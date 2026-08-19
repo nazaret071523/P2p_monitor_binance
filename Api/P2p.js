@@ -5,8 +5,7 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET');
 
   try {
-    // API optimizada que procesa las tasas P2P Binance USDT/VES en tiempo real
-    const response = await fetch("https://criptoya.com/api/binancep2p/sell/usdt/ves/5", {
+    const responseSell = await fetch("https://criptoya.com/api/binancep2p/sell/usdt/ves/5", {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
     
@@ -14,18 +13,17 @@ module.exports = async (req, res) => {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    const sellData = await response.json();
+    const sellData = await responseSell.json();
     const buyData = await responseBuy.json();
 
-    // Formatear datos para la interfaz
-    const buys = (sellData.data || []).map(item => ({
+    const buys = Object.values(sellData).slice(0, 5).map(item => ({
       adv: { price: item.price },
-      advertiser: { nickName: item.userName || "Comerciante" }
+      advertiser: { nickName: item.userName || "P2P User" }
     }));
 
-    const sells = (buyData.data || []).map(item => ({
+    const sells = Object.values(buyData).slice(0, 5).map(item => ({
       adv: { price: item.price },
-      advertiser: { nickName: item.userName || "Comerciante" }
+      advertiser: { nickName: item.userName || "P2P User" }
     }));
 
     return res.status(200).json({ status: "success", buy: buys, sell: sells });
