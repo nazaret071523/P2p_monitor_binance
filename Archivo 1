@@ -1,0 +1,77 @@
+# Agregar un archivo a un repositorio
+
+Puede cargar y confirmar un archivo existente en un repositorio en GitHub o mediante la línea de comandos.
+
+## Adición de un archivo a un repositorio en GitHub
+
+Los archivos que agregue a un repositorio a través de un explorador se limitan a 25 MiB por archivo. Puede agregar archivos más grandes, hasta 100 MiB cada uno, a través de la línea de comandos. Para obtener más información,consulta [Adición de un archivo a un repositorio mediante la línea de comandos](#adding-a-file-to-a-repository-using-the-command-line). Para agregar archivos mayores que 100 MiB, debe usar Almacenamiento de archivos de gran tamaño de Git. Para más información, consulta [Acerca de los archivos grandes en GitHub](/es/repositories/working-with-files/managing-large-files/about-large-files-on-github).
+
+Puede cargar hasta 100 archivos en GitHub al mismo tiempo.
+
+Si un repositorio cuenta con alguna rama protegida, no podrás editar o cargar archivos en ésta utilizando GitHub. Puedes utilizar GitHub Desktop para mover tus cambios a una rama nueva y confirmarlos. Para más información, consulta [Acerca de las ramas protegidas](/es/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) y [Confirmación y revisión de cambios en tu proyecto usando GitHub Desktop](/es/desktop/making-changes-in-a-branch/committing-and-reviewing-changes-to-your-project-in-github-desktop).
+
+Es posible que el repositorio tenga habilitados conjuntos de reglas de inserción. Los conjuntos de reglas de inserción pueden bloquear la creación de un nuevo archivo en el repositorio en función de determinadas restricciones. Los conjuntos de reglas de inserción se aplican a toda la red de bifurcación del repositorio. Esto significa que los conjuntos de reglas de inserción configurados en el repositorio raíz también se aplicarán a cada bifurcación del repositorio. Para más información, consulta [Acerca de los conjuntos de reglas](/es/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets#about-rulesets).
+
+El repositorio puede protegerse mediante la protección de inserción. Con protección contra inserciones, GitHub bloqueará la carga de un archivo al repositorio si este contiene un secreto admitido, como un token. Debe eliminar el secreto de los archivos antes de intentar cargarlos de nuevo. Para más información, consulta [Trabajar con protección de push en la interfaz de usuario de GitHub](/es/code-security/how-tos/secure-your-secrets/work-with-leak-prevention/push-protection-in-the-github-ui) y [Trabajar con protección de push en la interfaz de usuario de GitHub](/es/code-security/how-tos/secure-your-secrets/work-with-leak-prevention/push-protection-in-the-github-ui#resolving-a-blocked-commit).
+
+> \[!NOTE] La protección de inserción para las cargas de archivos en la interfaz de usuario web se encuentra actualmente en versión preliminar pública y está sujeta a cambios.
+
+> \[!WARNING]
+> Usa Git para insertar archivos en el repositorio si necesitas aplicar la lógica en el archivo `.gitattributes`. Por ejemplo, la conversión automática de finales de línea. Al cargar un archivo a través de la GitHub interfaz web, se omitirá `.gitattributes`.
+
+1. En GitHub, navegue hasta la página principal del repositorio.
+2. Encima de la lista de archivos, seleccione el menú de lista desplegable **Cargar archivos** y haga clic en **Agregar archivos**. Como alternativa, puede arrastrar y colocar archivos en el explorador.
+
+   ![Captura de pantalla de la página principal del repositorio. Encima de la lista de archivos, un botón con la etiqueta "Agregar archivo", aparece resaltado en naranja oscuro.](/assets/images/help/repository/upload-files-button.png)
+3. Para seleccionar los archivos que desea cargar, arrastre y coloque el archivo o carpeta, o haga clic en **elegir los archivos**.
+4. En el campo de "Mensaje de confirmación", escriba un mensaje de confirmación corto y significativo que describa la modificación que hizo en el archivo. Puedes atribuir el commit a más de un autor en el mensaje del commit. Para más información, consulta [Creación de un commit con varios autores o en nombre de una organización](/es/pull-requests/how-tos/commit-changes/creating-a-commit-with-multiple-authors).
+5. Debajo de los campos para el mensaje de confirmación, decide si deseas agregar tu confirmación a la rama actual o a una rama nueva. Debajo de los campos del mensaje de confirmación, decide si deseas agregar tu confirmación a la rama actual o a una nueva rama. Si tu rama actual es la rama predeterminada, debes elegir crear una nueva rama para tu confirmación y después crear una solicitud de extracción. Para más información, consulta [Crear una solicitud de incorporación de cambios](/es/pull-requests/how-tos/create-pull-requests/creating-a-pull-request).
+
+   ![Captura de pantalla de una solicitud de extracción de GitHub que muestra un botón de opción para hacer la confirmación directamente en la rama principal o para crear una nueva rama. Aparece seleccionada la opción de rama nueva.](/assets/images/help/repository/choose-commit-branch.png)
+6. Haz clic en **Proponer cambios**.
+
+## Agregar un archivo a un repositorio utilizando la línea de comando
+
+Puede cargar un archivo existente en un repositorio GitHub mediante la línea de comandos.
+
+> \[!TIP]
+> También puede [agregar un archivo existente a un repositorio desde el GitHub sitio web](/es/repositories/working-with-files/managing-files/adding-a-file-to-a-repository).
+
+Este procedimiento supone que ya has:
+
+* [Creado un repositorio en GitHub](/es/repositories/creating-and-managing-repositories/creating-a-new-repository), o bien tiene un repositorio existente que es propiedad de alguien más con quien quiere colaborar
+* [Clonado el repositorio de forma local en el equipo](/es/repositories/creating-and-managing-repositories/cloning-a-repository)
+
+> \[!WARNING]
+> Nunca uses los comandos `git add`, `commit` o `push` con información confidencial, por ejemplo, contraseñas y claves de API, en un repositorio remoto. Si ya has agregado esta información, consulta [Eliminación de datos confidenciales de un repositorio](/es/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
+
+1. En su equipo, mueva el archivo que desea cargar en GitHub al directorio local que se creó al clonar el repositorio.
+
+2. Abra <span class="platform-mac">Terminal</span><span class="platform-linux">Terminal</span><span class="platform-windows">Git Bash</span>.
+
+3. Cambia el directorio de trabajo actual por tu repositorio local.
+
+4. Agregue el archivo al "stage" para confirmarlo en el repositorio local.
+
+   ```shell
+   $ git add .
+   # Adds the file to your local repository and stages it for commit. Para sacar del "stage" un archivo, use "git reset HEAD EL_ARCHIVO".
+   ```
+
+5. Confirme el archivo que ha agregado al "stage" en el repositorio local.
+
+   ```shell
+   $ git commit -m "Add existing file"
+   # Commits the tracked changes and prepares them to be pushed to a remote repository. Para eliminar esta confirmación y modificar el archivo, usa 'git reset --soft HEAD~1' y confirma y agrega nuevamente el archivo.
+   ```
+
+6. [Inserta los cambios](/es/get-started/using-git/pushing-commits-to-a-remote-repository) en el repositorio local en GitHub.com.
+
+   ```shell
+   $ git push origin YOUR_BRANCH
+   # Pushes the changes in your local repository up to the remote repository you specified as the origin
+   ```
+
+## Información adicional
+
+* [Agregar código hospedado localmente a GitHub](/es/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github)
