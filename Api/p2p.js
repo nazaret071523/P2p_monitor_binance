@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P2P Binance Monitor Web</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #0b0e11; color: #eaecef; padding: 12px; }
+        .header { text-align: center; color: #f0b90b; font-size: 1.2rem; font-weight: bold; margin-bottom: 8px; }
+        .status { text-align: center; font-size: 0.75rem; color: #848e9c; margin-bottom: 12px; }
+        .kpis { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .card { background: #181a20; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #2b313a; }
+        .val { font-size: 1rem; font-weight: bold; margin-top: 4px; }
+        .buy { color: #0ecb81; } .sell { color: #f6465d; } .spread { color: #f0b90b; }
+        .btn { width: 100%; background: #f0b90b; border: none; padding: 12px; font-weight: bold; border-radius: 6px; cursor: pointer; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; background: #181a20; margin-bottom: 12px; font-size: 0.75rem; }
+        th, td { padding: 8px; border-bottom: 1px solid #2b313a; text-align: left; }
+        th { background: #2b313a; color: #848e9c; }
+    </style>
+</head>
+<body>
+    <div class="header">Binance P2P Web App</div>
+    <div class="status" id="status">Conectando...</div>
+
+    <button class="btn" onclick="loadData()">⚡ Actualizar Ahora</button>
+
+    <div class="kpis">
+        <div class="card"><small>Comprar</small><div class="val buy" id="buyVal">--.--</div></div>
+        <div class="card"><small>Vender</small><div class="val sell" id="sellVal">--.--</div></div>
+        <div class="card"><small>Spread</small><div class="val spread" id="spreadVal">--.--</div></div>
+    </div>
+
+    <canvas id="chart" style="max-height: 180px; margin-bottom: 12px;"></canvas>
+
+    <div style="color:#0ecb81; font-weight:bold; margin-bottom:4px;">Venta (Comprar USDT)</div>
+    <table><thead><tr><th>User</th><th>Precio</th></tr></thead><tbody id="buyT"></tbody></table>
+
+    <div style="color:#f6465d; font-weight:bold; margin-bottom:4px;">Compra (Vender USDT)</div>
+    <table><thead><tr><th>User</th><th>Precio</th></tr></thead><tbody id="sellT"></tbody></table>
+
+<script>
+    let chart;
+    const ctx = document.getElementById('chart').getContext('2d');
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [
+            { label: 'Comprar', data: [], borderColor: '#0ecb81' },
+            { label: 'Vender', data: [], borderColor: '#f6465d' }
+        ]}
+    });
+
+    async function loadData() {
+        document.getElementById('status').innerText = "Obteniendo datos...";
+        try {
+            const [resSell, resBuy] = await Promise.all([
+                fetch("https://criptoya.com/api/binancep2p/sell/usdt/ves/5"),
+                fetch("https://criptoya.com/api/binancep2p/buy/usdt/ves/5")
+            ]);
+
+            const sellData = await resSell.json();
+            const buyData = await resBuy.json();
+
+            const buys = Object.values(sellData).slice(0, 5);
+            const sells = Object.values(buyData).slice(0, 5);
+
+            if (buys.length > 0 && sells.length > 0) {
+                const b = parseFloat(buys[0].price);
+                const s = parseFloat(sells[0].price);
+
+                document.getElementById('buyVal').innerText = b.toFixed(2);
+                document.getElementById('sellVal').innerText = s.toFixed(2);
+                document.getElementById('spreadVal').innerText = (b - s).toFixed(2);
+
+                const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                chart.data.labels.push(t);
+                chart.data.datasets[0].data.push(b);
+                chart.data.datasets[1].data.push(s);
+                chart.update();
+
+                renderTable('buyT', buys);
+                renderTable('sellT', sells);
+                document.getElementById('status').innerText = "Actualizado: " + t;
+            }
+        } catch (e) {
+            document.getElementById('status').innerText = "Error cargando datos. Reintentando...";
+        }
+    }
+
+    function renderTable(id, items) {
+        document.getElementById(id).innerHTML = items.map(i => 
+            `<tr><td>${(i.userName || "P2P User").substring(0, 10)}</td><td><b>${parseFloat(i.price).toFixed(2)}</b></td></tr>`
+        ).join('');
+    }
+
+    loadData();
+    setInterval(loadData, 60000);
+</script>
+</body>
+</html>
