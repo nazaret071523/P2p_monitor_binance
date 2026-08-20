@@ -3,81 +3,93 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comerciante P2P Binance Pro</title>
+    <title>P2P Terminal Pro - Binance</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-dark: #0b0e11;
-            --card-bg: #1e2329;
-            --card-border: #2b313a;
-            --accent-gold: #f0b90b;
-            --color-buy: #0ecb81;
-            --color-sell: #f6465d;
-            --text-primary: #eaecef;
-            --text-secondary: #848e9c;
-            --mono-font: 'JetBrains Mono', monospace;
+            --bg-main: #080a0c;
+            --panel-bg: #12161c;
+            --panel-border: #1e242d;
+            --accent-yellow: #f0b90b;
+            --color-up: #0ecb81;
+            --color-down: #f6465d;
+            --text-main: #f0f3f8;
+            --text-muted: #6c788a;
+            --font-mono: 'JetBrains Mono', monospace;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
-        body { background: var(--bg-dark); color: var(--text-primary); padding: 16px 12px 24px 12px; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+        body { background: var(--bg-main); color: var(--text-main); padding: 14px; max-width: 500px; margin: 0 auto; }
 
-        .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); }
-        .brand { font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; color: var(--accent-gold); text-transform: uppercase; }
+        /* Encabezado Principal */
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--panel-border); }
+        .app-title { font-size: 0.85rem; font-weight: 800; color: #fff; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
+        .app-title span { color: var(--accent-yellow); }
         
-        /* Panel del Bot Inteligente */
-        .bot-panel { background: rgba(240, 185, 11, 0.05); border: 1px solid var(--accent-gold); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-        .bot-info { display: flex; flex-direction: column; flex: 1; }
-        .bot-title { font-size: 0.65rem; color: var(--accent-gold); font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
-        .bot-status { font-size: 0.72rem; color: #fff; font-weight: 600; line-height: 1.2; }
-        .bot-signal { font-family: var(--mono-font); font-weight: 800; font-size: 0.78rem; padding: 8px 10px; border-radius: 6px; text-transform: uppercase; text-align: center; white-space: nowrap; }
-        .signal-buy { background: rgba(14, 203, 129, 0.2); color: var(--color-buy); border: 1px solid var(--color-buy); }
-        .signal-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-sell); border: 1px solid var(--color-sell); }
-        .signal-wait { background: rgba(132, 142, 156, 0.2); color: var(--text-secondary); border: 1px solid var(--text-secondary); }
+        /* Indicador En Línea */
+        .live-status { display: flex; align-items: center; gap: 6px; font-size: 0.65rem; font-weight: 700; color: var(--color-up); background: rgba(14, 203, 129, 0.1); padding: 4px 8px; border-radius: 20px; border: 1px solid rgba(14, 203, 129, 0.3); }
+        .pulse-dot { width: 6px; height: 6px; background-color: var(--color-up); border-radius: 50%; box-shadow: 0 0 8px var(--color-up); animation: pulse 1.5s infinite; }
 
-        .bank-selector-container { margin-bottom: 14px; }
-        .bank-select { width: 100%; background: var(--card-bg); border: 1px solid var(--card-border); color: #fff; padding: 10px 12px; border-radius: 8px; font-weight: 700; font-size: 0.82rem; outline: none; }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(14, 203, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0); }
+        }
 
-        .timeframe-bar { display: flex; gap: 8px; margin-bottom: 16px; }
-        .tf-btn { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 8px 0; border-radius: 6px; font-size: 0.72rem; font-weight: 700; cursor: pointer; text-align: center; }
-        .tf-btn.active { background: var(--accent-gold); color: #000; border-color: var(--accent-gold); }
+        /* Bot Inteligente Estilo Ticker */
+        .ai-news-card { background: linear-gradient(135deg, rgba(240, 185, 11, 0.08) 0%, rgba(18, 22, 28, 0.95) 100%); border: 1px solid rgba(240, 185, 11, 0.3); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+        .ai-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .ai-tag { font-size: 0.62rem; font-weight: 800; color: var(--accent-yellow); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
+        .ai-badge { font-family: var(--font-mono); font-size: 0.7rem; font-weight: 800; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; }
+        .badge-buy { background: rgba(14, 203, 129, 0.2); color: var(--color-up); border: 1px solid var(--color-up); }
+        .badge-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-down); border: 1px solid var(--color-down); }
+        .badge-wait { background: rgba(108, 120, 138, 0.2); color: var(--text-muted); border: 1px solid var(--text-muted); }
+        .ai-text { font-size: 0.75rem; color: #d0d7e2; font-weight: 600; line-height: 1.35; }
 
-        /* Metricas Niveles Piso y Techo */
-        .levels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-        .level-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; }
-        .level-box.floor { border-left: 3px solid var(--color-buy); }
-        .level-box.roof { border-left: 3px solid var(--color-sell); }
-        .level-title { font-size: 0.6rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; }
-        .level-val { font-family: var(--mono-font); font-size: 0.82rem; font-weight: 700; }
+        /* Selector de Banco */
+        .select-box { margin-bottom: 12px; }
+        .custom-select { width: 100%; background: var(--panel-bg); border: 1px solid var(--panel-border); color: #fff; padding: 10px 12px; border-radius: 8px; font-weight: 700; font-size: 0.8rem; outline: none; transition: all 0.2s; }
+        .custom-select:focus { border-color: var(--accent-yellow); }
 
-        .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 6px; text-align: center; }
-        .kpi-label { font-size: 0.58rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
-        .kpi-value { font-family: var(--mono-font); font-size: 0.82rem; font-weight: 700; }
+        /* Botones Temporalidad */
+        .time-selector { display: flex; gap: 8px; margin-bottom: 14px; }
+        .tf-button { flex: 1; background: var(--panel-bg); border: 1px solid var(--panel-border); color: var(--text-muted); padding: 8px 0; border-radius: 6px; font-size: 0.72rem; font-weight: 700; cursor: pointer; text-align: center; }
+        .tf-button.active { background: var(--accent-yellow); color: #000; border-color: var(--accent-yellow); font-weight: 800; }
 
-        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 14px; height: 340px; position: relative; }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
-        .legend-tag { font-size: 0.55rem; padding: 3px 6px; border-radius: 4px; font-weight: bold; margin-left: 4px; }
+        /* Panel KPI */
+        .kpi-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+        .kpi-item { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 6px; text-align: center; }
+        .kpi-lbl { font-size: 0.58rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
+        .kpi-num { font-family: var(--font-mono); font-size: 0.82rem; font-weight: 800; }
+
+        /* Gráfica Pro */
+        .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 350px; position: relative; }
+        .chart-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <div class="brand">COMERCIANTE P2P BINANCE</div>
-        <div style="font-size: 0.65rem; color: var(--text-secondary); font-weight: bold;">SISTEMA INTELIGENTE</div>
-    </div>
-
-    <!-- Bot de Recomendación con Alerta de 1 Hora -->
-    <div class="bot-panel">
-        <div class="bot-info">
-            <span class="bot-title">🤖 ASESOR P2P (RANGO 1 HORA)</span>
-            <span class="bot-status" id="botReason">Procesando señales de mercado a corto plazo...</span>
+    <div class="top-bar">
+        <div class="app-title">
+            <span>⚡</span> TERMINAL P2P BINANCE
         </div>
-        <div class="bot-signal signal-wait" id="botSignal">ESPERAR</div>
+        <div class="live-status">
+            <div class="pulse-dot"></div> EN LÍNEA
+        </div>
     </div>
 
-    <div class="bank-selector-container">
-        <select id="bankSelect" class="bank-select" onchange="onBankSelectChange()">
+    <!-- Bot Noticiero Asesor Inteligente -->
+    <div class="ai-news-card">
+        <div class="ai-header">
+            <span class="ai-tag">📢 MERCADO & ALERTAS EN VIVO (1H)</span>
+            <span class="ai-badge badge-wait" id="botBadge">ESPERAR</span>
+        </div>
+        <div class="ai-text" id="botNews">Analizando flujos de órdenes de mercado P2P...</div>
+    </div>
+
+    <div class="select-box">
+        <select id="bankSelect" class="custom-select" onchange="onBankChange()">
             <option value="banesco">Banesco (Spread ~1.2%)</option>
             <option value="mercantil">Mercantil (Spread ~1.5%)</option>
             <option value="bdv">Banco de Venezuela (BDV) (Spread ~0.9%)</option>
@@ -87,116 +99,100 @@
         </select>
     </div>
 
-    <div class="timeframe-bar">
-        <button class="tf-btn" id="tf-1h" onclick="setTimeframe('1h')">1 Hora</button>
-        <button class="tf-btn active" id="tf-24h" onclick="setTimeframe('24h')">24 Horas</button>
-        <button class="tf-btn" id="tf-7d" onclick="setTimeframe('7d')">7 Días</button>
+    <div class="time-selector">
+        <button class="tf-button" id="tf-1h" onclick="changeTimeframe('1h')">1 Hora</button>
+        <button class="tf-button active" id="tf-24h" onclick="changeTimeframe('24h')">24 Horas</button>
+        <button class="tf-button" id="tf-7d" onclick="changeTimeframe('7d')">7 Días</button>
     </div>
 
-    <!-- Indicadores de Piso y Techo -->
-    <div class="levels-grid">
-        <div class="level-box floor">
-            <span class="level-title">PISO (SOPORTE):</span>
-            <span class="level-val" id="floorVal" style="color: var(--color-buy);">--.--</span>
+    <div class="kpi-container">
+        <div class="kpi-item">
+            <div class="kpi-lbl">Precio Compra</div>
+            <div class="kpi-num" id="kpiBuy" style="color: var(--color-up);">--.--</div>
         </div>
-        <div class="level-box roof">
-            <span class="level-title">TECHO (RESIS.):</span>
-            <span class="level-val" id="roofVal" style="color: var(--color-sell);">--.--</span>
+        <div class="kpi-item">
+            <div class="kpi-lbl">Precio Venta</div>
+            <div class="kpi-num" id="kpiSell" style="color: var(--color-down);">--.--</div>
         </div>
-    </div>
-
-    <div class="kpi-grid">
-        <div class="kpi-card">
-            <div class="kpi-label">Entrada (Compra)</div>
-            <div class="kpi-value" id="buyVal" style="color: var(--color-buy);">--.--</div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-label">Salida (Venta)</div>
-            <div class="kpi-value" id="sellVal" style="color: var(--color-sell);">--.--</div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-label">Brecha / Spread</div>
-            <div class="kpi-value" id="spreadVal" style="color: var(--accent-gold);">--.--</div>
+        <div class="kpi-item">
+            <div class="kpi-lbl">Margen / Spread</div>
+            <div class="kpi-num" id="kpiSpread" style="color: var(--accent-yellow);">--.--</div>
         </div>
     </div>
 
-    <div class="chart-container">
+    <div class="chart-box">
         <div class="chart-header">
-            <span>TENDENCIA Y NIVELES TÉCNICOS</span>
-            <div>
-                <span class="legend-tag" style="background: rgba(14, 203, 129, 0.15); color: var(--color-buy);">─ PISO</span>
-                <span class="legend-tag" style="background: rgba(246, 70, 93, 0.15); color: var(--color-sell);">─ TECHO</span>
-            </div>
+            <span>TENDENCIA Y NIVELES EN TIEMPO REAL</span>
         </div>
-        <canvas id="chart"></canvas>
+        <canvas id="p2pChart"></canvas>
     </div>
 
 <script>
-    let chart;
-    let currentTF = '24h';
+    let chartInstance;
+    let selectedTF = '24h';
     const bankSpreads = { banesco: 0.012, mercantil: 0.015, bdv: 0.009, bnc: 0.013, tesoro: 0.016, provincial: 0.011 };
 
-    function generateHistoricalData(tf) {
-        let points = tf === '1h' ? 12 : (tf === '24h' ? 24 : 14);
-        let base = 907.50;
+    function generateMockData(tf) {
+        let count = tf === '1h' ? 12 : (tf === '24h' ? 24 : 14);
+        let basePrice = 908.00;
         let labels = [];
         let prices = [];
         let now = new Date();
 
-        for (let i = points; i >= 0; i--) {
-            let timeLabel = "";
-            let variation = (Math.random() - 0.47) * (tf === '1h' ? 0.8 : 1.8);
-            base += variation;
+        for (let i = count; i >= 0; i--) {
+            let label = "";
+            let change = (Math.random() - 0.48) * (tf === '1h' ? 0.7 : 1.9);
+            basePrice += change;
 
             if (tf === '1h') {
                 let d = new Date(now.getTime() - i * 5 * 60000);
-                timeLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                label = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             } else if (tf === '24h') {
                 let d = new Date(now.getTime() - i * 3600000);
-                timeLabel = `${d.getHours()}:00`;
+                label = `${d.getHours()}:00`;
             } else {
                 let d = new Date(now.getTime() - i * 86400000);
-                timeLabel = `${d.getDate()}/${d.getMonth()+1}`;
+                label = `${d.getDate()}/${d.getMonth()+1}`;
             }
 
-            labels.push(timeLabel);
-            prices.push(parseFloat(base.toFixed(2)));
+            labels.push(label);
+            prices.push(parseFloat(basePrice.toFixed(2)));
         }
         return { labels, prices };
     }
 
-    const ctx = document.getElementById('chart').getContext('2d');
-    
-    chart = new Chart(ctx, {
+    const ctx = document.getElementById('p2pChart').getContext('2d');
+
+    chartInstance = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
             datasets: [
                 {
-                    label: 'Precio Referencial',
+                    label: 'Precio',
                     data: [],
                     borderColor: '#f0b90b',
-                    borderWidth: 2.5,
+                    borderWidth: 2,
                     pointRadius: 2,
                     pointBackgroundColor: '#f0b90b',
-                    fill: false,
-                    tension: 0.2
+                    tension: 0.25,
+                    fill: false
                 },
                 {
-                    label: 'Piso (Soporte)',
+                    label: 'Piso',
                     data: [],
                     borderColor: '#0ecb81',
                     borderWidth: 1.5,
-                    borderDash: [5, 5],
+                    borderDash: [4, 4],
                     pointRadius: 0,
                     fill: false
                 },
                 {
-                    label: 'Techo (Resistencia)',
+                    label: 'Techo',
                     data: [],
                     borderColor: '#f6465d',
                     borderWidth: 1.5,
-                    borderDash: [5, 5],
+                    borderDash: [4, 4],
                     pointRadius: 0,
                     fill: false
                 }
@@ -205,104 +201,114 @@
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#12161c',
+                    titleColor: '#848e9c',
+                    bodyFont: { family: 'JetBrains Mono' }
+                }
+            },
             scales: {
-                x: { grid: { color: '#1a1e23' }, ticks: { color: '#848e9c', font: { size: 9 } } },
-                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 9 } }, grace: '3%' }
+                x: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 9 } } },
+                y: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 9 } }, grace: '4%' }
             }
         }
     });
 
-    function initSavedBank() {
-        const savedBank = localStorage.getItem('selectedP2PBank');
-        if (savedBank) {
-            const select = document.getElementById('bankSelect');
-            if (select.querySelector(`option[value="${savedBank}"]`)) {
-                select.value = savedBank;
+    function initBankPreference() {
+        const storedBank = localStorage.getItem('p2p_selected_bank');
+        if (storedBank) {
+            const selectEl = document.getElementById('bankSelect');
+            if (selectEl.querySelector(`option[value="${storedBank}"]`)) {
+                selectEl.value = storedBank;
             }
         }
     }
 
-    function onBankSelectChange() {
-        const selectedValue = document.getElementById('bankSelect').value;
-        localStorage.setItem('selectedP2PBank', selectedValue);
-        updateMarketData();
+    function onBankChange() {
+        const val = document.getElementById('bankSelect').value;
+        localStorage.setItem('p2p_selected_bank', val);
+        refreshMarket();
     }
 
-    function setTimeframe(tf) {
-        currentTF = tf;
-        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+    function changeTimeframe(tf) {
+        selectedTF = tf;
+        document.querySelectorAll('.tf-button').forEach(btn => btn.classList.remove('active'));
         document.getElementById(`tf-${tf}`).classList.add('active');
-        updateMarketData();
+        refreshMarket();
     }
 
-    function calculateRSI(prices) {
-        let gains = 0, losses = 0;
-        for (let i = 1; i < prices.length; i++) {
-            let diff = prices[i] - prices[i - 1];
-            if (diff >= 0) gains += diff;
-            else losses += Math.abs(diff);
+    function runMarketBotAnalysis(prices1h) {
+        const first = prices1h[0];
+        const last = prices1h[prices1h.length - 1];
+        const min = Math.min(...prices1h);
+        const max = Math.max(...prices1h);
+        const diff = (last - first).toFixed(2);
+
+        const badge = document.getElementById('botBadge');
+        const news = document.getElementById('botNews');
+
+        if (last <= min + 0.3) {
+            badge.className = "ai-badge badge-buy";
+            badge.innerText = "COMPRAR";
+            news.innerText = `🚨 ALERTA: El precio tocó el piso mínimo de ${min.toFixed(2)} Bs en la última hora. Excelente oportunidad de entrada por sobreventa.`;
+        } else if (last >= max - 0.3) {
+            badge.className = "ai-badge badge-sell";
+            badge.innerText = "VENDER";
+            news.innerText = `📢 AVISO: El precio alcanzó el techo de ${max.toFixed(2)} Bs (+${diff} Bs en 1h). Se recomienda toma de ganancias ante posible corrección.`;
+        } else if (diff > 0.5) {
+            badge.className = "ai-badge badge-buy";
+            badge.innerText = "TENDENCIA ⬆";
+            news.innerText = `📈 MERCADO EN ALZA: Fuerte impulso comprador (+${diff} Bs en 1h). La demanda en P2P está incrementando la cotización.`;
+        } else if (diff < -0.5) {
+            badge.className = "ai-badge badge-sell";
+            badge.innerText = "TENDENCIA ⬇";
+            news.innerText = `📉 PRESIÓN BAJISTA: El mercado cayó ${diff} Bs en los últimos 60 minutos. Precaución al acumular inventario.`;
+        } else {
+            badge.className = "ai-badge badge-wait";
+            badge.innerText = "LATERAL";
+            news.innerText = `💬 MERCADO ESTABLE: Variación mínima (${diff} Bs) en la última hora. Piso en ${min.toFixed(2)} Bs / Techo en ${max.toFixed(2)} Bs. Sin riesgos altos.`;
         }
-        if (losses === 0) return 100;
-        let rs = (gains / prices.length) / (losses / prices.length);
-        return (100 - (100 / (1 + rs))).toFixed(1);
     }
 
-    function updateMarketData() {
-        const dataset = generateHistoricalData(currentTF);
+    function refreshMarket() {
+        const dataset = generateMockData(selectedTF);
         const prices = dataset.prices;
-        
+
         const minPrice = Math.min(...prices);
         const maxPrice = Math.max(...prices);
 
-        document.getElementById('floorVal').innerText = `${minPrice.toFixed(2)} Bs`;
-        document.getElementById('roofVal').innerText = `${maxPrice.toFixed(2)} Bs`;
-
         const lastPrice = prices[prices.length - 1];
-        const bankKey = document.getElementById('bankSelect').value;
-        const spreadRatio = bankSpreads[bankKey] || 0.012;
-        const precioCompra = lastPrice;
-        const precioVenta = lastPrice * (1 + spreadRatio);
-        const spread = precioVenta - precioCompra;
+        const bank = document.getElementById('bankSelect').value;
+        const spreadRatio = bankSpreads[bank] || 0.012;
 
-        document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
-        document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
-        document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} Bs`;
+        const buyPrice = lastPrice;
+        const sellPrice = lastPrice * (1 + spreadRatio);
+        const spread = sellPrice - buyPrice;
 
-        const hourlyData = generateHistoricalData('1h');
-        const hPrices = hourlyData.prices;
-        const hRSI = calculateRSI(hPrices);
-        const hDiff = hPrices[hPrices.length - 1] - hPrices[0];
+        document.getElementById('kpiBuy').innerText = buyPrice.toFixed(2);
+        document.getElementById('kpiSell').innerText = sellPrice.toFixed(2);
+        document.getElementById('kpiSpread').innerText = `${spread.toFixed(2)} Bs`;
 
-        const botSignal = document.getElementById('botSignal');
-        const botReason = document.getElementById('botReason');
+        // Generar análisis dinámico de 1 hora para el Bot
+        const hourlyDataset = generateMockData('1h');
+        runMarketBotAnalysis(hourlyDataset.prices);
 
-        if (hRSI < 42 && hDiff >= -0.2) {
-            botSignal.className = "bot-signal signal-buy";
-            botSignal.innerText = "ENTRAR (COMPRAR)";
-            botReason.innerText = "Última hora: Rebote en zona de piso clave.";
-        } else if (hRSI > 60 || hDiff < -0.8) {
-            botSignal.className = "bot-signal signal-sell";
-            botSignal.innerText = "SALIR (VENDER)";
-            botReason.innerText = "Última hora: Presión bajista detectada.";
-        } else {
-            botSignal.className = "bot-signal signal-wait";
-            botSignal.innerText = "ESPERAR";
-            botReason.innerText = "Última hora: Rango lateral sin volumen suficiente.";
-        }
+        // Actualizar gráfica con líneas integradas de Piso y Techo
+        chartInstance.data.labels = dataset.labels;
+        chartInstance.data.datasets[0].data = prices;
+        chartInstance.data.datasets[1].data = Array(prices.length).fill(minPrice);
+        chartInstance.data.datasets[2].data = Array(prices.length).fill(maxPrice);
+        
+        chartInstance.data.datasets[1].label = `Piso (${minPrice.toFixed(2)})`;
+        chartInstance.data.datasets[2].label = `Techo (${maxPrice.toFixed(2)})`;
 
-        const floorLine = Array(prices.length).fill(minPrice);
-        const roofLine = Array(prices.length).fill(maxPrice);
-
-        chart.data.labels = dataset.labels;
-        chart.data.datasets[0].data = prices;
-        chart.data.datasets[1].data = floorLine;
-        chart.data.datasets[2].data = roofLine;
-        chart.update();
+        chartInstance.update();
     }
 
-    initSavedBank();
-    updateMarketData();
+    initBankPreference();
+    refreshMarket();
 </script>
 </body>
 </html>
