@@ -37,7 +37,7 @@
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0); }
         }
 
-        /* Bot Inteligente Estilo Ticker */
+        /* Bot Inteligente */
         .ai-news-card { background: linear-gradient(135deg, rgba(240, 185, 11, 0.08) 0%, rgba(18, 22, 28, 0.95) 100%); border: 1px solid rgba(240, 185, 11, 0.3); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
         .ai-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
         .ai-tag { font-size: 0.62rem; font-weight: 800; color: var(--accent-yellow); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
@@ -65,7 +65,7 @@
 
         /* Gráfica Pro */
         .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 350px; position: relative; }
-        .chart-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
     </style>
 </head>
 <body>
@@ -82,10 +82,10 @@
     <!-- Bot Noticiero Asesor Inteligente -->
     <div class="ai-news-card">
         <div class="ai-header">
-            <span class="ai-tag">📢 MERCADO & ALERTAS EN VIVO (1H)</span>
+            <span class="ai-tag">📢 MERCADO & ALERTAS EN VIVO</span>
             <span class="ai-badge badge-wait" id="botBadge">ESPERAR</span>
         </div>
-        <div class="ai-text" id="botNews">Analizando flujos de órdenes de mercado P2P...</div>
+        <div class="ai-text" id="botNews">Procesando estructura de mercado...</div>
     </div>
 
     <div class="select-box">
@@ -132,31 +132,38 @@
     let selectedTF = '24h';
     const bankSpreads = { banesco: 0.012, mercantil: 0.015, bdv: 0.009, bnc: 0.013, tesoro: 0.016, provincial: 0.011 };
 
-    function generateMockData(tf) {
-        let count = tf === '1h' ? 12 : (tf === '24h' ? 24 : 14);
-        let basePrice = 908.00;
+    // Patrones de precios deterministas y fijos (Sin aleatoriedad)
+    const fixedPriceOffsets = {
+        '1h': [0.00, 0.25, 0.10, 0.45, 0.30, 0.15, 0.40, 0.70, 0.65, 0.60, 0.90, 1.10, 0.95],
+        '24h': [0.00, 0.40, 0.80, 0.30, 0.10, -0.40, -0.20, 0.30, 0.70, 0.50, 0.10, -0.10, 0.20, 0.60, 1.00, 1.30, 1.10, 0.80, 0.60, 0.90, 1.20, 1.50, 1.80, 1.60, 1.45],
+        '7d': [0.00, 1.20, 0.80, 2.10, 1.50, 3.20, 2.80, 4.10, 3.70, 5.00, 4.50, 5.80, 5.20, 6.10, 5.90]
+    };
+
+    function getDeterministicData(tf) {
+        const basePrice = 908.30;
+        const offsets = fixedPriceOffsets[tf];
+        const count = offsets.length;
         let labels = [];
         let prices = [];
         let now = new Date();
 
-        for (let i = count; i >= 0; i--) {
+        for (let i = 0; i < count; i++) {
             let label = "";
-            let change = (Math.random() - 0.48) * (tf === '1h' ? 0.7 : 1.9);
-            basePrice += change;
+            let idxFromEnd = count - 1 - i;
 
             if (tf === '1h') {
-                let d = new Date(now.getTime() - i * 5 * 60000);
+                let d = new Date(now.getTime() - idxFromEnd * 5 * 60000);
                 label = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             } else if (tf === '24h') {
-                let d = new Date(now.getTime() - i * 3600000);
+                let d = new Date(now.getTime() - idxFromEnd * 3600000);
                 label = `${d.getHours()}:00`;
             } else {
-                let d = new Date(now.getTime() - i * 86400000);
+                let d = new Date(now.getTime() - idxFromEnd * 86400000);
                 label = `${d.getDate()}/${d.getMonth()+1}`;
             }
 
             labels.push(label);
-            prices.push(parseFloat(basePrice.toFixed(2)));
+            prices.push(parseFloat((basePrice + offsets[i]).toFixed(2)));
         }
         return { labels, prices };
     }
@@ -239,41 +246,45 @@
         refreshMarket();
     }
 
-    function runMarketBotAnalysis(prices1h) {
-        const first = prices1h[0];
-        const last = prices1h[prices1h.length - 1];
-        const min = Math.min(...prices1h);
-        const max = Math.max(...prices1h);
+    function runMarketBotAnalysis(prices, tf) {
+        const first = prices[0];
+        const last = prices[prices.length - 1];
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
         const diff = (last - first).toFixed(2);
+        const tfLabel = tf === '1h' ? '1 hora' : (tf === '24h' ? '24 horas' : '7 días');
 
         const badge = document.getElementById('botBadge');
         const news = document.getElementById('botNews');
 
-        if (last <= min + 0.3) {
-            badge.className = "ai-badge badge-buy";
-            badge.innerText = "COMPRAR";
-            news.innerText = `🚨 ALERTA: El precio tocó el piso mínimo de ${min.toFixed(2)} Bs en la última hora. Excelente oportunidad de entrada por sobreventa.`;
-        } else if (last >= max - 0.3) {
+        const isAtCeiling = Math.abs(last - max) <= 0.10;
+        const isAtFloor = Math.abs(last - min) <= 0.10;
+
+        if (isAtCeiling) {
             badge.className = "ai-badge badge-sell";
-            badge.innerText = "VENDER";
-            news.innerText = `📢 AVISO: El precio alcanzó el techo de ${max.toFixed(2)} Bs (+${diff} Bs en 1h). Se recomienda toma de ganancias ante posible corrección.`;
-        } else if (diff > 0.5) {
+            badge.innerText = "VENDER (TECHO)";
+            news.innerText = `🚨 ALERTA: El precio alcanzó el techo máximo de ${max.toFixed(2)} Bs en ${tfLabel}. Se sugiere liquidar posición ante posible resistencia.`;
+        } else if (isAtFloor) {
             badge.className = "ai-badge badge-buy";
-            badge.innerText = "TENDENCIA ⬆";
-            news.innerText = `📈 MERCADO EN ALZA: Fuerte impulso comprador (+${diff} Bs en 1h). La demanda en P2P está incrementando la cotización.`;
-        } else if (diff < -0.5) {
+            badge.innerText = "COMPRAR (PISO)";
+            news.innerText = `🎯 OPORTUNIDAD: El precio tocó el soporte mínimo de ${min.toFixed(2)} Bs en ${tfLabel}. Punto óptimo para acumulación de inventario.`;
+        } else if (parseFloat(diff) > 0.5) {
+            badge.className = "ai-badge badge-buy";
+            badge.innerText = "ALCISTA";
+            news.innerText = `📈 TENDENCIA: Avance positivo de +${diff} Bs en ${tfLabel}. Estructura alcista estable con piso en ${min.toFixed(2)} Bs y techo en ${max.toFixed(2)} Bs.`;
+        } else if (parseFloat(diff) < -0.5) {
             badge.className = "ai-badge badge-sell";
-            badge.innerText = "TENDENCIA ⬇";
-            news.innerText = `📉 PRESIÓN BAJISTA: El mercado cayó ${diff} Bs en los últimos 60 minutos. Precaución al acumular inventario.`;
+            badge.innerText = "BAJISTA";
+            news.innerText = `📉 TENDENCIA: Retroceso de ${diff} Bs en ${tfLabel}. El mercado muestra corrección hacia el piso de ${min.toFixed(2)} Bs.`;
         } else {
             badge.className = "ai-badge badge-wait";
             badge.innerText = "LATERAL";
-            news.innerText = `💬 MERCADO ESTABLE: Variación mínima (${diff} Bs) en la última hora. Piso en ${min.toFixed(2)} Bs / Techo en ${max.toFixed(2)} Bs. Sin riesgos altos.`;
+            news.innerText = `💬 CONSOLIDACIÓN: Rango estrecho en ${tfLabel}. Sin ruptura clara entre el piso (${min.toFixed(2)} Bs) y techo (${max.toFixed(2)} Bs).`;
         }
     }
 
     function refreshMarket() {
-        const dataset = generateMockData(selectedTF);
+        const dataset = getDeterministicData(selectedTF);
         const prices = dataset.prices;
 
         const minPrice = Math.min(...prices);
@@ -291,11 +302,10 @@
         document.getElementById('kpiSell').innerText = sellPrice.toFixed(2);
         document.getElementById('kpiSpread').innerText = `${spread.toFixed(2)} Bs`;
 
-        // Generar análisis dinámico de 1 hora para el Bot
-        const hourlyDataset = generateMockData('1h');
-        runMarketBotAnalysis(hourlyDataset.prices);
+        // Análisis consistente según la temporalidad activa
+        runMarketBotAnalysis(prices, selectedTF);
 
-        // Actualizar gráfica con líneas integradas de Piso y Techo
+        // Actualización de Gráfica
         chartInstance.data.labels = dataset.labels;
         chartInstance.data.datasets[0].data = prices;
         chartInstance.data.datasets[1].data = Array(prices.length).fill(minPrice);
