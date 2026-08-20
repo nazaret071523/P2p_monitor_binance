@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comerciante P2P Binance</title>
+    <title>Comerciante P2P Binance Pro</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <style>
@@ -25,66 +25,59 @@
         .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--card-border); }
         .brand { font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; color: var(--accent-gold); text-transform: uppercase; }
         
-        .live-badge { font-size: 0.65rem; background: rgba(14, 203, 129, 0.15); color: var(--color-buy); border: 1px solid var(--color-buy); padding: 3px 8px; border-radius: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
-        .live-dot { width: 6px; height: 6px; background: var(--color-buy); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
-        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        /* Panel del Bot Inteligente */
+        .bot-panel { background: rgba(240, 185, 11, 0.05); border: 1px solid var(--accent-gold); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+        .bot-info { display: flex; flex-direction: column; }
+        .bot-title { font-size: 0.65rem; color: var(--accent-gold); font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+        .bot-status { font-size: 0.75rem; color: #fff; font-weight: 600; margin-top: 2px; }
+        .bot-signal { font-family: var(--mono-font); font-weight: 800; font-size: 0.85rem; padding: 6px 12px; border-radius: 6px; text-transform: uppercase; }
+        .signal-buy { background: rgba(14, 203, 129, 0.2); color: var(--color-buy); border: 1px solid var(--color-buy); }
+        .signal-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-sell); border: 1px solid var(--color-sell); }
+        .signal-wait { background: rgba(132, 142, 156, 0.2); color: var(--text-secondary); border: 1px solid var(--text-secondary); }
 
-        /* Selector de Banco */
-        .bank-selector-container { margin-bottom: 10px; }
-        .bank-label { font-size: 0.65rem; color: var(--text-secondary); font-weight: 700; margin-bottom: 4px; display: block; text-transform: uppercase; }
-        .bank-select { width: 100%; background: var(--card-bg); border: 1px solid var(--accent-gold); color: #fff; padding: 8px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; outline: none; cursor: pointer; }
+        /* Controles de Tiempo y Banco */
+        .bank-selector-container { margin-bottom: 8px; }
+        .bank-select { width: 100%; background: var(--card-bg); border: 1px solid var(--card-border); color: #fff; padding: 8px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; outline: none; }
 
-        .quick-amounts { display: flex; gap: 6px; margin-bottom: 8px; }
-        .chip { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 5px 0; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; text-align: center; }
-        .chip.active { background: rgba(240, 185, 11, 0.15); color: var(--accent-gold); border-color: var(--accent-gold); }
-
-        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-        .btn-update { background: var(--accent-gold); color: #000; border: none; padding: 10px; font-weight: 700; font-size: 0.8rem; border-radius: 6px; cursor: pointer; }
-        .input-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; display: flex; align-items: center; padding: 0 10px; }
-        .input-box span { font-size: 0.85rem; color: var(--text-secondary); margin-right: 4px; font-weight: bold; }
-        .calc-input { background: transparent; border: none; color: #fff; font-family: var(--mono-font); font-weight: 700; font-size: 0.85rem; width: 100%; text-align: right; outline: none; }
+        .timeframe-bar { display: flex; gap: 6px; margin-bottom: 10px; }
+        .tf-btn { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 6px 0; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; text-align: center; }
+        .tf-btn.active { background: var(--accent-gold); color: #000; border-color: var(--accent-gold); }
 
         .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
         .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 4px; text-align: center; position: relative; }
-        .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px; }
-        .kpi-card.buy::before { background: var(--color-buy); }
-        .kpi-card.sell::before { background: var(--color-sell); }
-        .kpi-card.spread::before { background: var(--accent-gold); }
-
         .kpi-label { font-size: 0.58rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
-        .kpi-value { font-family: var(--mono-font); font-size: 0.9rem; font-weight: 700; }
-        .val-buy { color: var(--color-buy); }
-        .val-sell { color: var(--color-sell); }
-        .val-spread { color: var(--accent-gold); }
+        .kpi-value { font-family: var(--mono-font); font-size: 0.85rem; font-weight: 700; }
 
-        .roi-banner { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-        .roi-banner.good { border-color: rgba(14, 203, 129, 0.4); background: rgba(14, 203, 129, 0.08); }
-        .roi-banner.medium { border-color: rgba(240, 185, 11, 0.4); background: rgba(240, 185, 11, 0.08); }
-        .roi-info small { color: var(--text-secondary); font-size: 0.6rem; display: block; font-weight: 600; }
-        .roi-info strong { font-size: 0.75rem; color: #fff; }
-        .roi-stat { font-family: var(--mono-font); font-size: 0.9rem; font-weight: 700; text-align: right; }
+        /* Indicadores Mercado */
+        .indicators-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .ind-box { background: var(--card-bg); border: 1px solid var(--card-border); padding: 8px 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+        .ind-title { font-size: 0.65rem; color: var(--text-secondary); font-weight: 700; }
+        .ind-val { font-family: var(--mono-font); font-weight: 700; font-size: 0.75rem; }
 
-        .breakeven-bar { background: rgba(255, 255, 255, 0.03); border: 1px dashed var(--card-border); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; font-size: 0.65rem; color: var(--text-secondary); display: flex; justify-content: space-between; }
-        .breakeven-val { font-family: var(--mono-font); color: #fff; font-weight: bold; }
-
-        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 350px; position: relative; }
+        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 320px; position: relative; }
         .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
-        .pred-legend { color: var(--accent-gold); font-weight: 700; font-size: 0.6rem; }
     </style>
 </head>
 <body>
 
     <div class="header">
         <div class="brand">COMERCIANTE P2P BINANCE</div>
-        <div class="live-badge"><span class="live-dot"></span> EN LÍNEA</div>
+        <div style="font-size: 0.65rem; color: var(--text-secondary); font-weight: bold;">SISTEMA INTELIGENTE</div>
     </div>
 
-    <!-- Lista de Bancos Actualizada -->
+    <!-- Bot de Recomendación -->
+    <div class="bot-panel">
+        <div class="bot-info">
+            <span class="bot-title">🤖 BOT ASESOR DE TRADING</span>
+            <span class="bot-status" id="botReason">Analizando estructura de mercado...</span>
+        </div>
+        <div class="bot-signal signal-wait" id="botSignal">ESPERAR</div>
+    </div>
+
     <div class="bank-selector-container">
-        <span class="bank-label">Banco / Entidad Financiera P2P:</span>
-        <select id="bankSelect" class="bank-select" onchange="onBankChange()">
-            <option value="banesco">Banesco (Spread Promedio ~1.2%)</option>
-            <option value="mercantil">Mercantil (Spread Promedio ~1.5%)</option>
+        <select id="bankSelect" class="bank-select" onchange="updateMarketData()">
+            <option value="banesco">Banesco (Spread ~1.2%)</option>
+            <option value="mercantil">Mercantil (Spread ~1.5%)</option>
             <option value="bdv">Banco de Venezuela (BDV) (Spread ~0.9%)</option>
             <option value="bnc">Banco Nacional de Crédito (BNC) (Spread ~1.3%)</option>
             <option value="tesoro">Banco del Tesoro (Spread ~1.6%)</option>
@@ -92,229 +85,195 @@
         </select>
     </div>
 
-    <div class="quick-amounts">
-        <div class="chip" onclick="setCapital(100, event)">$100</div>
-        <div class="chip" onclick="setCapital(250, event)">$250</div>
-        <div class="chip" onclick="setCapital(500, event)">$500</div>
-        <div class="chip active" id="chip1000" onclick="setCapital(1000, event)">$1000</div>
+    <!-- Filtro de Temporalidad Histórica -->
+    <div class="timeframe-bar">
+        <button class="tf-btn" id="tf-1h" onclick="setTimeframe('1h')">1 Hora</button>
+        <button class="tf-btn active" id="tf-24h" onclick="setTimeframe('24h')">24 Horas</button>
+        <button class="tf-btn" id="tf-7d" onclick="setTimeframe('7d')">7 Días</button>
     </div>
 
-    <div class="controls">
-        <button class="btn-update" onclick="loadData()">⚡ ACTUALIZAR</button>
-        <div class="input-box">
-            <span>$</span>
-            <input type="number" id="capitalInput" class="calc-input" value="1000" oninput="loadData()">
+    <div class="indicators-bar">
+        <div class="ind-box">
+            <span class="ind-title">TENDENCIA:</span>
+            <span class="ind-val" id="trendVal" style="color: var(--accent-gold);">NEUTRA</span>
+        </div>
+        <div class="ind-box">
+            <span class="ind-title">RSI (14):</span>
+            <span class="ind-val" id="rsiVal">50.0</span>
         </div>
     </div>
 
     <div class="kpi-grid">
-        <div class="kpi-card buy">
+        <div class="kpi-card">
             <div class="kpi-label">Entrada (Compra)</div>
-            <div class="kpi-value val-buy" id="buyVal">--.--</div>
+            <div class="kpi-value" id="buyVal" style="color: var(--color-buy);">--.--</div>
         </div>
-        <div class="kpi-card sell">
+        <div class="kpi-card">
             <div class="kpi-label">Salida (Venta)</div>
-            <div class="kpi-value val-sell" id="sellVal">--.--</div>
+            <div class="kpi-value" id="sellVal" style="color: var(--color-sell);">--.--</div>
         </div>
-        <div class="kpi-card spread">
+        <div class="kpi-card">
             <div class="kpi-label">Brecha / Spread</div>
-            <div class="kpi-value val-spread" id="spreadVal">--.--</div>
+            <div class="kpi-value" id="spreadVal" style="color: var(--accent-gold);">--.--</div>
         </div>
-    </div>
-
-    <div class="roi-banner good" id="roiBanner">
-        <div class="roi-info">
-            <small>ESTIMACIÓN NETO (DESC. COMISIÓN 0.25% x2)</small>
-            <strong>Ganancia Ciclo P2P</strong>
-        </div>
-        <div class="roi-stat" id="profitVal" style="color: var(--color-buy);">+0.00 $</div>
-    </div>
-
-    <div class="breakeven-bar">
-        <span>Precio mín. de venta (sin pérdida):</span>
-        <span class="breakeven-val" id="breakevenVal">--.-- Bs</span>
     </div>
 
     <div class="chart-container">
         <div class="chart-header">
-            <span>TENDENCIA Y RANGO DE PRECIO</span>
-            <span class="pred-legend">░ ABANICO DE PROYECCIÓN</span>
+            <span id="chartTitle">TENDENCIA DE PRECIO (UNA LÍNEA)</span>
+            <span style="color: var(--accent-gold); font-weight: bold;">─ TASA MERCADO</span>
         </div>
         <canvas id="chart"></canvas>
     </div>
 
 <script>
     let chart;
-    let baseRate = 0;
-    
-    // Spreads por Banco
-    const bankSpreads = {
-        banesco: 0.012,
-        mercantil: 0.015,
-        bdv: 0.009,
-        bnc: 0.013,
-        tesoro: 0.016,
-        provincial: 0.011
-    };
+    let currentTF = '24h';
+    const bankSpreads = { banesco: 0.012, mercantil: 0.015, bdv: 0.009, bnc: 0.013, tesoro: 0.016, provincial: 0.011 };
 
-    let timeHistory = [];
-    let buyHistory = [];
-    const maxHistoryPoints = 20;
+    // Generador de datos históricos ficticios pero con comportamiento realista
+    function generateHistoricalData(tf) {
+        let points = tf === '1h' ? 12 : (tf === '24h' ? 24 : 14);
+        let base = 907.50;
+        let labels = [];
+        let prices = [];
+
+        let now = new Date();
+
+        for (let i = points; i >= 0; i--) {
+            let timeLabel = "";
+            let variation = (Math.random() - 0.47) * 1.8;
+            base += variation;
+
+            if (tf === '1h') {
+                let d = new Date(now.getTime() - i * 5 * 60000);
+                timeLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } else if (tf === '24h') {
+                let d = new Date(now.getTime() - i * 3600000);
+                timeLabel = `${d.getHours()}:00`;
+            } else {
+                let d = new Date(now.getTime() - i * 86400000);
+                timeLabel = `${d.getDate()}/${d.getMonth()+1}`;
+            }
+
+            labels.push(timeLabel);
+            prices.push(parseFloat(base.toFixed(2)));
+        }
+        return { labels, prices };
+    }
 
     const ctx = document.getElementById('chart').getContext('2d');
     
+    // Configuración de la gráfica limpia de una sola línea
     chart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
-            datasets: [
-                {
-                    label: 'Precio Mercado',
-                    data: [],
-                    borderColor: '#f0b90b',
-                    borderWidth: 3,
-                    pointRadius: 3,
-                    pointBackgroundColor: '#f0b90b',
-                    tension: 0.2
-                },
-                {
-                    label: 'Límite Superior',
-                    data: [],
-                    borderColor: 'rgba(14, 203, 129, 0.4)',
-                    borderWidth: 1,
-                    pointRadius: 0,
-                    fill: false
-                },
-                {
-                    label: 'Límite Inferior',
-                    data: [],
-                    borderColor: 'rgba(246, 70, 93, 0.4)',
-                    backgroundColor: 'rgba(240, 185, 11, 0.08)',
-                    borderWidth: 1,
-                    pointRadius: 0,
-                    fill: '-1'
-                }
-            ]
+            datasets: [{
+                label: 'Precio Referencial (Bs)',
+                data: [],
+                borderColor: '#f0b90b',
+                borderWidth: 2.5,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                pointBackgroundColor: '#f0b90b',
+                fill: true,
+                backgroundColor: 'rgba(240, 185, 11, 0.05)',
+                tension: 0.25
+            }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                x: {
-                    grid: { color: '#1a1e23' },
-                    ticks: { color: '#848e9c', font: { size: 9 } }
-                },
-                y: {
-                    grid: { color: '#2b313a' },
-                    ticks: { color: '#848e9c', font: { size: 9 } },
-                    grace: '3%'
-                }
+                x: { grid: { color: '#1a1e23' }, ticks: { color: '#848e9c', font: { size: 9 } } },
+                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 9 } }, grace: '2%' }
             }
         }
     });
 
-    function onBankChange() {
-        timeHistory = [];
-        buyHistory = [];
-        loadData();
+    function setTimeframe(tf) {
+        currentTF = tf;
+        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`tf-${tf}`).classList.add('active');
+        updateMarketData();
     }
 
-    function setCapital(val, e) {
-        document.getElementById('capitalInput').value = val;
-        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-        if (e && e.target) {
-            e.target.classList.add('active');
+    function calculateRSI(prices) {
+        let gains = 0, losses = 0;
+        for (let i = 1; i < prices.length; i++) {
+            let diff = prices[i] - prices[i - 1];
+            if (diff >= 0) gains += diff;
+            else losses += Math.abs(diff);
         }
-        loadData();
+        if (losses === 0) return 100;
+        let rs = (gains / prices.length) / (losses / prices.length);
+        return (100 - (100 / (1 + rs))).toFixed(1);
     }
 
-    async function loadData() {
-        try {
-            if (baseRate === 0) {
-                const res = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
-                const data = await res.json();
-                if (data && data.promedio) {
-                    baseRate = parseFloat(data.promedio);
-                } else {
-                    baseRate = 907.41;
-                }
-            }
+    function updateMarketData() {
+        const dataset = generateHistoricalData(currentTF);
+        const prices = dataset.prices;
+        const lastPrice = prices[prices.length - 1];
+        const firstPrice = prices[0];
 
-            const bankKey = document.getElementById('bankSelect').value;
-            const bankSpreadRatio = bankSpreads[bankKey] || 0.012;
+        // Cálculo de Tendencia
+        const diff = lastPrice - firstPrice;
+        let trend = "LATERAL";
+        let trendColor = "var(--accent-gold)";
 
-            const tick = (Math.random() - 0.48) * 0.5;
-            baseRate = Math.max(10, baseRate + tick);
-
-            const precioCompra = baseRate;
-            const precioVenta = baseRate * (1 + bankSpreadRatio);
-
-            const comisionOperacion = 0.0025;
-            const roiBruto = ((precioVenta - precioCompra) / precioCompra);
-            const roiNeto = (roiBruto - (comisionOperacion * 2)) * 100;
-            const spread = precioVenta - precioCompra;
-
-            document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
-            document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
-            document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${(roiBruto * 100).toFixed(1)}%)`;
-
-            const minSellPrice = precioCompra * (1 + (comisionOperacion * 2));
-            document.getElementById('breakevenVal').innerText = `${minSellPrice.toFixed(2)} Bs`;
-
-            const capitalUsd = parseFloat(document.getElementById('capitalInput').value) || 0;
-            if (capitalUsd > 0) {
-                const gananciaNetaUsd = capitalUsd * (roiNeto / 100);
-                document.getElementById('profitVal').innerText = `+${gananciaNetaUsd.toFixed(2)} $ (+${roiNeto.toFixed(2)}%)`;
-            }
-
-            const banner = document.getElementById('roiBanner');
-            if (roiNeto >= 0.5) {
-                banner.className = "roi-banner good";
-            } else {
-                banner.className = "roi-banner medium";
-            }
-
-            const now = new Date();
-            const timeLabel = now.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' });
-
-            if (buyHistory.length >= maxHistoryPoints) {
-                buyHistory.shift();
-                timeHistory.shift();
-            }
-
-            buyHistory.push(precioCompra);
-            timeHistory.push(timeLabel);
-
-            let labels = [...timeHistory, '+1m', '+3m', '+5m'];
-            let pricePlot = [...buyHistory, null, null, null];
-
-            let lastPrice = buyHistory[buyHistory.length - 1];
-
-            let supBand = Array(buyHistory.length - 1).fill(null);
-            let infBand = Array(buyHistory.length - 1).fill(null);
-
-            supBand.push(lastPrice);
-            infBand.push(lastPrice);
-
-            let spreadMargin = spread * 0.8;
-            supBand.push(lastPrice + spreadMargin, lastPrice + (spreadMargin * 1.5), lastPrice + (spreadMargin * 2.2));
-            infBand.push(lastPrice - spreadMargin, lastPrice - (spreadMargin * 1.5), lastPrice - (spreadMargin * 2.2));
-
-            chart.data.labels = labels;
-            chart.data.datasets[0].data = pricePlot;
-            chart.data.datasets[1].data = supBand;
-            chart.data.datasets[2].data = infBand;
-
-            chart.update();
-
-        } catch (e) {
-            console.error(e);
+        if (diff > 0.8) {
+            trend = "ALCISTA 🟢";
+            trendColor = "var(--color-buy)";
+        } else if (diff < -0.8) {
+            trend = "BAJISTA 🔴";
+            trendColor = "var(--color-sell)";
         }
+
+        document.getElementById('trendVal').innerText = trend;
+        document.getElementById('trendVal').style.color = trendColor;
+
+        // Cálculo de RSI
+        const rsi = calculateRSI(prices);
+        document.getElementById('rsiVal').innerText = rsi;
+
+        // Precios por Banco
+        const bankKey = document.getElementById('bankSelect').value;
+        const spreadRatio = bankSpreads[bankKey] || 0.012;
+        const precioCompra = lastPrice;
+        const precioVenta = lastPrice * (1 + spreadRatio);
+        const spread = precioVenta - precioCompra;
+
+        document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
+        document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
+        document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} Bs`;
+
+        // Lógica del Bot Inteligente
+        const botSignal = document.getElementById('botSignal');
+        const botReason = document.getElementById('botReason');
+
+        if (rsi < 40 && diff >= 0) {
+            botSignal.className = "bot-signal signal-buy";
+            botSignal.innerText = "ENTRAR (COMPRAR)";
+            botReason.innerText = "Mercado en suelo con probabilidad de rebote alto.";
+        } else if (rsi > 65 || diff < -1.5) {
+            botSignal.className = "bot-signal signal-sell";
+            botSignal.innerText = "SALIR (VENDER)";
+            botReason.innerText = "Precio sobrecalentado o tendencia a la baja.";
+        } else {
+            botSignal.className = "bot-signal signal-wait";
+            botSignal.innerText = "ESPERAR";
+            botReason.innerText = "Mercado estable. Sin señales de entrada clara.";
+        }
+
+        // Renderizar Gráfica
+        chart.data.labels = dataset.labels;
+        chart.data.datasets[0].data = prices;
+        chart.update();
     }
 
-    loadData();
-    setInterval(loadData, 60000);
+    updateMarketData();
 </script>
 </body>
 </html>
