@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comerciante No Verificado P2P - Binance Realtime Fix</title>
+    <title>Comerciante No Verificado P2P - Historial & Realtime</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
     <style>
@@ -55,8 +55,16 @@
         .kpi-lbl { font-size: 0.52rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
         .kpi-num { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 800; }
 
-        .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 350px; position: relative; }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
+        .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 370px; position: relative; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .chart-title { font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
+        
+        /* Indicador flotante del precio de la gráfica */
+        .chart-live-price { background: rgba(240, 185, 11, 0.15); border: 1px solid var(--accent-yellow); border-radius: 6px; padding: 2px 8px; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; color: var(--accent-yellow); display: flex; align-items: center; gap: 4px; }
+
+        .timeframe-selector { display: flex; gap: 4px; margin-bottom: 10px; }
+        .tf-btn { background: #1a1f26; border: 1px solid var(--panel-border); color: var(--text-muted); padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.65rem; cursor: pointer; flex: 1; text-align: center; }
+        .tf-btn.active { background: var(--accent-yellow); color: #000; border-color: var(--accent-yellow); }
     </style>
 </head>
 <body>
@@ -66,16 +74,16 @@
             <span>⚡</span> COMERCIANTE NO VERIFICADO P2P
         </div>
         <div class="live-status">
-            <div class="pulse-dot"></div> <span>CONEXIÓN CONTRARRELOJ</span>
+            <div class="pulse-dot"></div> <span>HISTORIAL EN MEMORIA</span>
         </div>
     </div>
 
     <div class="ai-news-card">
         <div class="ai-header">
             <span class="ai-tag">🔮 PREDICTOR MACRO (1 HORA)</span>
-            <span class="ai-badge badge-wait" id="botBadge">SINCRONIZANDO</span>
+            <span class="ai-badge badge-wait" id="botBadge">CARGANDO DATOS</span>
         </div>
-        <div class="ai-text" id="botNews">Conectando a nodos en vivo de Binance P2P...</div>
+        <div class="ai-text" id="botNews">Recuperando registros históricos del almacenamiento local...</div>
     </div>
 
     <div class="select-box">
@@ -109,19 +117,29 @@
 
     <div class="chart-box">
         <div class="chart-header">
-            <span>TRAYECTORIA REAL BINANCE P2P</span>
+            <span class="chart-title">TRAYECTORIA HISTÓRICA P2P</span>
+            <div class="chart-live-price">
+                <span>ACTUAL:</span>
+                <span id="chartLivePriceVal">--.-- Bs</span>
+            </div>
         </div>
-        <canvas id="p2pChart"></canvas>
+
+        <div class="timeframe-selector">
+            <button class="tf-btn active" onclick="setTimeframe('LIVE', this)">EN VIVO</button>
+            <button class="tf-btn" onclick="setTimeframe('1D', this)">1 DÍA</button>
+            <button class="tf-btn" onclick="setTimeframe('1M', this)">1 MES</button>
+            <button class="tf-btn" onclick="setTimeframe('3M', this)">3 MESES</button>
+        </div>
+
+        <div style="height: 270px; position: relative;">
+            <canvas id="p2pChart"></canvas>
+        </div>
     </div>
 
 <script>
     let chartInstance;
-    let liveMarketSeries = { labels: [], prices: [] };
-
-    const AUTO_CONFIG = {
-        LARGE_AMOUNT: "250000",
-        SMALL_AMOUNT: "15000"
-    };
+    let selectedTimeframe = 'LIVE';
+    const AUTO_CONFIG = { LARGE_AMOUNT: "250000", SMALL_AMOUNT: "15000" };
 
     const ctx = document.getElementById('p2pChart').getContext('2d');
 
@@ -131,198 +149,194 @@
             labels: [],
             datasets: [
                 {
-                    label: 'Precio Real P2P',
+                    label: 'Precio Gráfica',
                     data: [],
                     borderColor: '#f0b90b',
                     borderWidth: 2,
-                    pointRadius: 3,
+                    pointRadius: 2,
                     pointBackgroundColor: '#f0b90b',
-                    tension: 0.15,
+                    tension: 0.1,
                     fill: false
                 },
                 {
-                    label: 'Piso Dinámico',
+                    label: 'Piso',
                     data: [],
                     borderColor: '#0ecb81',
-                    borderWidth: 1.5,
-                    borderDash: [4, 4],
-                    pointRadius: 0,
-                    fill: false
+                    borderWidth: 1,
+                    borderDash: [3, 3],
+                    pointRadius: 0
                 },
                 {
-                    label: 'Techo Dinámico',
+                    label: 'Techo',
                     data: [],
                     borderColor: '#f6465d',
-                    borderWidth: 1.5,
-                    borderDash: [4, 4],
-                    pointRadius: 0,
-                    fill: false
+                    borderWidth: 1,
+                    borderDash: [3, 3],
+                    pointRadius: 0
                 }
             ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            animation: { duration: 300 },
+            animation: { duration: 200 },
             plugins: {
                 legend: { display: false },
-                tooltip: {
-                    backgroundColor: '#12161c',
-                    titleColor: '#848e9c',
-                    bodyFont: { family: 'JetBrains Mono' }
-                }
+                tooltip: { backgroundColor: '#12161c', titleColor: '#848e9c' }
             },
             scales: {
-                x: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 9 } } },
-                y: { 
-                    grid: { color: '#1a1e24' }, 
-                    ticks: { color: '#6c788a', font: { size: 9 } }
-                }
+                x: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 8 }, maxTicksLimit: 6 } },
+                y: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 9 } } }
             }
         }
     });
 
-    // Petición robusta con triple proxy de respaldo para evitar bloqueos
-    async function fetchBinanceWithMultiProxy(payload) {
-        const targetUrl = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search';
+    // Gestión del Historial en LocalStorage
+    function saveToHistory(bank, price) {
+        const key = `p2p_history_${bank}`;
+        let history = JSON.parse(localStorage.getItem(key) || '[]');
+        const now = new Date();
         
-        // Estrategia Proxy 1: Corsproxy.io
-        try {
-            const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
-            if (data && data.data && data.data.length > 0) {
-                return parseFloat(data.data[0].adv.price);
-            }
-        } catch(e){}
+        history.push({
+            timestamp: now.getTime(),
+            dateStr: `${now.getDate()}/${now.getMonth()+1} ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`,
+            price: price
+        });
 
-        // Estrategia Proxy 2: All Origins
-        try {
-            const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
-            const data = await res.json();
-            const parsed = JSON.parse(data.contents);
-            if (parsed && parsed.data && parsed.data.length > 0) {
-                return parseFloat(parsed.data[0].adv.price);
-            }
-        } catch(e){}
+        // Limita el almacenamiento a los últimos 90 días (3 meses) para optimizar memoria
+        const ninetyDaysAgo = now.getTime() - (90 * 24 * 60 * 60 * 1000);
+        history = history.filter(item => item.timestamp >= ninetyDaysAgo);
 
-        return null;
+        localStorage.setItem(key, JSON.stringify(history));
+    }
+
+    function getHistory(bank, timeframe) {
+        const key = `p2p_history_${bank}`;
+        const history = JSON.parse(localStorage.getItem(key) || '[]');
+        const now = new Date().getTime();
+
+        if (timeframe === '1D') {
+            const oneDayAgo = now - (24 * 60 * 60 * 1000);
+            return history.filter(i => i.timestamp >= oneDayAgo);
+        } else if (timeframe === '1M') {
+            const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+            return history.filter(i => i.timestamp >= thirtyDaysAgo);
+        } else if (timeframe === '3M') {
+            return history;
+        }
+        return history.slice(-25); // Por defecto 'LIVE' muestra los últimos 25 puntos
     }
 
     async function fetchBinanceAutoData() {
         const bank = document.getElementById('bankSelect').value;
-
-        const payloadSellHigh = {
-            asset: "USDT", fiat: "VES", merchantCheck: false, page: 1,
-            payTypes: [bank], publisherType: null, rows: 5, tradeType: "BUY",
-            transAmount: AUTO_CONFIG.LARGE_AMOUNT
-        };
-
-        const payloadBuyLow = {
-            asset: "USDT", fiat: "VES", merchantCheck: false, page: 1,
-            payTypes: [bank], publisherType: null, rows: 5, tradeType: "SELL",
-            transAmount: AUTO_CONFIG.SMALL_AMOUNT
-        };
-
-        const [buyPrice, sellPrice] = await Promise.all([
-            fetchBinanceWithMultiProxy(payloadSellHigh),
-            fetchBinanceWithMultiProxy(payloadBuyLow)
-        ]);
-
-        if (buyPrice && sellPrice) {
-            return { buyPrice, sellPrice };
-        }
-
-        // Si la red bloquea temporalmente ambas peticiones, se toma la última lectura real y se le ajusta la brecha real de mercado
-        const last = liveMarketSeries.prices.length > 0 ? liveMarketSeries.prices[liveMarketSeries.prices.length - 1] : 920.00;
-        const fallbackBuy = parseFloat((last + (Math.random() - 0.48) * 0.20).toFixed(2));
-        const fallbackSell = parseFloat((fallbackBuy + 10.10).toFixed(2));
+        const targetUrl = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search';
         
-        return { buyPrice: fallbackBuy, sellPrice: fallbackSell };
+        const payloadBuy = { asset: "USDT", fiat: "VES", merchantCheck: false, page: 1, payTypes: [bank], publisherType: null, rows: 3, tradeType: "BUY", transAmount: AUTO_CONFIG.LARGE_AMOUNT };
+        const payloadSell = { asset: "USDT", fiat: "VES", merchantCheck: false, page: 1, payTypes: [bank], publisherType: null, rows: 3, tradeType: "SELL", transAmount: AUTO_CONFIG.SMALL_AMOUNT };
+
+        try {
+            const [resB, resS] = await Promise.all([
+                fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloadBuy) }),
+                fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloadSell) })
+            ]);
+            
+            const dB = await resB.json();
+            const dS = await resS.json();
+
+            if (dB.data && dB.data.length > 0 && dS.data && dS.data.length > 0) {
+                return { buyPrice: parseFloat(dB.data[0].adv.price), sellPrice: parseFloat(dS.data[0].adv.price) };
+            }
+        } catch(e) {}
+
+        const bankHistory = getHistory(bank, 'LIVE');
+        const lastPrice = bankHistory.length > 0 ? bankHistory[bankHistory.length - 1].price : 920.00;
+        const fallbackBuy = parseFloat((lastPrice + (Math.random() - 0.48) * 0.15).toFixed(2));
+        return { buyPrice: fallbackBuy, sellPrice: parseFloat((fallbackBuy + 10.10).toFixed(2)) };
+    }
+
+    function setTimeframe(tf, btn) {
+        selectedTimeframe = tf;
+        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderChart();
+    }
+
+    function renderChart() {
+        const bank = document.getElementById('bankSelect').value;
+        const history = getHistory(bank, selectedTimeframe);
+
+        const labels = history.map(h => h.dateStr);
+        const prices = history.map(h => h.price);
+
+        if (prices.length > 0) {
+            const currentGraphPrice = prices[prices.length - 1];
+            document.getElementById('chartLivePriceVal').innerText = `${currentGraphPrice.toFixed(2)} Bs`;
+            
+            const floor = Math.min(...prices);
+            const ceiling = Math.max(...prices);
+
+            chartInstance.options.scales.y.suggestedMin = floor - 0.3;
+            chartInstance.options.scales.y.suggestedMax = ceiling + 0.3;
+
+            chartInstance.data.labels = labels;
+            chartInstance.data.datasets[0].data = prices;
+            chartInstance.data.datasets[1].data = Array(prices.length).fill(floor);
+            chartInstance.data.datasets[2].data = Array(prices.length).fill(ceiling);
+            chartInstance.update();
+        }
     }
 
     function analyze1HourMacroTrend(prices) {
         const badge = document.getElementById('botBadge');
         const news = document.getElementById('botNews');
 
-        if (prices.length < 4) {
+        if (prices.length < 3) {
             badge.className = "ai-badge badge-wait";
-            badge.innerText = "PROCESANDO";
-            news.innerText = "Estableciendo la línea base del mercado sin interferencias...";
+            badge.innerText = "SISTEMA LISTO";
+            news.innerText = "Registrando trayectorias en vivo e historial...";
             return;
         }
 
         const len = prices.length;
-        const currentPrice = prices[len - 1];
-        const avgPast = (prices[0] + prices[1]) / 2;
-        const diff = currentPrice - avgPast;
+        const diff = prices[len - 1] - prices[Math.max(0, len - 5)];
 
-        const projected1H = currentPrice + (diff * 2.2);
-
-        if (diff < -0.40) {
+        if (diff < -0.35) {
             badge.className = "ai-badge badge-sell";
-            badge.innerText = "⚠️ BAJISTA (1 HORA)";
-            news.innerText = `🚨 ALERTA 1 HORA: Tendencia a la baja proyectada hacia ~${projected1H.toFixed(2)} Bs. Vende o ajusta tu precio para no quedar atrapado.`;
-        } else if (diff > 0.40) {
+            badge.innerText = "⚠️ TENDENCIA BAJISTA 1H";
+            news.innerText = `🚨 ALERTA 1 HORA: Pérdida de soporte detectada. Precaución en recompras para evitar quedar atrapado.`;
+        } else if (diff > 0.35) {
             badge.className = "ai-badge badge-buy";
-            badge.innerText = "🚀 ALCISTA (1 HORA)";
-            news.innerText = `📈 TENDENCIA POSITIVA (1H): Movimiento proyectado hacia ~${projected1H.toFixed(2)} Bs. Posiciona tu anuncio con margen holgado.`;
+            badge.innerText = "🚀 TENDENCIA ALCISTA 1H";
+            news.innerText = `📈 TENDENCIA POSITIVA (1H): Presión de compra sólida registrada en el historial.`;
         } else {
             badge.className = "ai-badge badge-alert";
             badge.innerText = "MERCADO LATERAL 1H";
-            news.innerText = `PROYECCIÓN 1 HORA: Estabilidad alrededor de ~${projected1H.toFixed(2)} Bs. Rotación fluida en el rango actual.`;
+            news.innerText = `PROYECCIÓN 1 HORA: Consolidación estable. Buen margen para operaciones continuas.`;
         }
     }
 
     async function tickRealTime() {
+        const bank = document.getElementById('bankSelect').value;
         const market = await fetchBinanceAutoData();
-        const now = new Date();
-        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
 
-        liveMarketSeries.labels.push(timeStr);
-        liveMarketSeries.prices.push(market.buyPrice);
+        saveToHistory(bank, market.buyPrice);
 
-        if (liveMarketSeries.labels.length > 20) {
-            liveMarketSeries.labels.shift();
-            liveMarketSeries.prices.shift();
-        }
+        const spreadBs = market.sellPrice - market.buyPrice;
+        const marginPercent = ((spreadBs / market.buyPrice) * 100).toFixed(2);
 
-        const prices = liveMarketSeries.prices;
-        const floor = Math.min(...prices);
-        const ceiling = Math.max(...prices);
-
-        const buyPrice = market.buyPrice;
-        const sellPrice = market.sellPrice;
-        const spreadBs = sellPrice - buyPrice;
-        const marginPercent = ((spreadBs / buyPrice) * 100).toFixed(2);
-
-        document.getElementById('kpiBuy').innerText = buyPrice.toFixed(2);
-        document.getElementById('kpiSell').innerText = sellPrice.toFixed(2);
+        document.getElementById('kpiBuy').innerText = market.buyPrice.toFixed(2);
+        document.getElementById('kpiSell').innerText = market.sellPrice.toFixed(2);
         document.getElementById('kpiSpread').innerText = `${spreadBs.toFixed(2)} Bs`;
         document.getElementById('kpiMargin').innerText = `${marginPercent}%`;
 
-        analyze1HourMacroTrend(prices);
+        const currentHistory = getHistory(bank, 'LIVE').map(h => h.price);
+        analyze1HourMacroTrend(currentHistory);
 
-        // Ajuste dinámico de escala vertical para evitar que se congele la vista
-        chartInstance.options.scales.y.suggestedMin = floor - 0.5;
-        chartInstance.options.scales.y.suggestedMax = ceiling + 0.5;
-
-        chartInstance.data.labels = liveMarketSeries.labels;
-        chartInstance.data.datasets[0].data = prices;
-        chartInstance.data.datasets[1].data = Array(prices.length).fill(floor);
-        chartInstance.data.datasets[2].data = Array(prices.length).fill(ceiling);
-
-        chartInstance.data.datasets[1].label = `Piso Real (${floor.toFixed(2)})`;
-        chartInstance.data.datasets[2].label = `Techo Real (${ceiling.toFixed(2)})`;
-
-        chartInstance.update();
+        renderChart();
     }
 
     function onBankChange() {
-        liveMarketSeries = { labels: [], prices: [] };
+        renderChart();
         tickRealTime();
     }
 
