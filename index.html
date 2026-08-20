@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Binance P2P Pro Terminal</title>
+    <title>Comerciante P2P Binance</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <style>
@@ -24,16 +24,17 @@
 
         /* Top Bar */
         .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--card-border); }
-        .title-group { display: flex; align-items: center; gap: 8px; }
-        .logo-icon { width: 10px; height: 10px; background: var(--accent-gold); border-radius: 2px; transform: rotate(45deg); }
-        .brand { font-weight: 800; font-size: 0.95rem; letter-spacing: 0.5px; color: #fff; }
-        .mode-tag { font-size: 0.6rem; background: rgba(240, 185, 11, 0.1); color: var(--accent-gold); border: 1px solid rgba(240, 185, 11, 0.3); padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+        .brand { font-weight: 800; font-size: 0.9rem; letter-spacing: 0.5px; color: var(--accent-gold); text-transform: uppercase; }
+        
+        .live-badge { font-size: 0.65rem; background: rgba(14, 203, 129, 0.15); color: var(--color-buy); border: 1px solid var(--color-buy); padding: 3px 8px; border-radius: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
+        .live-dot { width: 6px; height: 6px; background: var(--color-buy); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
         /* Inputs Area */
         .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
         .btn-update { background: var(--accent-gold); color: #000; border: none; padding: 10px; font-weight: 700; font-size: 0.8rem; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; }
         .input-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; display: flex; align-items: center; padding: 0 10px; }
-        .input-box span { font-size: 0.7rem; color: var(--text-secondary); margin-right: 4px; }
+        .input-box span { font-size: 0.85rem; color: var(--text-secondary); margin-right: 4px; font-weight: bold; }
         .calc-input { background: transparent; border: none; color: #fff; font-family: var(--mono-font); font-weight: 700; font-size: 0.85rem; width: 100%; text-align: right; outline: none; }
 
         /* Metric Grid */
@@ -80,17 +81,14 @@
 <body>
 
     <div class="header">
-        <div class="title-group">
-            <div class="logo-icon"></div>
-            <div class="brand">P2P MONITOR PRO</div>
-        </div>
-        <div class="mode-tag">NO VERIFICADO</div>
+        <div class="brand">COMERCIANTE P2P BINANCE</div>
+        <div class="live-badge"><span class="live-dot"></span> EN LÍNEA</div>
     </div>
 
     <div class="controls">
         <button class="btn-update" onclick="loadData()">⚡ ACTUALIZAR</button>
         <div class="input-box">
-            <span>Bs</span>
+            <span>$</span>
             <input type="number" id="capitalInput" class="calc-input" value="1000" oninput="loadData()">
         </div>
     </div>
@@ -115,7 +113,7 @@
             <small>ESTIMACIÓN DE GANANCIA NETA</small>
             <strong>Ciclo Completo P2P</strong>
         </div>
-        <div class="roi-stat" id="profitVal">+0.00 Bs</div>
+        <div class="roi-stat" id="profitVal">+0.00 $</div>
     </div>
 
     <div class="chart-header">
@@ -187,12 +185,11 @@
                 document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
                 document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${roi.toFixed(1)}%)`;
 
-                const capital = parseFloat(document.getElementById('capitalInput').value) || 0;
-                if (capital > 0) {
-                    const usdtObtenidos = capital / precioCompra;
-                    const bsFinales = usdtObtenidos * precioVenta;
-                    const gananciaNeta = bsFinales - capital;
-                    document.getElementById('profitVal').innerText = `+${gananciaNeta.toFixed(2)} Bs (+${roi.toFixed(2)}%)`;
+                // Cálculo en Dólares (USD)
+                const capitalUsd = parseFloat(document.getElementById('capitalInput').value) || 0;
+                if (capitalUsd > 0) {
+                    const gananciaUsd = capitalUsd * (roi / 100);
+                    document.getElementById('profitVal').innerText = `+${gananciaUsd.toFixed(2)} $ (+${roi.toFixed(2)}%)`;
                 }
 
                 const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
