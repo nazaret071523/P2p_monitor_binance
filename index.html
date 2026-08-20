@@ -22,57 +22,63 @@
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
         body { background: var(--bg-dark); color: var(--text-primary); padding: 12px; }
 
-        /* Top Bar */
-        .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--card-border); }
-        .brand { font-weight: 800; font-size: 0.9rem; letter-spacing: 0.5px; color: var(--accent-gold); text-transform: uppercase; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--card-border); }
+        .brand { font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; color: var(--accent-gold); text-transform: uppercase; }
         
         .live-badge { font-size: 0.65rem; background: rgba(14, 203, 129, 0.15); color: var(--color-buy); border: 1px solid var(--color-buy); padding: 3px 8px; border-radius: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
         .live-dot { width: 6px; height: 6px; background: var(--color-buy); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-        /* Inputs Area */
-        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-        .btn-update { background: var(--accent-gold); color: #000; border: none; padding: 10px; font-weight: 700; font-size: 0.8rem; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; }
+        /* Quick Amount Chips */
+        .quick-amounts { display: flex; gap: 6px; margin-bottom: 8px; }
+        .chip { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 5px 0; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; text-align: center; }
+        .chip.active { background: rgba(240, 185, 11, 0.15); color: var(--accent-gold); border-color: var(--accent-gold); }
+
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .btn-update { background: var(--accent-gold); color: #000; border: none; padding: 10px; font-weight: 700; font-size: 0.8rem; border-radius: 6px; cursor: pointer; }
         .input-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; display: flex; align-items: center; padding: 0 10px; }
         .input-box span { font-size: 0.85rem; color: var(--text-secondary); margin-right: 4px; font-weight: bold; }
         .calc-input { background: transparent; border: none; color: #fff; font-family: var(--mono-font); font-weight: 700; font-size: 0.85rem; width: 100%; text-align: right; outline: none; }
 
-        /* Metric Grid */
-        .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 6px; text-align: center; position: relative; overflow: hidden; }
+        .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 4px; text-align: center; position: relative; }
         .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px; }
         .kpi-card.buy::before { background: var(--color-buy); }
         .kpi-card.sell::before { background: var(--color-sell); }
         .kpi-card.spread::before { background: var(--accent-gold); }
 
-        .kpi-label { font-size: 0.6rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
-        .kpi-value { font-family: var(--mono-font); font-size: 0.95rem; font-weight: 700; }
+        .kpi-label { font-size: 0.58rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
+        .kpi-value { font-family: var(--mono-font); font-size: 0.9rem; font-weight: 700; }
         .val-buy { color: var(--color-buy); }
         .val-sell { color: var(--color-sell); }
         .val-spread { color: var(--accent-gold); }
 
-        /* ROI Widget */
-        .roi-banner { background: linear-gradient(90deg, rgba(14, 203, 129, 0.08) 0%, rgba(24, 26, 32, 0.5) 100%); border: 1px solid rgba(14, 203, 129, 0.2); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
-        .roi-info small { color: var(--text-secondary); font-size: 0.65rem; display: block; }
-        .roi-info strong { font-size: 0.8rem; color: #fff; }
-        .roi-stat { font-family: var(--mono-font); font-size: 0.95rem; font-weight: 700; color: var(--color-buy); }
+        /* Dynamic Banner Color */
+        .roi-banner { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; transition: all 0.3s ease; }
+        .roi-banner.good { border-color: rgba(14, 203, 129, 0.4); background: rgba(14, 203, 129, 0.08); }
+        .roi-banner.medium { border-color: rgba(240, 185, 11, 0.4); background: rgba(240, 185, 11, 0.08); }
+        .roi-info small { color: var(--text-secondary); font-size: 0.6rem; display: block; font-weight: 600; }
+        .roi-info strong { font-size: 0.75rem; color: #fff; }
+        .roi-stat { font-family: var(--mono-font); font-size: 0.9rem; font-weight: 700; text-align: right; }
 
-        /* Chart Header */
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.7rem; color: var(--text-secondary); font-weight: 600; }
+        /* Breakeven Footer Bar */
+        .breakeven-bar { background: rgba(255, 255, 255, 0.03); border: 1px dashed var(--card-border); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; font-size: 0.65rem; color: var(--text-secondary); display: flex; justify-content: space-between; }
+        .breakeven-val { font-family: var(--mono-font); color: #fff; font-weight: bold; }
 
-        /* Order Books */
-        .book-section { margin-bottom: 12px; }
-        .book-header { font-size: 0.75rem; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
+
+        .book-section { margin-bottom: 10px; }
+        .book-header { font-size: 0.7rem; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
         .dot { width: 6px; height: 6px; border-radius: 50%; }
-        .dot.buy { background: var(--color-buy); box-shadow: 0 0 6px var(--color-buy); }
-        .dot.sell { background: var(--color-sell); box-shadow: 0 0 6px var(--color-sell); }
+        .dot.buy { background: var(--color-buy); }
+        .dot.sell { background: var(--color-sell); }
 
-        table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 8px; overflow: hidden; border: 1px solid var(--card-border); font-size: 0.75rem; }
-        th { background: #161a1e; color: var(--text-secondary); font-weight: 600; font-size: 0.65rem; padding: 8px 10px; text-align: left; text-transform: uppercase; }
-        td { padding: 8px 10px; border-bottom: 1px solid var(--card-border); }
+        table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 8px; overflow: hidden; border: 1px solid var(--card-border); font-size: 0.72rem; }
+        th { background: #161a1e; color: var(--text-secondary); font-weight: 600; font-size: 0.6rem; padding: 6px 8px; text-align: left; text-transform: uppercase; }
+        td { padding: 6px 8px; border-bottom: 1px solid var(--card-border); }
         tr:last-child td { border-bottom: none; }
 
-        .rank-tag { font-size: 0.6rem; font-weight: 700; padding: 2px 4px; border-radius: 3px; font-family: var(--mono-font); }
+        .rank-tag { font-size: 0.58rem; font-weight: 700; padding: 2px 4px; border-radius: 3px; font-family: var(--mono-font); }
         .rank-buy { background: rgba(14, 203, 129, 0.12); color: var(--color-buy); }
         .rank-sell { background: rgba(246, 70, 93, 0.12); color: var(--color-sell); }
         .price-text { font-family: var(--mono-font); font-weight: 700; text-align: right; }
@@ -83,6 +89,14 @@
     <div class="header">
         <div class="brand">COMERCIANTE P2P BINANCE</div>
         <div class="live-badge"><span class="live-dot"></span> EN LÍNEA</div>
+    </div>
+
+    <!-- Acceso rápido a montos típicos -->
+    <div class="quick-amounts">
+        <div class="chip" onclick="setCapital(100)">$100</div>
+        <div class="chip" onclick="setCapital(250)">$250</div>
+        <div class="chip" onclick="setCapital(500)">$500</div>
+        <div class="chip active" id="chip1000" onclick="setCapital(1000)">$1000</div>
     </div>
 
     <div class="controls">
@@ -108,19 +122,25 @@
         </div>
     </div>
 
-    <div class="roi-banner">
+    <div class="roi-banner good" id="roiBanner">
         <div class="roi-info">
-            <small>ESTIMACIÓN DE GANANCIA NETA</small>
-            <strong>Ciclo Completo P2P</strong>
+            <small>ESTIMACIÓN NETO (DESC. COMISIÓN 0.35%)</small>
+            <strong>Ganancia Ciclo P2P</strong>
         </div>
-        <div class="roi-stat" id="profitVal">+0.00 $</div>
+        <div class="roi-stat" id="profitVal" style="color: var(--color-buy);">+0.00 $</div>
+    </div>
+
+    <!-- Módulo Breakeven -->
+    <div class="breakeven-bar">
+        <span>Precio mín. de venta (sin pérdida):</span>
+        <span class="breakeven-val" id="breakevenVal">--.-- Bs</span>
     </div>
 
     <div class="chart-header">
         <span>TENDENCIA EN TIEMPO REAL</span>
         <span id="timeStatus">Conectando...</span>
     </div>
-    <canvas id="chart" style="max-height: 140px; margin-bottom: 14px;"></canvas>
+    <canvas id="chart" style="max-height: 120px; margin-bottom: 12px;"></canvas>
 
     <div class="book-section">
         <div class="book-header" style="color: var(--color-buy);">
@@ -166,6 +186,13 @@
         }
     });
 
+    function setCapital(val) {
+        document.getElementById('capitalInput').value = val;
+        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+        event.target.classList.add('active');
+        loadData();
+    }
+
     async function loadData() {
         document.getElementById('timeStatus').innerText = "Cargando...";
         try {
@@ -178,18 +205,34 @@
                 const precioCompra = base; 
                 const precioVenta = base * 1.011; 
 
+                // Ajuste por comisiones Binance P2P (0.35% estándar por anuncio)
+                const comisionBinance = 0.0035;
+                const roiBruto = ((precioVenta - precioCompra) / precioCompra);
+                const roiNeto = (roiBruto - (comisionBinance * 2)) * 100;
+
                 const spread = precioVenta - precioCompra;
-                const roi = ((spread / precioCompra) * 100);
 
                 document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
                 document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
-                document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${roi.toFixed(1)}%)`;
+                document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${roiBruto.toFixed(1)}%)`;
 
-                // Cálculo en Dólares (USD)
+                // Breakeven calculation
+                const minSellPrice = precioCompra * (1 + (comisionBinance * 2));
+                document.getElementById('breakevenVal').innerText = `${minSellPrice.toFixed(2)} Bs`;
+
+                // Cálculo con comisión
                 const capitalUsd = parseFloat(document.getElementById('capitalInput').value) || 0;
                 if (capitalUsd > 0) {
-                    const gananciaUsd = capitalUsd * (roi / 100);
-                    document.getElementById('profitVal').innerText = `+${gananciaUsd.toFixed(2)} $ (+${roi.toFixed(2)}%)`;
+                    const gananciaNetaUsd = capitalUsd * (roiNeto / 100);
+                    document.getElementById('profitVal').innerText = `+${gananciaNetaUsd.toFixed(2)} $ (+${roiNeto.toFixed(2)}%)`;
+                }
+
+                // Alert color logic
+                const banner = document.getElementById('roiBanner');
+                if (roiNeto >= 0.8) {
+                    banner.className = "roi-banner good";
+                } else {
+                    banner.className = "roi-banner medium";
                 }
 
                 const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
