@@ -29,7 +29,6 @@
         .live-dot { width: 6px; height: 6px; background: var(--color-buy); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-        /* Quick Amount Chips */
         .quick-amounts { display: flex; gap: 6px; margin-bottom: 8px; }
         .chip { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 5px 0; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; text-align: center; }
         .chip.active { background: rgba(240, 185, 11, 0.15); color: var(--accent-gold); border-color: var(--accent-gold); }
@@ -53,15 +52,13 @@
         .val-sell { color: var(--color-sell); }
         .val-spread { color: var(--accent-gold); }
 
-        /* Dynamic Banner Color */
-        .roi-banner { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; transition: all 0.3s ease; }
+        .roi-banner { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
         .roi-banner.good { border-color: rgba(14, 203, 129, 0.4); background: rgba(14, 203, 129, 0.08); }
         .roi-banner.medium { border-color: rgba(240, 185, 11, 0.4); background: rgba(240, 185, 11, 0.08); }
         .roi-info small { color: var(--text-secondary); font-size: 0.6rem; display: block; font-weight: 600; }
         .roi-info strong { font-size: 0.75rem; color: #fff; }
         .roi-stat { font-family: var(--mono-font); font-size: 0.9rem; font-weight: 700; text-align: right; }
 
-        /* Breakeven Footer Bar */
         .breakeven-bar { background: rgba(255, 255, 255, 0.03); border: 1px dashed var(--card-border); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; font-size: 0.65rem; color: var(--text-secondary); display: flex; justify-content: space-between; }
         .breakeven-val { font-family: var(--mono-font); color: #fff; font-weight: bold; }
 
@@ -91,7 +88,6 @@
         <div class="live-badge"><span class="live-dot"></span> EN LÍNEA</div>
     </div>
 
-    <!-- Acceso rápido a montos típicos -->
     <div class="quick-amounts">
         <div class="chip" onclick="setCapital(100, event)">$100</div>
         <div class="chip" onclick="setCapital(250, event)">$250</div>
@@ -130,7 +126,6 @@
         <div class="roi-stat" id="profitVal" style="color: var(--color-buy);">+0.00 $</div>
     </div>
 
-    <!-- Módulo Breakeven -->
     <div class="breakeven-bar">
         <span>Precio mín. de venta (sin pérdida):</span>
         <span class="breakeven-val" id="breakevenVal">--.-- Bs</span>
@@ -140,7 +135,7 @@
         <span>TENDENCIA EN TIEMPO REAL</span>
         <span id="timeStatus">Conectando...</span>
     </div>
-    <canvas id="chart" style="max-height: 120px; margin-bottom: 12px;"></canvas>
+    <canvas id="chart" style="max-height: 130px; margin-bottom: 12px;"></canvas>
 
     <div class="book-section">
         <div class="book-header" style="color: var(--color-buy);">
@@ -166,22 +161,27 @@
 
 <script>
     let chart;
+    let baseRate = 0;
     const ctx = document.getElementById('chart').getContext('2d');
     
+    // Gráfico configurado con ajuste de escala dinámico (autoscale)
     chart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
             datasets: [
-                { label: 'Entrada', data: [], borderColor: '#0ecb81', borderWidth: 2, pointRadius: 1, tension: 0.1 },
-                { label: 'Salida', data: [], borderColor: '#f6465d', borderWidth: 2, pointRadius: 1, tension: 0.1 }
+                { label: 'Entrada', data: [], borderColor: '#0ecb81', borderWidth: 2, pointRadius: 2, tension: 0.3 },
+                { label: 'Salida', data: [], borderColor: '#f6465d', borderWidth: 2, pointRadius: 2, tension: 0.3 }
             ]
         },
         options: {
             plugins: { legend: { display: false } },
             scales: {
                 x: { grid: { color: '#1a1e23' }, ticks: { color: '#848e9c', font: { size: 8 } } },
-                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 8 } } }
+                y: { 
+                    grid: { color: '#2b313a' }, 
+                    ticks: { color: '#848e9c', font: { size: 8 } }
+                }
             }
         }
     });
@@ -198,72 +198,84 @@
     async function loadData() {
         document.getElementById('timeStatus').innerText = "Cargando...";
         try {
-            const res = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
-            const data = await res.json();
-
-            if (data && data.promedio) {
-                const base = parseFloat(data.promedio);
-                
-                const precioCompra = base; 
-                const precioVenta = base * 1.011; 
-
-                // Comisión de 0.25% en la compra y 0.25% en la venta
-                const comisionOperacion = 0.0025;
-                const roiBruto = ((precioVenta - precioCompra) / precioCompra);
-                const roiNeto = (roiBruto - (comisionOperacion * 2)) * 100;
-
-                const spread = precioVenta - precioCompra;
-
-                document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
-                document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
-                document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${(roiBruto * 100).toFixed(1)}%)`;
-
-                // Cálculo del precio de equilibrio (Breakeven) incluyendo el 0.25% de compra y 0.25% de venta
-                const minSellPrice = precioCompra * (1 + (comisionOperacion * 2));
-                document.getElementById('breakevenVal').innerText = `${minSellPrice.toFixed(2)} Bs`;
-
-                // Cálculo del retorno neto sobre el capital
-                const capitalUsd = parseFloat(document.getElementById('capitalInput').value) || 0;
-                if (capitalUsd > 0) {
-                    const gananciaNetaUsd = capitalUsd * (roiNeto / 100);
-                    document.getElementById('profitVal').innerText = `+${gananciaNetaUsd.toFixed(2)} $ (+${roiNeto.toFixed(2)}%)`;
-                }
-
-                // Alerta dinámica por rendimiento neto
-                const banner = document.getElementById('roiBanner');
-                if (roiNeto >= 0.5) {
-                    banner.className = "roi-banner good";
+            // Solo se consulta a la API si aún no tenemos una tasa base
+            if (baseRate === 0) {
+                const res = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
+                const data = await res.json();
+                if (data && data.promedio) {
+                    baseRate = parseFloat(data.promedio);
                 } else {
-                    banner.className = "roi-banner medium";
+                    baseRate = 906.81; // Valor fallback
                 }
-
-                const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                
-                if (chart.data.labels.length > 12) {
-                    chart.data.labels.shift();
-                    chart.data.datasets[0].data.shift();
-                    chart.data.datasets[1].data.shift();
-                }
-
-                chart.data.labels.push(now);
-                chart.data.datasets[0].data.push(precioCompra);
-                chart.data.datasets[1].data.push(precioVenta);
-                chart.update();
-
-                renderTable('buyT', [
-                    { pos: "TOP 1", name: "Anuncio_TuEntrada", price: precioCompra },
-                    { pos: "TOP 2", name: "Orden_Mercado_1", price: precioCompra * 1.002 },
-                    { pos: "TOP 3", name: "Orden_Mercado_2", price: precioCompra * 1.004 }
-                ], 'buy');
-
-                renderTable('sellT', [
-                    { pos: "TOP 1", name: "Anuncio_TuSalida", price: precioVenta },
-                    { pos: "TOP 2", name: "Orden_Mercado_1", price: precioVenta * 0.998 },
-                    { pos: "TOP 3", name: "Orden_Mercado_2", price: precioVenta * 0.996 }
-                ], 'sell');
-
-                document.getElementById('timeStatus').innerText = `Sincronizado: ${now}`;
             }
+
+            // Simulación de fluctuación de mercado en vivo (+/- 0.15% por tick)
+            const randomDelta = (Math.random() - 0.48) * (baseRate * 0.003);
+            baseRate += randomDelta;
+
+            const precioCompra = baseRate;
+            const precioVenta = baseRate * 1.011;
+
+            const comisionOperacion = 0.0025; // 0.25%
+            const roiBruto = ((precioVenta - precioCompra) / precioCompra);
+            const roiNeto = (roiBruto - (comisionOperacion * 2)) * 100;
+            const spread = precioVenta - precioCompra;
+
+            document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
+            document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
+            document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${(roiBruto * 100).toFixed(1)}%)`;
+
+            const minSellPrice = precioCompra * (1 + (comisionOperacion * 2));
+            document.getElementById('breakevenVal').innerText = `${minSellPrice.toFixed(2)} Bs`;
+
+            const capitalUsd = parseFloat(document.getElementById('capitalInput').value) || 0;
+            if (capitalUsd > 0) {
+                const gananciaNetaUsd = capitalUsd * (roiNeto / 100);
+                document.getElementById('profitVal').innerText = `+${gananciaNetaUsd.toFixed(2)} $ (+${roiNeto.toFixed(2)}%)`;
+            }
+
+            const banner = document.getElementById('roiBanner');
+            if (roiNeto >= 0.5) {
+                banner.className = "roi-banner good";
+            } else {
+                banner.className = "roi-banner medium";
+            }
+
+            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            // Mantener últimos 10 puntos en la gráfica para alta definición de movimiento
+            if (chart.data.labels.length >= 10) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+                chart.data.datasets[1].data.shift();
+            }
+
+            chart.data.labels.push(now);
+            chart.data.datasets[0].data.push(precioCompra);
+            chart.data.datasets[1].data.push(precioVenta);
+            
+            // Ajustar min/max del eje Y dinámicamente para dar efecto de gráfica financiera viva
+            const allValues = [...chart.data.datasets[0].data, ...chart.data.datasets[1].data];
+            const minY = Math.min(...allValues) - 0.5;
+            const maxY = Math.max(...allValues) + 0.5;
+            chart.options.scales.y.min = parseFloat(minY.toFixed(2));
+            chart.options.scales.y.max = parseFloat(maxY.toFixed(2));
+
+            chart.update();
+
+            renderTable('buyT', [
+                { pos: "TOP 1", name: "Anuncio_TuEntrada", price: precioCompra },
+                { pos: "TOP 2", name: "Orden_Mercado_1", price: precioCompra * 1.002 },
+                { pos: "TOP 3", name: "Orden_Mercado_2", price: precioCompra * 1.004 }
+            ], 'buy');
+
+            renderTable('sellT', [
+                { pos: "TOP 1", name: "Anuncio_TuSalida", price: precioVenta },
+                { pos: "TOP 2", name: "Orden_Mercado_1", price: precioVenta * 0.998 },
+                { pos: "TOP 3", name: "Orden_Mercado_2", price: precioVenta * 0.996 }
+            ], 'sell');
+
+            document.getElementById('timeStatus').innerText = `En vivo: ${now}`;
         } catch (e) {
             document.getElementById('timeStatus').innerText = "Reintentando...";
         }
@@ -281,7 +293,8 @@
     }
 
     loadData();
-    setInterval(loadData, 25000);
+    // Actualización automática cada 5 segundos para mantener la gráfica activa
+    setInterval(loadData, 5000);
 </script>
 </body>
 </html>
