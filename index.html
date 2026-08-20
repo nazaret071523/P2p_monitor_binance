@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comerciante No Verificado P2P - IA de Tiempos P2P</title>
+    <title>Comerciante No Verificado P2P - IA Precios y Tiempos</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
     <style>
@@ -35,7 +35,6 @@
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0); }
         }
 
-        /* Tarjeta de Inteligencia Temporal */
         .ai-news-card { background: linear-gradient(135deg, rgba(240, 185, 11, 0.08) 0%, rgba(18, 22, 28, 0.95) 100%); border: 1px solid rgba(240, 185, 11, 0.3); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
         .ai-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
         .ai-tag { font-size: 0.62rem; font-weight: 800; color: var(--accent-yellow); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
@@ -44,11 +43,12 @@
         .badge-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-down); border: 1px solid var(--color-down); }
         .badge-wait { background: rgba(108, 120, 138, 0.2); color: var(--text-muted); border: 1px solid var(--text-muted); }
 
-        /* Panel de Tiempos Predichos */
+        /* Cuadrícula visual optimizada para Hora y Precio */
         .time-prediction-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: rgba(8, 10, 12, 0.6); padding: 8px; border-radius: 8px; border: 1px solid var(--panel-border); margin-bottom: 8px; }
         .time-box { text-align: center; }
         .time-lbl { font-size: 0.58rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
-        .time-val { font-family: var(--font-mono); font-size: 0.82rem; font-weight: 800; margin-top: 2px; }
+        .time-val { font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; margin-top: 2px; }
+        .price-val { font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; opacity: 0.9; margin-top: 1px; }
 
         .ai-text { font-size: 0.73rem; color: #d0d7e2; font-weight: 600; line-height: 1.35; }
 
@@ -78,21 +78,23 @@
     <div class="ai-news-card">
         <div class="ai-header">
             <span class="ai-tag">🔮 PREDICCIÓN TEMPORAL DE MERCADO</span>
-            <span class="ai-badge badge-wait" id="botBadge">ESTABILIZANDO</span>
+            <span class="ai-badge badge-wait" id="botBadge">CALIBRANDO</span>
         </div>
 
         <div class="time-prediction-grid">
             <div class="time-box">
                 <div class="time-lbl">🟢 Piso Estimado</div>
-                <div class="time-val" id="timeFloor" style="color: var(--color-up);">--:-- PM</div>
+                <div class="time-val" id="timeFloor" style="color: var(--color-up);">--:--</div>
+                <div class="price-val" id="priceFloor" style="color: var(--color-up);">--.-- Bs</div>
             </div>
             <div class="time-box">
                 <div class="time-lbl">🔴 Techo Estimado</div>
-                <div class="time-val" id="timeCeiling" style="color: var(--color-down);">--:-- PM</div>
+                <div class="time-val" id="timeCeiling" style="color: var(--color-down);">--:--</div>
+                <div class="price-val" id="priceCeiling" style="color: var(--color-down);">--.-- Bs</div>
             </div>
         </div>
 
-        <div class="ai-text" id="botNews">Evaluando velocidad de órdenes para estimar horarios de techo y piso...</div>
+        <div class="ai-text" id="botNews">Evaluando velocidad de órdenes para estimar horarios y precios objetivo...</div>
     </div>
 
     <div class="select-box">
@@ -202,43 +204,52 @@
             }
         } catch(e) {}
 
-        const last = liveSeries.prices.length > 0 ? liveSeries.prices[liveSeries.prices.length - 1] : 920.00;
-        const fallbackBuy = parseFloat((last + (Math.random() - 0.48) * 0.18).toFixed(2));
+        const last = liveSeries.prices.length > 0 ? liveSeries.prices[liveSeries.prices.length - 1] : 919.89;
+        const fallbackBuy = parseFloat((last + (Math.random() - 0.48) * 0.15).toFixed(2));
         return { buyPrice: fallbackBuy, sellPrice: parseFloat((fallbackBuy + 10.10).toFixed(2)) };
     }
 
-    // Algoritmo de Regresión Lineal y Proyección Horaria de Techos y Pisos
-    function predictTargetTimes(prices) {
+    // Predicción Integrada: Hora y Precio Estimado
+    function predictTargetTimesAndPrices(prices, currentPrice) {
         const badge = document.getElementById('botBadge');
         const news = document.getElementById('botNews');
+        
         const timeFloor = document.getElementById('timeFloor');
+        const priceFloor = document.getElementById('priceFloor');
+        
         const timeCeiling = document.getElementById('timeCeiling');
+        const priceCeiling = document.getElementById('priceCeiling');
 
         if (prices.length < 4) {
             badge.className = "ai-badge badge-wait";
-            badge.innerText = "CALCULANDO TIEMPOS";
-            news.innerText = "Reuniendo registros de velocidad de órdenes para estimar las horas exactas de tope...";
+            badge.innerText = "CALIBRANDO";
+            news.innerText = "Reuniendo lecturas para definir precios y horas objetivo...";
             return;
         }
 
         const len = prices.length;
-        const delta = prices[len - 1] - prices[len - 4]; // Velocidad del movimiento
+        const delta = prices[len - 1] - prices[len - 4];
         const now = new Date();
 
-        // Cálculo de Minutos requeridos para llegar al punto de inflexión
-        let minutesToCeiling = 30;
-        let minutesToFloor = 45;
+        let minutesToCeiling = 25;
+        let minutesToFloor = 40;
 
-        if (delta > 0.3) {
-            // Mercado Alcista: Techo más cercano
-            minutesToCeiling = Math.max(15, Math.round(45 - (delta * 20)));
-            minutesToFloor = Math.round(minutesToCeiling + 50);
+        // Proyección de variaciones en Bs
+        let projectedCeilingBs = currentPrice + 0.25;
+        let projectedFloorBs = currentPrice - 0.20;
+
+        if (delta > 0.15) {
+            minutesToCeiling = 15;
+            minutesToFloor = 45;
+            projectedCeilingBs = currentPrice + Math.max(0.30, delta * 1.8);
+            projectedFloorBs = currentPrice - 0.10;
             badge.className = "ai-badge badge-buy";
             badge.innerText = "🚀 IMPULSO ALCISTA";
-        } else if (delta < -0.3) {
-            // Mercado Bajista: Piso más cercano
-            minutesToFloor = Math.max(15, Math.round(45 - (Math.abs(delta) * 20)));
-            minutesToCeiling = Math.round(minutesToFloor + 50);
+        } else if (delta < -0.15) {
+            minutesToFloor = 15;
+            minutesToCeiling = 45;
+            projectedFloorBs = currentPrice - Math.max(0.30, Math.abs(delta) * 1.8);
+            projectedCeilingBs = currentPrice + 0.10;
             badge.className = "ai-badge badge-sell";
             badge.innerText = "⚠️ CORRECCIÓN BAJISTA";
         } else {
@@ -246,17 +257,19 @@
             badge.innerText = "LATERALIZACIÓN";
         }
 
-        // Formateo de Horas
         const floorTime = new Date(now.getTime() + minutesToFloor * 60000);
         const ceilingTime = new Date(now.getTime() + minutesToCeiling * 60000);
 
         const formatTime = (d) => `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 
+        // Renderizado directo de Horas y Precios
         timeFloor.innerText = formatTime(floorTime);
-        timeCeiling.innerText = formatTime(ceilingTime);
+        priceFloor.innerText = `~${projectedFloorBs.toFixed(2)} Bs`;
 
-        const targetPrice = (prices[len - 1] + (delta * 1.5)).toFixed(2);
-        news.innerText = `PROYECCIÓN DE TIEMPO: Próximo techo estimado a las ${formatTime(ceilingTime)} en ~${targetPrice} Bs. Ajusta tus recompras antes del piso de las ${formatTime(floorTime)}.`;
+        timeCeiling.innerText = formatTime(ceilingTime);
+        priceCeiling.innerText = `~${projectedCeilingBs.toFixed(2)} Bs`;
+
+        news.innerText = `PROYECCIÓN TÉCNICA: Próximo techo estimado a las ${formatTime(ceilingTime)} en ~${projectedCeilingBs.toFixed(2)} Bs. Ajusta recompras antes del piso a las ${formatTime(floorTime)} (~${projectedFloorBs.toFixed(2)} Bs).`;
     }
 
     async function tickRealTime() {
@@ -284,7 +297,7 @@
         document.getElementById('kpiSpread').innerText = `${spreadBs.toFixed(2)} Bs`;
         document.getElementById('kpiMargin').innerText = `${marginPercent}%`;
 
-        predictTargetTimes(prices);
+        predictTargetTimesAndPrices(prices, market.buyPrice);
 
         chartInstance.options.scales.y.suggestedMin = floor - 0.4;
         chartInstance.options.scales.y.suggestedMax = ceiling + 0.4;
