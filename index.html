@@ -62,7 +62,7 @@
         .breakeven-bar { background: rgba(255, 255, 255, 0.03); border: 1px dashed var(--card-border); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; font-size: 0.65rem; color: var(--text-secondary); display: flex; justify-content: space-between; }
         .breakeven-val { font-family: var(--mono-font); color: #fff; font-weight: bold; }
 
-        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 320px; position: relative; }
+        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 350px; position: relative; }
         .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
         .pred-legend { color: var(--accent-gold); font-weight: 700; font-size: 0.6rem; }
     </style>
@@ -71,7 +71,7 @@
 
     <div class="header">
         <div class="brand">COMERCIANTE P2P BINANCE</div>
-        <div class="live-badge"><span class="live-dot"></span> EN LÍNEA</div>
+        <div class="live-badge"><span class="live-dot"></span> RECOPILANDO DATOS</div>
     </div>
 
     <div class="quick-amounts">
@@ -82,7 +82,7 @@
     </div>
 
     <div class="controls">
-        <button class="btn-update" onclick="loadData()">⚡ ACTUALIZAR</button>
+        <button class="btn-update" onclick="loadData()">⚡ CAPTURAR DATO</button>
         <div class="input-box">
             <span>$</span>
             <input type="number" id="capitalInput" class="calc-input" value="1000" oninput="loadData()">
@@ -117,11 +117,10 @@
         <span class="breakeven-val" id="breakevenVal">--.-- Bs</span>
     </div>
 
-    <!-- Panel único enfocado en Análisis y Proyección -->
     <div class="chart-container">
         <div class="chart-header">
-            <span>PROYECCIÓN DE MERCADO Y RANGO FUTURO</span>
-            <span class="pred-legend">░ SOMBRA DE TENDENCIA</span>
+            <span id="dataCounter">DATOS ACUMULADOS: 0 MUESTRAS</span>
+            <span class="pred-legend">░ ABANICO PROBABILÍSTICO</span>
         </div>
         <canvas id="chart"></canvas>
     </div>
@@ -129,9 +128,13 @@
 <script>
     let chart;
     let baseRate = 0;
-    let historyBuy = [];
-    let historySell = [];
-    const maxHistory = 8;
+    
+    // Almacenamiento continuo de datos
+    let timeHistory = [];
+    let buyHistory = [];
+    let sellHistory = [];
+    const maxHistoryPoints = 30; // Guarda hasta 30 minutos de historial
+
     const ctx = document.getElementById('chart').getContext('2d');
     
     chart = new Chart(ctx, {
@@ -140,55 +143,53 @@
             labels: [],
             datasets: [
                 {
-                    label: 'Entrada (Compra)',
+                    label: 'Compra (Entrada)',
                     data: [],
                     borderColor: '#0ecb81',
-                    borderWidth: 2.5,
-                    pointRadius: 3,
+                    borderWidth: 2,
+                    pointRadius: 2,
                     pointBackgroundColor: '#0ecb81',
-                    tension: 0.2
+                    tension: 0.15
                 },
                 {
-                    label: 'Salida (Venta)',
+                    label: 'Venta (Salida)',
                     data: [],
                     borderColor: '#f6465d',
-                    borderWidth: 2.5,
-                    pointRadius: 3,
+                    borderWidth: 2,
+                    pointRadius: 2,
                     pointBackgroundColor: '#f6465d',
-                    tension: 0.2
+                    tension: 0.15
                 },
                 {
-                    label: 'Tendencia Compra',
+                    label: 'Proyección Compra',
                     data: [],
                     borderColor: '#0ecb81',
                     borderWidth: 1.5,
                     borderDash: [4, 4],
                     pointRadius: 0,
-                    tension: 0.2,
-                    fill: false
+                    tension: 0.1
                 },
                 {
-                    label: 'Tendencia Venta',
+                    label: 'Proyección Venta',
                     data: [],
                     borderColor: '#f6465d',
                     borderWidth: 1.5,
                     borderDash: [4, 4],
                     pointRadius: 0,
-                    tension: 0.2,
-                    fill: false
+                    tension: 0.1
                 },
                 {
-                    label: 'Límite Sup',
+                    label: 'Canal Superior',
                     data: [],
-                    borderColor: 'rgba(240, 185, 11, 0.3)',
+                    borderColor: 'rgba(240, 185, 11, 0.25)',
                     borderWidth: 1,
                     pointRadius: 0,
                     fill: false
                 },
                 {
-                    label: 'Límite Inf',
+                    label: 'Canal Inferior',
                     data: [],
-                    borderColor: 'rgba(240, 185, 11, 0.3)',
+                    borderColor: 'rgba(240, 185, 11, 0.25)',
                     backgroundColor: 'rgba(240, 185, 11, 0.08)',
                     borderWidth: 1,
                     pointRadius: 0,
@@ -208,7 +209,7 @@
                 y: {
                     grid: { color: '#2b313a' },
                     ticks: { color: '#848e9c', font: { size: 9 } },
-                    grace: '8%'
+                    grace: '5%'
                 }
             }
         }
@@ -223,6 +224,28 @@
         loadData();
     }
 
+    // Algoritmo para calcular la inclinación (tendencia) según los datos acumulados
+    function calculateSlope(data) {
+        const n = data.length;
+        if (n < 2) return 0;
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        for (let i = 0; i < n; i++) {
+            sumX += i;
+            sumY += data[i];
+            sumXY += i * data[i];
+            sumXX += i * i;
+        }
+        return (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    }
+
+    // Algoritmo de volatilidad para el ancho del abanico
+    function calculateVolatility(data) {
+        if (data.length < 2) return 0.5;
+        let mean = data.reduce((a, b) => a + b, 0) / data.length;
+        let variance = data.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / data.length;
+        return Math.sqrt(variance);
+    }
+
     async function loadData() {
         try {
             if (baseRate === 0) {
@@ -235,7 +258,8 @@
                 }
             }
 
-            const tick = (Math.random() - 0.48) * 0.7;
+            // Simulación de fluctuación de mercado
+            const tick = (Math.random() - 0.48) * 0.6;
             baseRate = Math.max(10, baseRate + tick);
 
             const precioCompra = baseRate;
@@ -266,60 +290,64 @@
                 banner.className = "roi-banner medium";
             }
 
+            // Mantenimiento de Historial
             const now = new Date();
+            const timeLabel = now.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' });
 
-            if (historyBuy.length >= maxHistory) {
-                historyBuy.shift();
-                historySell.shift();
-            }
-            historyBuy.push(precioCompra);
-            historySell.push(precioVenta);
-
-            let labels = [];
-            for (let i = historyBuy.length - 1; i >= 0; i--) {
-                let past = new Date(now.getTime() - (i * 10000));
-                labels.push(past.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' }));
-            }
-            labels.push('+15s');
-            labels.push('+30s');
-
-            let buyPlot = [...historyBuy, null, null];
-            let sellPlot = [...historySell, null, null];
-
-            let lastBuy = historyBuy[historyBuy.length - 1];
-            let lastSell = historySell[historySell.length - 1];
-
-            let slopeBuy = 0;
-            let slopeSell = 0;
-            if (historyBuy.length >= 2) {
-                slopeBuy = historyBuy[historyBuy.length - 1] - historyBuy[historyBuy.length - 2];
-                slopeSell = historySell[historySell.length - 1] - historySell[historySell.length - 2];
+            if (buyHistory.length >= maxHistoryPoints) {
+                buyHistory.shift();
+                sellHistory.shift();
+                timeHistory.shift();
             }
 
-            let predBuy = Array(historyBuy.length - 1).fill(null);
-            let predSell = Array(historyBuy.length - 1).fill(null);
-            let supBand = Array(historyBuy.length - 1).fill(null);
-            let infBand = Array(historyBuy.length - 1).fill(null);
+            buyHistory.push(precioCompra);
+            sellHistory.push(precioVenta);
+            timeHistory.push(timeLabel);
 
-            // Anclaje al presente
+            document.getElementById('dataCounter').innerText = `DATOS ACUMULADOS: ${buyHistory.length} MUESTRAS`;
+
+            // Construcción del eje X con pasos hacia el futuro (+1m, +3m, +5m)
+            let labels = [...timeHistory, '+1m', '+3m', '+5m'];
+
+            // Relleno de datos del pasado
+            let buyPlot = [...buyHistory, null, null, null];
+            let sellPlot = [...sellHistory, null, null, null];
+
+            // Cálculo de Predicción en base al historial
+            let slopeBuy = calculateSlope(buyHistory);
+            let slopeSell = calculateSlope(sellHistory);
+            let volatility = calculateVolatility(buyHistory);
+
+            let lastBuy = buyHistory[buyHistory.length - 1];
+            let lastSell = sellHistory[sellHistory.length - 1];
+
+            let predBuy = Array(buyHistory.length - 1).fill(null);
+            let predSell = Array(sellHistory.length - 1).fill(null);
+            let supBand = Array(buyHistory.length - 1).fill(null);
+            let infBand = Array(buyHistory.length - 1).fill(null);
+
+            // Anclaje al momento actual
             predBuy.push(lastBuy);
             predSell.push(lastSell);
             supBand.push(lastSell);
             infBand.push(lastBuy);
 
-            // Pasos futuros (+15s y +30s)
-            let futBuy1 = lastBuy + (slopeBuy * 0.8);
-            let futBuy2 = futBuy1 + (slopeBuy * 0.5);
+            // Proyección matemática a futuro
+            let b1 = lastBuy + slopeBuy * 1;
+            let b2 = lastBuy + slopeBuy * 3;
+            let b3 = lastBuy + slopeBuy * 5;
 
-            let futSell1 = lastSell + (slopeSell * 0.8);
-            let futSell2 = futSell1 + (slopeSell * 0.5);
+            let s1 = lastSell + slopeSell * 1;
+            let s2 = lastSell + slopeSell * 3;
+            let s3 = lastSell + slopeSell * 5;
 
-            predBuy.push(futBuy1, futBuy2);
-            predSell.push(futSell1, futSell2);
+            predBuy.push(b1, b2, b3);
+            predSell.push(s1, s2, s3);
 
-            // La sombra de predicción abarca el rango completo entre Compra y Venta
-            supBand.push(futSell1 + 0.6, futSell2 + 1.2);
-            infBand.push(futBuy1 - 0.6, futBuy2 - 1.2);
+            // Abanico dinámico según la volatilidad acumulada
+            let volFactor = Math.max(0.8, volatility * 1.5);
+            supBand.push(s1 + volFactor, s2 + (volFactor * 1.8), s3 + (volFactor * 2.5));
+            infBand.push(b1 - volFactor, b2 - (volFactor * 1.8), b3 - (volFactor * 2.5));
 
             chart.data.labels = labels;
             chart.data.datasets[0].data = buyPlot;
@@ -337,7 +365,8 @@
     }
 
     loadData();
-    setInterval(loadData, 5000);
+    // Toma un nuevo dato de mercado cada 60 segundos
+    setInterval(loadData, 60000);
 </script>
 </body>
 </html>
