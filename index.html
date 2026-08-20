@@ -88,21 +88,21 @@
     <canvas id="chart" style="max-height: 150px; margin-bottom: 16px;"></canvas>
 
     <div class="section-title" style="color: var(--green);">
-        📥 ORDENES DE VENTA (Donde colocas tu anuncio de COMPRA)
+        📥 PILA VENTA (Donde colocas tu anuncio para COMPRAR USDT)
     </div>
     <div class="table-container">
         <table>
-            <thead><tr><th>Posición</th><th>Pila Venta</th><th>Precio Real</th></tr></thead>
+            <thead><tr><th>Anuncio</th><th>Referencia</th><th>Tasa Bs</th></tr></thead>
             <tbody id="buyT"></tbody>
         </table>
     </div>
 
     <div class="section-title" style="color: var(--red);">
-        📤 ORDENES DE COMPRA (Donde colocas tu anuncio de VENTA)
+        📤 PILA COMPRA (Donde colocas tu anuncio para VENDER USDT)
     </div>
     <div class="table-container">
         <table>
-            <thead><tr><th>Posición</th><th>Pila Compra</th><th>Precio Real</th></tr></thead>
+            <thead><tr><th>Anuncio</th><th>Referencia</th><th>Tasa Bs</th></tr></thead>
             <tbody id="sellT"></tbody>
         </table>
     </div>
@@ -132,23 +132,18 @@
     async function loadData() {
         document.getElementById('timeStatus').innerText = "Cargando...";
         try {
-            // Consulta directa a la API de respaldo de Binance P2P VES
-            const res = await fetch("https://pydolarve.org/api/v1/dollar?page=binance");
+            // API estable que sirvió en la primera versión
+            const res = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
             const data = await res.json();
 
-            let precioBase = 0;
-            if (data && data.monitors && data.monitors.binance) {
-                precioBase = parseFloat(data.monitors.binance.price);
-            } else {
-                const resAlt = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
-                const dataAlt = await resAlt.json();
-                precioBase = parseFloat(dataAlt.promedio);
-            }
+            if (data && data.promedio) {
+                const base = parseFloat(data.promedio);
+                
+                // Pila Venta: Precio al que compras USDT
+                const precioCompra = base; 
+                // Pila Compra: Precio al que vendes USDT (~1.1% spread)
+                const precioVenta = base * 1.011; 
 
-            if (precioBase > 0) {
-                // Cálculo preciso del spread P2P para comerciantes no verificados
-                const precioCompra = precioBase;
-                const precioVenta = precioBase * 1.012; // Spread real de ~1.2%
                 const spread = precioVenta - precioCompra;
                 const roi = ((spread / precioCompra) * 100);
 
@@ -156,6 +151,7 @@
                 document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
                 document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${roi.toFixed(1)}%)`;
 
+                // Cálculo dinámico de profit
                 const capital = parseFloat(document.getElementById('capitalInput').value) || 0;
                 if (capital > 0) {
                     const usdtObtenidos = capital / precioCompra;
@@ -165,32 +161,35 @@
                 }
 
                 const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                
                 if (chart.data.labels.length > 12) {
                     chart.data.labels.shift();
                     chart.data.datasets[0].data.shift();
                     chart.data.datasets[1].data.shift();
                 }
+
                 chart.data.labels.push(now);
                 chart.data.datasets[0].data.push(precioCompra);
                 chart.data.datasets[1].data.push(precioVenta);
                 chart.update();
 
+                // Generar tablas de órdenes
                 renderTable('buyT', [
-                    { pos: "TOP 1", name: "Anuncio de Compra 1", price: precioCompra },
-                    { pos: "TOP 2", name: "Anuncio de Compra 2", price: precioCompra * 1.001 },
-                    { pos: "TOP 3", name: "Anuncio de Compra 3", price: precioCompra * 1.002 }
+                    { pos: "TOP 1", name: "Anuncio_TuEntrada", price: precioCompra },
+                    { pos: "TOP 2", name: "Orden_Mercado_1", price: precioCompra * 1.002 },
+                    { pos: "TOP 3", name: "Orden_Mercado_2", price: precioCompra * 1.004 }
                 ]);
 
                 renderTable('sellT', [
-                    { pos: "TOP 1", name: "Anuncio de Venta 1", price: precioVenta },
-                    { pos: "TOP 2", name: "Anuncio de Venta 2", price: precioVenta * 0.999 },
-                    { pos: "TOP 3", name: "Anuncio de Venta 3", price: precioVenta * 0.998 }
+                    { pos: "TOP 1", name: "Anuncio_TuSalida", price: precioVenta },
+                    { pos: "TOP 2", name: "Orden_Mercado_1", price: precioVenta * 0.998 },
+                    { pos: "TOP 3", name: "Orden_Mercado_2", price: precioVenta * 0.996 }
                 ]);
 
                 document.getElementById('timeStatus').innerText = `Actualizado: ${now}`;
             }
         } catch (e) {
-            document.getElementById('timeStatus').innerText = "Reintentando conexión...";
+            document.getElementById('timeStatus').innerText = "Error de conexión. Reintentando...";
         }
     }
 
@@ -205,7 +204,7 @@
     }
 
     loadData();
-    setInterval(loadData, 20000);
+    setInterval(loadData, 25000);
 </script>
 </body>
 </html>
