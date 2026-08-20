@@ -18,7 +18,6 @@
         table { width: 100%; border-collapse: collapse; background: #181a20; margin-bottom: 12px; font-size: 0.75rem; }
         th, td { padding: 8px; border-bottom: 1px solid #2b313a; text-align: left; }
         th { background: #2b313a; color: #848e9c; }
-        .badge { background: #2b313a; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; }
     </style>
 </head>
 <body>
@@ -29,11 +28,11 @@
 
     <div class="kpis">
         <div class="card">
-            <small>P. Entrada (Comprar)</small>
+            <small>1° Tu Anuncio COMPRA</small>
             <div class="val buy" id="buyVal">--.--</div>
         </div>
         <div class="card">
-            <small>P. Salida (Recomprar)</small>
+            <small>2° Tu Anuncio VENTA</small>
             <div class="val sell" id="sellVal">--.--</div>
         </div>
         <div class="card">
@@ -45,14 +44,14 @@
     <canvas id="chart" style="max-height: 170px; margin-bottom: 12px;"></canvas>
 
     <div style="color:#0ecb81; font-weight:bold; margin-bottom:4px; font-size:0.85rem;">
-        📥 Señal de Entrada (Comprar USDT a este precio)
+        📥 Pila Venta (Publicas tu anuncio para COMPRAR USDT)
     </div>
-    <table><thead><tr><th>User</th><th>Tasa Referencia</th></tr></thead><tbody id="buyT"></tbody></table>
+    <table><thead><tr><th>Anuncio</th><th>Tasa Referencia</th></tr></thead><tbody id="buyT"></tbody></table>
 
     <div style="color:#f6465d; font-weight:bold; margin-bottom:4px; font-size:0.85rem;">
-        📤 Señal de Recompra / Venta (Vender USDT a este precio)
+        📤 Pila Compra (Publicas tu anuncio para VENDER/RECOMPRAR)
     </div>
-    <table><thead><tr><th>User</th><th>Tasa Referencia</th></tr></thead><tbody id="sellT"></tbody></table>
+    <table><thead><tr><th>Anuncio</th><th>Tasa Referencia</th></tr></thead><tbody id="sellT"></tbody></table>
 
 <script>
     let chart;
@@ -61,8 +60,8 @@
     chart = new Chart(ctx, {
         type: 'line',
         data: { labels: [], datasets: [
-            { label: 'Entrada (Compra)', data: [], borderColor: '#0ecb81' },
-            { label: 'Salida (Venta)', data: [], borderColor: '#f6465d' }
+            { label: 'Precio Compra (Pila Venta)', data: [], borderColor: '#0ecb81' },
+            { label: 'Precio Venta (Pila Compra)', data: [], borderColor: '#f6465d' }
         ]}
     });
 
@@ -74,20 +73,22 @@
             if (data && data.promedio) {
                 const base = parseFloat(data.promedio);
                 
-                // Ajuste de margen estimado para no verificados (~0.8% - 1.2% de spread)
-                const precioEntrada = base; 
-                const precioSalida = base * 1.011; 
-                const spreadVal = precioSalida - precioEntrada;
+                // Pila Venta: Tu compras pagando menos Bs
+                const precioCompraUsdt = base; 
+                
+                // Pila Compra: Tu vendes cobrando más Bs
+                const precioVentaUsdt = base * 1.011; 
+                
+                const spreadVal = precioVentaUsdt - precioCompraUsdt;
 
-                // Indicador visual de tendencia
                 let arrow = "";
                 if (prevBuy > 0) {
-                    arrow = precioEntrada > prevBuy ? " ⬆️" : (precioEntrada < prevBuy ? " ⬇️" : " ➡️");
+                    arrow = precioCompraUsdt > prevBuy ? " ⬆️" : (precioCompraUsdt < prevBuy ? " ⬇️" : " ➡️");
                 }
-                prevBuy = precioEntrada;
+                prevBuy = precioCompraUsdt;
 
-                document.getElementById('buyVal').innerText = precioEntrada.toFixed(2) + arrow;
-                document.getElementById('sellVal').innerText = precioSalida.toFixed(2);
+                document.getElementById('buyVal').innerText = precioCompraUsdt.toFixed(2) + arrow;
+                document.getElementById('sellVal').innerText = precioVentaUsdt.toFixed(2);
                 document.getElementById('spreadVal').innerText = spreadVal.toFixed(2) + " Bs";
 
                 const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -99,21 +100,21 @@
                 }
 
                 chart.data.labels.push(t);
-                chart.data.datasets[0].data.push(precioEntrada);
-                chart.data.datasets[1].data.push(precioSalida);
+                chart.data.datasets[0].data.push(precioCompraUsdt);
+                chart.data.datasets[1].data.push(precioVentaUsdt);
                 chart.update();
 
-                // Generar tablas competitivas
+                // Estructura corregida de ofertas
                 const buyOffers = [
-                    { userName: "Anuncio_TuEntrada", price: precioEntrada },
-                    { userName: "Orden_Mercado_1", price: precioEntrada * 1.002 },
-                    { userName: "Orden_Mercado_2", price: precioEntrada * 1.004 }
+                    { userName: "Tu Anuncio (Cómprales)", price: precioCompraUsdt },
+                    { userName: "Competencia 1", price: precioCompraUsdt * 1.002 },
+                    { userName: "Competencia 2", price: precioCompraUsdt * 1.004 }
                 ];
                 
                 const sellOffers = [
-                    { userName: "Anuncio_TuSalida", price: precioSalida },
-                    { userName: "Orden_Mercado_1", price: precioSalida * 0.998 },
-                    { userName: "Orden_Mercado_2", price: precioSalida * 0.996 }
+                    { userName: "Tu Anuncio (Véndeles)", price: precioVentaUsdt },
+                    { userName: "Competencia 1", price: precioVentaUsdt * 0.998 },
+                    { userName: "Competencia 2", price: precioVentaUsdt * 0.996 }
                 ];
 
                 renderTable('buyT', buyOffers);
@@ -130,7 +131,6 @@
         ).join('');
     }
 
-    // Ejecución inicial y refresco cada 30 segundos
     loadData();
     setInterval(loadData, 30000);
 </script>
