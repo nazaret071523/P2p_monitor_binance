@@ -63,6 +63,7 @@
         .breakeven-val { font-family: var(--mono-font); color: #fff; font-weight: bold; }
 
         .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
+        .pred-legend { color: rgba(240, 185, 11, 0.9); font-weight: 700; display: flex; align-items: center; gap: 4px; }
 
         .book-section { margin-bottom: 10px; }
         .book-header { font-size: 0.7rem; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
@@ -132,10 +133,10 @@
     </div>
 
     <div class="chart-header">
-        <span>TENDENCIA EN TIEMPO REAL</span>
-        <span id="timeStatus">Conectando...</span>
+        <span>TENDENCIA Y PROYECCIÓN</span>
+        <span class="pred-legend">░ SOMBRA PROBABLE (PREDICCIÓN)</span>
     </div>
-    <canvas id="chart" style="max-height: 130px; margin-bottom: 12px;"></canvas>
+    <canvas id="chart" style="max-height: 140px; margin-bottom: 12px;"></canvas>
 
     <div class="book-section">
         <div class="book-header" style="color: var(--color-buy);">
@@ -162,26 +163,28 @@
 <script>
     let chart;
     let baseRate = 0;
+    const historyLength = 8;
+    const futureLength = 3;
     const ctx = document.getElementById('chart').getContext('2d');
     
-    // Gráfico configurado con ajuste de escala dinámico (autoscale)
     chart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
             datasets: [
-                { label: 'Entrada', data: [], borderColor: '#0ecb81', borderWidth: 2, pointRadius: 2, tension: 0.3 },
-                { label: 'Salida', data: [], borderColor: '#f6465d', borderWidth: 2, pointRadius: 2, tension: 0.3 }
+                { label: 'Entrada Real', data: [], borderColor: '#0ecb81', borderWidth: 2, pointRadius: 2, tension: 0.2 },
+                { label: 'Salida Real', data: [], borderColor: '#f6465d', borderWidth: 2, pointRadius: 2, tension: 0.2 },
+                // Predicción y Sombra
+                { label: 'Proyección Sup', data: [], borderColor: 'transparent', backgroundColor: 'rgba(240, 185, 11, 0.12)', fill: '+1', pointRadius: 0, tension: 0.3 },
+                { label: 'Proyección Inf', data: [], borderColor: 'transparent', fill: false, pointRadius: 0, tension: 0.3 },
+                { label: 'Tendencia Estimada', data: [], borderColor: '#f0b90b', borderWidth: 1.5, borderDash: [4, 4], pointRadius: 0, tension: 0.3 }
             ]
         },
         options: {
             plugins: { legend: { display: false } },
             scales: {
                 x: { grid: { color: '#1a1e23' }, ticks: { color: '#848e9c', font: { size: 8 } } },
-                y: { 
-                    grid: { color: '#2b313a' }, 
-                    ticks: { color: '#848e9c', font: { size: 8 } }
-                }
+                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 8 } } }
             }
         }
     });
@@ -196,27 +199,25 @@
     }
 
     async function loadData() {
-        document.getElementById('timeStatus').innerText = "Cargando...";
+        document.getElementById('timeStatus');
         try {
-            // Solo se consulta a la API si aún no tenemos una tasa base
             if (baseRate === 0) {
                 const res = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
                 const data = await res.json();
                 if (data && data.promedio) {
                     baseRate = parseFloat(data.promedio);
                 } else {
-                    baseRate = 906.81; // Valor fallback
+                    baseRate = 906.81;
                 }
             }
 
-            // Simulación de fluctuación de mercado en vivo (+/- 0.15% por tick)
             const randomDelta = (Math.random() - 0.48) * (baseRate * 0.003);
             baseRate += randomDelta;
 
             const precioCompra = baseRate;
             const precioVenta = baseRate * 1.011;
 
-            const comisionOperacion = 0.0025; // 0.25%
+            const comisionOperacion = 0.0025;
             const roiBruto = ((precioVenta - precioCompra) / precioCompra);
             const roiNeto = (roiBruto - (comisionOperacion * 2)) * 100;
             const spread = precioVenta - precioCompra;
@@ -241,23 +242,72 @@
                 banner.className = "roi-banner medium";
             }
 
-            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             
-            // Mantener últimos 10 puntos en la gráfica para alta definición de movimiento
-            if (chart.data.labels.length >= 10) {
-                chart.data.labels.shift();
-                chart.data.datasets[0].data.shift();
-                chart.data.datasets[1].data.shift();
+            // Actualización de historial real
+            let currentRealBuy = chart.data.datasets[0].data;
+            let currentRealSell = chart.data.datasets[1].data;
+
+            if (currentRealBuy.length >= historyLength) {
+                currentRealBuy.shift();
+                currentRealSell.shift();
+            }
+            currentRealBuy.push(precioCompra);
+            currentRealSell.push(precioVenta);
+
+            // Generar etiquetas de tiempo (Presentes + Futuro +15s, +30s, +45s)
+            let labels = [];
+            for (let i = currentRealBuy.length - 1; i >= 0; i--) {
+                let pastTime = new Date(now.getTime() - (i * 5000));
+                labels.push(pastTime.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' }));
+            }
+            for (let j = 1; j <= futureLength; j++) {
+                let futTime = new Date(now.getTime() + (j * 15000));
+                labels.push('+' + (j * 15) + 's');
+            }
+            chart.data.labels = labels;
+
+            // Ajustar arrays de datos para que los datos reales no cubran la zona del futuro
+            let realBuyPlot = [...currentRealBuy, ...Array(futureLength).fill(null)];
+            let realSellPlot = [...currentRealSell, ...Array(futureLength).fill(null)];
+
+            // Cálculo de proyección / Sombra de predicción hacia el futuro
+            let projSup = Array(currentRealBuy.length - 1).fill(null);
+            let projInf = Array(currentRealBuy.length - 1).fill(null);
+            let projTrend = Array(currentRealBuy.length - 1).fill(null);
+
+            const lastReal = precioCompra;
+            // Tendencia estimada basada en últimos 3 puntos
+            let momentum = 0;
+            if (currentRealBuy.length >= 3) {
+                momentum = (currentRealBuy[currentRealBuy.length - 1] - currentRealBuy[currentRealBuy.length - 3]) / 2;
             }
 
-            chart.data.labels.push(now);
-            chart.data.datasets[0].data.push(precioCompra);
-            chart.data.datasets[1].data.push(precioVenta);
-            
-            // Ajustar min/max del eje Y dinámicamente para dar efecto de gráfica financiera viva
-            const allValues = [...chart.data.datasets[0].data, ...chart.data.datasets[1].data];
-            const minY = Math.min(...allValues) - 0.5;
-            const maxY = Math.max(...allValues) + 0.5;
+            // Conectar el punto actual con la sombra futura
+            projSup.push(lastReal);
+            projInf.push(lastReal);
+            projTrend.push(lastReal);
+
+            for (let k = 1; k <= futureLength; k++) {
+                let futureTrend = lastReal + (momentum * k);
+                let spreadVariance = (baseRate * 0.0015) * Math.sqrt(k); // Abanico de volatilidad creciente
+                
+                projSup.push(futureTrend + spreadVariance);
+                projInf.push(futureTrend - spreadVariance);
+                projTrend.push(futureTrend);
+            }
+
+            chart.data.datasets[0].data = realBuyPlot;
+            chart.data.datasets[1].data = realSellPlot;
+            chart.data.datasets[2].data = projSup;
+            chart.data.datasets[3].data = projInf;
+            chart.data.datasets[4].data = projTrend;
+
+            // Ajuste dinámico de escala del eje Y
+            const allVal = [...currentRealBuy, ...currentRealSell, ...projSup.filter(v => v !== null)];
+            const minY = Math.min(...allVal) - 0.4;
+            const maxY = Math.max(...allVal) + 0.4;
             chart.options.scales.y.min = parseFloat(minY.toFixed(2));
             chart.options.scales.y.max = parseFloat(maxY.toFixed(2));
 
@@ -275,9 +325,8 @@
                 { pos: "TOP 3", name: "Orden_Mercado_2", price: precioVenta * 0.996 }
             ], 'sell');
 
-            document.getElementById('timeStatus').innerText = `En vivo: ${now}`;
         } catch (e) {
-            document.getElementById('timeStatus').innerText = "Reintentando...";
+            console.error(e);
         }
     }
 
@@ -293,7 +342,6 @@
     }
 
     loadData();
-    // Actualización automática cada 5 segundos para mantener la gráfica activa
     setInterval(loadData, 5000);
 </script>
 </body>
