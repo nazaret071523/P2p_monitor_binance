@@ -51,22 +51,23 @@
         ]}
     });
 
+    async function fetchWithProxy(targetUrl) {
+        // Intenta directo primero, si falla aplica proxy CORS
+        try {
+            const res = await fetch(targetUrl);
+            if (res.ok) return await res.json();
+        } catch (e) {}
+        
+        const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
+        const resProxy = await fetch(proxyUrl);
+        return await resProxy.json();
+    }
+
     async function loadData() {
         document.getElementById('status').innerText = "Obteniendo datos...";
-        
-        // Proxy CORS para saltar la restricción del navegador
-        const proxy = "https://api.allorigins.win/raw?url=";
-        const urlSell = encodeURIComponent("https://criptoya.com/api/binancep2p/sell/usdt/ves/5");
-        const urlBuy = encodeURIComponent("https://criptoya.com/api/binancep2p/buy/usdt/ves/5");
-
         try {
-            const [resSell, resBuy] = await Promise.all([
-                fetch(proxy + urlSell),
-                fetch(proxy + urlBuy)
-            ]);
-
-            const sellData = await resSell.json();
-            const buyData = await resBuy.json();
+            const sellData = await fetchWithProxy("https://criptoya.com/api/binancep2p/sell/usdt/ves/5");
+            const buyData = await fetchWithProxy("https://criptoya.com/api/binancep2p/buy/usdt/ves/5");
 
             const buys = Object.values(sellData).slice(0, 5);
             const sells = Object.values(buyData).slice(0, 5);
@@ -90,7 +91,7 @@
                 document.getElementById('status').innerText = "Actualizado: " + t;
             }
         } catch (e) {
-            document.getElementById('status').innerText = "Error cargando datos. Reintentando...";
+            document.getElementById('status').innerText = "Error cargando datos. Reintentando en breve...";
         }
     }
 
