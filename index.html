@@ -3,106 +3,145 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Binance P2P Trading Terminal</title>
+    <title>Binance P2P Pro Terminal</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-main: #0b0e11;
-            --bg-card: #181a20;
-            --accent-yellow: #f0b90b;
-            --green: #0ecb81;
-            --red: #f6465d;
-            --text-main: #eaecef;
-            --text-sub: #848e9c;
-            --border: #2b313a;
+            --bg-dark: #0b0e11;
+            --card-bg: #1e2329;
+            --card-border: #2b313a;
+            --accent-gold: #f0b90b;
+            --color-buy: #0ecb81;
+            --color-sell: #f6465d;
+            --text-primary: #eaecef;
+            --text-secondary: #848e9c;
+            --mono-font: 'JetBrains Mono', monospace;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background: var(--bg-main); color: var(--text-main); padding: 12px; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
+        body { background: var(--bg-dark); color: var(--text-primary); padding: 12px; }
 
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-        .brand { font-size: 1.1rem; font-weight: 800; color: var(--accent-yellow); }
-        .live-badge { font-size: 0.65rem; background: rgba(14, 203, 129, 0.15); color: var(--green); border: 1px solid var(--green); padding: 2px 8px; border-radius: 12px; font-weight: bold; display: flex; align-items: center; gap: 4px; }
-        .live-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
+        /* Top Bar */
+        .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--card-border); }
+        .title-group { display: flex; align-items: center; gap: 8px; }
+        .logo-icon { width: 10px; height: 10px; background: var(--accent-gold); border-radius: 2px; transform: rotate(45deg); }
+        .brand { font-weight: 800; font-size: 0.95rem; letter-spacing: 0.5px; color: #fff; }
+        .mode-tag { font-size: 0.6rem; background: rgba(240, 185, 11, 0.1); color: var(--accent-gold); border: 1px solid rgba(240, 185, 11, 0.3); padding: 2px 6px; border-radius: 4px; font-weight: 700; }
 
-        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        /* Inputs Area */
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .btn-update { background: var(--accent-gold); color: #000; border: none; padding: 10px; font-weight: 700; font-size: 0.8rem; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; }
+        .input-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; display: flex; align-items: center; padding: 0 10px; }
+        .input-box span { font-size: 0.7rem; color: var(--text-secondary); margin-right: 4px; }
+        .calc-input { background: transparent; border: none; color: #fff; font-family: var(--mono-font); font-weight: 700; font-size: 0.85rem; width: 100%; text-align: right; outline: none; }
 
-        .controls { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 12px; }
-        .btn { background: var(--accent-yellow); color: #000; border: none; padding: 10px; font-weight: bold; font-size: 0.85rem; border-radius: 6px; cursor: pointer; }
-        .calc-input { background: var(--bg-card); border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 6px; font-size: 0.85rem; text-align: center; }
+        /* Metric Grid */
+        .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 6px; text-align: center; position: relative; overflow: hidden; }
+        .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px; }
+        .kpi-card.buy::before { background: var(--color-buy); }
+        .kpi-card.sell::before { background: var(--color-sell); }
+        .kpi-card.spread::before { background: var(--accent-gold); }
 
-        .kpis { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-        .card { background: var(--bg-card); padding: 10px 8px; border-radius: 8px; text-align: center; border: 1px solid var(--border); }
-        .card small { font-size: 0.65rem; color: var(--text-sub); display: block; margin-bottom: 4px; font-weight: 600; }
-        .val { font-size: 0.95rem; font-weight: 800; }
-        .buy { color: var(--green); } .sell { color: var(--red); } .spread { color: var(--accent-yellow); }
+        .kpi-label { font-size: 0.6rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+        .kpi-value { font-family: var(--mono-font); font-size: 0.95rem; font-weight: 700; }
+        .val-buy { color: var(--color-buy); }
+        .val-sell { color: var(--color-sell); }
+        .val-spread { color: var(--accent-gold); }
 
-        .profit-banner { background: rgba(240, 185, 11, 0.08); border: 1px solid rgba(240, 185, 11, 0.2); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; }
-        .profit-banner strong { color: var(--green); font-size: 0.85rem; }
+        /* ROI Widget */
+        .roi-banner { background: linear-gradient(90deg, rgba(14, 203, 129, 0.08) 0%, rgba(24, 26, 32, 0.5) 100%); border: 1px solid rgba(14, 203, 129, 0.2); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .roi-info small { color: var(--text-secondary); font-size: 0.65rem; display: block; }
+        .roi-info strong { font-size: 0.8rem; color: #fff; }
+        .roi-stat { font-family: var(--mono-font); font-size: 0.95rem; font-weight: 700; color: var(--color-buy); }
 
-        .section-title { font-size: 0.75rem; font-weight: 700; color: var(--text-sub); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+        /* Chart Header */
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.7rem; color: var(--text-secondary); font-weight: 600; }
 
-        .table-container { margin-bottom: 12px; }
-        table { width: 100%; border-collapse: collapse; background: var(--bg-card); border-radius: 8px; font-size: 0.75rem; border: 1px solid var(--border); }
-        th { background: #23272e; color: var(--text-sub); padding: 8px; text-align: left; font-weight: 600; font-size: 0.7rem; }
-        td { padding: 8px; border-bottom: 1px solid var(--border); }
-        .badge-pos { background: rgba(14, 203, 129, 0.1); color: var(--green); padding: 2px 4px; border-radius: 3px; font-weight: bold; }
+        /* Order Books */
+        .book-section { margin-bottom: 12px; }
+        .book-header { font-size: 0.75rem; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; }
+        .dot.buy { background: var(--color-buy); box-shadow: 0 0 6px var(--color-buy); }
+        .dot.sell { background: var(--color-sell); box-shadow: 0 0 6px var(--color-sell); }
+
+        table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 8px; overflow: hidden; border: 1px solid var(--card-border); font-size: 0.75rem; }
+        th { background: #161a1e; color: var(--text-secondary); font-weight: 600; font-size: 0.65rem; padding: 8px 10px; text-align: left; text-transform: uppercase; }
+        td { padding: 8px 10px; border-bottom: 1px solid var(--card-border); }
+        tr:last-child td { border-bottom: none; }
+
+        .rank-tag { font-size: 0.6rem; font-weight: 700; padding: 2px 4px; border-radius: 3px; font-family: var(--mono-font); }
+        .rank-buy { background: rgba(14, 203, 129, 0.12); color: var(--color-buy); }
+        .rank-sell { background: rgba(246, 70, 93, 0.12); color: var(--color-sell); }
+        .price-text { font-family: var(--mono-font); font-weight: 700; text-align: right; }
     </style>
 </head>
 <body>
 
     <div class="header">
-        <div class="brand">PRO P2P TERMINAL</div>
-        <div class="live-badge"><span class="live-dot"></span> EN VIVO</div>
+        <div class="title-group">
+            <div class="logo-icon"></div>
+            <div class="brand">P2P MONITOR PRO</div>
+        </div>
+        <div class="mode-tag">NO VERIFICADO</div>
     </div>
 
     <div class="controls">
-        <button class="btn" onclick="loadData()">⚡ ACTUALIZAR MERCADO</button>
-        <input type="number" id="capitalInput" class="calc-input" value="1000" placeholder="Cap. Bs" oninput="loadData()">
-    </div>
-
-    <div class="kpis">
-        <div class="card">
-            <small>Pila Venta (Tu Compra)</small>
-            <div class="val buy" id="buyVal">--.--</div>
-        </div>
-        <div class="card">
-            <small>Pila Compra (Tu Venta)</small>
-            <div class="val sell" id="sellVal">--.--</div>
-        </div>
-        <div class="card">
-            <small>Spread / ROI</small>
-            <div class="val spread" id="spreadVal">--.--</div>
+        <button class="btn-update" onclick="loadData()">⚡ ACTUALIZAR</button>
+        <div class="input-box">
+            <span>Bs</span>
+            <input type="number" id="capitalInput" class="calc-input" value="1000" oninput="loadData()">
         </div>
     </div>
 
-    <div class="profit-banner">
-        <span>Ganancia estimada por ciclo:</span>
-        <strong id="profitVal">0.00 Bs (0.00%)</strong>
+    <div class="kpi-grid">
+        <div class="kpi-card buy">
+            <div class="kpi-label">Entrada (Compra)</div>
+            <div class="kpi-value val-buy" id="buyVal">--.--</div>
+        </div>
+        <div class="kpi-card sell">
+            <div class="kpi-label">Salida (Venta)</div>
+            <div class="kpi-value val-sell" id="sellVal">--.--</div>
+        </div>
+        <div class="kpi-card spread">
+            <div class="kpi-label">Spread / ROI</div>
+            <div class="kpi-value val-spread" id="spreadVal">--.--</div>
+        </div>
     </div>
 
-    <div class="section-title">
-        <span>HISTORIAL DE PRECIOS REALES</span>
+    <div class="roi-banner">
+        <div class="roi-info">
+            <small>ESTIMACIÓN DE GANANCIA NETA</small>
+            <strong>Ciclo Completo P2P</strong>
+        </div>
+        <div class="roi-stat" id="profitVal">+0.00 Bs</div>
+    </div>
+
+    <div class="chart-header">
+        <span>TENDENCIA EN TIEMPO REAL</span>
         <span id="timeStatus">Conectando...</span>
     </div>
-    <canvas id="chart" style="max-height: 150px; margin-bottom: 16px;"></canvas>
+    <canvas id="chart" style="max-height: 140px; margin-bottom: 14px;"></canvas>
 
-    <div class="section-title" style="color: var(--green);">
-        📥 PILA VENTA (Donde colocas tu anuncio para COMPRAR USDT)
-    </div>
-    <div class="table-container">
+    <div class="book-section">
+        <div class="book-header" style="color: var(--color-buy);">
+            <div class="dot buy"></div>
+            <span>Libro Venta (Tus Anuncios de COMPRA)</span>
+        </div>
         <table>
-            <thead><tr><th>Anuncio</th><th>Referencia</th><th>Tasa Bs</th></tr></thead>
+            <thead><tr><th>Posición</th><th>Referencia</th><th style="text-align:right;">Tasa</th></tr></thead>
             <tbody id="buyT"></tbody>
         </table>
     </div>
 
-    <div class="section-title" style="color: var(--red);">
-        📤 PILA COMPRA (Donde colocas tu anuncio para VENDER USDT)
-    </div>
-    <div class="table-container">
+    <div class="book-section">
+        <div class="book-header" style="color: var(--color-sell);">
+            <div class="dot sell"></div>
+            <span>Libro Compra (Tus Anuncios de VENTA)</span>
+        </div>
         <table>
-            <thead><tr><th>Anuncio</th><th>Referencia</th><th>Tasa Bs</th></tr></thead>
+            <thead><tr><th>Posición</th><th>Referencia</th><th style="text-align:right;">Tasa</th></tr></thead>
             <tbody id="sellT"></tbody>
         </table>
     </div>
@@ -116,15 +155,15 @@
         data: {
             labels: [],
             datasets: [
-                { label: 'Tu Compra', data: [], borderColor: '#0ecb81', borderWidth: 2, pointRadius: 2, tension: 0.2 },
-                { label: 'Tu Venta', data: [], borderColor: '#f6465d', borderWidth: 2, pointRadius: 2, tension: 0.2 }
+                { label: 'Entrada', data: [], borderColor: '#0ecb81', borderWidth: 2, pointRadius: 1, tension: 0.1 },
+                { label: 'Salida', data: [], borderColor: '#f6465d', borderWidth: 2, pointRadius: 1, tension: 0.1 }
             ]
         },
         options: {
             plugins: { legend: { display: false } },
             scales: {
-                x: { grid: { color: '#181a20' }, ticks: { color: '#848e9c', font: { size: 9 } } },
-                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 9 } } }
+                x: { grid: { color: '#1a1e23' }, ticks: { color: '#848e9c', font: { size: 8 } } },
+                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 8 } } }
             }
         }
     });
@@ -132,16 +171,13 @@
     async function loadData() {
         document.getElementById('timeStatus').innerText = "Cargando...";
         try {
-            // API estable que sirvió en la primera versión
             const res = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
             const data = await res.json();
 
             if (data && data.promedio) {
                 const base = parseFloat(data.promedio);
                 
-                // Pila Venta: Precio al que compras USDT
                 const precioCompra = base; 
-                // Pila Compra: Precio al que vendes USDT (~1.1% spread)
                 const precioVenta = base * 1.011; 
 
                 const spread = precioVenta - precioCompra;
@@ -151,7 +187,6 @@
                 document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
                 document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${roi.toFixed(1)}%)`;
 
-                // Cálculo dinámico de profit
                 const capital = parseFloat(document.getElementById('capitalInput').value) || 0;
                 if (capital > 0) {
                     const usdtObtenidos = capital / precioCompra;
@@ -173,32 +208,32 @@
                 chart.data.datasets[1].data.push(precioVenta);
                 chart.update();
 
-                // Generar tablas de órdenes
                 renderTable('buyT', [
                     { pos: "TOP 1", name: "Anuncio_TuEntrada", price: precioCompra },
                     { pos: "TOP 2", name: "Orden_Mercado_1", price: precioCompra * 1.002 },
                     { pos: "TOP 3", name: "Orden_Mercado_2", price: precioCompra * 1.004 }
-                ]);
+                ], 'buy');
 
                 renderTable('sellT', [
                     { pos: "TOP 1", name: "Anuncio_TuSalida", price: precioVenta },
                     { pos: "TOP 2", name: "Orden_Mercado_1", price: precioVenta * 0.998 },
                     { pos: "TOP 3", name: "Orden_Mercado_2", price: precioVenta * 0.996 }
-                ]);
+                ], 'sell');
 
-                document.getElementById('timeStatus').innerText = `Actualizado: ${now}`;
+                document.getElementById('timeStatus').innerText = `Sincronizado: ${now}`;
             }
         } catch (e) {
-            document.getElementById('timeStatus').innerText = "Error de conexión. Reintentando...";
+            document.getElementById('timeStatus').innerText = "Reintentando...";
         }
     }
 
-    function renderTable(id, items) {
+    function renderTable(id, items, type) {
+        const badgeClass = type === 'buy' ? 'rank-buy' : 'rank-sell';
         document.getElementById(id).innerHTML = items.map(i => 
             `<tr>
-                <td><span class="badge-pos">${i.pos}</span></td>
+                <td><span class="rank-tag ${badgeClass}">${i.pos}</span></td>
                 <td>${i.name}</td>
-                <td><b>${i.price.toFixed(2)} Bs</b></td>
+                <td class="price-text">${i.price.toFixed(2)} Bs</td>
             </tr>`
         ).join('');
     }
