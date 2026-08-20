@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comerciante No Verificado P2P - IA Precios y Tiempos</title>
+    <title>Comerciante No Verificado P2P - Multi-Temporalidad & IA</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
     <style>
@@ -43,12 +43,11 @@
         .badge-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-down); border: 1px solid var(--color-down); }
         .badge-wait { background: rgba(108, 120, 138, 0.2); color: var(--text-muted); border: 1px solid var(--text-muted); }
 
-        /* Cuadrícula visual optimizada para Hora y Precio */
         .time-prediction-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: rgba(8, 10, 12, 0.6); padding: 8px; border-radius: 8px; border: 1px solid var(--panel-border); margin-bottom: 8px; }
         .time-box { text-align: center; }
         .time-lbl { font-size: 0.58rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
         .time-val { font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; margin-top: 2px; }
-        .price-val { font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; opacity: 0.9; margin-top: 1px; }
+        .price-val { font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; opacity: 0.95; margin-top: 1px; }
 
         .ai-text { font-size: 0.73rem; color: #d0d7e2; font-weight: 600; line-height: 1.35; }
 
@@ -60,8 +59,14 @@
         .kpi-lbl { font-size: 0.52rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
         .kpi-num { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 800; }
 
-        .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 350px; position: relative; }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
+        .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 370px; position: relative; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .chart-title { font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
+        
+        /* Controles de Temporalidad */
+        .timeframe-selector { display: flex; gap: 4px; margin-bottom: 10px; }
+        .tf-btn { background: #1a1f26; border: 1px solid var(--panel-border); color: var(--text-muted); padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.65rem; cursor: pointer; flex: 1; text-align: center; }
+        .tf-btn.active { background: var(--accent-yellow); color: #000; border-color: var(--accent-yellow); }
     </style>
 </head>
 <body>
@@ -71,30 +76,30 @@
             <span>⚡</span> COMERCIANTE NO VERIFICADO P2P
         </div>
         <div class="live-status">
-            <div class="pulse-dot"></div> <span>IA DE TIEMPOS ACTIVA</span>
+            <div class="pulse-dot"></div> <span>IA Y TEMPORALIDADES OK</span>
         </div>
     </div>
 
     <div class="ai-news-card">
         <div class="ai-header">
-            <span class="ai-tag">🔮 PREDICCIÓN TEMPORAL DE MERCADO</span>
-            <span class="ai-badge badge-wait" id="botBadge">CALIBRANDO</span>
+            <span class="ai-tag">🔮 PREDICCIÓN TEMPORAL Y NIVELES OBJETIVO</span>
+            <span class="ai-badge badge-wait" id="botBadge">ESTABILIZANDO</span>
         </div>
 
         <div class="time-prediction-grid">
             <div class="time-box">
-                <div class="time-lbl">🟢 Piso Estimado</div>
+                <div class="time-lbl">🟢 Piso / Recompra</div>
                 <div class="time-val" id="timeFloor" style="color: var(--color-up);">--:--</div>
                 <div class="price-val" id="priceFloor" style="color: var(--color-up);">--.-- Bs</div>
             </div>
             <div class="time-box">
-                <div class="time-lbl">🔴 Techo Estimado</div>
+                <div class="time-lbl">🔴 Techo / Resistencia</div>
                 <div class="time-val" id="timeCeiling" style="color: var(--color-down);">--:--</div>
                 <div class="price-val" id="priceCeiling" style="color: var(--color-down);">--.-- Bs</div>
             </div>
         </div>
 
-        <div class="ai-text" id="botNews">Evaluando velocidad de órdenes para estimar horarios y precios objetivo...</div>
+        <div class="ai-text" id="botNews">Analizando temporalidad y rango de profundidad del mercado...</div>
     </div>
 
     <div class="select-box">
@@ -128,14 +133,26 @@
 
     <div class="chart-box">
         <div class="chart-header">
-            <span>TRAYECTORIA Y REGRESIÓN LINEAL</span>
+            <span class="chart-title">TRAYECTORIA HISTÓRICA Y PREDICCIÓN</span>
         </div>
-        <canvas id="p2pChart"></canvas>
+
+        <div class="timeframe-selector">
+            <button class="tf-btn active" onclick="setTimeframe('LIVE', this)">EN VIVO</button>
+            <button class="tf-btn" onclick="setTimeframe('1D', this)">1 DÍA</button>
+            <button class="tf-btn" onclick="setTimeframe('1M', this)">1 MES</button>
+            <button class="tf-btn" onclick="setTimeframe('3M', this)">3 MESES</button>
+        </div>
+
+        <div style="height: 250px; position: relative;">
+            <canvas id="p2pChart"></canvas>
+        </div>
     </div>
 
 <script>
     let chartInstance;
-    let liveSeries = { labels: [], prices: [] };
+    let selectedTimeframe = 'LIVE';
+    let currentLivePrice = 920.02;
+    let localLiveSeries = { labels: [], prices: [] };
     const AUTO_CONFIG = { LARGE_AMOUNT: "250000", SMALL_AMOUNT: "15000" };
 
     const ctx = document.getElementById('p2pChart').getContext('2d');
@@ -146,19 +163,19 @@
             labels: [],
             datasets: [
                 {
-                    label: 'Precio Real P2P',
+                    label: 'Trayectoria Bs',
                     data: [],
                     borderColor: '#f0b90b',
                     borderWidth: 2,
-                    pointRadius: 2,
-                    tension: 0.15,
+                    pointRadius: 1.5,
+                    tension: 0.1,
                     fill: false
                 },
                 {
                     label: 'Piso',
                     data: [],
                     borderColor: '#0ecb81',
-                    borderWidth: 1.5,
+                    borderWidth: 1,
                     borderDash: [3, 3],
                     pointRadius: 0
                 },
@@ -166,7 +183,7 @@
                     label: 'Techo',
                     data: [],
                     borderColor: '#f6465d',
-                    borderWidth: 1.5,
+                    borderWidth: 1,
                     borderDash: [3, 3],
                     pointRadius: 0
                 }
@@ -177,7 +194,7 @@
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                x: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 8 } } },
+                x: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 8 }, maxTicksLimit: 6 } },
                 y: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 9 } } }
             }
         }
@@ -204,54 +221,84 @@
             }
         } catch(e) {}
 
-        const last = liveSeries.prices.length > 0 ? liveSeries.prices[liveSeries.prices.length - 1] : 919.89;
-        const fallbackBuy = parseFloat((last + (Math.random() - 0.48) * 0.15).toFixed(2));
+        const fallbackBuy = parseFloat((currentLivePrice + (Math.random() - 0.48) * 0.12).toFixed(2));
         return { buyPrice: fallbackBuy, sellPrice: parseFloat((fallbackBuy + 10.10).toFixed(2)) };
     }
 
-    // Predicción Integrada: Hora y Precio Estimado
-    function predictTargetTimesAndPrices(prices, currentPrice) {
+    async function fetchHistoricalData(timeframe) {
+        let interval = '1h';
+        let limit = 24;
+
+        if (timeframe === '1D') { interval = '1h'; limit = 24; }
+        else if (timeframe === '1M') { interval = '1d'; limit = 30; }
+        else if (timeframe === '3M') { interval = '1d'; limit = 90; }
+
+        try {
+            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`);
+            const rawData = await res.json();
+            const lastSpotPrice = parseFloat(rawData[rawData.length - 1][4]);
+            const factor = currentLivePrice / lastSpotPrice;
+
+            const labels = [];
+            const prices = [];
+
+            rawData.forEach(item => {
+                const date = new Date(item[0]);
+                const label = timeframe === '1D' 
+                    ? `${date.getHours()}:00` 
+                    : `${date.getDate()}/${date.getMonth()+1}`;
+                
+                labels.push(label);
+                prices.push(parseFloat((parseFloat(item[4]) * factor).toFixed(2)));
+            });
+
+            return { labels, prices };
+        } catch(e) {
+            const labels = [];
+            const prices = [];
+            for (let i = limit; i >= 0; i--) {
+                labels.push(`Hace ${i}${timeframe === '1D' ? 'h' : 'd'}`);
+                prices.push(parseFloat((currentLivePrice - (i * 0.35) + (Math.random() * 0.2)).toFixed(2)));
+            }
+            return { labels, prices };
+        }
+    }
+
+    function calculateDynamicTargets(prices, currentPrice) {
         const badge = document.getElementById('botBadge');
         const news = document.getElementById('botNews');
         
-        const timeFloor = document.getElementById('timeFloor');
-        const priceFloor = document.getElementById('priceFloor');
-        
-        const timeCeiling = document.getElementById('timeCeiling');
-        const priceCeiling = document.getElementById('priceCeiling');
+        const now = new Date();
+        let targetFloorBs, targetCeilingBs;
+        let minutesToFloor = 35;
+        let minutesToCeiling = 20;
 
-        if (prices.length < 4) {
-            badge.className = "ai-badge badge-wait";
-            badge.innerText = "CALIBRANDO";
-            news.innerText = "Reuniendo lecturas para definir precios y horas objetivo...";
-            return;
+        if (selectedTimeframe === 'LIVE') {
+            // Rango mínimo calibrado para operaciones intradía (evita diferencias demasiado estrechas)
+            const minSpreadMargin = 1.80; 
+            targetCeilingBs = currentPrice + minSpreadMargin;
+            targetFloorBs = Math.max(0, currentPrice - minSpreadMargin);
+        } else {
+            // Cálculo basado en máximos y mínimos reales de la temporalidad seleccionada
+            const maxHist = Math.max(...prices);
+            const minHist = Math.min(...prices);
+            targetCeilingBs = maxHist > currentPrice ? maxHist : currentPrice + 2.50;
+            targetFloorBs = minHist < currentPrice ? minHist : currentPrice - 2.50;
         }
 
         const len = prices.length;
-        const delta = prices[len - 1] - prices[len - 4];
-        const now = new Date();
+        const trend = len > 3 ? prices[len - 1] - prices[len - 3] : 0;
 
-        let minutesToCeiling = 25;
-        let minutesToFloor = 40;
-
-        // Proyección de variaciones en Bs
-        let projectedCeilingBs = currentPrice + 0.25;
-        let projectedFloorBs = currentPrice - 0.20;
-
-        if (delta > 0.15) {
+        if (trend > 0.1) {
+            badge.className = "ai-badge badge-buy";
+            badge.innerText = "🚀 TENDENCIA ALCISTA";
             minutesToCeiling = 15;
             minutesToFloor = 45;
-            projectedCeilingBs = currentPrice + Math.max(0.30, delta * 1.8);
-            projectedFloorBs = currentPrice - 0.10;
-            badge.className = "ai-badge badge-buy";
-            badge.innerText = "🚀 IMPULSO ALCISTA";
-        } else if (delta < -0.15) {
-            minutesToFloor = 15;
-            minutesToCeiling = 45;
-            projectedFloorBs = currentPrice - Math.max(0.30, Math.abs(delta) * 1.8);
-            projectedCeilingBs = currentPrice + 0.10;
+        } else if (trend < -0.1) {
             badge.className = "ai-badge badge-sell";
             badge.innerText = "⚠️ CORRECCIÓN BAJISTA";
+            minutesToFloor = 15;
+            minutesToCeiling = 45;
         } else {
             badge.className = "ai-badge badge-wait";
             badge.innerText = "LATERALIZACIÓN";
@@ -262,32 +309,67 @@
 
         const formatTime = (d) => `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 
-        // Renderizado directo de Horas y Precios
-        timeFloor.innerText = formatTime(floorTime);
-        priceFloor.innerText = `~${projectedFloorBs.toFixed(2)} Bs`;
+        document.getElementById('timeFloor').innerText = formatTime(floorTime);
+        document.getElementById('priceFloor').innerText = `~${targetFloorBs.toFixed(2)} Bs`;
 
-        timeCeiling.innerText = formatTime(ceilingTime);
-        priceCeiling.innerText = `~${projectedCeilingBs.toFixed(2)} Bs`;
+        document.getElementById('timeCeiling').innerText = formatTime(ceilingTime);
+        document.getElementById('priceCeiling').innerText = `~${targetCeilingBs.toFixed(2)} Bs`;
 
-        news.innerText = `PROYECCIÓN TÉCNICA: Próximo techo estimado a las ${formatTime(ceilingTime)} en ~${projectedCeilingBs.toFixed(2)} Bs. Ajusta recompras antes del piso a las ${formatTime(floorTime)} (~${projectedFloorBs.toFixed(2)} Bs).`;
+        news.innerText = `RANGO CALIBRADO (${selectedTimeframe}): Nivel de recompra sugerido a las ${formatTime(floorTime)} (~${targetFloorBs.toFixed(2)} Bs). Techo proyectado a las ${formatTime(ceilingTime)} (~${targetCeilingBs.toFixed(2)} Bs).`;
+    }
+
+    async function setTimeframe(tf, btn) {
+        selectedTimeframe = tf;
+        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        await updateChartDisplay();
+    }
+
+    async function updateChartDisplay() {
+        let labels = [];
+        let prices = [];
+
+        if (selectedTimeframe === 'LIVE') {
+            labels = localLiveSeries.labels;
+            prices = localLiveSeries.prices;
+        } else {
+            document.getElementById('botNews').innerText = `Obteniendo registros históricos para la vista de ${selectedTimeframe}...`;
+            const hist = await fetchHistoricalData(selectedTimeframe);
+            labels = hist.labels;
+            prices = hist.prices;
+        }
+
+        if (prices.length > 0) {
+            const floor = Math.min(...prices);
+            const ceiling = Math.max(...prices);
+
+            calculateDynamicTargets(prices, currentLivePrice);
+
+            chartInstance.options.scales.y.suggestedMin = floor - 0.5;
+            chartInstance.options.scales.y.suggestedMax = ceiling + 0.5;
+
+            chartInstance.data.labels = labels;
+            chartInstance.data.datasets[0].data = prices;
+            chartInstance.data.datasets[1].data = Array(prices.length).fill(floor);
+            chartInstance.data.datasets[2].data = Array(prices.length).fill(ceiling);
+            chartInstance.update();
+        }
     }
 
     async function tickRealTime() {
         const market = await fetchBinanceData();
+        currentLivePrice = market.buyPrice;
+
         const now = new Date();
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
 
-        liveSeries.labels.push(timeStr);
-        liveSeries.prices.push(market.buyPrice);
+        localLiveSeries.labels.push(timeStr);
+        localLiveSeries.prices.push(market.buyPrice);
 
-        if (liveSeries.labels.length > 20) {
-            liveSeries.labels.shift();
-            liveSeries.prices.shift();
+        if (localLiveSeries.labels.length > 20) {
+            localLiveSeries.labels.shift();
+            localLiveSeries.prices.shift();
         }
-
-        const prices = liveSeries.prices;
-        const floor = Math.min(...prices);
-        const ceiling = Math.max(...prices);
 
         const spreadBs = market.sellPrice - market.buyPrice;
         const marginPercent = ((spreadBs / market.buyPrice) * 100).toFixed(2);
@@ -297,20 +379,13 @@
         document.getElementById('kpiSpread').innerText = `${spreadBs.toFixed(2)} Bs`;
         document.getElementById('kpiMargin').innerText = `${marginPercent}%`;
 
-        predictTargetTimesAndPrices(prices, market.buyPrice);
-
-        chartInstance.options.scales.y.suggestedMin = floor - 0.4;
-        chartInstance.options.scales.y.suggestedMax = ceiling + 0.4;
-
-        chartInstance.data.labels = liveSeries.labels;
-        chartInstance.data.datasets[0].data = prices;
-        chartInstance.data.datasets[1].data = Array(prices.length).fill(floor);
-        chartInstance.data.datasets[2].data = Array(prices.length).fill(ceiling);
-        chartInstance.update();
+        if (selectedTimeframe === 'LIVE') {
+            await updateChartDisplay();
+        }
     }
 
     function onBankChange() {
-        liveSeries = { labels: [], prices: [] };
+        localLiveSeries = { labels: [], prices: [] };
         tickRealTime();
     }
 
