@@ -62,25 +62,9 @@
         .breakeven-bar { background: rgba(255, 255, 255, 0.03); border: 1px dashed var(--card-border); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; font-size: 0.65rem; color: var(--text-secondary); display: flex; justify-content: space-between; }
         .breakeven-val { font-family: var(--mono-font); color: #fff; font-weight: bold; }
 
-        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px; margin-bottom: 12px; }
+        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 320px; position: relative; }
         .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
         .pred-legend { color: var(--accent-gold); font-weight: 700; font-size: 0.6rem; }
-
-        .book-section { margin-bottom: 10px; }
-        .book-header { font-size: 0.7rem; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-        .dot { width: 6px; height: 6px; border-radius: 50%; }
-        .dot.buy { background: var(--color-buy); }
-        .dot.sell { background: var(--color-sell); }
-
-        table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 8px; overflow: hidden; border: 1px solid var(--card-border); font-size: 0.72rem; }
-        th { background: #161a1e; color: var(--text-secondary); font-weight: 600; font-size: 0.6rem; padding: 6px 8px; text-align: left; text-transform: uppercase; }
-        td { padding: 6px 8px; border-bottom: 1px solid var(--card-border); }
-        tr:last-child td { border-bottom: none; }
-
-        .rank-tag { font-size: 0.58rem; font-weight: 700; padding: 2px 4px; border-radius: 3px; font-family: var(--mono-font); }
-        .rank-buy { background: rgba(14, 203, 129, 0.12); color: var(--color-buy); }
-        .rank-sell { background: rgba(246, 70, 93, 0.12); color: var(--color-sell); }
-        .price-text { font-family: var(--mono-font); font-weight: 700; text-align: right; }
     </style>
 </head>
 <body>
@@ -133,34 +117,13 @@
         <span class="breakeven-val" id="breakevenVal">--.-- Bs</span>
     </div>
 
+    <!-- Panel único enfocado en Análisis y Proyección -->
     <div class="chart-container">
         <div class="chart-header">
-            <span>PROYECTOR ALGORÍTMICO P2P</span>
-            <span class="pred-legend">🤖 BOT PROJECTION</span>
+            <span>PROYECCIÓN DE MERCADO Y RANGO FUTURO</span>
+            <span class="pred-legend">░ SOMBRA DE TENDENCIA</span>
         </div>
-        <canvas id="chart" style="max-height: 150px;"></canvas>
-    </div>
-
-    <div class="book-section">
-        <div class="book-header" style="color: var(--color-buy);">
-            <div class="dot buy"></div>
-            <span>Libro Venta (Tus Anuncios de COMPRA)</span>
-        </div>
-        <table>
-            <thead><tr><th>Posición</th><th>Referencia</th><th style="text-align:right;">Tasa</th></tr></thead>
-            <tbody id="buyT"></tbody>
-        </table>
-    </div>
-
-    <div class="book-section">
-        <div class="book-header" style="color: var(--color-sell);">
-            <div class="dot sell"></div>
-            <span>Libro Compra (Tus Anuncios de VENTA)</span>
-        </div>
-        <table>
-            <thead><tr><th>Posición</th><th>Referencia</th><th style="text-align:right;">Tasa</th></tr></thead>
-            <tbody id="sellT"></tbody>
-        </table>
+        <canvas id="chart"></canvas>
     </div>
 
 <script>
@@ -177,49 +140,59 @@
             labels: [],
             datasets: [
                 {
-                    label: 'Compra (Entrada)',
+                    label: 'Entrada (Compra)',
                     data: [],
                     borderColor: '#0ecb81',
-                    borderWidth: 2,
+                    borderWidth: 2.5,
                     pointRadius: 3,
                     pointBackgroundColor: '#0ecb81',
                     tension: 0.2
                 },
                 {
-                    label: 'Venta (Salida)',
+                    label: 'Salida (Venta)',
                     data: [],
                     borderColor: '#f6465d',
-                    borderWidth: 2,
+                    borderWidth: 2.5,
                     pointRadius: 3,
                     pointBackgroundColor: '#f6465d',
                     tension: 0.2
                 },
                 {
-                    label: 'Predicción Bot',
+                    label: 'Tendencia Compra',
                     data: [],
-                    borderColor: '#f0b90b',
-                    borderWidth: 2,
-                    borderDash: [5, 5],
+                    borderColor: '#0ecb81',
+                    borderWidth: 1.5,
+                    borderDash: [4, 4],
                     pointRadius: 0,
                     tension: 0.2,
                     fill: false
                 },
                 {
-                    label: 'Canal Sup',
+                    label: 'Tendencia Venta',
                     data: [],
-                    borderColor: 'rgba(240, 185, 11, 0.2)',
+                    borderColor: '#f6465d',
+                    borderWidth: 1.5,
+                    borderDash: [4, 4],
+                    pointRadius: 0,
+                    tension: 0.2,
+                    fill: false
+                },
+                {
+                    label: 'Límite Sup',
+                    data: [],
+                    borderColor: 'rgba(240, 185, 11, 0.3)',
                     borderWidth: 1,
                     pointRadius: 0,
                     fill: false
                 },
                 {
-                    label: 'Canal Inf',
+                    label: 'Límite Inf',
                     data: [],
-                    borderColor: 'rgba(240, 185, 11, 0.2)',
+                    borderColor: 'rgba(240, 185, 11, 0.3)',
                     backgroundColor: 'rgba(240, 185, 11, 0.08)',
                     borderWidth: 1,
                     pointRadius: 0,
-                    fill: '-1' // Sombrea entre el canal superior e inferior
+                    fill: '-1'
                 }
             ]
         },
@@ -235,7 +208,7 @@
                 y: {
                     grid: { color: '#2b313a' },
                     ticks: { color: '#848e9c', font: { size: 9 } },
-                    grace: '5%' // Ajuste de rango automático sin romper escala
+                    grace: '8%'
                 }
             }
         }
@@ -258,12 +231,11 @@
                 if (data && data.promedio) {
                     baseRate = parseFloat(data.promedio);
                 } else {
-                    baseRate = 907.69;
+                    baseRate = 907.41;
                 }
             }
 
-            // Simulación ligera de movimiento de tick mercado P2P
-            const tick = (Math.random() - 0.49) * 0.8;
+            const tick = (Math.random() - 0.48) * 0.7;
             baseRate = Math.max(10, baseRate + tick);
 
             const precioCompra = baseRate;
@@ -295,7 +267,6 @@
             }
 
             const now = new Date();
-            const timeLabel = now.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' });
 
             if (historyBuy.length >= maxHistory) {
                 historyBuy.shift();
@@ -304,7 +275,6 @@
             historyBuy.push(precioCompra);
             historySell.push(precioVenta);
 
-            // Generación de etiquetas de tiempo (Pasado + Futuro proyeccion bot)
             let labels = [];
             for (let i = historyBuy.length - 1; i >= 0; i--) {
                 let past = new Date(now.getTime() - (i * 10000));
@@ -313,69 +283,57 @@
             labels.push('+15s');
             labels.push('+30s');
 
-            // Preparación de datasets
-            let buyDataPlot = [...historyBuy, null, null];
-            let sellDataPlot = [...historySell, null, null];
+            let buyPlot = [...historyBuy, null, null];
+            let sellPlot = [...historySell, null, null];
 
-            // Algoritmo de Predicción
             let lastBuy = historyBuy[historyBuy.length - 1];
-            let slope = 0;
+            let lastSell = historySell[historySell.length - 1];
+
+            let slopeBuy = 0;
+            let slopeSell = 0;
             if (historyBuy.length >= 2) {
-                slope = (historyBuy[historyBuy.length - 1] - historyBuy[historyBuy.length - 2]);
+                slopeBuy = historyBuy[historyBuy.length - 1] - historyBuy[historyBuy.length - 2];
+                slopeSell = historySell[historySell.length - 1] - historySell[historySell.length - 2];
             }
 
-            let predData = Array(historyBuy.length - 1).fill(null);
-            let chanSupData = Array(historyBuy.length - 1).fill(null);
-            let chanInfData = Array(historyBuy.length - 1).fill(null);
+            let predBuy = Array(historyBuy.length - 1).fill(null);
+            let predSell = Array(historyBuy.length - 1).fill(null);
+            let supBand = Array(historyBuy.length - 1).fill(null);
+            let infBand = Array(historyBuy.length - 1).fill(null);
 
-            // Punto de acople
-            predData.push(lastBuy);
-            chanSupData.push(lastBuy);
-            chanInfData.push(lastBuy);
+            // Anclaje al presente
+            predBuy.push(lastBuy);
+            predSell.push(lastSell);
+            supBand.push(lastSell);
+            infBand.push(lastBuy);
 
-            // Proyección del Bot
-            let proj1 = lastBuy + (slope * 0.8) + 0.2;
-            let proj2 = proj1 + (slope * 0.5) + 0.3;
+            // Pasos futuros (+15s y +30s)
+            let futBuy1 = lastBuy + (slopeBuy * 0.8);
+            let futBuy2 = futBuy1 + (slopeBuy * 0.5);
 
-            predData.push(proj1, proj2);
-            chanSupData.push(proj1 + 0.8, proj2 + 1.5);
-            chanInfData.push(proj1 - 0.8, proj2 - 1.5);
+            let futSell1 = lastSell + (slopeSell * 0.8);
+            let futSell2 = futSell1 + (slopeSell * 0.5);
+
+            predBuy.push(futBuy1, futBuy2);
+            predSell.push(futSell1, futSell2);
+
+            // La sombra de predicción abarca el rango completo entre Compra y Venta
+            supBand.push(futSell1 + 0.6, futSell2 + 1.2);
+            infBand.push(futBuy1 - 0.6, futBuy2 - 1.2);
 
             chart.data.labels = labels;
-            chart.data.datasets[0].data = buyDataPlot;
-            chart.data.datasets[1].data = sellDataPlot;
-            chart.data.datasets[2].data = predData;
-            chart.data.datasets[3].data = chanSupData;
-            chart.data.datasets[4].data = chanInfData;
+            chart.data.datasets[0].data = buyPlot;
+            chart.data.datasets[1].data = sellPlot;
+            chart.data.datasets[2].data = predBuy;
+            chart.data.datasets[3].data = predSell;
+            chart.data.datasets[4].data = supBand;
+            chart.data.datasets[5].data = infBand;
 
             chart.update();
-
-            renderTable('buyT', [
-                { pos: "TOP 1", name: "Anuncio_TuEntrada", price: precioCompra },
-                { pos: "TOP 2", name: "Orden_Mercado_1", price: precioCompra * 1.002 },
-                { pos: "TOP 3", name: "Orden_Mercado_2", price: precioCompra * 1.004 }
-            ], 'buy');
-
-            renderTable('sellT', [
-                { pos: "TOP 1", name: "Anuncio_TuSalida", price: precioVenta },
-                { pos: "TOP 2", name: "Orden_Mercado_1", price: precioVenta * 0.998 },
-                { pos: "TOP 3", name: "Orden_Mercado_2", price: precioVenta * 0.996 }
-            ], 'sell');
 
         } catch (e) {
             console.error(e);
         }
-    }
-
-    function renderTable(id, items, type) {
-        const badgeClass = type === 'buy' ? 'rank-buy' : 'rank-sell';
-        document.getElementById(id).innerHTML = items.map(i => 
-            `<tr>
-                <td><span class="rank-tag ${badgeClass}">${i.pos}</span></td>
-                <td>${i.name}</td>
-                <td class="price-text">${i.price.toFixed(2)} Bs</td>
-            </tr>`
-        ).join('');
     }
 
     loadData();
