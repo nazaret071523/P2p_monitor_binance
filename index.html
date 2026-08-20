@@ -28,14 +28,13 @@
         /* Panel del Bot Inteligente */
         .bot-panel { background: rgba(240, 185, 11, 0.05); border: 1px solid var(--accent-gold); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
         .bot-info { display: flex; flex-direction: column; }
-        .bot-title { font-size: 0.65rem; color: var(--accent-gold); font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
-        .bot-status { font-size: 0.75rem; color: #fff; font-weight: 600; margin-top: 2px; }
-        .bot-signal { font-family: var(--mono-font); font-weight: 800; font-size: 0.85rem; padding: 6px 12px; border-radius: 6px; text-transform: uppercase; }
+        .bot-title { font-size: 0.65rem; color: var(--accent-gold); font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; }
+        .bot-status { font-size: 0.72rem; color: #fff; font-weight: 600; margin-top: 2px; }
+        .bot-signal { font-family: var(--mono-font); font-weight: 800; font-size: 0.8rem; padding: 6px 10px; border-radius: 6px; text-transform: uppercase; text-align: center; }
         .signal-buy { background: rgba(14, 203, 129, 0.2); color: var(--color-buy); border: 1px solid var(--color-buy); }
         .signal-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-sell); border: 1px solid var(--color-sell); }
         .signal-wait { background: rgba(132, 142, 156, 0.2); color: var(--text-secondary); border: 1px solid var(--text-secondary); }
 
-        /* Controles de Tiempo y Banco */
         .bank-selector-container { margin-bottom: 8px; }
         .bank-select { width: 100%; background: var(--card-bg); border: 1px solid var(--card-border); color: #fff; padding: 8px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; outline: none; }
 
@@ -43,19 +42,22 @@
         .tf-btn { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 6px 0; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; text-align: center; }
         .tf-btn.active { background: var(--accent-gold); color: #000; border-color: var(--accent-gold); }
 
+        /* Metricas Niveles Piso y Techo */
+        .levels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .level-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
+        .level-box.floor { border-left: 3px solid var(--color-buy); }
+        .level-box.roof { border-left: 3px solid var(--color-sell); }
+        .level-title { font-size: 0.6rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; }
+        .level-val { font-family: var(--mono-font); font-size: 0.8rem; font-weight: 700; }
+
         .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 4px; text-align: center; position: relative; }
+        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 4px; text-align: center; }
         .kpi-label { font-size: 0.58rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
         .kpi-value { font-family: var(--mono-font); font-size: 0.85rem; font-weight: 700; }
 
-        /* Indicadores Mercado */
-        .indicators-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-        .ind-box { background: var(--card-bg); border: 1px solid var(--card-border); padding: 8px 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-        .ind-title { font-size: 0.65rem; color: var(--text-secondary); font-weight: 700; }
-        .ind-val { font-family: var(--mono-font); font-weight: 700; font-size: 0.75rem; }
-
-        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 320px; position: relative; }
+        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 330px; position: relative; }
         .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
+        .legend-tag { font-size: 0.55rem; padding: 2px 5px; border-radius: 3px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -65,11 +67,11 @@
         <div style="font-size: 0.65rem; color: var(--text-secondary); font-weight: bold;">SISTEMA INTELIGENTE</div>
     </div>
 
-    <!-- Bot de Recomendación -->
+    <!-- Bot de Recomendación con Alerta de 1 Hora -->
     <div class="bot-panel">
         <div class="bot-info">
-            <span class="bot-title">🤖 BOT ASESOR DE TRADING</span>
-            <span class="bot-status" id="botReason">Analizando estructura de mercado...</span>
+            <span class="bot-title">🤖 ASESOR P2P (RANGO 1 HORA)</span>
+            <span class="bot-status" id="botReason">Procesando señales de mercado a corto plazo...</span>
         </div>
         <div class="bot-signal signal-wait" id="botSignal">ESPERAR</div>
     </div>
@@ -85,21 +87,21 @@
         </select>
     </div>
 
-    <!-- Filtro de Temporalidad Histórica -->
     <div class="timeframe-bar">
         <button class="tf-btn" id="tf-1h" onclick="setTimeframe('1h')">1 Hora</button>
         <button class="tf-btn active" id="tf-24h" onclick="setTimeframe('24h')">24 Horas</button>
         <button class="tf-btn" id="tf-7d" onclick="setTimeframe('7d')">7 Días</button>
     </div>
 
-    <div class="indicators-bar">
-        <div class="ind-box">
-            <span class="ind-title">TENDENCIA:</span>
-            <span class="ind-val" id="trendVal" style="color: var(--accent-gold);">NEUTRA</span>
+    <!-- Indicadores de Piso y Techo -->
+    <div class="levels-grid">
+        <div class="level-box floor">
+            <span class="level-title">PISO (SOPORTE):</span>
+            <span class="level-val" id="floorVal" style="color: var(--color-buy);">--.--</span>
         </div>
-        <div class="ind-box">
-            <span class="ind-title">RSI (14):</span>
-            <span class="ind-val" id="rsiVal">50.0</span>
+        <div class="level-box roof">
+            <span class="level-title">TECHO (RESIS.):</span>
+            <span class="level-val" id="roofVal" style="color: var(--color-sell);">--.--</span>
         </div>
     </div>
 
@@ -120,8 +122,11 @@
 
     <div class="chart-container">
         <div class="chart-header">
-            <span id="chartTitle">TENDENCIA DE PRECIO (UNA LÍNEA)</span>
-            <span style="color: var(--accent-gold); font-weight: bold;">─ TASA MERCADO</span>
+            <span>TENDENCIA Y NIVELES TÉCNICOS</span>
+            <div>
+                <span class="legend-tag" style="background: rgba(14, 203, 129, 0.15); color: var(--color-buy);">─ PISO</span>
+                <span class="legend-tag" style="background: rgba(246, 70, 93, 0.15); color: var(--color-sell);">─ TECHO</span>
+            </div>
         </div>
         <canvas id="chart"></canvas>
     </div>
@@ -131,18 +136,16 @@
     let currentTF = '24h';
     const bankSpreads = { banesco: 0.012, mercantil: 0.015, bdv: 0.009, bnc: 0.013, tesoro: 0.016, provincial: 0.011 };
 
-    // Generador de datos históricos ficticios pero con comportamiento realista
     function generateHistoricalData(tf) {
         let points = tf === '1h' ? 12 : (tf === '24h' ? 24 : 14);
         let base = 907.50;
         let labels = [];
         let prices = [];
-
         let now = new Date();
 
         for (let i = points; i >= 0; i--) {
             let timeLabel = "";
-            let variation = (Math.random() - 0.47) * 1.8;
+            let variation = (Math.random() - 0.47) * (tf === '1h' ? 0.8 : 1.8);
             base += variation;
 
             if (tf === '1h') {
@@ -164,23 +167,40 @@
 
     const ctx = document.getElementById('chart').getContext('2d');
     
-    // Configuración de la gráfica limpia de una sola línea
     chart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
-            datasets: [{
-                label: 'Precio Referencial (Bs)',
-                data: [],
-                borderColor: '#f0b90b',
-                borderWidth: 2.5,
-                pointRadius: 2,
-                pointHoverRadius: 5,
-                pointBackgroundColor: '#f0b90b',
-                fill: true,
-                backgroundColor: 'rgba(240, 185, 11, 0.05)',
-                tension: 0.25
-            }]
+            datasets: [
+                {
+                    label: 'Precio Referencial',
+                    data: [],
+                    borderColor: '#f0b90b',
+                    borderWidth: 2.5,
+                    pointRadius: 2,
+                    pointBackgroundColor: '#f0b90b',
+                    fill: false,
+                    tension: 0.2
+                },
+                {
+                    label: 'Piso (Soporte)',
+                    data: [],
+                    borderColor: '#0ecb81',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false
+                },
+                {
+                    label: 'Techo (Resistencia)',
+                    data: [],
+                    borderColor: '#f6465d',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false
+                }
+            ]
         },
         options: {
             responsive: true,
@@ -188,7 +208,7 @@
             plugins: { legend: { display: false } },
             scales: {
                 x: { grid: { color: '#1a1e23' }, ticks: { color: '#848e9c', font: { size: 9 } } },
-                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 9 } }, grace: '2%' }
+                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 9 } }, grace: '3%' }
             }
         }
     });
@@ -215,30 +235,16 @@
     function updateMarketData() {
         const dataset = generateHistoricalData(currentTF);
         const prices = dataset.prices;
+        
+        // Cálculo de Piso y Techo dinámicos
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+
+        document.getElementById('floorVal').innerText = `${minPrice.toFixed(2)} Bs`;
+        document.getElementById('roofVal').innerText = `${maxPrice.toFixed(2)} Bs`;
+
+        // Datos del Banco
         const lastPrice = prices[prices.length - 1];
-        const firstPrice = prices[0];
-
-        // Cálculo de Tendencia
-        const diff = lastPrice - firstPrice;
-        let trend = "LATERAL";
-        let trendColor = "var(--accent-gold)";
-
-        if (diff > 0.8) {
-            trend = "ALCISTA 🟢";
-            trendColor = "var(--color-buy)";
-        } else if (diff < -0.8) {
-            trend = "BAJISTA 🔴";
-            trendColor = "var(--color-sell)";
-        }
-
-        document.getElementById('trendVal').innerText = trend;
-        document.getElementById('trendVal').style.color = trendColor;
-
-        // Cálculo de RSI
-        const rsi = calculateRSI(prices);
-        document.getElementById('rsiVal').innerText = rsi;
-
-        // Precios por Banco
         const bankKey = document.getElementById('bankSelect').value;
         const spreadRatio = bankSpreads[bankKey] || 0.012;
         const precioCompra = lastPrice;
@@ -249,27 +255,38 @@
         document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
         document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} Bs`;
 
-        // Lógica del Bot Inteligente
+        // Generación de Datos de 1 Hora Exclusivos para la Alerta
+        const hourlyData = generateHistoricalData('1h');
+        const hPrices = hourlyData.prices;
+        const hRSI = calculateRSI(hPrices);
+        const hDiff = hPrices[hPrices.length - 1] - hPrices[0];
+
+        // Lógica del Bot (Evaluación a 1 Hora)
         const botSignal = document.getElementById('botSignal');
         const botReason = document.getElementById('botReason');
 
-        if (rsi < 40 && diff >= 0) {
+        if (hRSI < 42 && hDiff >= -0.2) {
             botSignal.className = "bot-signal signal-buy";
             botSignal.innerText = "ENTRAR (COMPRAR)";
-            botReason.innerText = "Mercado en suelo con probabilidad de rebote alto.";
-        } else if (rsi > 65 || diff < -1.5) {
+            botReason.innerText = "Última hora: Rebote en zona de piso clave.";
+        } else if (hRSI > 60 || hDiff < -0.8) {
             botSignal.className = "bot-signal signal-sell";
             botSignal.innerText = "SALIR (VENDER)";
-            botReason.innerText = "Precio sobrecalentado o tendencia a la baja.";
+            botReason.innerText = "Última hora: Presión bajista detectada.";
         } else {
             botSignal.className = "bot-signal signal-wait";
             botSignal.innerText = "ESPERAR";
-            botReason.innerText = "Mercado estable. Sin señales de entrada clara.";
+            botReason.innerText = "Última hora: Rango lateral sin volumen suficiente.";
         }
 
-        // Renderizar Gráfica
+        // Renderizar Gráfica con Líneas de Piso y Techo
+        const floorLine = Array(prices.length).fill(minPrice);
+        const roofLine = Array(prices.length).fill(maxPrice);
+
         chart.data.labels = dataset.labels;
         chart.data.datasets[0].data = prices;
+        chart.data.datasets[1].data = floorLine;
+        chart.data.datasets[2].data = roofLine;
         chart.update();
     }
 
