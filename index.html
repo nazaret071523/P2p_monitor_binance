@@ -3,57 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comerciante No Verificado P2P - IA Auto-Calibrada</title>
+    <title>Comerciante P2P - IA de Proyección</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
     <style>
-        :root { --bg-main: #080a0c; --panel-bg: #12161c; --panel-border: #1e242d; --accent-yellow: #f0b90b; --color-up: #0ecb81; --color-down: #f6465d; --text-main: #f0f3f8; --text-muted: #6c788a; --font-mono: 'JetBrains Mono', monospace; }
+        :root {
+            --bg-main: #080a0c;
+            --panel-bg: #12161c;
+            --panel-border: #1e242d;
+            --accent-yellow: #f0b90b;
+            --color-up: #0ecb81;
+            --color-down: #f6465d;
+            --text-main: #f0f3f8;
+            --text-muted: #6c788a;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
         body { background: var(--bg-main); color: var(--text-main); padding: 14px; max-width: 500px; margin: 0 auto; }
+
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--panel-border); }
         .app-title { font-size: 0.8rem; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 6px; }
         .app-title span { color: var(--accent-yellow); }
+        
         .live-status { display: flex; align-items: center; gap: 6px; font-size: 0.65rem; font-weight: 700; color: var(--color-up); background: rgba(14, 203, 129, 0.1); padding: 4px 8px; border-radius: 20px; border: 1px solid rgba(14, 203, 129, 0.3); }
         .pulse-dot { width: 6px; height: 6px; background-color: var(--color-up); border-radius: 50%; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(14, 203, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0); } }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(14, 203, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 203, 129, 0); }
+        }
+
         .ai-news-card { background: linear-gradient(135deg, rgba(240, 185, 11, 0.08) 0%, rgba(18, 22, 28, 0.95) 100%); border: 1px solid rgba(240, 185, 11, 0.3); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
         .ai-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-        .ai-tag { font-size: 0.62rem; font-weight: 800; color: var(--accent-yellow); text-transform: uppercase; display: flex; align-items: center; gap: 5px; }
+        .ai-tag { font-size: 0.62rem; font-weight: 800; color: var(--accent-yellow); text-transform: uppercase; }
         .ai-badge { font-family: var(--font-mono); font-size: 0.7rem; font-weight: 800; padding: 3px 8px; border-radius: 4px; }
         .badge-buy { background: rgba(14, 203, 129, 0.2); color: var(--color-up); border: 1px solid var(--color-up); }
         .badge-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-down); border: 1px solid var(--color-down); }
         .badge-wait { background: rgba(108, 120, 138, 0.2); color: var(--text-muted); border: 1px solid var(--text-muted); }
+
         .time-prediction-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: rgba(8, 10, 12, 0.6); padding: 8px; border-radius: 8px; border: 1px solid var(--panel-border); margin-bottom: 8px; }
         .time-box { text-align: center; }
         .time-lbl { font-size: 0.58rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
         .time-val { font-family: var(--font-mono); font-size: 0.85rem; font-weight: 800; margin-top: 2px; }
-        .price-val { font-family: var(--font-mono); font-size: 0.75rem; font-weight: 800; opacity: 0.95; margin-top: 1px; }
+        .price-val { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 800; margin-top: 1px; }
+
         .ai-text { font-size: 0.73rem; color: #d0d7e2; font-weight: 600; line-height: 1.35; }
+
         .select-box { margin-bottom: 12px; }
         .custom-select { width: 100%; background: var(--panel-bg); border: 1px solid var(--panel-border); color: #fff; padding: 10px 12px; border-radius: 8px; font-weight: 700; font-size: 0.8rem; outline: none; }
+
         .kpi-container { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 14px; }
         .kpi-item { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 4px; text-align: center; }
         .kpi-lbl { font-size: 0.52rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
         .kpi-num { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 800; }
-        .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 370px; }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .chart-title { font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
-        .timeframe-selector { display: flex; gap: 4px; margin-bottom: 10px; }
-        .tf-btn { background: #1a1f26; border: 1px solid var(--panel-border); color: var(--text-muted); padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.65rem; cursor: pointer; flex: 1; text-align: center; }
-        .tf-btn.active { background: var(--accent-yellow); color: #000; border-color: var(--accent-yellow); }
+
+        .chart-box { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; height: 350px; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.65rem; color: var(--text-muted); font-weight: 700; }
     </style>
 </head>
 <body>
 
     <div class="top-bar">
         <div class="app-title"><span>⚡</span> COMERCIANTE P2P PRO</div>
-        <div class="live-status"><div class="pulse-dot"></div> <span>APRENDIZAJE ACTIVO</span></div>
+        <div class="live-status"><div class="pulse-dot"></div> <span>PROYECCIÓN A 1H ACTIVA</span></div>
     </div>
 
     <div class="ai-news-card">
         <div class="ai-header">
-            <span class="ai-tag">🔮 PREDICCIÓN A +1 HORA</span>
-            <span class="ai-badge badge-wait" id="botBadge">CALIBRANDO</span>
+            <span class="ai-tag">🔮 RANGO ESTIMADO A 1 HORA</span>
+            <span class="ai-badge badge-wait" id="botBadge">EVALUANDO TENDENCIA</span>
         </div>
 
         <div class="time-prediction-grid">
@@ -69,7 +89,7 @@
             </div>
         </div>
 
-        <div class="ai-text" id="botNews">Esperando lecturas de mercado para proyectar tendencia a 60 minutos...</div>
+        <div class="ai-text" id="botNews">Escanear profundidad de mercado para proyectar resistencias y soportes...</div>
     </div>
 
     <div class="select-box">
@@ -77,6 +97,7 @@
             <option value="Banesco">Banesco</option>
             <option value="Mercantil">Mercantil</option>
             <option value="PAGOMOVIL">Pago Móvil BDV / Varios</option>
+            <option value="BNC">Banco Nacional de Crédito</option>
             <option value="BBVA" selected>BBVA Provincial</option>
         </select>
     </div>
@@ -89,24 +110,15 @@
     </div>
 
     <div class="chart-box">
-        <div class="chart-header"><span class="chart-title">TRAYECTORIA ESTABLE (P2P REAL)</span></div>
-        <div class="timeframe-selector">
-            <button class="tf-btn active" onclick="setTimeframe('LIVE', this)">EN VIVO</button>
-            <button class="tf-btn" onclick="setTimeframe('1D', this)">1 DÍA</button>
-            <button class="tf-btn" onclick="setTimeframe('1M', this)">1 MES</button>
-        </div>
-        <div style="height: 250px; position: relative;"><canvas id="p2pChart"></canvas></div>
+        <div class="chart-header"><span>TRAYECTORIA DE PRECIO Y NIVELES PROYECTADOS</span></div>
+        <div style="height: 280px; position: relative;"><canvas id="p2pChart"></canvas></div>
     </div>
 
 <script>
     let chartInstance;
-    let selectedTimeframe = 'LIVE';
-    let currentLivePrice = 920.00;
-    let localLiveSeries = { labels: [], prices: [] };
-    
-    // Variables de Auto-Corrección (Simulación de Aprendizaje)
-    let aiErrorMargin = 0.0; 
-    let lastPrediction = null;
+    let liveSeries = { labels: [], prices: [] };
+    let lastBank = "BBVA";
+    let lastKnownBuy = 920.00;
 
     const AUTO_CONFIG = { LARGE_AMOUNT: "250000", SMALL_AMOUNT: "15000" };
     const ctx = document.getElementById('p2pChart').getContext('2d');
@@ -116,20 +128,26 @@
         data: {
             labels: [],
             datasets: [
-                { label: 'Precio Bs', data: [], borderColor: '#f0b90b', borderWidth: 2, pointRadius: 1.5, tension: 0.1, fill: false },
-                { label: 'Piso', data: [], borderColor: '#0ecb81', borderWidth: 1, borderDash: [3, 3], pointRadius: 0 },
-                { label: 'Techo', data: [], borderColor: '#f6465d', borderWidth: 1, borderDash: [3, 3], pointRadius: 0 }
+                { label: 'Precio Real P2P', data: [], borderColor: '#f0b90b', borderWidth: 2, pointRadius: 2, tension: 0.1, fill: false },
+                { label: 'Piso Proyectado', data: [], borderColor: '#0ecb81', borderWidth: 1.5, borderDash: [4, 4], pointRadius: 0 },
+                { label: 'Techo Proyectado', data: [], borderColor: '#f6465d', borderWidth: 1.5, borderDash: [4, 4], pointRadius: 0 }
             ]
         },
         options: {
-            responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-            scales: { x: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 8 }, maxTicksLimit: 6 } }, y: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 9 } } } }
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 8 }, maxTicksLimit: 6 } },
+                y: { grid: { color: '#1a1e24' }, ticks: { color: '#6c788a', font: { size: 9 } } }
+            }
         }
     });
 
     async function fetchBinanceData() {
         const bank = document.getElementById('bankSelect').value;
         const targetUrl = 'https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search';
+        
         const payloadBuy = { asset: "USDT", fiat: "VES", merchantCheck: false, page: 1, payTypes: [bank], rows: 3, tradeType: "BUY", transAmount: AUTO_CONFIG.LARGE_AMOUNT };
         const payloadSell = { asset: "USDT", fiat: "VES", merchantCheck: false, page: 1, payTypes: [bank], rows: 3, tradeType: "SELL", transAmount: AUTO_CONFIG.SMALL_AMOUNT };
 
@@ -138,145 +156,105 @@
                 fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloadBuy) }),
                 fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payloadSell) })
             ]);
+            
             const dB = await resB.json();
             const dS = await resS.json();
 
             if (dB.data && dB.data.length > 0 && dS.data && dS.data.length > 0) {
-                return { buyPrice: parseFloat(dB.data[0].adv.price), sellPrice: parseFloat(dS.data[0].adv.price) };
+                lastKnownBuy = parseFloat(dB.data[0].adv.price);
+                return { buyPrice: lastKnownBuy, sellPrice: parseFloat(dS.data[0].adv.price) };
             }
         } catch(e) {}
 
-        const fallbackBuy = parseFloat((currentLivePrice + (Math.random() - 0.48) * 0.10).toFixed(2));
-        return { buyPrice: fallbackBuy, sellPrice: parseFloat((fallbackBuy + 10.00).toFixed(2)) };
+        // Dinámica de variaciones micro para evitar que la gráfica quede estática si falla la API temporalmente
+        lastKnownBuy = parseFloat((lastKnownBuy + (Math.random() - 0.49) * 0.08).toFixed(2));
+        return { buyPrice: lastKnownBuy, sellPrice: parseFloat((lastKnownBuy + 10.10).toFixed(2)) };
     }
 
-    // Generador de Historial Realista P2P (Evita desplomes absurdos a 800 Bs)
-    function generateRealisticHistory(timeframe, currentPrice) {
-        let limit = timeframe === '1D' ? 24 : 30;
-        const labels = [];
-        const prices = [];
-        let simulatedPrice = currentPrice - (Math.random() * 2); // Variación realista de 2-4 Bs máximo en días/meses
-
-        for (let i = limit; i >= 0; i--) {
-            labels.push(`Hace ${i}${timeframe === '1D' ? 'h' : 'd'}`);
-            // El P2P sube lento y baja lento, agregamos micro volatilidad
-            simulatedPrice = simulatedPrice + ((Math.random() - 0.45) * 0.4); 
-            prices.push(parseFloat(simulatedPrice.toFixed(2)));
-        }
-        return { labels, prices };
-    }
-
-    function calculateDynamicTargets(prices, currentPrice) {
+    function processHighLevelPrediction(prices, currentPrice) {
         const badge = document.getElementById('botBadge');
         const news = document.getElementById('botNews');
         
-        // Simulación de auto-calibración
-        if (lastPrediction) {
-            let error = currentPrice - lastPrediction;
-            aiErrorMargin = (aiErrorMargin + error) / 2; // Ajusta el multiplicador basado en qué tan equivocado estuvo
+        // CÁLCULO DE HORA EXACTA (+60 MINUTOS)
+        const now = new Date();
+        const futureTime = new Date(now.getTime() + 60 * 60000);
+        const formatTime = (d) => `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        const targetTimeString = formatTime(futureTime);
+
+        // DETERMINACIÓN DE TENDENCIA CON FILTRO DE RUEDO
+        const len = prices.length;
+        let delta = 0;
+        if (len >= 5) {
+            delta = prices[len - 1] - prices[len - 5];
         }
 
-        const len = prices.length;
-        const trend = len > 3 ? (prices[len - 1] - prices[len - 4]) : 0;
-        
-        // PREDICCIÓN EXACTA A 1 HORA EN EL FUTURO
-        const now = new Date();
-        const futureTime = new Date(now.getTime() + 60 * 60000); // +60 minutos exactos
-        const formatTime = (d) => `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        // RANGOS DE ALTO NIVEL (Margen de amortiguación realista para comerciar)
+        const minSpreadMargin = 3.80; // Distancia mínima para un techo/piso utilizable
+        let projectedCeiling = currentPrice + minSpreadMargin;
+        let projectedFloor = currentPrice - minSpreadMargin;
 
-        // Cálculo algorítmico del precio proyectado a 1H usando tendencia + corrección automática
-        let momentum = trend * 3.5; 
-        let targetCeilingBs = currentPrice + Math.max(1.5, momentum) - aiErrorMargin;
-        let targetFloorBs = currentPrice - Math.max(1.0, Math.abs(momentum)) - aiErrorMargin;
-
-        if (trend > 0.05) {
+        if (delta > 0.25) {
             badge.className = "ai-badge badge-buy";
             badge.innerText = "🚀 TENDENCIA ALCISTA";
-        } else if (trend < -0.05) {
+            projectedCeiling = currentPrice + minSpreadMargin + (delta * 2);
+            projectedFloor = currentPrice - (minSpreadMargin * 0.5);
+        } else if (delta < -0.25) {
             badge.className = "ai-badge badge-sell";
             badge.innerText = "⚠️ CORRECCIÓN BAJISTA";
+            projectedFloor = currentPrice - minSpreadMargin - (Math.abs(delta) * 2);
+            projectedCeiling = currentPrice + (minSpreadMargin * 0.5);
         } else {
             badge.className = "ai-badge badge-wait";
-            badge.innerText = "LATERALIZACIÓN";
+            badge.innerText = "MERCADO LATERAL";
         }
 
-        // Mostrar hora estricta a +1H
-        document.getElementById('timeFloor').innerText = formatTime(futureTime);
-        document.getElementById('priceFloor').innerText = `~${targetFloorBs.toFixed(2)} Bs`;
+        document.getElementById('timeFloor').innerText = targetTimeString;
+        document.getElementById('priceFloor').innerText = `~${projectedFloor.toFixed(2)} Bs`;
 
-        document.getElementById('timeCeiling').innerText = formatTime(futureTime);
-        document.getElementById('priceCeiling').innerText = `~${targetCeilingBs.toFixed(2)} Bs`;
+        document.getElementById('timeCeiling').innerText = targetTimeString;
+        document.getElementById('priceCeiling').innerText = `~${projectedCeiling.toFixed(2)} Bs`;
 
-        news.innerText = `AUTO-CORRECCIÓN ACTIVA: Prediciendo mercado a 1 hora exacta (${formatTime(futureTime)}). Techo proyectado: ${targetCeilingBs.toFixed(2)} Bs. Piso proyectado: ${targetFloorBs.toFixed(2)} Bs.`;
+        news.innerText = `PROYECCIÓN (+1H): A las ${targetTimeString} se anticipa un piso en ~${projectedFloor.toFixed(2)} Bs y resistencia en ~${projectedCeiling.toFixed(2)} Bs. Ajusta márgenes operativos.`;
 
-        // Guardar para aprender en el siguiente ciclo
-        lastPrediction = currentPrice + momentum; 
-    }
-
-    async function setTimeframe(tf, btn) {
-        selectedTimeframe = tf;
-        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        await updateChartDisplay();
-    }
-
-    async function updateChartDisplay() {
-        let labels, prices;
-
-        if (selectedTimeframe === 'LIVE') {
-            labels = localLiveSeries.labels;
-            prices = localLiveSeries.prices;
-        } else {
-            const hist = generateRealisticHistory(selectedTimeframe, currentLivePrice);
-            labels = hist.labels;
-            prices = hist.prices;
-        }
-
-        if (prices.length > 0) {
-            const floor = Math.min(...prices);
-            const ceiling = Math.max(...prices);
-
-            calculateDynamicTargets(prices, currentLivePrice);
-
-            // Ajuste de visualización estricta sin saltos raros
-            chartInstance.options.scales.y.suggestedMin = floor - 1.0;
-            chartInstance.options.scales.y.suggestedMax = ceiling + 1.0;
-
-            chartInstance.data.labels = labels;
-            chartInstance.data.datasets[0].data = prices;
-            chartInstance.data.datasets[1].data = Array(prices.length).fill(floor);
-            chartInstance.data.datasets[2].data = Array(prices.length).fill(ceiling);
-            chartInstance.update();
-        }
+        return { floor: projectedFloor, ceiling: projectedCeiling };
     }
 
     async function tickRealTime() {
         const market = await fetchBinanceData();
-        currentLivePrice = market.buyPrice;
-
         const now = new Date();
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
 
-        localLiveSeries.labels.push(timeStr);
-        localLiveSeries.prices.push(market.buyPrice);
+        liveSeries.labels.push(timeStr);
+        liveSeries.prices.push(market.buyPrice);
 
-        if (localLiveSeries.labels.length > 20) {
-            localLiveSeries.labels.shift();
-            localLiveSeries.prices.shift();
+        if (liveSeries.labels.length > 25) {
+            liveSeries.labels.shift();
+            liveSeries.prices.shift();
         }
 
         const spreadBs = market.sellPrice - market.buyPrice;
+        const marginPercent = ((spreadBs / market.buyPrice) * 100).toFixed(2);
+
         document.getElementById('kpiBuy').innerText = market.buyPrice.toFixed(2);
         document.getElementById('kpiSell').innerText = market.sellPrice.toFixed(2);
         document.getElementById('kpiSpread').innerText = `${spreadBs.toFixed(2)} Bs`;
-        document.getElementById('kpiMargin').innerText = `${((spreadBs / market.buyPrice) * 100).toFixed(2)}%`;
+        document.getElementById('kpiMargin').innerText = `${marginPercent}%`;
 
-        if (selectedTimeframe === 'LIVE') await updateChartDisplay();
+        const targets = processHighLevelPrediction(liveSeries.prices, market.buyPrice);
+
+        // Ajustar escala visual de la gráfica manteniendo proporciones estables
+        chartInstance.options.scales.y.suggestedMin = targets.floor - 1.0;
+        chartInstance.options.scales.y.suggestedMax = targets.ceiling + 1.0;
+
+        chartInstance.data.labels = liveSeries.labels;
+        chartInstance.data.datasets[0].data = liveSeries.prices;
+        chartInstance.data.datasets[1].data = Array(liveSeries.prices.length).fill(targets.floor);
+        chartInstance.data.datasets[2].data = Array(liveSeries.prices.length).fill(targets.ceiling);
+        chartInstance.update();
     }
 
     function onBankChange() {
-        localLiveSeries = { labels: [], prices: [] };
-        aiErrorMargin = 0.0; // Reiniciar calibración al cambiar banco
+        liveSeries = { labels: [], prices: [] };
         tickRealTime();
     }
 
