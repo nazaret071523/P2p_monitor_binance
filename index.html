@@ -20,44 +20,44 @@
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
-        body { background: var(--bg-dark); color: var(--text-primary); padding: 12px; }
+        body { background: var(--bg-dark); color: var(--text-primary); padding: 16px 12px 24px 12px; }
 
-        .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--card-border); }
+        .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); }
         .brand { font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px; color: var(--accent-gold); text-transform: uppercase; }
         
         /* Panel del Bot Inteligente */
-        .bot-panel { background: rgba(240, 185, 11, 0.05); border: 1px solid var(--accent-gold); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
-        .bot-info { display: flex; flex-direction: column; }
-        .bot-title { font-size: 0.65rem; color: var(--accent-gold); font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; }
-        .bot-status { font-size: 0.72rem; color: #fff; font-weight: 600; margin-top: 2px; }
-        .bot-signal { font-family: var(--mono-font); font-weight: 800; font-size: 0.8rem; padding: 6px 10px; border-radius: 6px; text-transform: uppercase; text-align: center; }
+        .bot-panel { background: rgba(240, 185, 11, 0.05); border: 1px solid var(--accent-gold); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .bot-info { display: flex; flex-direction: column; flex: 1; }
+        .bot-title { font-size: 0.65rem; color: var(--accent-gold); font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+        .bot-status { font-size: 0.72rem; color: #fff; font-weight: 600; line-height: 1.2; }
+        .bot-signal { font-family: var(--mono-font); font-weight: 800; font-size: 0.78rem; padding: 8px 10px; border-radius: 6px; text-transform: uppercase; text-align: center; white-space: nowrap; }
         .signal-buy { background: rgba(14, 203, 129, 0.2); color: var(--color-buy); border: 1px solid var(--color-buy); }
         .signal-sell { background: rgba(246, 70, 93, 0.2); color: var(--color-sell); border: 1px solid var(--color-sell); }
         .signal-wait { background: rgba(132, 142, 156, 0.2); color: var(--text-secondary); border: 1px solid var(--text-secondary); }
 
-        .bank-selector-container { margin-bottom: 8px; }
-        .bank-select { width: 100%; background: var(--card-bg); border: 1px solid var(--card-border); color: #fff; padding: 8px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; outline: none; }
+        .bank-selector-container { margin-bottom: 14px; }
+        .bank-select { width: 100%; background: var(--card-bg); border: 1px solid var(--card-border); color: #fff; padding: 10px 12px; border-radius: 8px; font-weight: 700; font-size: 0.82rem; outline: none; }
 
-        .timeframe-bar { display: flex; gap: 6px; margin-bottom: 10px; }
-        .tf-btn { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 6px 0; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; text-align: center; }
+        .timeframe-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+        .tf-btn { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 8px 0; border-radius: 6px; font-size: 0.72rem; font-weight: 700; cursor: pointer; text-align: center; }
         .tf-btn.active { background: var(--accent-gold); color: #000; border-color: var(--accent-gold); }
 
         /* Metricas Niveles Piso y Techo */
-        .levels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-        .level-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
+        .levels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+        .level-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; }
         .level-box.floor { border-left: 3px solid var(--color-buy); }
         .level-box.roof { border-left: 3px solid var(--color-sell); }
         .level-title { font-size: 0.6rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; }
-        .level-val { font-family: var(--mono-font); font-size: 0.8rem; font-weight: 700; }
+        .level-val { font-family: var(--mono-font); font-size: 0.82rem; font-weight: 700; }
 
-        .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 4px; text-align: center; }
-        .kpi-label { font-size: 0.58rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
-        .kpi-value { font-family: var(--mono-font); font-size: 0.85rem; font-weight: 700; }
+        .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+        .kpi-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 10px 6px; text-align: center; }
+        .kpi-label { font-size: 0.58rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
+        .kpi-value { font-family: var(--mono-font); font-size: 0.82rem; font-weight: 700; }
 
-        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 12px; height: 330px; position: relative; }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
-        .legend-tag { font-size: 0.55rem; padding: 2px 5px; border-radius: 3px; font-weight: bold; }
+        .chart-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 14px; height: 340px; position: relative; }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; }
+        .legend-tag { font-size: 0.55rem; padding: 3px 6px; border-radius: 4px; font-weight: bold; margin-left: 4px; }
     </style>
 </head>
 <body>
@@ -77,7 +77,7 @@
     </div>
 
     <div class="bank-selector-container">
-        <select id="bankSelect" class="bank-select" onchange="updateMarketData()">
+        <select id="bankSelect" class="bank-select" onchange="onBankSelectChange()">
             <option value="banesco">Banesco (Spread ~1.2%)</option>
             <option value="mercantil">Mercantil (Spread ~1.5%)</option>
             <option value="bdv">Banco de Venezuela (BDV) (Spread ~0.9%)</option>
@@ -213,6 +213,22 @@
         }
     });
 
+    function initSavedBank() {
+        const savedBank = localStorage.getItem('selectedP2PBank');
+        if (savedBank) {
+            const select = document.getElementById('bankSelect');
+            if (select.querySelector(`option[value="${savedBank}"]`)) {
+                select.value = savedBank;
+            }
+        }
+    }
+
+    function onBankSelectChange() {
+        const selectedValue = document.getElementById('bankSelect').value;
+        localStorage.setItem('selectedP2PBank', selectedValue);
+        updateMarketData();
+    }
+
     function setTimeframe(tf) {
         currentTF = tf;
         document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
@@ -236,14 +252,12 @@
         const dataset = generateHistoricalData(currentTF);
         const prices = dataset.prices;
         
-        // Cálculo de Piso y Techo dinámicos
         const minPrice = Math.min(...prices);
         const maxPrice = Math.max(...prices);
 
         document.getElementById('floorVal').innerText = `${minPrice.toFixed(2)} Bs`;
         document.getElementById('roofVal').innerText = `${maxPrice.toFixed(2)} Bs`;
 
-        // Datos del Banco
         const lastPrice = prices[prices.length - 1];
         const bankKey = document.getElementById('bankSelect').value;
         const spreadRatio = bankSpreads[bankKey] || 0.012;
@@ -255,13 +269,11 @@
         document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
         document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} Bs`;
 
-        // Generación de Datos de 1 Hora Exclusivos para la Alerta
         const hourlyData = generateHistoricalData('1h');
         const hPrices = hourlyData.prices;
         const hRSI = calculateRSI(hPrices);
         const hDiff = hPrices[hPrices.length - 1] - hPrices[0];
 
-        // Lógica del Bot (Evaluación a 1 Hora)
         const botSignal = document.getElementById('botSignal');
         const botReason = document.getElementById('botReason');
 
@@ -279,7 +291,6 @@
             botReason.innerText = "Última hora: Rango lateral sin volumen suficiente.";
         }
 
-        // Renderizar Gráfica con Líneas de Piso y Techo
         const floorLine = Array(prices.length).fill(minPrice);
         const roofLine = Array(prices.length).fill(maxPrice);
 
@@ -290,6 +301,7 @@
         chart.update();
     }
 
+    initSavedBank();
     updateMarketData();
 </script>
 </body>
