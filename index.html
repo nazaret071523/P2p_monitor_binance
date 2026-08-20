@@ -29,6 +29,11 @@
         .live-dot { width: 6px; height: 6px; background: var(--color-buy); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
+        /* Estilos del Selector de Banco */
+        .bank-selector-container { margin-bottom: 10px; }
+        .bank-label { font-size: 0.65rem; color: var(--text-secondary); font-weight: 700; margin-bottom: 4px; display: block; text-transform: uppercase; }
+        .bank-select { width: 100%; background: var(--card-bg); border: 1px solid var(--accent-gold); color: #fff; padding: 8px 10px; border-radius: 6px; font-weight: 700; font-size: 0.8rem; outline: none; cursor: pointer; }
+
         .quick-amounts { display: flex; gap: 6px; margin-bottom: 8px; }
         .chip { flex: 1; background: var(--card-bg); border: 1px solid var(--card-border); color: var(--text-secondary); padding: 5px 0; border-radius: 4px; font-size: 0.7rem; font-weight: 700; cursor: pointer; text-align: center; }
         .chip.active { background: rgba(240, 185, 11, 0.15); color: var(--accent-gold); border-color: var(--accent-gold); }
@@ -71,7 +76,19 @@
 
     <div class="header">
         <div class="brand">COMERCIANTE P2P BINANCE</div>
-        <div class="live-badge"><span class="live-dot"></span> RECOPILANDO DATOS</div>
+        <div class="live-badge"><span class="live-dot"></span> EN LÍNEA</div>
+    </div>
+
+    <!-- Filtro por Banco -->
+    <div class="bank-selector-container">
+        <span class="bank-label">Método / Banco P2P:</span>
+        <select id="bankSelect" class="bank-select" onchange="onBankChange()">
+            <option value="banesco">Banesco (Spread Promedio ~1.2%)</option>
+            <option value="mercantil">Mercantil (Spread Promedio ~1.5%)</option>
+            <option value="bdv">Banco de Venezuela (BDV) (Spread ~0.9%)</option>
+            <option value="pagomovil">Pago Móvil (Spread ~1.4%)</option>
+            <option value="provincial">BBVA Provincial (Spread ~1.1%)</option>
+        </select>
     </div>
 
     <div class="quick-amounts">
@@ -82,7 +99,7 @@
     </div>
 
     <div class="controls">
-        <button class="btn-update" onclick="loadData()">⚡ CAPTURAR DATO</button>
+        <button class="btn-update" onclick="loadData()">⚡ ACTUALIZAR</button>
         <div class="input-box">
             <span>$</span>
             <input type="number" id="capitalInput" class="calc-input" value="1000" oninput="loadData()">
@@ -99,7 +116,7 @@
             <div class="kpi-value val-sell" id="sellVal">--.--</div>
         </div>
         <div class="kpi-card spread">
-            <div class="kpi-label">Spread / ROI</div>
+            <div class="kpi-label">Brecha / Spread</div>
             <div class="kpi-value val-spread" id="spreadVal">--.--</div>
         </div>
     </div>
@@ -119,8 +136,8 @@
 
     <div class="chart-container">
         <div class="chart-header">
-            <span id="dataCounter">DATOS ACUMULADOS: 0 MUESTRAS</span>
-            <span class="pred-legend">░ ABANICO PROBABILÍSTICO</span>
+            <span id="dataCounter">TENDENCIA LIMPIA DE PRECIO</span>
+            <span class="pred-legend">░ ABANICO DE RANGO FUTURO</span>
         </div>
         <canvas id="chart"></canvas>
     </div>
@@ -129,67 +146,48 @@
     let chart;
     let baseRate = 0;
     
-    // Almacenamiento continuo de datos
+    // Configuración de brecha por banco
+    const bankSpreads = {
+        banesco: 0.012,
+        mercantil: 0.015,
+        bdv: 0.009,
+        pagomovil: 0.014,
+        provincial: 0.011
+    };
+
     let timeHistory = [];
     let buyHistory = [];
-    let sellHistory = [];
-    const maxHistoryPoints = 30; // Guarda hasta 30 minutos de historial
+    const maxHistoryPoints = 20;
 
     const ctx = document.getElementById('chart').getContext('2d');
     
+    // Gráfica simplificada de línea + sombra
     chart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
             datasets: [
                 {
-                    label: 'Compra (Entrada)',
+                    label: 'Precio de Mercado',
                     data: [],
-                    borderColor: '#0ecb81',
-                    borderWidth: 2,
-                    pointRadius: 2,
-                    pointBackgroundColor: '#0ecb81',
-                    tension: 0.15
+                    borderColor: '#f0b90b',
+                    borderWidth: 3,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#f0b90b',
+                    tension: 0.2
                 },
                 {
-                    label: 'Venta (Salida)',
+                    label: 'Techo Estival',
                     data: [],
-                    borderColor: '#f6465d',
-                    borderWidth: 2,
-                    pointRadius: 2,
-                    pointBackgroundColor: '#f6465d',
-                    tension: 0.15
-                },
-                {
-                    label: 'Proyección Compra',
-                    data: [],
-                    borderColor: '#0ecb81',
-                    borderWidth: 1.5,
-                    borderDash: [4, 4],
-                    pointRadius: 0,
-                    tension: 0.1
-                },
-                {
-                    label: 'Proyección Venta',
-                    data: [],
-                    borderColor: '#f6465d',
-                    borderWidth: 1.5,
-                    borderDash: [4, 4],
-                    pointRadius: 0,
-                    tension: 0.1
-                },
-                {
-                    label: 'Canal Superior',
-                    data: [],
-                    borderColor: 'rgba(240, 185, 11, 0.25)',
+                    borderColor: 'rgba(14, 203, 129, 0.4)',
                     borderWidth: 1,
                     pointRadius: 0,
                     fill: false
                 },
                 {
-                    label: 'Canal Inferior',
+                    label: 'Piso Estival',
                     data: [],
-                    borderColor: 'rgba(240, 185, 11, 0.25)',
+                    borderColor: 'rgba(246, 70, 93, 0.4)',
                     backgroundColor: 'rgba(240, 185, 11, 0.08)',
                     borderWidth: 1,
                     pointRadius: 0,
@@ -209,11 +207,17 @@
                 y: {
                     grid: { color: '#2b313a' },
                     ticks: { color: '#848e9c', font: { size: 9 } },
-                    grace: '5%'
+                    grace: '3%'
                 }
             }
         }
     });
+
+    function onBankChange() {
+        timeHistory = [];
+        buyHistory = [];
+        loadData();
+    }
 
     function setCapital(val, e) {
         document.getElementById('capitalInput').value = val;
@@ -222,28 +226,6 @@
             e.target.classList.add('active');
         }
         loadData();
-    }
-
-    // Algoritmo para calcular la inclinación (tendencia) según los datos acumulados
-    function calculateSlope(data) {
-        const n = data.length;
-        if (n < 2) return 0;
-        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-        for (let i = 0; i < n; i++) {
-            sumX += i;
-            sumY += data[i];
-            sumXY += i * data[i];
-            sumXX += i * i;
-        }
-        return (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-    }
-
-    // Algoritmo de volatilidad para el ancho del abanico
-    function calculateVolatility(data) {
-        if (data.length < 2) return 0.5;
-        let mean = data.reduce((a, b) => a + b, 0) / data.length;
-        let variance = data.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / data.length;
-        return Math.sqrt(variance);
     }
 
     async function loadData() {
@@ -258,12 +240,14 @@
                 }
             }
 
-            // Simulación de fluctuación de mercado
-            const tick = (Math.random() - 0.48) * 0.6;
+            const bankKey = document.getElementById('bankSelect').value;
+            const bankSpreadRatio = bankSpreads[bankKey] || 0.012;
+
+            const tick = (Math.random() - 0.48) * 0.5;
             baseRate = Math.max(10, baseRate + tick);
 
             const precioCompra = baseRate;
-            const precioVenta = baseRate * 1.011;
+            const precioVenta = baseRate * (1 + bankSpreadRatio);
 
             const comisionOperacion = 0.0025;
             const roiBruto = ((precioVenta - precioCompra) / precioCompra);
@@ -290,72 +274,38 @@
                 banner.className = "roi-banner medium";
             }
 
-            // Mantenimiento de Historial
             const now = new Date();
             const timeLabel = now.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' });
 
             if (buyHistory.length >= maxHistoryPoints) {
                 buyHistory.shift();
-                sellHistory.shift();
                 timeHistory.shift();
             }
 
             buyHistory.push(precioCompra);
-            sellHistory.push(precioVenta);
             timeHistory.push(timeLabel);
 
-            document.getElementById('dataCounter').innerText = `DATOS ACUMULADOS: ${buyHistory.length} MUESTRAS`;
-
-            // Construcción del eje X con pasos hacia el futuro (+1m, +3m, +5m)
             let labels = [...timeHistory, '+1m', '+3m', '+5m'];
+            let pricePlot = [...buyHistory, null, null, null];
 
-            // Relleno de datos del pasado
-            let buyPlot = [...buyHistory, null, null, null];
-            let sellPlot = [...sellHistory, null, null, null];
+            let lastPrice = buyHistory[buyHistory.length - 1];
 
-            // Cálculo de Predicción en base al historial
-            let slopeBuy = calculateSlope(buyHistory);
-            let slopeSell = calculateSlope(sellHistory);
-            let volatility = calculateVolatility(buyHistory);
-
-            let lastBuy = buyHistory[buyHistory.length - 1];
-            let lastSell = sellHistory[sellHistory.length - 1];
-
-            let predBuy = Array(buyHistory.length - 1).fill(null);
-            let predSell = Array(sellHistory.length - 1).fill(null);
             let supBand = Array(buyHistory.length - 1).fill(null);
             let infBand = Array(buyHistory.length - 1).fill(null);
 
-            // Anclaje al momento actual
-            predBuy.push(lastBuy);
-            predSell.push(lastSell);
-            supBand.push(lastSell);
-            infBand.push(lastBuy);
+            // Anclaje
+            supBand.push(lastPrice);
+            infBand.push(lastPrice);
 
-            // Proyección matemática a futuro
-            let b1 = lastBuy + slopeBuy * 1;
-            let b2 = lastBuy + slopeBuy * 3;
-            let b3 = lastBuy + slopeBuy * 5;
-
-            let s1 = lastSell + slopeSell * 1;
-            let s2 = lastSell + slopeSell * 3;
-            let s3 = lastSell + slopeSell * 5;
-
-            predBuy.push(b1, b2, b3);
-            predSell.push(s1, s2, s3);
-
-            // Abanico dinámico según la volatilidad acumulada
-            let volFactor = Math.max(0.8, volatility * 1.5);
-            supBand.push(s1 + volFactor, s2 + (volFactor * 1.8), s3 + (volFactor * 2.5));
-            infBand.push(b1 - volFactor, b2 - (volFactor * 1.8), b3 - (volFactor * 2.5));
+            // Proyección limpia de abanico futuro
+            let spreadMargin = spread * 0.8;
+            supBand.push(lastPrice + spreadMargin, lastPrice + (spreadMargin * 1.5), lastPrice + (spreadMargin * 2.2));
+            infBand.push(lastPrice - spreadMargin, lastPrice - (spreadMargin * 1.5), lastPrice - (spreadMargin * 2.2));
 
             chart.data.labels = labels;
-            chart.data.datasets[0].data = buyPlot;
-            chart.data.datasets[1].data = sellPlot;
-            chart.data.datasets[2].data = predBuy;
-            chart.data.datasets[3].data = predSell;
-            chart.data.datasets[4].data = supBand;
-            chart.data.datasets[5].data = infBand;
+            chart.data.datasets[0].data = pricePlot;
+            chart.data.datasets[1].data = supBand;
+            chart.data.datasets[2].data = infBand;
 
             chart.update();
 
@@ -365,7 +315,6 @@
     }
 
     loadData();
-    // Toma un nuevo dato de mercado cada 60 segundos
     setInterval(loadData, 60000);
 </script>
 </body>
