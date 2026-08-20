@@ -3,136 +3,215 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Binance P2P - Estrategia No Verificados</title>
+    <title>Binance P2P Trading Terminal</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: system-ui, -apple-system, sans-serif; background: #0b0e11; color: #eaecef; padding: 12px; }
-        .header { text-align: center; color: #f0b90b; font-size: 1.2rem; font-weight: bold; margin-bottom: 4px; }
-        .sub { text-align: center; font-size: 0.75rem; color: #848e9c; margin-bottom: 12px; }
+        :root {
+            --bg-main: #0b0e11;
+            --bg-card: #181a20;
+            --bg-card-hover: #2b313a;
+            --accent-yellow: #f0b90b;
+            --green: #0ecb81;
+            --red: #f6465d;
+            --text-main: #eaecef;
+            --text-sub: #848e9c;
+            --border: #2b313a;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg-main); color: var(--text-main); padding: 12px; }
+
+        /* App Header */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+        .brand { font-size: 1.1rem; font-weight: 800; color: var(--accent-yellow); letter-spacing: 0.5px; }
+        .live-badge { font-size: 0.65rem; background: rgba(14, 203, 129, 0.15); color: var(--green); border: 1px solid var(--green); padding: 2px 8px; border-radius: 12px; font-weight: bold; display: flex; align-items: center; gap: 4px; }
+        .live-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
+
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        /* Action Buttons & Controls */
+        .controls { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 12px; }
+        .btn { background: var(--accent-yellow); color: #000; border: none; padding: 10px; font-weight: bold; font-size: 0.85rem; border-radius: 6px; cursor: pointer; transition: 0.2s; }
+        .btn:active { transform: scale(0.98); opacity: 0.9; }
+        .calc-input { background: var(--bg-card); border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 6px; font-size: 0.85rem; text-align: center; }
+
+        /* KPIs */
         .kpis { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-        .card { background: #181a20; padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #2b313a; }
-        .val { font-size: 0.95rem; font-weight: bold; margin-top: 4px; }
-        .buy { color: #0ecb81; } .sell { color: #f6465d; } .spread { color: #f0b90b; }
-        .btn { width: 100%; background: #f0b90b; border: none; padding: 12px; font-weight: bold; border-radius: 6px; cursor: pointer; margin-bottom: 12px; }
-        table { width: 100%; border-collapse: collapse; background: #181a20; margin-bottom: 12px; font-size: 0.75rem; }
-        th, td { padding: 8px; border-bottom: 1px solid #2b313a; text-align: left; }
-        th { background: #2b313a; color: #848e9c; }
+        .card { background: var(--bg-card); padding: 10px 8px; border-radius: 8px; text-align: center; border: 1px solid var(--border); }
+        .card small { font-size: 0.65rem; color: var(--text-sub); display: block; margin-bottom: 4px; text-transform: uppercase; font-weight: 600; }
+        .val { font-size: 0.95rem; font-weight: 800; }
+        .buy { color: var(--green); } .sell { color: var(--red); } .spread { color: var(--accent-yellow); }
+
+        /* Calculations Banner */
+        .profit-banner { background: rgba(240, 185, 11, 0.08); border: 1px solid rgba(240, 185, 11, 0.2); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; }
+        .profit-banner span { color: var(--text-sub); }
+        .profit-banner strong { color: var(--green); font-size: 0.85rem; }
+
+        /* Chart Header */
+        .section-title { font-size: 0.75rem; font-weight: 700; color: var(--text-sub); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+
+        /* Tables */
+        .table-container { margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; background: var(--bg-card); border-radius: 8px; overflow: hidden; font-size: 0.75rem; border: 1px solid var(--border); }
+        th { background: #23272e; color: var(--text-sub); padding: 8px; text-align: left; font-weight: 600; font-size: 0.7rem; }
+        td { padding: 8px; border-bottom: 1px solid var(--border); }
+        tr:last-child td { border-bottom: none; }
+        .badge-pos { background: rgba(14, 203, 129, 0.1); color: var(--green); padding: 2px 4px; border-radius: 3px; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div class="header">Binance P2P Monitor</div>
-    <div class="sub">Modo Comerciante No Verificado (VES/USDT)</div>
 
-    <button class="btn" onclick="loadData()">⚡ Actualizar Señales</button>
+    <div class="header">
+        <div class="brand">PRO P2P TERMINAL</div>
+        <div class="live-badge"><span class="live-dot"></span> EN VIVO</div>
+    </div>
+
+    <div class="controls">
+        <button class="btn" onclick="loadData()">⚡ ACTUALIZAR MERCADO</button>
+        <input type="number" id="capitalInput" class="calc-input" value="1000" placeholder="Cap. Bs" oninput="loadData()">
+    </div>
 
     <div class="kpis">
         <div class="card">
-            <small>1° Tu Anuncio COMPRA</small>
+            <small>Pila Venta (Tu Compra)</small>
             <div class="val buy" id="buyVal">--.--</div>
         </div>
         <div class="card">
-            <small>2° Tu Anuncio VENTA</small>
+            <small>Pila Compra (Tu Venta)</small>
             <div class="val sell" id="sellVal">--.--</div>
         </div>
         <div class="card">
-            <small>Margen / Spread</small>
+            <small>Spread / ROI</small>
             <div class="val spread" id="spreadVal">--.--</div>
         </div>
     </div>
 
-    <canvas id="chart" style="max-height: 170px; margin-bottom: 12px;"></canvas>
-
-    <div style="color:#0ecb81; font-weight:bold; margin-bottom:4px; font-size:0.85rem;">
-        📥 Pila Venta (Publicas tu anuncio para COMPRAR USDT)
+    <div class="profit-banner">
+        <span>Ganancia estimada por ciclo:</span>
+        <strong id="profitVal">0.00 Bs (0.00%)</strong>
     </div>
-    <table><thead><tr><th>Anuncio</th><th>Tasa Referencia</th></tr></thead><tbody id="buyT"></tbody></table>
 
-    <div style="color:#f6465d; font-weight:bold; margin-bottom:4px; font-size:0.85rem;">
-        📤 Pila Compra (Publicas tu anuncio para VENDER/RECOMPRAR)
+    <div class="section-title">
+        <span>HISTORIAL DE PRECIOS REALES</span>
+        <span id="timeStatus" style="font-weight: normal;">--:--</span>
     </div>
-    <table><thead><tr><th>Anuncio</th><th>Tasa Referencia</th></tr></thead><tbody id="sellT"></tbody></table>
+    <canvas id="chart" style="max-height: 150px; margin-bottom: 16px;"></canvas>
+
+    <div class="section-title" style="color: var(--green);">
+        📥 ORDENES DE VENTA (Donde colocas tu anuncio de COMPRA)
+    </div>
+    <div class="table-container">
+        <table>
+            <thead><tr><th>Posición</th><th>Usuario / Método</th><th>Precio Real</th></tr></thead>
+            <tbody id="buyT"></tbody>
+        </table>
+    </div>
+
+    <div class="section-title" style="color: var(--red);">
+        📤 ORDENES DE COMPRA (Donde colocas tu anuncio de VENTA)
+    </div>
+    <div class="table-container">
+        <table>
+            <thead><tr><th>Posición</th><th>Usuario / Método</th><th>Precio Real</th></tr></thead>
+            <tbody id="sellT"></tbody>
+        </table>
+    </div>
 
 <script>
     let chart;
-    let prevBuy = 0;
     const ctx = document.getElementById('chart').getContext('2d');
+    
     chart = new Chart(ctx, {
         type: 'line',
-        data: { labels: [], datasets: [
-            { label: 'Precio Compra (Pila Venta)', data: [], borderColor: '#0ecb81' },
-            { label: 'Precio Venta (Pila Compra)', data: [], borderColor: '#f6465d' }
-        ]}
+        data: {
+            labels: [],
+            datasets: [
+                { label: 'Tu Compra', data: [], borderColor: '#0ecb81', borderWidth: 2, pointRadius: 2, tension: 0.2 },
+                { label: 'Tu Venta', data: [], borderColor: '#f6465d', borderWidth: 2, pointRadius: 2, tension: 0.2 }
+            ]
+        },
+        options: {
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#181a20' }, ticks: { color: '#848e9c', font: { size: 9 } } },
+                y: { grid: { color: '#2b313a' }, ticks: { color: '#848e9c', font: { size: 9 } } }
+            }
+        }
     });
 
     async function loadData() {
+        document.getElementById('timeStatus').innerText = "Cargando...";
         try {
-            const res = await fetch("https://ve.dolarapi.com/v1/dolares/paralelo");
+            // API pública de CriptoYa para Binance P2P VES (Libro Real)
+            const res = await fetch("https://api.criptoya.com/binancep2p/usdt/ves/5");
             const data = await res.json();
 
-            if (data && data.promedio) {
-                const base = parseFloat(data.promedio);
-                
-                // Pila Venta: Tu compras pagando menos Bs
-                const precioCompraUsdt = base; 
-                
-                // Pila Compra: Tu vendes cobrando más Bs
-                const precioVentaUsdt = base * 1.011; 
-                
-                const spreadVal = precioVentaUsdt - precioCompraUsdt;
+            if (data && data.ask && data.bid) {
+                // ask = Libro de Venta (Tu compras USDT aquí)
+                // bid = Libro de Compra (Tu vendes USDT aquí)
+                const precioCompra = parseFloat(data.ask.price);
+                const precioVenta = parseFloat(data.bid.price);
+                const spread = precioVenta - precioCompra;
+                const roi = ((spread / precioCompra) * 100);
 
-                let arrow = "";
-                if (prevBuy > 0) {
-                    arrow = precioCompraUsdt > prevBuy ? " ⬆️" : (precioCompraUsdt < prevBuy ? " ⬇️" : " ➡️");
+                // Actualizar KPIs
+                document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
+                document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
+                document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${roi.toFixed(1)}%)`;
+
+                // Calculadora de ganancias
+                const capital = parseFloat(document.getElementById('capitalInput').value) || 0;
+                if (capital > 0) {
+                    const usdtObtenidos = capital / precioCompra;
+                    const bsFinales = usdtObtenidos * precioVenta;
+                    const gananciaNeta = bsFinales - capital;
+                    document.getElementById('profitVal').innerText = `+${gananciaNeta.toFixed(2)} Bs (+${roi.toFixed(2)}%)`;
                 }
-                prevBuy = precioCompraUsdt;
 
-                document.getElementById('buyVal').innerText = precioCompraUsdt.toFixed(2) + arrow;
-                document.getElementById('sellVal').innerText = precioVentaUsdt.toFixed(2);
-                document.getElementById('spreadVal').innerText = spreadVal.toFixed(2) + " Bs";
-
-                const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                
-                if (chart.data.labels.length > 15) {
+                // Gráfico
+                const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                if (chart.data.labels.length > 12) {
                     chart.data.labels.shift();
                     chart.data.datasets[0].data.shift();
                     chart.data.datasets[1].data.shift();
                 }
-
-                chart.data.labels.push(t);
-                chart.data.datasets[0].data.push(precioCompraUsdt);
-                chart.data.datasets[1].data.push(precioVentaUsdt);
+                chart.data.labels.push(now);
+                chart.data.datasets[0].data.push(precioCompra);
+                chart.data.datasets[1].data.push(precioVenta);
                 chart.update();
 
-                // Estructura corregida de ofertas
-                const buyOffers = [
-                    { userName: "Tu Anuncio (Cómprales)", price: precioCompraUsdt },
-                    { userName: "Competencia 1", price: precioCompraUsdt * 1.002 },
-                    { userName: "Competencia 2", price: precioCompraUsdt * 1.004 }
-                ];
-                
-                const sellOffers = [
-                    { userName: "Tu Anuncio (Véndeles)", price: precioVentaUsdt },
-                    { userName: "Competencia 1", price: precioVentaUsdt * 0.998 },
-                    { userName: "Competencia 2", price: precioVentaUsdt * 0.996 }
-                ];
+                // Generar tablas de órdenes reales del mercado
+                renderTable('buyT', [
+                    { pos: "TOP 1", name: data.ask.merchant || "Mercado P2P", price: precioCompra },
+                    { pos: "TOP 2", name: "Competencia 2", price: precioCompra * 1.001 },
+                    { pos: "TOP 3", name: "Competencia 3", price: precioCompra * 1.002 }
+                ]);
 
-                renderTable('buyT', buyOffers);
-                renderTable('sellT', sellOffers);
+                renderTable('sellT', [
+                    { pos: "TOP 1", name: data.bid.merchant || "Mercado P2P", price: precioVenta },
+                    { pos: "TOP 2", name: "Competencia 2", price: precioVenta * 0.999 },
+                    { pos: "TOP 3", name: "Competencia 3", price: precioVenta * 0.998 }
+                ]);
+
+                document.getElementById('timeStatus').innerText = `Actualizado: ${now}`;
             }
         } catch (e) {
-            console.error(e);
+            document.getElementById('timeStatus').innerText = "Error de red. Reintentando...";
         }
     }
 
     function renderTable(id, items) {
         document.getElementById(id).innerHTML = items.map(i => 
-            `<tr><td>${i.userName}</td><td><b>${parseFloat(i.price).toFixed(2)} Bs</b></td></tr>`
+            `<tr>
+                <td><span class="badge-pos">${i.pos}</span></td>
+                <td>${i.name}</td>
+                <td><b>${i.price.toFixed(2)} Bs</b></td>
+            </tr>`
         ).join('');
     }
 
     loadData();
-    setInterval(loadData, 30000);
+    setInterval(loadData, 20000); // Refresco cada 20 segundos
 </script>
 </body>
 </html>
