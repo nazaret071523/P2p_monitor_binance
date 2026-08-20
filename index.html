@@ -53,10 +53,16 @@
 
     async function loadData() {
         document.getElementById('status').innerText = "Obteniendo datos...";
+        
+        // Proxy CORS para saltar la restricción del navegador
+        const proxy = "https://api.allorigins.win/raw?url=";
+        const urlSell = encodeURIComponent("https://criptoya.com/api/binancep2p/sell/usdt/ves/5");
+        const urlBuy = encodeURIComponent("https://criptoya.com/api/binancep2p/buy/usdt/ves/5");
+
         try {
             const [resSell, resBuy] = await Promise.all([
-                fetch("https://criptoya.com/api/binancep2p/sell/usdt/ves/5"),
-                fetch("https://criptoya.com/api/binancep2p/buy/usdt/ves/5")
+                fetch(proxy + urlSell),
+                fetch(proxy + urlBuy)
             ]);
 
             const sellData = await resSell.json();
