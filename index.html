@@ -51,15 +51,40 @@
         ]}
     });
 
+    async function fetchP2P(tradeType) {
+        const payload = {
+            fiat: "VES",
+            page: 1,
+            rows: 5,
+            tradeType: tradeType,
+            asset: "USDT",
+            countries: [],
+            proMerchant: false,
+            publisherType: null,
+            payTypes: []
+        };
+
+        const res = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const json = await res.json();
+        return json.data || [];
+    }
+
     async function loadData() {
         document.getElementById('status').innerText = "Obteniendo datos...";
         try {
-            const res = await fetch('/api/p2p');
-            const data = await res.json();
+            const [buysData, sellsData] = await Promise.all([
+                fetchP2P("BUY"),
+                fetchP2P("SELL")
+            ]);
 
-            if (data.comprar && data.vender) {
-                const buys = Object.values(data.comprar).slice(0, 5);
-                const sells = Object.values(data.vender).slice(0, 5);
+            if (buysData.length > 0 && sellsData.length > 0) {
+                const buys = buysData.map(i => ({ userName: i.advertiser.nickName, price: i.adv.price }));
+                const sells = sellsData.map(i => ({ userName: i.advertiser.nickName, price: i.adv.price }));
 
                 const b = parseFloat(buys[0].price);
                 const s = parseFloat(sells[0].price);
@@ -78,10 +103,10 @@
                 renderTable('sellT', sells);
                 document.getElementById('status').innerText = "Actualizado: " + t;
             } else {
-                throw new Error("Respuesta inválida");
+                throw new Error("Sin datos de Binance");
             }
         } catch (e) {
-            document.getElementById('status').innerText = "Error consultando la API. Reintentando...";
+            document.getElementById('status').innerText = "Error cargando datos. Reintentando...";
         }
     }
 
