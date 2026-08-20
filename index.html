@@ -93,10 +93,10 @@
 
     <!-- Acceso rápido a montos típicos -->
     <div class="quick-amounts">
-        <div class="chip" onclick="setCapital(100)">$100</div>
-        <div class="chip" onclick="setCapital(250)">$250</div>
-        <div class="chip" onclick="setCapital(500)">$500</div>
-        <div class="chip active" id="chip1000" onclick="setCapital(1000)">$1000</div>
+        <div class="chip" onclick="setCapital(100, event)">$100</div>
+        <div class="chip" onclick="setCapital(250, event)">$250</div>
+        <div class="chip" onclick="setCapital(500, event)">$500</div>
+        <div class="chip active" id="chip1000" onclick="setCapital(1000, event)">$1000</div>
     </div>
 
     <div class="controls">
@@ -124,7 +124,7 @@
 
     <div class="roi-banner good" id="roiBanner">
         <div class="roi-info">
-            <small>ESTIMACIÓN NETO (DESC. COMISIÓN 0.35%)</small>
+            <small>ESTIMACIÓN NETO (DESC. COMISIÓN 0.25% x2)</small>
             <strong>Ganancia Ciclo P2P</strong>
         </div>
         <div class="roi-stat" id="profitVal" style="color: var(--color-buy);">+0.00 $</div>
@@ -186,10 +186,12 @@
         }
     });
 
-    function setCapital(val) {
+    function setCapital(val, e) {
         document.getElementById('capitalInput').value = val;
         document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-        event.target.classList.add('active');
+        if (e && e.target) {
+            e.target.classList.add('active');
+        }
         loadData();
     }
 
@@ -205,31 +207,31 @@
                 const precioCompra = base; 
                 const precioVenta = base * 1.011; 
 
-                // Ajuste por comisiones Binance P2P (0.35% estándar por anuncio)
-                const comisionBinance = 0.0035;
+                // Comisión de 0.25% en la compra y 0.25% en la venta
+                const comisionOperacion = 0.0025;
                 const roiBruto = ((precioVenta - precioCompra) / precioCompra);
-                const roiNeto = (roiBruto - (comisionBinance * 2)) * 100;
+                const roiNeto = (roiBruto - (comisionOperacion * 2)) * 100;
 
                 const spread = precioVenta - precioCompra;
 
                 document.getElementById('buyVal').innerText = precioCompra.toFixed(2);
                 document.getElementById('sellVal').innerText = precioVenta.toFixed(2);
-                document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${roiBruto.toFixed(1)}%)`;
+                document.getElementById('spreadVal').innerText = `${spread.toFixed(2)} (${(roiBruto * 100).toFixed(1)}%)`;
 
-                // Breakeven calculation
-                const minSellPrice = precioCompra * (1 + (comisionBinance * 2));
+                // Cálculo del precio de equilibrio (Breakeven) incluyendo el 0.25% de compra y 0.25% de venta
+                const minSellPrice = precioCompra * (1 + (comisionOperacion * 2));
                 document.getElementById('breakevenVal').innerText = `${minSellPrice.toFixed(2)} Bs`;
 
-                // Cálculo con comisión
+                // Cálculo del retorno neto sobre el capital
                 const capitalUsd = parseFloat(document.getElementById('capitalInput').value) || 0;
                 if (capitalUsd > 0) {
                     const gananciaNetaUsd = capitalUsd * (roiNeto / 100);
                     document.getElementById('profitVal').innerText = `+${gananciaNetaUsd.toFixed(2)} $ (+${roiNeto.toFixed(2)}%)`;
                 }
 
-                // Alert color logic
+                // Alerta dinámica por rendimiento neto
                 const banner = document.getElementById('roiBanner');
-                if (roiNeto >= 0.8) {
+                if (roiNeto >= 0.5) {
                     banner.className = "roi-banner good";
                 } else {
                     banner.className = "roi-banner medium";
