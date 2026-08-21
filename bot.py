@@ -115,11 +115,13 @@ def calculate_ml_prediction():
         df['ma_5'] = df['price'].rolling(window=5).mean()
         df['ma_15'] = df['price'].rolling(window=15).mean()
         df['volatility'] = df['price'].rolling(window=5).std()
-        df['target'] = df['price'].shift(-60)
+        
+        # Objetivo a corto plazo (5 lecturas hacia adelante) para habilitar entrenamiento con pocas muestras
+        df['target'] = df['price'].shift(-5)
 
         df_clean = df.dropna().copy()
 
-        if len(df_clean) < 10:
+        if len(df_clean) < 5:
             return None, f"Procesando matriz... ({len(df_clean)} muestras de entrenamiento, {total_records} totales)."
 
         features = ['price', 'lag_1', 'lag_2', 'lag_5', 'ma_5', 'ma_15', 'volatility']
@@ -166,22 +168,22 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     curr = data['current_price']
     pred = data['predicted_price']
     diff = pred - curr
-    target_time = (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
+    target_time = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M")
 
-    if diff > 0.3:
+    if diff > 0.1:
         estado = "🚀 ALCISTA (Fuerte)"
-    elif diff < -0.3:
+    elif diff < -0.1:
         estado = "⚠️ BAJISTA (Fuerte)"
     else:
         estado = "↔️ LATERAL / ESTABLE"
 
-    margin = abs(diff) * 0.5 + 1.5
+    margin = abs(diff) * 0.5 + 0.2
     floor = pred - margin
     ceiling = pred + margin
 
     report = (
         f"🤖 *PREDICCIÓN MACHINE LEARNING (XGBoost)*\n"
-        f"⏱️ *Proyección para:* {target_time} (+1 Hora)\n\n"
+        f"⏱️ *Proyección para:* {target_time}\n\n"
         f"📌 *Precio Actual:* {curr:.2f} Bs\n"
         f"🎯 *Predicción ML:* {pred:.2f} Bs\n"
         f"📊 *Tendencia Estimada:* {estado}\n\n"
@@ -196,7 +198,7 @@ async def seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = get_db_connection()
         cursor = conn.cursor()
         base_price = 36.50
-        for i in range(35):
+        for i in range(60):
             fake_price = base_price + (i * 0.02) + (np.random.randn() * 0.05)
             cursor.execute(
                 "INSERT INTO prices (bank, buy_price, sell_price) VALUES (%s, %s, %s)",
@@ -205,7 +207,7 @@ async def seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         cursor.close()
         conn.close()
-        await update.message.reply_text("✅ *35 lecturas de prueba insertadas.* Ya puedes ejecutar /prediccion", parse_mode="Markdown")
+        await update.message.reply_text("✅ *60 lecturas de prueba insertadas.* Ya puedes ejecutar /prediccion", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"Error generando datos: {e}")
 
