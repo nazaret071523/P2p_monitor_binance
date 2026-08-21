@@ -28,7 +28,7 @@ def run_health_server():
 
 # ==================== CONFIGURACIÓN ====================
 TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
-DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:[Abrilalessandro30]@aws-0-us-west-2.pooler.supabase.com:5432/postgres"  # Pega tu URL de Supabase
+DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:Abrilalessandro30@aws-0-us-west-2.pooler.supabase.com:6543/postgres"  # Pega tu URL de Supabase
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
