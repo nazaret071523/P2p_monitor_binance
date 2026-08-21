@@ -57,34 +57,44 @@ def init_db():
 def background_collector():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "payTypes": ["BBVA"], "rows": 1, "tradeType": "BUY", "transAmount": "250000"
+        "asset": "USDT",
+        "fiat": "VES",
+        "merchantCheck": False,
+        "page": 1,
+        "payTypes": ["BBVA"],
+        "rows": 5,
+        "tradeType": "BUY"
     }
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Content-Type": "application/json"
     }
     
     while True:
         try:
             res = requests.post(url, json=payload, headers=headers, timeout=10)
-            data = res.json()
-            if data.get("data") and len(data["data"]) > 0:
-                buy_price = float(data["data"][0]["adv"]["price"])
-                
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT INTO prices (bank, buy_price, sell_price) VALUES (%s, %s, %s)",
-                    ("BBVA", buy_price, buy_price + 10.0)
-                )
-                conn.commit()
-                cursor.close()
-                conn.close()
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Registrado: {buy_price} Bs")
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("data") and len(data["data"]) > 0:
+                    buy_price = float(data["data"][0]["adv"]["price"])
+                    
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO prices (bank, buy_price, sell_price) VALUES (%s, %s, %s)",
+                        ("BBVA", buy_price, buy_price + 0.5)
+                    )
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Exito: Registrado {buy_price} Bs")
+            else:
+                print(f"Binance dio status code: {res.status_code}")
         except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Alerta Recolector: {e}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Error Recolector: {e}")
         
-        time.sleep(60)
+        time.sleep(30)
 
 # ==================== MOTOR ML (XGBOOST) ====================
 def calculate_ml_prediction():
@@ -181,11 +191,30 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(report, parse_mode="Markdown")
 
+async def seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        base_price = 36.50
+        for i in range(35):
+            fake_price = base_price + (i * 0.02) + (np.random.randn() * 0.05)
+            cursor.execute(
+                "INSERT INTO prices (bank, buy_price, sell_price) VALUES (%s, %s, %s)",
+                ("BBVA", fake_price, fake_price + 0.5)
+            )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        await update.message.reply_text("✅ *35 lecturas de prueba insertadas.* Ya puedes ejecutar /prediccion", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"Error generando datos: {e}")
+
 # ==================== INICIALIZACIÓN ====================
 async def run_bot():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("prediccion", predict_command))
+    app.add_handler(CommandHandler("seed", seed_command))
 
     print("Iniciando Polling de Telegram...")
     async with app:
