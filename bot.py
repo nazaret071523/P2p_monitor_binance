@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-TELEGRAM_TOKEN = os.getenv("8579313357:AAH-ImigUgbAM59dOwy4sSi00j26u9EEjA8")
+TELEGRAM_TOKEN = os.getenv"8579313357:AAH-ImigUgbAM59dOwy4sSi00j26u9EEjA8"
 
 def get_binance_p2p_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
