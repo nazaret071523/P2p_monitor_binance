@@ -1,13 +1,23 @@
 import os
 import json
 import random
+import threading
+import http.server
+import socketserver
 import urllib.request
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# Pega aquí el token NUEVO que copiaste de BotFather
 TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
+
+# Servidor web falso para evitar el "Timed out" en la capa Free de Render
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        print(f"Servidor web ficticio escuchando en el puerto {port}")
+        httpd.serve_forever()
 
 def get_binance_p2p_price():
     proxy_url = "https://api.allorigins.win/raw?url=https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -38,7 +48,6 @@ def get_binance_p2p_price():
         print(f"Error Binance Proxy: {e}")
 
     return 38.50
-    return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Bot Activo. Usa /prediccion para consultar precios en vivo.")
@@ -78,6 +87,9 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 if __name__ == "__main__":
+    # Inicia el servidor HTTP en un hilo secundario para cumplir con Render Free
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("prediccion", prediccion))
