@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# Reemplaza el texto entre comillas por el Token NUEVO que te acaba de dar BotFather
+# Pega aquí el token NUEVO que copiaste de BotFather
 TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
 
 def get_binance_p2p_price():
@@ -34,7 +34,7 @@ def get_binance_p2p_price():
                 prices = [float(adv["adv"]["price"]) for adv in res_data["data"][:3]]
                 return round(sum(prices) / len(prices), 2)
     except Exception as e:
-        print(f"Error consultando Binance: {e}")
+        print(f"Error Binance: {e}")
 
     return None
 
