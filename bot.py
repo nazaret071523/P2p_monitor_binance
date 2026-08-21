@@ -1,6 +1,8 @@
 import os
 import time
 import asyncio
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import psycopg2
 import requests
 from datetime import datetime, timedelta
@@ -12,10 +14,21 @@ from xgboost import XGBRegressor
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# ==================== SERVIDOR SALUD DE RENDER ====================
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
 # ==================== CONFIGURACIÓN ====================
 TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
 DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:[AbrilAlessandro30$]@aws-0-us-west-2.pooler.supabase.com:5432/postgres"  # Pega tu URL de Supabase
-
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
@@ -74,7 +87,6 @@ def train_and_predict_ml():
         if len(df) < 30:
             return None, f"Se requieren al menos 30 lecturas para activar Machine Learning (Actuales: {len(df)})."
 
-        # Creación de variables técnicas (Feature Engineering)
         df['price'] = df['buy_price']
         df['lag_1'] = df['price'].shift(1)
         df['lag_2'] = df['price'].shift(2)
@@ -82,7 +94,7 @@ def train_and_predict_ml():
         df['ma_5'] = df['price'].rolling(window=5).mean()
         df['ma_15'] = df['price'].rolling(window=15).mean()
         df['volatility'] = df['price'].rolling(window=5).std()
-        df['target'] = df['price'].shift(-60)  # Objetivo: Precio proyectado a 60 lecturas (~1 Hora)
+        df['target'] = df['price'].shift(-60)
 
         df_clean = df.dropna().copy()
 
@@ -93,11 +105,9 @@ def train_and_predict_ml():
         X = df_clean[features]
         y = df_clean['target']
 
-        # Entrenar modelo XGBoost
         model = XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=42)
         model.fit(X, y)
 
-        # Preparar la última lectura para predecir el futuro
         latest_row = df.iloc[-1]
         last_features = pd.DataFrame([{
             'price': latest_row['price'],
@@ -139,7 +149,6 @@ def generate_prediction_report():
     else:
         estado = "↔️ LATERAL / ESTABLE"
 
-    # Margen dinamico según desviación esperada
     margin = abs(diff) * 0.5 + 1.5
     floor = pred - margin
     ceiling = pred + margin
@@ -164,6 +173,9 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def main():
+    # Iniciar servidor web de salud para Render
+    threading.Thread(target=run_health_server, daemon=True).start()
+
     init_db()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -173,7 +185,7 @@ async def main():
     await app.start()
     await app.updater.start_polling()
 
-    print("Servidor con Machine Learning listo y escuchando...")
+    print("Servidor listo y escuchando en Render...")
 
     while True:
         fetch_and_store_binance()
