@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # Reemplaza el texto entre comillas por el Token NUEVO que te acaba de dar BotFather
-TELEGRAM_TOKEN = "8579313357:AAH-ImigUgbAM59dOwy4sSi00j26u9EEjA8"
+TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
 
 def get_binance_p2p_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
