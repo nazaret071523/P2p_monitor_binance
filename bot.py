@@ -27,7 +27,7 @@ def run_health_server():
     server.serve_forever()
 
 # ==================== CONFIGURACIÓN ====================
-TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
+TELEGRAM_TOKEN = "8579313357:AAH-ImigUgbAM59dOwy4sSi00j26u9EEjA8"
 DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:Abrilalessandro30@aws-0-us-west-2.pooler.supabase.com:6543/postgres"
 
 def get_db_connection():
