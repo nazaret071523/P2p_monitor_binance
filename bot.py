@@ -28,9 +28,9 @@ def run_health_server():
 
 # ==================== CONFIGURACIÓN ====================
 TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
-DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:Abrilalessandro30@aws-0-us-west-2.pooler.supabase.com:6543/postgres"  # Pega tu URL de Supabase
+DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:Abrilalessandro30aws-0-us-west-2.pooler.supabase.com:6543/postgres"  # Pega tu URL de Supabase
 def get_db_connection():
-    return psycopg2.connect(DB_URL)
+    return psycopg2.connect(DB_URL, connect_timeout=5)
 
 def init_db():
     try:
@@ -48,7 +48,7 @@ def init_db():
         conn.commit()
         cursor.close()
         conn.close()
-        print("Base de datos PostgreSQL inicializada.")
+        print("Base de datos PostgreSQL inicializada con éxito.")
     except Exception as e:
         print(f"Error inicializando BD: {e}")
 
@@ -59,7 +59,7 @@ def fetch_and_store_binance():
         "page": 1, "payTypes": ["BBVA"], "rows": 1, "tradeType": "BUY", "transAmount": "250000"
     }
     try:
-        res = requests.post(url, json=payload, timeout=10)
+        res = requests.post(url, json=payload, timeout=8)
         data = res.json()
         if data.get("data"):
             buy_price = float(data["data"][0]["adv"]["price"])
@@ -74,7 +74,13 @@ def fetch_and_store_binance():
             conn.close()
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Registrado en PostgreSQL: {buy_price} Bs")
     except Exception as e:
-        print(f"Error al obtener/guardar precio de Binance: {e}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Aviso en recolección: {e}")
+
+async def data_collection_loop():
+    """Bucle independiente que se ejecuta en segundo plano sin congelar Telegram."""
+    while True:
+        await asyncio.to_thread(fetch_and_store_binance)
+        await asyncio.sleep(60)
 
 # ==================== MOTOR DE MACHINE LEARNING ====================
 def train_and_predict_ml():
@@ -169,11 +175,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("¡Bot P2P Inteligente (XGBoost + PostgreSQL) Activo! Usa /prediccion para consultar.")
 
 async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = generate_prediction_report()
+    msg = await asyncio.to_thread(generate_prediction_report)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def main():
-    # Iniciar servidor web de salud para Render
     threading.Thread(target=run_health_server, daemon=True).start()
 
     init_db()
@@ -183,13 +188,15 @@ async def main():
 
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
+    
+    # Iniciar la recolección en segundo plano de manera asíncrona
+    asyncio.create_task(data_collection_loop())
 
     print("Servidor listo y escuchando en Render...")
-
-    while True:
-        fetch_and_store_binance()
-        await asyncio.sleep(60)
+    await app.updater.start_polling()
+    
+    # Mantener la ejecución viva
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
