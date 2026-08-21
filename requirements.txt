@@ -1,8 +1,2 @@
-python-telegram-bot==21.10
 requests
-schedule
-psycopg2-binary
-pandas
-numpy
-scikit-learn
-xgboost
+python-telegram-bot==20.7
