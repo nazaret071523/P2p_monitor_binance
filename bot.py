@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # REEMPLAZA CON TU TOKEN DE BOTFATHER
-TELEGRAM_TOKEN = "TU_TOKEN_AQUI"
+TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
 
 def init_db():
     conn = sqlite3.connect("p2p_data.db")
