@@ -13,8 +13,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ==================== CONFIGURACIÓN ====================
-TELEGRAM_TOKEN = "TU_TOKEN_DE_TELEGRAM"
-DB_URL = "TU_URL_DE_POSTGRESQL_AQUI"  # Pega tu URL de Supabase
+TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
+DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:[AbrilAlessandro30$]@aws-0-us-west-2.pooler.supabase.com:5432/postgres"  # Pega tu URL de Supabase
 
 def get_db_connection():
     return psycopg2.connect(DB_URL)
