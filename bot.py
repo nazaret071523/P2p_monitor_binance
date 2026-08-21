@@ -28,8 +28,9 @@ def run_health_server():
 # ==================== CONFIGURACIÓN ====================
 TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
 DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:Abrilalessandro30@aws-0-us-west-2.pooler.supabase.com:6543/postgres"
+
 def get_db_connection():
-    return psycopg2.connect(DB_URL, connect_timeout=5)
+    return psycopg2.connect(DB_URL, connect_timeout=10)
 
 def init_db():
     try:
@@ -53,7 +54,6 @@ def init_db():
 
 # ==================== RECOLECTOR INDEPENDIENTE ====================
 def background_collector():
-    """Hilo 100% independiente para que Telegram NUNCA se congele."""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
@@ -65,7 +65,7 @@ def background_collector():
     
     while True:
         try:
-            res = requests.post(url, json=payload, headers=headers, timeout=5)
+            res = requests.post(url, json=payload, headers=headers, timeout=10)
             data = res.json()
             if data.get("data") and len(data["data"]) > 0:
                 buy_price = float(data["data"][0]["adv"]["price"])
@@ -180,23 +180,23 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(report, parse_mode="Markdown")
 
-def main():
-    # 1. Servidor de salud Render
-    threading.Thread(target=run_health_server, daemon=True).start()
+# ==================== INICIALIZACIÓN ====================
+if __name__ == "__main__":
+    # 1. Servidor de salud Render en hilo secundario
+    t_health = threading.Thread(target=run_health_server, daemon=True)
+    t_health.start()
 
-    # 2. Inicializar base de datos
+    # 2. Crear tabla en Supabase
     init_db()
 
-    # 3. Recolector independiente en segundo plano
-    threading.Thread(target=background_collector, daemon=True).start()
+    # 3. Recolector de datos Binance en hilo secundario
+    t_collector = threading.Thread(target=background_collector, daemon=True)
+    t_collector.start()
 
-    # 4. Iniciar Bot de Telegram ultra fluido
+    # 4. Iniciar servicio de Telegram
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("prediccion", predict_command))
 
-    print("Bot activo y respondiendo instantáneamente...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    print("Iniciando Polling de Telegram...")
+    app.run_polling(drop_pending_updates=True)
