@@ -6,6 +6,7 @@
     <title>Monitor P2P Binance</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body class="bg-gray-900 text-white p-6">
     <div class="max-w-4xl mx-auto space-y-6">
@@ -17,19 +18,19 @@
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">COMPRA</p>
-                <p id="buy-price" class="text-2xl font-bold text-green-400">Cargando...</p>
+                <p id="buy-price" class="text-2xl font-bold text-green-400">-- Bs</p>
             </div>
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">VENTA</p>
-                <p id="sell-price" class="text-2xl font-bold text-red-400">Cargando...</p>
+                <p id="sell-price" class="text-2xl font-bold text-red-400">-- Bs</p>
             </div>
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">SPREAD</p>
-                <p id="spread" class="text-2xl font-bold text-yellow-400">Cargando...</p>
+                <p id="spread" class="text-2xl font-bold text-yellow-400">-- Bs</p>
             </div>
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">GANANCIA</p>
-                <p id="margin" class="text-2xl font-bold text-blue-400">Cargando...</p>
+                <p id="margin" class="text-2xl font-bold text-blue-400">--%</p>
             </div>
         </div>
 
@@ -39,6 +40,11 @@
     </div>
 
     <script>
+        const SUPABASE_URL = 'https://ozowlqqxsiqkfklzakjb.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96b3dscXF4c2lxa2ZrbHpha2piIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzcyODExODIsImV4cCI6MjA1Mjg1NzE4Mn0.8M4Lz1f5vG6L4ZzG7X1g6Z5vG6L4ZzG7X1g6Z5vG6L4';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
         const ctx = document.getElementById('priceChart').getContext('2d');
         const chart = new Chart(ctx, {
             type: 'line',
@@ -57,36 +63,31 @@
 
         async function updateData() {
             try {
-                // Petición al backend en Render utilizando un proxy CORS
-                const res = await fetch('https://corsproxy.io/?' + encodeURIComponent('https://p2p-monitor-binance.onrender.com/data'));
-                const data = await res.json();
-                
-                if (data && data.price) {
-                    const price = parseFloat(data.price);
-                    const sell = price + 0.5;
-                    const spread = sell - price;
-                    const margin = ((spread / price) * 100).toFixed(2);
+                const { data, error } = await supabase
+                    .from('prices')
+                    .select('*')
+                    .order('id', { ascending: false })
+                    .limit(10);
 
-                    document.getElementById('buy-price').innerText = price.toFixed(2) + ' Bs';
+                if (data && data.length > 0) {
+                    const latest = data[0];
+                    const buy = parseFloat(latest.buy_price);
+                    const sell = parseFloat(latest.sell_price) || (buy + 0.5);
+                    const spread = sell - buy;
+                    const margin = ((spread / buy) * 100).toFixed(2);
+
+                    document.getElementById('buy-price').innerText = buy.toFixed(2) + ' Bs';
                     document.getElementById('sell-price').innerText = sell.toFixed(2) + ' Bs';
                     document.getElementById('spread').innerText = spread.toFixed(2) + ' Bs';
                     document.getElementById('margin').innerText = margin + '%';
 
-                    const time = new Date().toLocaleTimeString();
-                    if (chart.data.labels.length > 10) {
-                        chart.data.labels.shift();
-                        chart.data.datasets[0].data.shift();
-                    }
-                    chart.data.labels.push(time);
-                    chart.data.datasets[0].data.push(price);
+                    const history = data.reverse();
+                    chart.data.labels = history.map(r => new Date(r.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+                    chart.data.datasets[0].data = history.map(r => r.buy_price);
                     chart.update();
                 }
             } catch (e) {
-                // Fallback directo si el servidor responde con los datos guardados
-                document.getElementById('buy-price').innerText = '37.71 Bs';
-                document.getElementById('sell-price').innerText = '38.21 Bs';
-                document.getElementById('spread').innerText = '0.50 Bs';
-                document.getElementById('margin').innerText = '1.33%';
+                console.error("Error al obtener datos:", e);
             }
         }
 
