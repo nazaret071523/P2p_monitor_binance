@@ -1,92 +1,206 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Monitor P2P Binance</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comerciante P2P Pro - Binance</title>
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #eab308;
+      --blue: #3b82f6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      padding: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background-color: var(--card-bg);
+      padding: 16px;
+      border-radius: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border: 1px solid #334155;
+    }
+
+    .header h1 {
+      font-size: 1.1rem;
+      color: var(--yellow);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge {
+      background-color: rgba(34, 197, 94, 0.2);
+      color: var(--green);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      border: 1px solid var(--green);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .card {
+      background-color: var(--card-bg);
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid #334155;
+    }
+
+    .card-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .card-value {
+      font-size: 1.3rem;
+      font-weight: bold;
+    }
+
+    .value-compra { color: var(--green); }
+    .value-venta { color: var(--red); }
+    .value-spread { color: var(--yellow); }
+    .value-ganancia { color: var(--blue); }
+
+    .chart-card {
+      background-color: var(--card-bg);
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px solid #334155;
+    }
+
+    .chart-title {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .history-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      padding: 6px 0;
+      border-bottom: 1px solid #334155;
+    }
+
+    .history-item:last-child {
+      border-bottom: none;
+    }
+  </style>
 </head>
-<body class="bg-gray-900 text-white p-6">
-    <div class="max-w-4xl mx-auto space-y-6">
-        <div class="flex justify-between items-center bg-gray-800 p-4 rounded-xl border border-gray-700">
-            <h1 class="text-xl font-bold text-yellow-400">⚡ COMERCIANTE P2P PRO</h1>
-            <span id="status" class="bg-green-900 text-green-300 text-xs px-3 py-1 rounded-full border border-green-500">EN VIVO</span>
-        </div>
+<body>
 
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
-                <p class="text-gray-400 text-xs">COMPRA</p>
-                <p id="buy-price" class="text-2xl font-bold text-green-400">-- Bs</p>
-            </div>
-            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
-                <p class="text-gray-400 text-xs">VENTA</p>
-                <p id="sell-price" class="text-2xl font-bold text-red-400">-- Bs</p>
-            </div>
-            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
-                <p class="text-gray-400 text-xs">SPREAD</p>
-                <p id="spread" class="text-2xl font-bold text-yellow-400">-- Bs</p>
-            </div>
-            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
-                <p class="text-gray-400 text-xs">GANANCIA</p>
-                <p id="margin" class="text-2xl font-bold text-blue-400">--%</p>
-            </div>
-        </div>
+  <div class="header">
+    <h1>⚡ COMERCIANTE P2P PRO</h1>
+    <span class="badge" id="estado">EN VIVO</span>
+  </div>
 
-        <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
-            <canvas id="priceChart" height="150"></canvas>
-        </div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-label">Compra</div>
+      <div class="card-value value-compra" id="precio-compra">0.00 Bs</div>
     </div>
 
-    <script>
-        const ctx = document.getElementById('priceChart').getContext('2d');
-        const chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Precio USDT/VES',
-                    data: [],
-                    borderColor: '#f59e0b',
-                    tension: 0.1,
-                    fill: false
-                }]
-            },
-            options: { responsive: true, scales: { y: { beginAtZero: false } } }
-        });
+    <div class="card">
+      <div class="card-label">Venta</div>
+      <div class="card-value value-venta" id="precio-venta">0.00 Bs</div>
+    </div>
 
-        async function updateData() {
-            try {
-                const res = await fetch('./data.json?t=' + new Date().getTime());
-                const data = await res.json();
+    <div class="card">
+      <div class="card-label">Spread</div>
+      <div class="card-value value-spread" id="spread">0.00 Bs</div>
+    </div>
 
-                if (data && data.buy) {
-                    const buy = parseFloat(data.buy);
-                    const sell = parseFloat(data.sell);
-                    const spread = sell - buy;
-                    const margin = ((spread / buy) * 100).toFixed(2);
+    <div class="card">
+      <div class="card-label">Ganancia</div>
+      <div class="card-value value-ganancia" id="ganancia">0.00%</div>
+    </div>
+  </div>
 
-                    document.getElementById('buy-price').innerText = buy.toFixed(2) + ' Bs';
-                    document.getElementById('sell-price').innerText = sell.toFixed(2) + ' Bs';
-                    document.getElementById('spread').innerText = spread.toFixed(2) + ' Bs';
-                    document.getElementById('margin').innerText = margin + '%';
+  <div class="chart-card">
+    <div class="chart-title">📊 Histórico de Lecturas (Render API)</div>
+    <div class="history-list" id="historial-container">
+      <div class="history-item" style="color: var(--text-muted);">Cargando datos...</div>
+    </div>
+  </div>
 
-                    const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                    if (chart.data.labels.length > 10) {
-                        chart.data.labels.shift();
-                        chart.data.datasets[0].data.shift();
-                    }
-                    chart.data.labels.push(time);
-                    chart.data.datasets[0].data.push(buy);
-                    chart.update();
-                }
-            } catch (e) {
-                console.error(e);
-            }
+  <script>
+    async function actualizarDashboard() {
+      try {
+        const respuesta = await fetch("https://p2p-monitor-binance.onrender.com");
+        const datos = await respuesta.json();
+
+        // Actualización de valores en pantalla
+        if (datos.compra) document.getElementById("precio-compra").innerText = `${datos.compra.toFixed(2)} Bs`;
+        if (datos.venta) document.getElementById("precio-venta").innerText = `${datos.venta.toFixed(2)} Bs`;
+        if (datos.spread) document.getElementById("spread").innerText = `${datos.spread.toFixed(2)} Bs`;
+        if (datos.ganancia_pct) document.getElementById("ganancia").innerText = `${datos.ganancia_pct.toFixed(2)}%`;
+
+        // Renderizado del historial
+        if (datos.historial && datos.historial.length > 0) {
+          const container = document.getElementById("historial-container");
+          container.innerHTML = "";
+          
+          datos.historial.slice().reverse().forEach(item => {
+            const div = document.createElement("div");
+            div.className = "history-item";
+            div.innerHTML = `
+              <span>🕒 ${item.hora}</span>
+              <span>C: <strong style="color: var(--green);">${item.compra.toFixed(2)}</strong> | V: <strong style="color: var(--red);">${item.venta.toFixed(2)}</strong></span>
+            `;
+            container.appendChild(div);
+          });
         }
 
-        updateData();
-        setInterval(updateData, 10000);
-    </script>
+        document.getElementById("estado").innerText = "EN VIVO";
+        document.getElementById("estado").style.borderColor = "var(--green)";
+      } catch (error) {
+        console.error("Error al sincronizar datos:", error);
+        document.getElementById("estado").innerText = "RECONECTANDO";
+        document.getElementById("estado").style.borderColor = "var(--yellow)";
+      }
+    }
+
+    // Carga inicial y bucle de actualización continua
+    actualizarDashboard();
+    setInterval(actualizarDashboard, 30000);
+  </script>
+
 </body>
 </html>
