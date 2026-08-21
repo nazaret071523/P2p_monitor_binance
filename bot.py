@@ -179,8 +179,19 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🧠 _Modelado con {data['samples']} variables y {data['total_records']} lecturas._"
     )
     await update.message.reply_text(report, parse_mode="Markdown")
-
 # ==================== INICIALIZACIÓN ====================
+async def run_bot():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("prediccion", predict_command))
+
+    print("Iniciando Polling de Telegram...")
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        # Mantener el bot corriendo en Python 3.14
+        await asyncio.Event().wait()
+
 if __name__ == "__main__":
     # 1. Servidor de salud Render en hilo secundario
     t_health = threading.Thread(target=run_health_server, daemon=True)
@@ -193,10 +204,8 @@ if __name__ == "__main__":
     t_collector = threading.Thread(target=background_collector, daemon=True)
     t_collector.start()
 
-    # 4. Iniciar servicio de Telegram
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("prediccion", predict_command))
-
-    print("Iniciando Polling de Telegram...")
-    app.run_polling(drop_pending_updates=True)
+    # 4. Iniciar bucle asíncrono explícito
+    try:
+        asyncio.run(run_bot())
+    except (KeyboardInterrupt, SystemExit):
+        pass
