@@ -1,5 +1,6 @@
 import os
 import time
+import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import psycopg2
@@ -109,7 +110,7 @@ def calculate_ml_prediction():
         df_clean = df.dropna().copy()
 
         if len(df_clean) < 10:
-            return None, f"Procesando estructura de matriz... ({len(df_clean)} muestras de entrenamiento, {total_records} totales)."
+            return None, f"Procesando matriz... ({len(df_clean)} muestras de entrenamiento, {total_records} totales)."
 
         features = ['price', 'lag_1', 'lag_2', 'lag_5', 'ma_5', 'ma_15', 'volatility']
         X = df_clean[features]
@@ -179,6 +180,7 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🧠 _Modelado con {data['samples']} variables y {data['total_records']} lecturas._"
     )
     await update.message.reply_text(report, parse_mode="Markdown")
+
 # ==================== INICIALIZACIÓN ====================
 async def run_bot():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -189,22 +191,17 @@ async def run_bot():
     async with app:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
-        # Mantener el bot corriendo en Python 3.14
         await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    # 1. Servidor de salud Render en hilo secundario
     t_health = threading.Thread(target=run_health_server, daemon=True)
     t_health.start()
 
-    # 2. Crear tabla en Supabase
     init_db()
 
-    # 3. Recolector de datos Binance en hilo secundario
     t_collector = threading.Thread(target=background_collector, daemon=True)
     t_collector.start()
 
-    # 4. Iniciar bucle asíncrono explícito
     try:
         asyncio.run(run_bot())
     except (KeyboardInterrupt, SystemExit):
