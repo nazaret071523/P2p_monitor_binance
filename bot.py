@@ -1,6 +1,5 @@
 import os
 import time
-import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import psycopg2
@@ -48,50 +47,55 @@ def init_db():
         conn.commit()
         cursor.close()
         conn.close()
-        print("Base de datos PostgreSQL inicializada con éxito.")
+        print("Base de datos conectada e inicializada.")
     except Exception as e:
-        print(f"Error inicializando BD: {e}")
+        print(f"Error en init_db: {e}")
 
-def fetch_and_store_binance():
+# ==================== RECOLECTOR INDEPENDIENTE ====================
+def background_collector():
+    """Hilo 100% independiente para que Telegram NUNCA se congele."""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
         "page": 1, "payTypes": ["BBVA"], "rows": 1, "tradeType": "BUY", "transAmount": "250000"
     }
-    try:
-        res = requests.post(url, json=payload, timeout=8)
-        data = res.json()
-        if data.get("data"):
-            buy_price = float(data["data"][0]["adv"]["price"])
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO prices (bank, buy_price, sell_price) VALUES (%s, %s, %s)",
-                ("BBVA", buy_price, buy_price + 10.0)
-            )
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Registrado en PostgreSQL: {buy_price} Bs")
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Aviso en recolección: {e}")
-
-async def data_collection_loop():
-    """Bucle independiente que se ejecuta en segundo plano sin congelar Telegram."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    
     while True:
-        await asyncio.to_thread(fetch_and_store_binance)
-        await asyncio.sleep(60)
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=5)
+            data = res.json()
+            if data.get("data") and len(data["data"]) > 0:
+                buy_price = float(data["data"][0]["adv"]["price"])
+                
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO prices (bank, buy_price, sell_price) VALUES (%s, %s, %s)",
+                    ("BBVA", buy_price, buy_price + 10.0)
+                )
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Registrado: {buy_price} Bs")
+        except Exception as e:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Alerta Recolector: {e}")
+        
+        time.sleep(60)
 
-# ==================== MOTOR DE MACHINE LEARNING ====================
-def train_and_predict_ml():
+# ==================== MOTOR ML (XGBOOST) ====================
+def calculate_ml_prediction():
     try:
         conn = get_db_connection()
         query = "SELECT timestamp, buy_price FROM prices ORDER BY id ASC;"
         df = pd.read_sql(query, conn)
         conn.close()
 
-        if len(df) < 30:
-            return None, f"Se requieren al menos 30 lecturas para activar Machine Learning (Actuales: {len(df)})."
+        total_records = len(df)
+        if total_records < 30:
+            return None, f"Se requieren al menos 30 lecturas para activar Machine Learning (Actuales: {total_records})."
 
         df['price'] = df['buy_price']
         df['lag_1'] = df['price'].shift(1)
@@ -104,8 +108,8 @@ def train_and_predict_ml():
 
         df_clean = df.dropna().copy()
 
-        if len(df_clean) < 15:
-            return None, f"Acumulando más historial estructurado para el entrenamiento ML ({len(df_clean)} muestras válidas)."
+        if len(df_clean) < 10:
+            return None, f"Procesando estructura de matriz... ({len(df_clean)} muestras de entrenamiento, {total_records} totales)."
 
         features = ['price', 'lag_1', 'lag_2', 'lag_5', 'ma_5', 'ma_15', 'volatility']
         X = df_clean[features]
@@ -132,16 +136,21 @@ def train_and_predict_ml():
             'current_price': current_price,
             'predicted_price': predicted_price,
             'samples': len(df_clean),
-            'total_records': len(df)
+            'total_records': total_records
         }, None
 
     except Exception as e:
         return None, f"Error en el motor ML: {e}"
 
-def generate_prediction_report():
-    data, err = train_and_predict_ml()
+# ==================== COMANDOS TELEGRAM ====================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⚡ *Javis Robo-Engine Activo*\nUsa /prediccion para calcular tendencias.", parse_mode="Markdown")
+
+async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data, err = calculate_ml_prediction()
     if err:
-        return f"⚙️ *SISTEMA DE ENTRENAMIENTO ML*\n\n{err}"
+        await update.message.reply_text(f"⚙️ *SISTEMA ML*\n\n{err}", parse_mode="Markdown")
+        return
 
     curr = data['current_price']
     pred = data['predicted_price']
@@ -159,7 +168,7 @@ def generate_prediction_report():
     floor = pred - margin
     ceiling = pred + margin
 
-    return (
+    report = (
         f"🤖 *PREDICCIÓN MACHINE LEARNING (XGBoost)*\n"
         f"⏱️ *Proyección para:* {target_time} (+1 Hora)\n\n"
         f"📌 *Precio Actual:* {curr:.2f} Bs\n"
@@ -167,36 +176,27 @@ def generate_prediction_report():
         f"📊 *Tendencia Estimada:* {estado}\n\n"
         f"🟢 *Piso Calculado:* {floor:.2f} Bs\n"
         f"🔴 *Techo Calculado:* {ceiling:.2f} Bs\n\n"
-        f"🧠 _Modelo entrenado con {data['samples']} patrones e historial completo de {data['total_records']} lecturas._"
+        f"🧠 _Modelado con {data['samples']} variables y {data['total_records']} lecturas._"
     )
+    await update.message.reply_text(report, parse_mode="Markdown")
 
-# ==================== COMANDOS TELEGRAM ====================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("¡Bot P2P Inteligente (XGBoost + PostgreSQL) Activo! Usa /prediccion para consultar.")
-
-async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await asyncio.to_thread(generate_prediction_report)
-    await update.message.reply_text(msg, parse_mode="Markdown")
-
-async def main():
+def main():
+    # 1. Servidor de salud Render
     threading.Thread(target=run_health_server, daemon=True).start()
 
+    # 2. Inicializar base de datos
     init_db()
+
+    # 3. Recolector independiente en segundo plano
+    threading.Thread(target=background_collector, daemon=True).start()
+
+    # 4. Iniciar Bot de Telegram ultra fluido
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("prediccion", predict_command))
 
-    await app.initialize()
-    await app.start()
-    
-    # Iniciar la recolección en segundo plano de manera asíncrona
-    asyncio.create_task(data_collection_loop())
-
-    print("Servidor listo y escuchando en Render...")
-    await app.updater.start_polling()
-    
-    # Mantener la ejecución viva
-    await asyncio.Event().wait()
+    print("Bot activo y respondiendo instantáneamente...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
