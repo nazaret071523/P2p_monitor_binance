@@ -10,7 +10,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # REEMPLAZA CON TU TOKEN DE BOTFATHER
 TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
-
+DB_URL = "postgresql://postgres.ozowlqqxsiqkfklzakjb:[AbrilAlessandro30$]@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
 def init_db():
     conn = sqlite3.connect("p2p_data.db")
     cursor = conn.cursor()
