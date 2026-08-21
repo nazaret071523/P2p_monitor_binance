@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-TELEGRAM_TOKEN = "8579313357:AAM-InLgiq4AMS80wy45100I26uSEE51A0"
+# Reemplaza el texto entre comillas por el Token NUEVO que te acaba de dar BotFather
+TELEGRAM_TOKEN = "8579313357:AAH-ImigUgbAM59dOwy4sSi00j26u9EEjA8"
 
 def get_binance_p2p_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
