@@ -3,12 +3,13 @@ import time
 import sqlite3
 import requests
 import schedule
+import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# REEMPLAZA ESTO CON EL NUEVO TOKEN QUE GENERES CON /revoke EN BOTFATHER
-TELEGRAM_TOKEN = "8579313357:AAGfJ4NfawMpcA1f1gRGTUAZCvEfl0ZbLZM"
+# REEMPLAZA CON TU TOKEN DE BOTFATHER
+TELEGRAM_TOKEN = "TU_TOKEN_AQUI"
 
 def init_db():
     conn = sqlite3.connect("p2p_data.db")
@@ -52,7 +53,7 @@ def calculate_prediction():
     rows = cursor.fetchall()
     conn.close()
 
-    if len(rows) < 10:
+    if len(rows) < 5:
         return "Insuficientes datos acumulados. Recolectando información de mercado..."
 
     prices = [r[0] for r in reversed(rows)]
@@ -82,13 +83,22 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = calculate_prediction()
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-if __name__ == "__main__":
+async def main():
     init_db()
-    schedule.every(1).minutes.do(fetch_and_store_binance)
     
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("prediccion", predict_command))
-    
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
     print("Servidor en ejecución...")
-    app.run_polling()
+
+    while True:
+        fetch_and_store_binance()
+        await asyncio.sleep(60)
+
+if __name__ == "__main__":
+    asyncio.run(main())
