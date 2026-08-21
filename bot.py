@@ -22,9 +22,12 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
 def run_health_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
+    try:
+        port = int(os.environ.get("PORT", 8080))
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        server.serve_forever()
+    except Exception as e:
+        print(f"Error en servidor HTTP: {e}")
 
 # ==================== CONFIGURACIÓN ====================
 TELEGRAM_TOKEN = "8579313357:AAH-ImigUgbAM59dOwy4sSi00j26u9EEjA8"
@@ -90,7 +93,7 @@ def background_collector():
                     conn.close()
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Exito: Registrado {buy_price} Bs")
             else:
-                print(f"Binance dio status code: {res.status_code}")
+                print(f"Binance status code: {res.status_code}")
         except Exception as e:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Error Recolector: {e}")
         
@@ -115,8 +118,6 @@ def calculate_ml_prediction():
         df['ma_5'] = df['price'].rolling(window=5).mean()
         df['ma_15'] = df['price'].rolling(window=15).mean()
         df['volatility'] = df['price'].rolling(window=5).std()
-        
-        # Objetivo a corto plazo (5 lecturas hacia adelante) para habilitar entrenamiento con pocas muestras
         df['target'] = df['price'].shift(-5)
 
         df_clean = df.dropna().copy()
@@ -197,7 +198,7 @@ async def seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        base_price = 36.50
+        base_price = 37.70
         for i in range(60):
             fake_price = base_price + (i * 0.02) + (np.random.randn() * 0.05)
             cursor.execute(
@@ -212,19 +213,7 @@ async def seed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error generando datos: {e}")
 
 # ==================== INICIALIZACIÓN ====================
-async def run_bot():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("prediccion", predict_command))
-    app.add_handler(CommandHandler("seed", seed_command))
-
-    print("Iniciando Polling de Telegram...")
-    async with app:
-        await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        await asyncio.Event().wait()
-
-if __name__ == "__main__":
+def main():
     t_health = threading.Thread(target=run_health_server, daemon=True)
     t_health.start()
 
@@ -233,7 +222,13 @@ if __name__ == "__main__":
     t_collector = threading.Thread(target=background_collector, daemon=True)
     t_collector.start()
 
-    try:
-        asyncio.run(run_bot())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    print("Iniciando Bot de Telegram...")
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("prediccion", predict_command))
+    app.add_handler(CommandHandler("seed", seed_command))
+    
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
