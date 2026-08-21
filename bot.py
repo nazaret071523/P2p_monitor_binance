@@ -1,6 +1,7 @@
 import os
-import requests
+import json
 import random
+import urllib.request
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -9,11 +10,7 @@ TELEGRAM_TOKEN = "8579313357:AAM-InLgiq4AMS80wy45100I26uSEE51A0"
 
 def get_binance_p2p_price():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Content-Type": "application/json"
-    }
-    payload = {
+    payload = json.dumps({
         "asset": "USDT",
         "fiat": "VES",
         "merchantCheck": False,
@@ -21,14 +18,20 @@ def get_binance_p2p_price():
         "payTypes": ["BBVA"],
         "rows": 5,
         "tradeType": "BUY"
+    }).encode("utf-8")
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Content-Type": "application/json"
     }
     
     try:
-        res = requests.post(url, json=payload, headers=headers, timeout=8)
-        data = res.json()
-        if data.get("data") and len(data["data"]) > 0:
-            prices = [float(adv["adv"]["price"]) for adv in data["data"][:3]]
-            return round(sum(prices) / len(prices), 2)
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=8) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            if res_data.get("data") and len(res_data["data"]) > 0:
+                prices = [float(adv["adv"]["price"]) for adv in res_data["data"][:3]]
+                return round(sum(prices) / len(prices), 2)
     except Exception as e:
         print(f"Error consultando Binance: {e}")
 
