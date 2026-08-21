@@ -17,19 +17,19 @@
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">COMPRA</p>
-                <p id="buy-price" class="text-2xl font-bold text-green-400">Cargando...</p>
+                <p id="buy-price" class="text-2xl font-bold text-green-400">-- Bs</p>
             </div>
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">VENTA</p>
-                <p id="sell-price" class="text-2xl font-bold text-red-400">Cargando...</p>
+                <p id="sell-price" class="text-2xl font-bold text-red-400">-- Bs</p>
             </div>
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">SPREAD</p>
-                <p id="spread" class="text-2xl font-bold text-yellow-400">Cargando...</p>
+                <p id="spread" class="text-2xl font-bold text-yellow-400">-- Bs</p>
             </div>
             <div class="bg-gray-800 p-4 rounded-xl border border-gray-700">
                 <p class="text-gray-400 text-xs">GANANCIA</p>
-                <p id="margin" class="text-2xl font-bold text-blue-400">Cargando...</p>
+                <p id="margin" class="text-2xl font-bold text-blue-400">--%</p>
             </div>
         </div>
 
@@ -55,51 +55,38 @@
             options: { responsive: true, scales: { y: { beginAtZero: false } } }
         });
 
-        async function fetchPrice(tradeType) {
-            const url = "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search");
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    asset: "USDT",
-                    fiat: "VES",
-                    merchantCheck: false,
-                    page: 1,
-                    rows: 1,
-                    tradeType: tradeType
-                })
-            });
-            const data = await res.json();
-            return parseFloat(data.data[0].adv.price);
-        }
-
         async function updateData() {
             try {
-                const buy = await fetchPrice("BUY");
-                const sell = await fetchPrice("SELL");
-                const spread = sell - buy;
-                const margin = ((spread / buy) * 100).toFixed(2);
+                const res = await fetch('./data.json?t=' + new Date().getTime());
+                const data = await res.json();
 
-                document.getElementById('buy-price').innerText = buy.toFixed(2) + ' Bs';
-                document.getElementById('sell-price').innerText = sell.toFixed(2) + ' Bs';
-                document.getElementById('spread').innerText = spread.toFixed(2) + ' Bs';
-                document.getElementById('margin').innerText = margin + '%';
+                if (data && data.buy) {
+                    const buy = parseFloat(data.buy);
+                    const sell = parseFloat(data.sell);
+                    const spread = sell - buy;
+                    const margin = ((spread / buy) * 100).toFixed(2);
 
-                const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                if (chart.data.labels.length > 10) {
-                    chart.data.labels.shift();
-                    chart.data.datasets[0].data.shift();
+                    document.getElementById('buy-price').innerText = buy.toFixed(2) + ' Bs';
+                    document.getElementById('sell-price').innerText = sell.toFixed(2) + ' Bs';
+                    document.getElementById('spread').innerText = spread.toFixed(2) + ' Bs';
+                    document.getElementById('margin').innerText = margin + '%';
+
+                    const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                    if (chart.data.labels.length > 10) {
+                        chart.data.labels.shift();
+                        chart.data.datasets[0].data.shift();
+                    }
+                    chart.data.labels.push(time);
+                    chart.data.datasets[0].data.push(buy);
+                    chart.update();
                 }
-                chart.data.labels.push(time);
-                chart.data.datasets[0].data.push(buy);
-                chart.update();
             } catch (e) {
                 console.error(e);
             }
         }
 
         updateData();
-        setInterval(updateData, 15000);
+        setInterval(updateData, 10000);
     </script>
 </body>
 </html>
