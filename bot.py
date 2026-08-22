@@ -6,21 +6,23 @@ import threading
 import urllib.request
 import statistics
 from datetime import datetime, timedelta
+import pytz
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
 DB_FILE = "p2p_historial.db"
+TZ_VE = pytz.timezone("America/Caracas")
 
-# 1. Base de datos SQLite
+# 1. Base de datos SQLite con Timestamp en Horario Venezuela
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS precios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            timestamp TEXT,
             compra REAL,
             venta REAL
         )
@@ -31,7 +33,8 @@ def init_db():
 def guardar_precios(compra, venta):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO precios (compra, venta) VALUES (?, ?)", (compra, venta))
+    hora_ve = datetime.now(TZ_VE).strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("INSERT INTO precios (timestamp, compra, venta) VALUES (?, ?, ?)", (hora_ve, compra, venta))
     conn.commit()
     conn.close()
 
@@ -50,8 +53,8 @@ def get_binance_p2p_rates():
         payload = json.dumps({
             "asset": "USDT",
             "fiat": "VES",
-            "merchantCheck": False,  # Incluye comerciantes NO verificados
-            "transAmount": "5000",   # Filtro mínimo desde 5,000 VES
+            "merchantCheck": False,
+            "transAmount": "5000",
             "page": 1,
             "rows": 10,
             "tradeType": trade_type
@@ -79,13 +82,13 @@ def get_binance_p2p_rates():
             print(f"Error consultando Binance {trade_type}: {e}")
         return None
 
-    # Mapeo corregido: SELL para el precio de compra del comerciante y BUY para la venta
+    # Mapeo: SELL para Compra comerciante, BUY para Venta comerciante
     compra = fetch_type("SELL")
     venta = fetch_type("BUY")
     
     return compra or 915.21, venta or 920.20
 
-# 3. Servidor API Web para el Dashboard en Vercel
+# 3. API Servidor con Horario Venezuela
 class APIHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -96,13 +99,14 @@ class APIHandler(BaseHTTPRequestHandler):
         compra, venta = get_binance_p2p_rates()
         spread = round(venta - compra, 2)
         
-        # Margen neto restando 0.25% compra + 0.25% venta (0.50% total)
         ganancia_bruta_pct = ((venta - compra) / compra) * 100 if compra else 0
         ganancia_neta_pct = round(ganancia_bruta_pct - 0.50, 2)
         
         historial = obtener_historial(20)
+        hora_actual_ve = datetime.now(TZ_VE).strftime("%H:%M:%S")
 
         data_response = {
+            "hora_ve": hora_actual_ve,
             "compra": compra,
             "venta": venta,
             "spread": spread,
@@ -117,7 +121,7 @@ def run_api_server():
     server = HTTPServer(("", port), APIHandler)
     server.serve_forever()
 
-# 4. Hilo de recolección continua
+# 4. Recolección Continua
 def auto_collector():
     while True:
         compra, venta = get_binance_p2p_rates()
@@ -125,9 +129,9 @@ def auto_collector():
             guardar_precios(compra, venta)
         time.sleep(900)
 
-# 5. Comandos del Bot de Telegram
+# 5. Comandos Telegram con Hora Venezuela
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot P2P Activo. Usa /prediccion para ver métricas y proyecciones en vivo.")
+    await update.message.reply_text("🤖 Bot P2P Activo. Usa /prediccion para ver métricas y proyecciones en horario de Venezuela.")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     compra, venta = get_binance_p2p_rates()
@@ -151,22 +155,25 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     techo = round(compra + volatilidad, 2)
     prediccion_ml = round(prediccion_val, 2)
     spread = round(venta - compra, 2)
-    
-    # Margen neto con comisiones (0.25% + 0.25%)
     ganancia_neta = round((((venta - compra) / compra) * 100) - 0.50, 2)
     
-    hora_proyeccion = (datetime.now() + timedelta(hours=3)).strftime("%H:%M")
+    # Proyección ajustada a la hora de Venezuela (+1 hora para estimación cercana)
+    hora_ve_actual = datetime.now(TZ_VE)
+    hora_proyeccion = (hora_ve_actual + timedelta(hours=1)).strftime("%I:%M %p")
+    hora_actual_str = hora_ve_actual.strftime("%I:%M %p")
+
     tendencia = "📈 ALCISTA" if prediccion_ml > compra else ("📉 BAJISTA" if prediccion_ml < compra else "↔️ LATERAL")
 
     mensaje = (
         f"🤖 **MONITOR P2P NO VERIFICADO**\n"
+        f"🕒 *Hora VE: {hora_actual_str}*\n"
         f"🎯 *Filtro: 5K - 300K VES | Comisión: 0.25% + 0.25%*\n\n"
         f"🟢 **Compra:** {compra:.2f} Bs\n"
         f"🔴 **Venta:** {venta:.2f} Bs\n"
         f"⚡ **Spread:** {spread:.2f} Bs | **Ganancia Neta:** {max(ganancia_neta, 0.0):.2f}%\n\n"
-        f"🔮 **Predicción ML ({hora_proyeccion}):** {prediccion_ml:.2f} Bs ({tendencia})\n"
+        f"🔮 **Predicción ML para las {hora_proyeccion}:** {prediccion_ml:.2f} Bs ({tendencia})\n"
         f"🟢 **Piso:** {piso:.2f} Bs | 🔴 **Techo:** {techo:.2f} Bs\n\n"
-        f"🧠 *Modelado con {num_lecturas} lecturas en BD.*"
+        f"🧠 *Modelado con {num_lecturas} lecturas guardadas.*"
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
