@@ -17,8 +17,7 @@ try:
     HAS_POSTGRES = True
 except ImportError:
     HAS_POSTGRES = False
-
-TELEGRAM_TOKEN = os.environ.get"8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
+TELEGRAM_TOKEN = os.environ.get("8579313357:AAEsEOuz-cAs040-lAW_AO9gKqY2KjCPcuo")
 DB_FILE = "p2p_historial.db"
 DATABASE_URL = os.environ.get("DATABASE_URL")  # URL de Neon.tech / Supabase
 TZ_VE = timezone(timedelta(hours=-4))
