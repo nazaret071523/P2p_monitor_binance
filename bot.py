@@ -12,11 +12,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
 DB_FILE = "p2p_historial.db"
-
-# Zona horaria fija de Venezuela (UTC-4) sin dependencias externas
 TZ_VE = timezone(timedelta(hours=-4))
 
-# 1. Base de datos SQLite con Timestamp VE
+# 1. Base de datos SQLite
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -47,7 +45,7 @@ def obtener_historial(limit=50):
     conn.close()
     return list(reversed(rows))
 
-# 2. Extractor Binance P2P (No Verificados | 5k - 300k VES)
+# 2. Extractor Binance P2P
 def get_binance_p2p_rates():
     def fetch_type(trade_type):
         url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -85,8 +83,39 @@ def get_binance_p2p_rates():
 
     compra = fetch_type("SELL")
     venta = fetch_type("BUY")
-    
     return compra or 915.21, venta or 920.20
+
+# Cálculo del modelo de predicción
+def calcular_prediccion(compra, historial_filas):
+    precios_compra = [r[1] for r in historial_filas]
+    num_lecturas = len(precios_compra)
+    
+    if num_lecturas < 3:
+        volatilidad = compra * 0.008
+        prediccion_val = compra + (volatilidad * 0.3)
+    else:
+        media_corta = statistics.mean(precios_compra[-3:])
+        media_larga = statistics.mean(precios_compra)
+        desviacion = statistics.stdev(precios_compra) if num_lecturas > 2 else compra * 0.005
+        prediccion_val = compra + (media_corta - media_larga) + (desviacion * 0.2)
+        volatilidad = max(desviacion * 1.5, compra * 0.005)
+
+    piso = round(compra - volatilidad, 2)
+    techo = round(compra + volatilidad, 2)
+    prediccion_ml = round(prediccion_val, 2)
+    
+    hora_ve_actual = datetime.now(TZ_VE)
+    hora_proyeccion = (hora_ve_actual + timedelta(hours=1)).strftime("%I:%M %p")
+    tendencia = "📈 ALCISTA" if prediccion_ml > compra else ("📉 BAJISTA" if prediccion_ml < compra else "↔️ LATERAL")
+
+    return {
+        "prediccion_ml": prediccion_ml,
+        "piso": piso,
+        "techo": techo,
+        "tendencia": tendencia,
+        "hora_proyeccion": hora_proyeccion,
+        "num_lecturas": num_lecturas
+    }
 
 # 3. API Servidor
 class APIHandler(BaseHTTPRequestHandler):
@@ -98,11 +127,11 @@ class APIHandler(BaseHTTPRequestHandler):
 
         compra, venta = get_binance_p2p_rates()
         spread = round(venta - compra, 2)
-        
         ganancia_bruta_pct = ((venta - compra) / compra) * 100 if compra else 0
         ganancia_neta_pct = round(ganancia_bruta_pct - 0.50, 2)
         
         historial = obtener_historial(20)
+        ml_data = calcular_prediccion(compra, historial)
         hora_actual_ve = datetime.now(TZ_VE).strftime("%H:%M:%S")
 
         data_response = {
@@ -112,6 +141,7 @@ class APIHandler(BaseHTTPRequestHandler):
             "spread": spread,
             "ganancia_pct": max(ganancia_neta_pct, 0.0),
             "filtro_rango": "5,000 - 300,000 VES",
+            "prediccion": ml_data,
             "historial": [{"hora": row[0][11:16] if row[0] else "--:--", "compra": row[1], "venta": row[2]} for row in historial]
         }
         self.wfile.write(json.dumps(data_response).encode("utf-8"))
@@ -129,39 +159,20 @@ def auto_collector():
             guardar_precios(compra, venta)
         time.sleep(900)
 
-# 5. Comandos Telegram con Hora Venezuela
+# 5. Comandos Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot P2P Activo. Usa /prediccion para ver métricas y proyecciones en horario de Venezuela.")
+    await update.message.reply_text("🤖 Bot P2P Activo. Usa /prediccion para ver métricas y proyecciones.")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     compra, venta = get_binance_p2p_rates()
     guardar_precios(compra, venta)
     
     historial_filas = obtener_historial(50)
-    precios_compra = [r[1] for r in historial_filas]
-    num_lecturas = len(precios_compra)
+    ml = calcular_prediccion(compra, historial_filas)
     
-    if num_lecturas < 3:
-        volatilidad = compra * 0.008
-        prediccion_val = compra + (volatilidad * 0.3)
-    else:
-        media_corta = statistics.mean(precios_compra[-3:])
-        media_larga = statistics.mean(precios_compra)
-        desviacion = statistics.stdev(precios_compra) if num_lecturas > 2 else compra * 0.005
-        prediccion_val = compra + (media_corta - media_larga) + (desviacion * 0.2)
-        volatilidad = max(desviacion * 1.5, compra * 0.005)
-
-    piso = round(compra - volatilidad, 2)
-    techo = round(compra + volatilidad, 2)
-    prediccion_ml = round(prediccion_val, 2)
     spread = round(venta - compra, 2)
     ganancia_neta = round((((venta - compra) / compra) * 100) - 0.50, 2)
-    
-    hora_ve_actual = datetime.now(TZ_VE)
-    hora_proyeccion = (hora_ve_actual + timedelta(hours=1)).strftime("%I:%M %p")
-    hora_actual_str = hora_ve_actual.strftime("%I:%M %p")
-
-    tendencia = "📈 ALCISTA" if prediccion_ml > compra else ("📉 BAJISTA" if prediccion_ml < compra else "↔️ LATERAL")
+    hora_actual_str = datetime.now(TZ_VE).strftime("%I:%M %p")
 
     mensaje = (
         f"🤖 **MONITOR P2P NO VERIFICADO**\n"
@@ -170,9 +181,9 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🟢 **Compra:** {compra:.2f} Bs\n"
         f"🔴 **Venta:** {venta:.2f} Bs\n"
         f"⚡ **Spread:** {spread:.2f} Bs | **Ganancia Neta:** {max(ganancia_neta, 0.0):.2f}%\n\n"
-        f"🔮 **Predicción ML para las {hora_proyeccion}:** {prediccion_ml:.2f} Bs ({tendencia})\n"
-        f"🟢 **Piso:** {piso:.2f} Bs | 🔴 **Techo:** {techo:.2f} Bs\n\n"
-        f"🧠 *Modelado con {num_lecturas} lecturas guardadas.*"
+        f"🔮 **Predicción ML para las {ml['hora_proyeccion']}:** {ml['prediccion_ml']:.2f} Bs ({ml['tendencia']})\n"
+        f"🟢 **Piso:** {ml['piso']:.2f} Bs | 🔴 **Techo:** {ml['techo']:.2f} Bs\n\n"
+        f"🧠 *Modelado con {ml['num_lecturas']} lecturas guardadas.*"
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
