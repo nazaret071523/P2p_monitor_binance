@@ -50,8 +50,8 @@ def get_binance_p2p_rates():
         payload = json.dumps({
             "asset": "USDT",
             "fiat": "VES",
-            "merchantCheck": False,  # Incluye no verificados
-            "transAmount": "5000",   # Filtro desde 5,000 VES
+            "merchantCheck": False,  # Incluye comerciantes NO verificados
+            "transAmount": "5000",   # Filtro mínimo desde 5,000 VES
             "page": 1,
             "rows": 10,
             "tradeType": trade_type
@@ -79,10 +79,11 @@ def get_binance_p2p_rates():
             print(f"Error consultando Binance {trade_type}: {e}")
         return None
 
-    compra = fetch_type("BUY")
-    venta = fetch_type("SELL")
+    # Mapeo corregido: SELL para el precio de compra del comerciante y BUY para la venta
+    compra = fetch_type("SELL")
+    venta = fetch_type("BUY")
     
-    return compra or 919.42, venta or 919.89
+    return compra or 915.21, venta or 920.20
 
 # 3. Servidor API Web para el Dashboard en Vercel
 class APIHandler(BaseHTTPRequestHandler):
