@@ -11,11 +11,10 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
+TELEGRAM_TOKEN = "579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
 DB_FILE = "p2p_historial.db"
 TZ_VE = timezone(timedelta(hours=-4))
 
-# Variable global para rastrear el cambio de tendencia entre consultas
 TENDENCIA_ANTERIOR = None
 
 # 1. Base de datos
@@ -49,8 +48,8 @@ def obtener_historial(limit=200):
     conn.close()
     return list(reversed(rows))
 
-# 2. Extractor Binance P2P
-def get_binance_p2p_rates():
+# 2. Extractor Binance P2P Ampliado (Permite obtener bloques de muestras para Warm-Up)
+def get_binance_p2p_rates(full_samples=False):
     def fetch_type(trade_type):
         url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
         payload = json.dumps({
@@ -59,7 +58,7 @@ def get_binance_p2p_rates():
             "merchantCheck": False,
             "transAmount": "5000",
             "page": 1,
-            "rows": 10,
+            "rows": 20,
             "tradeType": trade_type
         }).encode("utf-8")
         
@@ -77,40 +76,40 @@ def get_binance_p2p_rates():
                         max_single_trans = float(adv["adv"]["maxSingleTransAmount"])
                         if max_single_trans >= 5000:
                             prices.append(float(adv["adv"]["price"]))
-                        if len(prices) >= 5:
-                            break
                     if prices:
-                        return round(sum(prices) / len(prices), 2)
+                        return prices if full_samples else round(sum(prices[:5]) / len(prices[:5]), 2)
         except Exception as e:
             print(f"Error consultando Binance {trade_type}: {e}")
         return None
 
+    if full_samples:
+        compras = fetch_type("SELL") or [915.21]
+        ventas = fetch_type("BUY") or [920.20]
+        return compras, ventas
+
     compra = fetch_type("SELL")
     venta = fetch_type("BUY")
-    return compra or 915.21, venta or 920.20
+    compra_val = compra if isinstance(compra, float) else 915.21
+    venta_val = venta if isinstance(venta, float) else 920.20
+    return compra_val, venta_val
 
-# 3. Motor Avanzado de Machine Learning (MODIFICADO Y CORREGIDO)
+# Función para poblar la DB al encender si está vacía por un reinicio de Render
+def precargar_historial_si_vacio():
+    historial = obtener_historial(10)
+    if len(historial) < 5:
+        print("⚡ DB recién iniciada o reseteada por Render. Precargando muestras vivas de Binance...")
+        compras, ventas = get_binance_p2p_rates(full_samples=True)
+        min_len = min(len(compras), len(ventas))
+        for i in range(min_len):
+            guardar_precios(compras[i], ventas[i])
+
+# 3. Motor Avanzado de Machine Learning
 def calcular_prediccion_avanzada(compra_actual, historial):
     global TENDENCIA_ANTERIOR
     num_lecturas = len(historial)
     hora_ve_actual = datetime.now(TZ_VE)
     hora_proyeccion = (hora_ve_actual + timedelta(hours=1)).strftime("%I:%M %p")
     
-    if num_lecturas < 5:
-        volatilidad = compra_actual * 0.003
-        return {
-            "prediccion_ml": round(compra_actual, 2),
-            "piso": round(compra_actual - volatilidad, 2),
-            "techo": round(compra_actual + volatilidad, 2),
-            "tendencia": "↔️ ESTABLE (Recolectando Datos)",
-            "alerta_cambio": "",
-            "texto_target": f"↔️ **Rango Estimado:** {compra_actual - volatilidad:.2f} - {compra_actual + volatilidad:.2f} Bs",
-            "hora_proyeccion": hora_proyeccion,
-            "num_lecturas": num_lecturas,
-            "precision_score": "Inicial (En entrenamiento)"
-        }
-
-    # Extracción de precios
     precios = [row[1] for row in historial]
     n = len(precios)
     pesos = [math.exp(i / n) for i in range(n)]
@@ -126,7 +125,7 @@ def calcular_prediccion_avanzada(compra_actual, historial):
     slope = num / den if den != 0 else 0
     desviacion = statistics.stdev(precios) if n > 2 else compra_actual * 0.003
     
-    # Determinación de Tendencia
+    # Clasificación de Tendencia
     if slope < -0.02:
         tendencia_limpia = "BAJISTA"
         tendencia = "📉 BAJISTA (Fuerte)" if slope < -0.08 else "↘️ BAJISTA (Moderada)"
@@ -137,11 +136,10 @@ def calcular_prediccion_avanzada(compra_actual, historial):
         tendencia_limpia = "LATERAL"
         tendencia = "↔️ LATERAL"
 
-    # CORRECCIÓN: Definición de Piso/Techo reales del rango
     piso = round(min(precios[-10:]) - (desviacion * 0.5), 2)
     techo = round(max(precios[-10:]) + (desviacion * 0.5), 2)
 
-    # CORRECCIÓN: Precio Objetivo Dirigido hacia la Tendencia Real
+    # Proyección Dirigida
     if tendencia_limpia == "BAJISTA":
         target = max(piso, compra_actual + (slope * 4))
         prediccion_ml = round(target, 2)
@@ -154,13 +152,13 @@ def calcular_prediccion_avanzada(compra_actual, historial):
         prediccion_ml = round(compra_actual, 2)
         texto_target = f"🔮 **Rango de Oscilación ({hora_proyeccion}):** {piso:.2f} - {techo:.2f} Bs"
 
-    # Detección de Alerta por Cambio de Tendencia
+    # Alerta por Giro de Mercado
     alerta_cambio = ""
     if TENDENCIA_ANTERIOR and TENDENCIA_ANTERIOR != tendencia_limpia:
         alerta_cambio = f"\n⚠️ **¡ALERTA DE CAMBIO DE TENDENCIA!**\nEl mercado cambió a **{tendencia}**\n"
     TENDENCIA_ANTERIOR = tendencia_limpia
 
-    precision = "Alta" if num_lecturas > 50 else ("Media" if num_lecturas > 20 else "Baja")
+    precision = "Alta" if num_lecturas > 30 else ("Media" if num_lecturas > 10 else "Inicial")
 
     return {
         "prediccion_ml": prediccion_ml,
@@ -208,19 +206,22 @@ def run_api_server():
     server = HTTPServer(("", port), APIHandler)
     server.serve_forever()
 
-# 5. Recolección Continua
+# 5. Recolección Continua (Reducido a 3 min para acumular muestras rápido)
 def auto_collector():
     while True:
         compra, venta = get_binance_p2p_rates()
         if compra and venta:
             guardar_precios(compra, venta)
-        time.sleep(900)
+        time.sleep(180)  # Cada 3 minutos guarda un punto
 
 # 6. Comandos Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Bot P2P Activo. Usa /prediccion para consultar la IA P2P.")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Asegurar precarga si la DB está vacía
+    precargar_historial_si_vacio()
+
     compra, venta = get_binance_p2p_rates()
     guardar_precios(compra, venta)
     
@@ -248,6 +249,7 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     init_db()
+    precargar_historial_si_vacio()  # Evita que inicie en 0 o 2 muestras
     threading.Thread(target=run_api_server, daemon=True).start()
     threading.Thread(target=auto_collector, daemon=True).start()
     
