@@ -5,17 +5,18 @@ import sqlite3
 import threading
 import urllib.request
 import statistics
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
 DB_FILE = "p2p_historial.db"
-TZ_VE = pytz.timezone("America/Caracas")
 
-# 1. Base de datos SQLite con Timestamp en Horario Venezuela
+# Zona horaria fija de Venezuela (UTC-4) sin dependencias externas
+TZ_VE = timezone(timedelta(hours=-4))
+
+# 1. Base de datos SQLite con Timestamp VE
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -82,13 +83,12 @@ def get_binance_p2p_rates():
             print(f"Error consultando Binance {trade_type}: {e}")
         return None
 
-    # Mapeo: SELL para Compra comerciante, BUY para Venta comerciante
     compra = fetch_type("SELL")
     venta = fetch_type("BUY")
     
     return compra or 915.21, venta or 920.20
 
-# 3. API Servidor con Horario Venezuela
+# 3. API Servidor
 class APIHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -112,7 +112,7 @@ class APIHandler(BaseHTTPRequestHandler):
             "spread": spread,
             "ganancia_pct": max(ganancia_neta_pct, 0.0),
             "filtro_rango": "5,000 - 300,000 VES",
-            "historial": [{"hora": row[0][11:16], "compra": row[1], "venta": row[2]} for row in historial]
+            "historial": [{"hora": row[0][11:16] if row[0] else "--:--", "compra": row[1], "venta": row[2]} for row in historial]
         }
         self.wfile.write(json.dumps(data_response).encode("utf-8"))
 
@@ -157,7 +157,6 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     spread = round(venta - compra, 2)
     ganancia_neta = round((((venta - compra) / compra) * 100) - 0.50, 2)
     
-    # Proyección ajustada a la hora de Venezuela (+1 hora para estimación cercana)
     hora_ve_actual = datetime.now(TZ_VE)
     hora_proyeccion = (hora_ve_actual + timedelta(hours=1)).strftime("%I:%M %p")
     hora_actual_str = hora_ve_actual.strftime("%I:%M %p")
