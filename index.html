@@ -14,13 +14,14 @@
       --red: #ef4444;
       --yellow: #eab308;
       --blue: #3b82f6;
+      --purple: #a855f7;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
     body { background-color: var(--bg-color); color: var(--text-main); padding: 16px; max-width: 600px; margin: 0 auto; }
     .header { background-color: var(--card-bg); padding: 16px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border: 1px solid #334155; }
     .header h1 { font-size: 1.1rem; color: var(--yellow); }
     .badge { background-color: rgba(34, 197, 94, 0.2); color: var(--green); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: bold; border: 1px solid var(--green); }
-    .time-bar { background-color: #1e293b; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #334155; }
+    .time-bar { background-color: #1e293b; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #334155; }
     .filter-info { background-color: #0284c7; color: white; padding: 6px 12px; border-radius: 8px; font-size: 0.75rem; text-align: center; margin-bottom: 16px; font-weight: bold; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
     .card { background-color: var(--card-bg); padding: 14px; border-radius: 12px; border: 1px solid #334155; }
@@ -30,6 +31,13 @@
     .value-venta { color: var(--red); }
     .value-spread { color: var(--yellow); }
     .value-ganancia { color: var(--blue); }
+    
+    /* Bloque Predicción */
+    .prediction-card { background-color: var(--card-bg); padding: 16px; border-radius: 12px; border: 1px solid var(--purple); margin-bottom: 16px; }
+    .prediction-title { font-size: 0.85rem; color: var(--purple); font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; }
+    .prediction-value { font-size: 1.4rem; font-weight: bold; margin-bottom: 8px; }
+    .prediction-bounds { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); background: #0f172a; padding: 8px 12px; border-radius: 8px; }
+
     .chart-card { background-color: var(--card-bg); padding: 16px; border-radius: 12px; border: 1px solid #334155; }
     .chart-title { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; }
     .history-list { display: flex; flex-direction: column; gap: 8px; }
@@ -70,6 +78,19 @@
     </div>
   </div>
 
+  <!-- Bloque de Predicción ML -->
+  <div class="prediction-card">
+    <div class="prediction-title">
+      <span>🔮 PREDICCIÓN ML (<span id="hora-prediccion">--:--</span>)</span>
+      <span id="tendencia">--</span>
+    </div>
+    <div class="prediction-value" id="valor-prediccion">0.00 Bs</div>
+    <div class="prediction-bounds">
+      <span>🟢 Piso: <strong id="piso-val" style="color: var(--green);">0.00 Bs</strong></span>
+      <span>🔴 Techo: <strong id="techo-val" style="color: var(--red);">0.00 Bs</strong></span>
+    </div>
+  </div>
+
   <div class="chart-card">
     <div class="chart-title">📊 Histórico de Lecturas (Hora VE)</div>
     <div class="history-list" id="historial-container">
@@ -95,6 +116,14 @@
         if (datos.venta) document.getElementById("precio-venta").innerText = `${datos.venta.toFixed(2)} Bs`;
         if (datos.spread) document.getElementById("spread").innerText = `${datos.spread.toFixed(2)} Bs`;
         if (datos.ganancia_pct) document.getElementById("ganancia").innerText = `${datos.ganancia_pct.toFixed(2)}%`;
+
+        if (datos.prediccion) {
+          document.getElementById("hora-prediccion").innerText = datos.prediccion.hora_proyeccion;
+          document.getElementById("tendencia").innerText = datos.prediccion.tendencia;
+          document.getElementById("valor-prediccion").innerText = `${datos.prediccion.prediccion_ml.toFixed(2)} Bs`;
+          document.getElementById("piso-val").innerText = `${datos.prediccion.piso.toFixed(2)} Bs`;
+          document.getElementById("techo-val").innerText = `${datos.prediccion.techo.toFixed(2)} Bs`;
+        }
 
         if (datos.historial && datos.historial.length > 0) {
           const container = document.getElementById("historial-container");
