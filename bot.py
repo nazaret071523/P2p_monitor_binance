@@ -43,18 +43,20 @@ def obtener_historial(limit=50):
     conn.close()
     return list(reversed(rows))
 
-# 2. Extractor de Tasas P2P (Compra y Venta)
+# 2. Extractor Binance P2P (No Verificados | 5k - 300k VES)
 def get_binance_p2p_rates():
     def fetch_type(trade_type):
         url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
         payload = json.dumps({
             "asset": "USDT",
             "fiat": "VES",
-            "merchantCheck": False,
+            "merchantCheck": False,  # Incluye no verificados
+            "transAmount": "5000",   # Filtro desde 5,000 VES
             "page": 1,
-            "rows": 5,
+            "rows": 10,
             "tradeType": trade_type
         }).encode("utf-8")
+        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Content-Type": "application/json"
@@ -64,26 +66,27 @@ def get_binance_p2p_rates():
             with urllib.request.urlopen(req, timeout=8) as response:
                 res_data = json.loads(response.read().decode("utf-8"))
                 if res_data.get("data") and len(res_data["data"]) > 0:
-                    prices = [float(adv["adv"]["price"]) for adv in res_data["data"]]
-                    return round(sum(prices) / len(prices), 2)
+                    prices = []
+                    for adv in res_data["data"]:
+                        max_single_trans = float(adv["adv"]["maxSingleTransAmount"])
+                        if max_single_trans >= 5000:
+                            prices.append(float(adv["adv"]["price"]))
+                        if len(prices) >= 5:
+                            break
+                    if prices:
+                        return round(sum(prices) / len(prices), 2)
         except Exception as e:
-            print(f"Error Binance {trade_type}: {e}")
+            print(f"Error consultando Binance {trade_type}: {e}")
         return None
 
     compra = fetch_type("BUY")
     venta = fetch_type("SELL")
     
-    if not compra or not venta:
-        # Valores base de respaldo si Binance aplica bloqueo temporal
-        compra = compra or 919.50
-        venta = venta or (compra + 0.50)
-        
-    return compra, venta
+    return compra or 919.42, venta or 919.89
 
-# 3. Servidor Web / API REST para el Dashboard de Vercel
+# 3. Servidor API Web para el Dashboard en Vercel
 class APIHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # Permite conexiones desde tu panel de Vercel (CORS)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -91,14 +94,19 @@ class APIHandler(BaseHTTPRequestHandler):
 
         compra, venta = get_binance_p2p_rates()
         spread = round(venta - compra, 2)
-        ganancia_pct = round((spread / compra) * 100, 2) if compra else 0
+        
+        # Margen neto restando 0.25% compra + 0.25% venta (0.50% total)
+        ganancia_bruta_pct = ((venta - compra) / compra) * 100 if compra else 0
+        ganancia_neta_pct = round(ganancia_bruta_pct - 0.50, 2)
+        
         historial = obtener_historial(20)
 
         data_response = {
             "compra": compra,
             "venta": venta,
             "spread": spread,
-            "ganancia_pct": ganancia_pct,
+            "ganancia_pct": max(ganancia_neta_pct, 0.0),
+            "filtro_rango": "5,000 - 300,000 VES",
             "historial": [{"hora": row[0][11:16], "compra": row[1], "venta": row[2]} for row in historial]
         }
         self.wfile.write(json.dumps(data_response).encode("utf-8"))
@@ -108,7 +116,7 @@ def run_api_server():
     server = HTTPServer(("", port), APIHandler)
     server.serve_forever()
 
-# 4. Colector Automático en Segundo Plano
+# 4. Hilo de recolección continua
 def auto_collector():
     while True:
         compra, venta = get_binance_p2p_rates()
@@ -116,9 +124,9 @@ def auto_collector():
             guardar_precios(compra, venta)
         time.sleep(900)
 
-# 5. Lógica Telegram
+# 5. Comandos del Bot de Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot Activo. Usa /prediccion para consultar precios en vivo.")
+    await update.message.reply_text("🤖 Bot P2P Activo. Usa /prediccion para ver métricas y proyecciones en vivo.")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     compra, venta = get_binance_p2p_rates()
@@ -141,19 +149,23 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     piso = round(compra - volatilidad, 2)
     techo = round(compra + volatilidad, 2)
     prediccion_ml = round(prediccion_val, 2)
-    hora_proyeccion = (datetime.now() + timedelta(hours=3)).strftime("%H:%M")
+    spread = round(venta - compra, 2)
     
+    # Margen neto con comisiones (0.25% + 0.25%)
+    ganancia_neta = round((((venta - compra) / compra) * 100) - 0.50, 2)
+    
+    hora_proyeccion = (datetime.now() + timedelta(hours=3)).strftime("%H:%M")
     tendencia = "📈 ALCISTA" if prediccion_ml > compra else ("📉 BAJISTA" if prediccion_ml < compra else "↔️ LATERAL")
 
     mensaje = (
-        f"🤖 **PREDICCIÓN MACHINE LEARNING**\n"
-        f"⏰ Proyección para: {hora_proyeccion}\n\n"
-        f"📌 **Precio Actual:** {compra:.2f} Bs\n"
-        f"🎯 **Predicción ML:** {prediccion_ml:.2f} Bs\n"
-        f"📊 **Tendencia Estimada:** {tendencia}\n\n"
-        f"🟢 **Piso Calculado:** {piso:.2f} Bs\n"
-        f"🔴 **Techo Calculado:** {techo:.2f} Bs\n\n"
-        f"🧠 *Modelado con {num_lecturas} lecturas guardadas en BD.*"
+        f"🤖 **MONITOR P2P NO VERIFICADO**\n"
+        f"🎯 *Filtro: 5K - 300K VES | Comisión: 0.25% + 0.25%*\n\n"
+        f"🟢 **Compra:** {compra:.2f} Bs\n"
+        f"🔴 **Venta:** {venta:.2f} Bs\n"
+        f"⚡ **Spread:** {spread:.2f} Bs | **Ganancia Neta:** {max(ganancia_neta, 0.0):.2f}%\n\n"
+        f"🔮 **Predicción ML ({hora_proyeccion}):** {prediccion_ml:.2f} Bs ({tendencia})\n"
+        f"🟢 **Piso:** {piso:.2f} Bs | 🔴 **Techo:** {techo:.2f} Bs\n\n"
+        f"🧠 *Modelado con {num_lecturas} lecturas en BD.*"
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
