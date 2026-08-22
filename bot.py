@@ -15,6 +15,9 @@ TELEGRAM_TOKEN = "8579313357:AAE3_PCgfY2zmpkVJWIz8gA4ECeDBufoct4"
 DB_FILE = "p2p_historial.db"
 TZ_VE = timezone(timedelta(hours=-4))
 
+# Variable global para rastrear el cambio de tendencia entre consultas
+TENDENCIA_ANTERIOR = None
+
 # 1. Base de datos
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -86,31 +89,31 @@ def get_binance_p2p_rates():
     venta = fetch_type("BUY")
     return compra or 915.21, venta or 920.20
 
-# 3. Motor Avanzado de Machine Learning (Weighted Linear Regression + Volatility Model)
+# 3. Motor Avanzado de Machine Learning (MODIFICADO Y CORREGIDO)
 def calcular_prediccion_avanzada(compra_actual, historial):
+    global TENDENCIA_ANTERIOR
     num_lecturas = len(historial)
     hora_ve_actual = datetime.now(TZ_VE)
     hora_proyeccion = (hora_ve_actual + timedelta(hours=1)).strftime("%I:%M %p")
     
     if num_lecturas < 5:
-        # Modo frio (pocas lecturas acumuladas)
-        volatilidad = compra_actual * 0.005
+        volatilidad = compra_actual * 0.003
         return {
-            "prediccion_ml": round(compra_actual + 0.10, 2),
+            "prediccion_ml": round(compra_actual, 2),
             "piso": round(compra_actual - volatilidad, 2),
             "techo": round(compra_actual + volatilidad, 2),
             "tendencia": "↔️ ESTABLE (Recolectando Datos)",
+            "alerta_cambio": "",
+            "texto_target": f"↔️ **Rango Estimado:** {compra_actual - volatilidad:.2f} - {compra_actual + volatilidad:.2f} Bs",
             "hora_proyeccion": hora_proyeccion,
             "num_lecturas": num_lecturas,
             "precision_score": "Inicial (En entrenamiento)"
         }
 
-    # Extracción de características (X = tiempo en minutos, Y = precio compra)
+    # Extracción de precios
     precios = [row[1] for row in historial]
-    
-    # Regresión Lineal Ponderada (dar más peso a los datos más recientes)
     n = len(precios)
-    pesos = [math.exp(i / n) for i in range(n)]  # Ponderación exponencial
+    pesos = [math.exp(i / n) for i in range(n)]
     sum_w = sum(pesos)
     
     x = list(range(n))
@@ -121,28 +124,41 @@ def calcular_prediccion_avanzada(compra_actual, historial):
     den = sum(w * ((x[i] - mean_x) ** 2) for i, w in enumerate(pesos))
     
     slope = num / den if den != 0 else 0
-    
-    # Proyección a 4 pasos (1 hora si se guarda cada 15 min)
-    prediccion_base = compra_actual + (slope * 4)
-    
-    # Ajuste por Desviación Estándar Dinámica (Medición del Riesgo/Piso/Techo)
     desviacion = statistics.stdev(precios) if n > 2 else compra_actual * 0.003
-    piso = round(prediccion_base - (desviacion * 1.25), 2)
-    techo = round(prediccion_base + (desviacion * 1.25), 2)
-    prediccion_ml = round(prediccion_base, 2)
     
-    # Clasificación de tendencia
-    diff = prediccion_ml - compra_actual
-    if diff > 0.15:
-        tendencia = "📈 ALCISTA (Fuerte)"
-    elif diff > 0.02:
-        tendencia = "↗️ ALCISTA (Moderada)"
-    elif diff < -0.15:
-        tendencia = "📉 BAJISTA (Fuerte)"
-    elif diff < -0.02:
-        tendencia = "↘️ BAJISTA (Moderada)"
+    # Determinación de Tendencia
+    if slope < -0.02:
+        tendencia_limpia = "BAJISTA"
+        tendencia = "📉 BAJISTA (Fuerte)" if slope < -0.08 else "↘️ BAJISTA (Moderada)"
+    elif slope > 0.02:
+        tendencia_limpia = "ALCISTA"
+        tendencia = "📈 ALCISTA (Fuerte)" if slope > 0.08 else "↗️ ALCISTA (Moderada)"
     else:
+        tendencia_limpia = "LATERAL"
         tendencia = "↔️ LATERAL"
+
+    # CORRECCIÓN: Definición de Piso/Techo reales del rango
+    piso = round(min(precios[-10:]) - (desviacion * 0.5), 2)
+    techo = round(max(precios[-10:]) + (desviacion * 0.5), 2)
+
+    # CORRECCIÓN: Precio Objetivo Dirigido hacia la Tendencia Real
+    if tendencia_limpia == "BAJISTA":
+        target = max(piso, compra_actual + (slope * 4))
+        prediccion_ml = round(target, 2)
+        texto_target = f"🔮 **Proyección de Caída ({hora_proyeccion}):** {prediccion_ml:.2f} Bs"
+    elif tendencia_limpia == "ALCISTA":
+        target = min(techo, compra_actual + (slope * 4))
+        prediccion_ml = round(target, 2)
+        texto_target = f"🔮 **Proyección de Subida ({hora_proyeccion}):** {prediccion_ml:.2f} Bs"
+    else:
+        prediccion_ml = round(compra_actual, 2)
+        texto_target = f"🔮 **Rango de Oscilación ({hora_proyeccion}):** {piso:.2f} - {techo:.2f} Bs"
+
+    # Detección de Alerta por Cambio de Tendencia
+    alerta_cambio = ""
+    if TENDENCIA_ANTERIOR and TENDENCIA_ANTERIOR != tendencia_limpia:
+        alerta_cambio = f"\n⚠️ **¡ALERTA DE CAMBIO DE TENDENCIA!**\nEl mercado cambió a **{tendencia}**\n"
+    TENDENCIA_ANTERIOR = tendencia_limpia
 
     precision = "Alta" if num_lecturas > 50 else ("Media" if num_lecturas > 20 else "Baja")
 
@@ -151,6 +167,8 @@ def calcular_prediccion_avanzada(compra_actual, historial):
         "piso": piso,
         "techo": techo,
         "tendencia": tendencia,
+        "alerta_cambio": alerta_cambio,
+        "texto_target": texto_target,
         "hora_proyeccion": hora_proyeccion,
         "num_lecturas": num_lecturas,
         "precision_score": precision
@@ -219,8 +237,9 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎯 *Filtro: 5K - 300K VES | Comisión: 0.50% Total*\n\n"
         f"🟢 **Compra:** {compra:.2f} Bs\n"
         f"🔴 **Venta:** {venta:.2f} Bs\n"
-        f"⚡ **Spread:** {spread:.2f} Bs | **Ganancia Neta:** {max(ganancia_neta, 0.0):.2f}%\n\n"
-        f"🔮 **Predicción ML ({ml['hora_proyeccion']}):** {ml['prediccion_ml']:.2f} Bs\n"
+        f"⚡ **Spread:** {spread:.2f} Bs | **Ganancia Neta:** {max(ganancia_neta, 0.0):.2f}%\n"
+        f"{ml['alerta_cambio']}\n"
+        f"{ml['texto_target']}\n"
         f"📊 **Tendencia:** {ml['tendencia']}\n"
         f"🟢 **Piso:** {ml['piso']:.2f} Bs | 🔴 **Techo:** {ml['techo']:.2f} Bs\n\n"
         f"🧠 *Entrenado con {ml['num_lecturas']} muestras | Precisión: {ml['precision_score']}*"
