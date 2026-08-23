@@ -1,6 +1,7 @@
 import os
 import time
-import requests
+import asyncio
+import httpx
 import threading
 import psycopg2
 import sqlite3
@@ -15,12 +16,13 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 PORT = int(os.environ.get("PORT", 10000))
 VET = timezone(timedelta(hours=-4))
 
+# Servidor HTTP para Render Health Check
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        self.wfile.write(b"Venbot P2P Quant Engine Live")
+        self.wfile.write(b"Venbot Active")
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
@@ -79,10 +81,8 @@ def obtener_historial(horas=24):
     conn.close()
     return rows
 
-def consultar_ordenes_binance(trade_type, monto):
+async def consultar_ordenes_binance_async(client, trade_type, monto):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json"}
-    
     payload = {
         "asset": "USDT",
         "fiat": "VES",
@@ -95,28 +95,32 @@ def consultar_ordenes_binance(trade_type, monto):
     }
     
     try:
-        r = requests.post(url, json=payload, headers=headers, timeout=10).json()
-        data = r.get('data', [])
-        if data:
-            # Promedio ponderado de las 3 mejores ofertas para limpiar anomalías puntuales
-            precios = [float(item['adv']['price']) for item in data[:3]]
-            return round(np.mean(precios), 2)
-        return None
+        response = await client.post(url, json=payload, timeout=5.0)
+        if response.status_code == 200:
+            data = response.json().get('data', [])
+            if data:
+                precios = [float(item['adv']['price']) for item in data[:3]]
+                return round(float(np.mean(precios)), 2)
     except Exception as e:
-        print(f"Error Binance P2P ({trade_type} - {monto}): {e}")
-        return None
+        print(f"Error consultando Binance ({trade_type} - {monto}): {e}")
+    return None
 
-def get_p2p_rates():
-    tasa_recompra = consultar_ordenes_binance("SELL", "10000")
-    tasa_venta = consultar_ordenes_binance("BUY", "300000")
-    
-    if not tasa_recompra or not tasa_venta:
-        return None, None, None, None
+async def get_p2p_rates_async():
+    async with httpx.AsyncClient(headers={"Content-Type": "application/json"}) as client:
+        # Recompra a 10k VES -> tradeType "SELL"
+        # Venta a 300k VES -> tradeType "BUY"
+        task_recompra = consultar_ordenes_binance_async(client, "SELL", "10000")
+        task_venta = consultar_ordenes_binance_async(client, "BUY", "300000")
+        
+        tasa_recompra, tasa_venta = await asyncio.gather(task_recompra, task_venta)
+        
+        if not tasa_recompra or not tasa_venta:
+            return None, None, None, None
 
-    spread = round(tasa_venta - tasa_recompra, 2)
-    porcentaje_bruto = round((spread / tasa_recompra) * 100, 2)
-    
-    return tasa_recompra, tasa_venta, spread, porcentaje_bruto
+        spread = round(tasa_venta - tasa_recompra, 2)
+        porcentaje_bruto = round((spread / tasa_recompra) * 100, 2)
+        
+        return tasa_recompra, tasa_venta, spread, porcentaje_bruto
 
 def motor_prediccion_cuantitativo_7h():
     historial = obtener_historial(24)
@@ -134,7 +138,6 @@ def motor_prediccion_cuantitativo_7h():
     compras = np.array([h[1] for h in historial])
     ventas = np.array([h[2] for h in historial])
     
-    # 1. Filtro Estadístico de Anomalías (IQR Outlier Removal)
     def limpiar_outliers(data):
         q25, q75 = np.percentile(data, 25), np.percentile(data, 75)
         iqr = q75 - q25
@@ -145,10 +148,9 @@ def motor_prediccion_cuantitativo_7h():
     c_clean = limpiar_outliers(compras)
     v_clean = limpiar_outliers(ventas)
 
-    piso_soporte = round(np.min(c_clean), 2)
-    techo_resistencia = round(np.max(v_clean), 2)
+    piso_soporte = round(float(np.min(c_clean)), 2)
+    techo_resistencia = round(float(np.max(v_clean)), 2)
 
-    # 2. Suavizado Exponencial Doble (Holt's Linear Trend Model)
     def holt_linear(series, alpha=0.4, beta=0.2, h=7):
         level = series[0]
         trend = series[1] - series[0]
@@ -158,20 +160,17 @@ def motor_prediccion_cuantitativo_7h():
             trend = beta * (level - last_level) + (1 - beta) * trend
         return level + (trend * h), trend
 
-    # Proyección a 7 horas (asumiendo mediciones constantes)
-    steps_7h = 7 * 20  # 20 lecturas por hora (cada 3 min)
+    steps_7h = 7 * 20
     pred_c_raw, trend_c = holt_linear(c_clean, h=steps_7h)
     pred_v_raw, trend_v = holt_linear(v_clean, h=steps_7h)
 
-    # 3. Mantenimiento del Spread Mínimo Saludable de Mercado
-    spread_historico_mediana = np.median(v_clean - c_clean)
-    pred_c_7h = round(pred_c_raw, 2)
-    pred_v_7h = round(max(pred_v_raw, pred_c_7h + spread_historico_mediana), 2)
+    spread_historico_mediana = float(np.median(v_clean - c_clean))
+    pred_c_7h = round(float(pred_c_raw), 2)
+    pred_v_7h = round(float(max(pred_v_raw, pred_c_7h + spread_historico_mediana)), 2)
     brecha = round(pred_v_7h - pred_c_7h, 2)
 
-    # 4. Análisis de Volatilidad y Tendencia con Bandas
-    std_dev = np.std(c_clean)
-    volatilidad_pct = (std_dev / np.mean(c_clean)) * 100
+    std_dev = float(np.std(c_clean))
+    volatilidad_pct = (std_dev / float(np.mean(c_clean))) * 100
     
     trend_score = (trend_c + trend_v) / 2
     if trend_score > 0.05:
@@ -203,22 +202,28 @@ def motor_prediccion_cuantitativo_7h():
         "muestras": n
     }
 
-def background_monitor():
-    while True:
-        try:
-            c, v, sp, pct = get_p2p_rates()
-            if c and v:
-                guardar_lectura(c, v, sp)
-        except Exception as e:
-            print(f"Error en monitor de fondo: {e}")
-        time.sleep(180)
+def background_monitor_worker():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    async def loop_func():
+        while True:
+            try:
+                c, v, sp, pct = await get_p2p_rates_async()
+                if c and v:
+                    guardar_lectura(c, v, sp)
+            except Exception as e:
+                print(f"Error monitor fondo: {e}")
+            await asyncio.sleep(180)
+            
+    loop.run_until_complete(loop_func())
 
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
+    tasa_compra, tasa_venta, spread, pct_bruto = await get_p2p_rates_async()
     pred = motor_prediccion_cuantitativo_7h()
     
     if not tasa_compra or not tasa_venta:
-        await update.message.reply_text("❌ Error consultando la API de Binance P2P.")
+        await update.message.reply_text("❌ Ocurrió un timeout al consultar Binance P2P. Intenta de nuevo en unos segundos.")
         return
 
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
@@ -234,7 +239,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔮 **Proyección Venta (7h):** {pred['pred_venta']}\n"
         f"📐 **Brecha Esperada (7h):** {pred['brecha_esperada']}\n"
         f"📊 **Tendencia:** {pred['tendencia']}\n"
-        f"🌊 **Volatilidad de Mercado:** {pred['volatilidad']}\n\n"
+        f"🌊 **Volatilidad:** {pred['volatilidad']}\n\n"
         f"🛡️ **Soporte (Piso 24h):** {pred['piso']}\n"
         f"🏰 **Resistencia (Techo 24h):** {pred['techo']}\n\n"
         f"🧠 **Lecturas Validadas:** {pred['muestras']}"
@@ -245,11 +250,11 @@ if __name__ == "__main__":
     init_db()
     
     threading.Thread(target=run_web_server, daemon=True).start()
-    threading.Thread(target=background_monitor, daemon=True).start()
+    threading.Thread(target=background_monitor_worker, daemon=True).start()
     
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         app.add_handler(CommandHandler("prediccion", prediccion_cmd))
         app.add_handler(CommandHandler("p2p", prediccion_cmd))
-        print("Bot Cuantitativo Iniciado...")
+        print("Bot iniciado correctamente...")
         app.run_polling(drop_pending_updates=True)
