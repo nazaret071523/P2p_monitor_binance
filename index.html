@@ -15,7 +15,12 @@
     <!-- Header Status -->
     <div class="card flex justify-between items-center py-2.5">
         <span class="text-yellow-400 font-bold text-base flex items-center gap-1">⚡ COMERCIANTE P2P PRO</span>
-        <span id="status-tag" class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-900 text-emerald-300 font-bold tracking-wide">EN VIVO</span>
+        <div class="flex items-center gap-1.5">
+            <button id="btn-notif" onclick="solicitarPermisoNotificaciones()" class="px-2 py-0.5 text-[10px] rounded-full bg-slate-800 text-cyan-400 font-bold border border-cyan-500/30 hover:bg-slate-700">
+                🔔 Notificaciones
+            </button>
+            <span id="status-tag" class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-900 text-emerald-300 font-bold tracking-wide">EN VIVO</span>
+        </div>
     </div>
 
     <!-- Banner Hora Oficial y Filtro -->
@@ -91,6 +96,7 @@
 
     <script>
         const API_URL = "https://p2p-monitor-binance.onrender.com";
+        let ultimaTendencia = null;
 
         function actualizarHora() {
             const ahora = new Date();
@@ -99,8 +105,41 @@
         }
         setInterval(actualizarHora, 1000);
 
+        function solicitarPermisoNotificaciones() {
+            if ("Notification" in window) {
+                Notification.requestPermission().then(permission => {
+                    if (permission === "granted") {
+                        document.getElementById("btn-notif").innerText = "🔔 Alertas Activas";
+                        document.getElementById("btn-notif").className = "px-2 py-0.5 text-[10px] rounded-full bg-emerald-900/60 text-emerald-300 font-bold border border-emerald-500/40";
+                        new Notification("Comerciante P2P Pro", {
+                            body: "¡Notificaciones de tendencia activadas con éxito!",
+                            icon: "https://binance.com/favicon.ico"
+                        });
+                    }
+                });
+            } else {
+                alert("Tu navegador no soporta notificaciones.");
+            }
+        }
+
+        function notificarCambioTendencia(nuevaTendencia) {
+            if ("Notification" in window && Notification.permission === "granted") {
+                new Notification("🚨 ALERTA P2P: Cambio de Tendencia", {
+                    body: `La tendencia del mercado ha cambiado a: ${nuevaTendencia}`,
+                    icon: "https://binance.com/favicon.ico"
+                });
+            }
+        }
+
+        function normalizarTendencia(textoRaw) {
+            const t = (textoRaw || "").toUpperCase();
+            if (t.includes("ALCISTA")) return "ALCISTA";
+            if (t.includes("BAJISTA")) return "BAJISTA";
+            if (t.includes("LATERAL")) return "LATERAL";
+            return "ESTABLE";
+        }
+
         function formatearTextoMarkdown(texto) {
-            // Convierte los asteriscos dobles (**texto**) a etiquetas <strong> blancas y resaltadas
             return texto.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>');
         }
 
@@ -108,13 +147,15 @@
             let mensaje = "";
             
             if (spread < 5) {
-                mensaje = "💡 **Mercado apretado:** El spread bruto es muy bajo (" + spread.toFixed(2) + " Bs). No se recomienda operar volumen alto en este momento salvo que trabajes con comisiones mínimas.";
-            } else if (tendencia.includes("ALCISTA")) {
-                mensaje = "🚀 **Tendencia Alcista:** Se detecta presión al alza. Priorizar posicionar anuncios de **COMPRA** rápidamente para capturar inventario antes de un ajuste superior de precio.";
-            } else if (tendencia.includes("BAJISTA")) {
-                mensaje = "📉 **Tendencia Bajista:** Precaución al acumular inventario USDT. Prioriza la **VENTA** rápida para proteger el capital en bolívares.";
+                mensaje = "💡 **Mercado apretado:** El spread bruto es muy bajo (" + spread.toFixed(2) + " Bs). Margen ajustado para operar volumen alto.";
+            } else if (tendencia === "ALCISTA") {
+                mensaje = "🚀 **Tendencia Alcista:** Presión al alza. Se recomienda priorizar órdenes de **COMPRA** para asegurar inventario antes de que vuelva a subir.";
+            } else if (tendencia === "BAJISTA") {
+                mensaje = "📉 **Tendencia Bajista:** Presión a la baja. Se recomienda priorizar la **VENTA** rápida para resguardar capital en bolívares.";
+            } else if (tendencia === "LATERAL") {
+                mensaje = "⚖️ **Tendencia Lateral:** Rango ideal de arbitraje. Coloca órdenes en el **PISO** (" + compra.toFixed(2) + " Bs) para recomprar en el **TECHO**.";
             } else {
-                mensaje = "⚖️ **Mercado Lateral:** Buen momento para arbitraje regular. Con un spread de " + spread.toFixed(2) + " Bs, puedes colocar órdenes en el **PISO** (" + compra.toFixed(2) + " Bs) para recomprar en el **TECHO**.";
+                mensaje = "🟢 **Tendencia Estable:** Mercado sin fluctuaciones bruscas. Spread de " + spread.toFixed(2) + " Bs constante para operaciones regulares.";
             }
 
             document.getElementById("ai-response").innerHTML = formatearTextoMarkdown(mensaje);
@@ -134,22 +175,29 @@
                 document.getElementById("precio-venta").innerText = venta.toFixed(2) + " Bs";
                 document.getElementById("spread-bruto").innerText = spread.toFixed(2) + " Bs";
 
-                // ML y Tendencia
+                // ML y Tendencia Normalizada
                 const ml = data.ml_prediccion || {};
-                const tendenciaActual = data.tendencia || ml.tendencia || "ESTABLE / LATERAL";
-                
+                const tendenciaRaw = data.tendencia || ml.tendencia || "ESTABLE";
+                const tendenciaLimpia = normalizarTendencia(tendenciaRaw);
+
                 document.getElementById("ml-precio").innerText = (data.prediccion || ml.precio || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-piso").innerText = (data.piso || ml.piso || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-techo").innerText = (data.techo || ml.techo || 0).toFixed(2) + " Bs";
-                document.getElementById("ml-tendencia").innerText = tendenciaActual;
+                document.getElementById("ml-tendencia").innerText = tendenciaLimpia;
                 document.getElementById("ml-hora").innerText = ml.hora || "+7h";
+
+                // Disparar notificación si cambia entre ALCISTA, BAJISTA, LATERAL o ESTABLE
+                if (ultimaTendencia !== null && ultimaTendencia !== tendenciaLimpia) {
+                    notificarCambioTendencia(tendenciaLimpia);
+                }
+                ultimaTendencia = tendenciaLimpia;
 
                 // Status
                 document.getElementById("status-tag").innerText = "EN VIVO";
                 document.getElementById("status-tag").className = "px-2 py-0.5 text-[10px] rounded-full bg-emerald-900 text-emerald-300 font-bold tracking-wide";
 
-                // Ejecutar motor de análisis
-                generarRecomendacionIA(compra, venta, spread, tendenciaActual);
+                // Ejecutar recomendación
+                generarRecomendacionIA(compra, venta, spread, tendenciaLimpia);
 
             } catch (err) {
                 document.getElementById("status-tag").innerText = "RECONECTANDO";
