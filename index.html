@@ -3,179 +3,232 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Venbot Predicciones | Binance P2P Monitor</title>
+    <title>Venbot Predicciones | Monitor P2P</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0e11;
-            --card-bg: #181a20;
-            --accent-green: #0ecb81;
-            --accent-red: #f6465d;
-            --text-main: #eaeaea;
+            --bg: #0b0e14;
+            --surface: #131722;
+            --card: #1e222d;
+            --border: #2a2e39;
+            --text-main: #f0f3fa;
             --text-muted: #848e9c;
-            --border-color: #2b313a;
+            --green: #089981;
+            --green-glow: rgba(8, 153, 129, 0.15);
+            --red: #f23645;
+            --red-glow: rgba(242, 54, 69, 0.15);
             --gold: #f0b90b;
+            --accent: #2962ff;
+        }
+
+        * {
+            box-sizing: border-box;
+            font-family: 'Inter', -apple-system, sans-serif;
         }
 
         body {
             margin: 0;
-            padding: 12px;
-            background-color: var(--bg-color);
+            padding: 16px 12px;
+            background-color: var(--bg);
             color: var(--text-main);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
         }
 
         .container {
-            max-width: 900px;
-            margin: 0 auto;
+            width: 100%;
+            max-width: 850px;
         }
 
         header {
             text-align: center;
-            padding: 10px 0;
-            border-bottom: 1px solid var(--border-color);
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }
 
-        h1 {
-            margin: 0;
-            font-size: 1.4rem;
+        .brand-title {
+            font-size: 1.35rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
             color: var(--gold);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
 
-        .subtitle {
-            font-size: 0.8rem;
+        .brand-subtitle {
+            font-size: 0.78rem;
             color: var(--text-muted);
             margin-top: 4px;
         }
 
-        .ad-space-top {
+        .ad-banner {
             width: 100%;
-            height: 70px;
-            background-color: #2b313a;
-            border: 1px dashed #474d57;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-muted);
-            font-size: 0.85rem;
-            margin-bottom: 15px;
+            padding: 14px;
+            background: linear-gradient(180deg, #181c27 0%, #131722 100%);
+            border: 1px dashed var(--border);
+            border-radius: 12px;
             text-align: center;
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            font-weight: 500;
+            margin-bottom: 18px;
         }
 
-        .cards-grid {
+        /* METRICAS PRINCIPALES (GRID PERFECTO EN MOVIL) */
+        .metrics-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: 10px;
-            margin-bottom: 15px;
+            margin-bottom: 18px;
         }
 
-        .card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 12px;
+        .metric-card {
+            background-color: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 10px;
             text-align: center;
+            transition: border-color 0.2s ease;
         }
 
-        .card-title {
-            font-size: 0.75rem;
-            color: var(--text-muted);
+        .metric-label {
+            font-size: 0.68rem;
+            font-weight: 600;
             text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.3px;
         }
 
-        .card-value {
-            font-size: 1.25rem;
-            font-weight: bold;
-            margin: 6px 0;
+        .metric-value {
+            font-size: 1.15rem;
+            font-weight: 700;
+            margin-top: 6px;
         }
 
-        .val-buy { color: var(--accent-green); }
-        .val-sell { color: var(--accent-red); }
+        .val-buy { color: var(--green); }
+        .val-sell { color: var(--red); }
         .val-margin { color: var(--gold); }
 
-        .ia-section {
-            background: linear-gradient(135deg, #1e2329 0%, #181a20 100%);
-            border: 1px solid #363c4e;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
+        /* BLOQUE MOTOR IA */
+        .ia-card {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 18px;
         }
 
         .ia-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
+            margin-bottom: 14px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
         }
 
         .ia-title {
-            font-size: 0.95rem;
-            font-weight: bold;
-            color: #61afef;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .ia-badge {
-            background-color: rgba(97, 175, 239, 0.2);
-            color: #61afef;
-            padding: 2px 8px;
-            border-radius: 12px;
+            background: rgba(41, 98, 255, 0.15);
+            color: #64b5f6;
+            border: 1px solid rgba(41, 98, 255, 0.3);
+            padding: 4px 10px;
+            border-radius: 20px;
             font-size: 0.7rem;
+            font-weight: 600;
         }
 
-        .ia-details {
+        .ia-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            font-size: 0.85rem;
+            gap: 12px;
         }
 
-        .chart-container {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
+        .ia-item {
+            background-color: var(--card);
+            padding: 10px 12px;
             border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            height: 300px;
+            border: 1px solid var(--border);
+        }
+
+        .ia-item-label {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .ia-item-val {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        /* CONTENEDOR GRAFICA */
+        .chart-card {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 18px;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .chart-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
         }
 
         .chart-controls {
             display: flex;
-            justify-content: flex-end;
-            gap: 5px;
-            margin-bottom: 10px;
+            gap: 6px;
         }
 
         .btn-range {
-            background-color: #2b313a;
-            border: none;
-            color: var(--text-main);
-            padding: 4px 10px;
-            font-size: 0.75rem;
-            border-radius: 4px;
+            background-color: var(--card);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 4px 12px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            border-radius: 6px;
             cursor: pointer;
+            transition: all 0.2s ease;
         }
 
         .btn-range.active {
             background-color: var(--gold);
+            border-color: var(--gold);
             color: #000;
-            font-weight: bold;
         }
 
-        .ad-space-bottom {
+        .canvas-holder {
+            position: relative;
+            height: 260px;
             width: 100%;
-            height: 90px;
-            background-color: #2b313a;
-            border: 1px dashed #474d57;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-muted);
-            font-size: 0.85rem;
-            margin-top: 15px;
-            text-align: center;
+        }
+
+        @media (max-width: 480px) {
+            .metric-value { font-size: 0.95rem; }
+            .metric-label { font-size: 0.62rem; }
+            .ia-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -183,53 +236,70 @@
 
 <div class="container">
     <header>
-        <h1>VENBOT PREDICCIONES</h1>
-        <div class="subtitle">Bloque #4 (10k Recompra / 300k Venta)</div>
+        <div class="brand-title">🦅 VENBOT PREDICCIONES</div>
+        <div class="brand-subtitle">Bloque #4 (10k Recompra / 300k Venta)</div>
     </header>
 
-    <div class="ad-space-top">
-        📢 Espacio Publicitario Disponible (Banner 728x90)
+    <div class="ad-banner">
+        📢 Espacio Publicitario Disponible (Banner Premium 728x90)
     </div>
 
-    <div class="cards-grid">
-        <div class="card">
-            <div class="card-title">🟢 Compra (10k)</div>
-            <div class="card-value val-buy" id="compra-val">Cargando...</div>
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <div class="metric-label">🟢 Compra</div>
+            <div class="metric-value val-buy" id="compra-val">--.--</div>
         </div>
-        <div class="card">
-            <div class="card-title">🔴 Venta (300k)</div>
-            <div class="card-value val-sell" id="venta-val">Cargando...</div>
+        <div class="metric-card">
+            <div class="metric-label">🔴 Venta</div>
+            <div class="metric-value val-sell" id="venta-val">--.--</div>
         </div>
-        <div class="card">
-            <div class="card-title">⚡ Margen Neto</div>
-            <div class="card-value val-margin" id="margin-val">Cargando...</div>
+        <div class="metric-card">
+            <div class="metric-label">⚡ Margen</div>
+            <div class="metric-value val-margin" id="margin-val">--.--</div>
         </div>
     </div>
 
-    <div class="ia-section">
+    <div class="ia-card">
         <div class="ia-header">
-            <div class="ia-title">🔮 Proyección Motor IA (+7H)</div>
+            <div class="ia-title">🔮 Proyección IA Quant (+7H)</div>
             <div class="ia-badge" id="trend-val">ANALIZANDO...</div>
         </div>
-        <div class="ia-details">
-            <div>• Recompra Est.: <b id="pred-buy">--.-- Bs</b></div>
-            <div>• Venta Est.: <b id="pred-sell">--.-- Bs</b></div>
-            <div>• Piso del Mercado: <b id="piso-val">--.-- Bs</b></div>
-            <div>• Techo del Mercado: <b id="techo-val">--.-- Bs</b></div>
+        <div class="ia-grid">
+            <div class="ia-item">
+                <div class="ia-item-label">Recompra Estimada</div>
+                <div class="ia-item-val" id="pred-buy">--.-- Bs</div>
+            </div>
+            <div class="ia-item">
+                <div class="ia-item-label">Venta Estimada</div>
+                <div class="ia-item-val" id="pred-sell">--.-- Bs</div>
+            </div>
+            <div class="ia-item">
+                <div class="ia-item-label">Piso de Mercado</div>
+                <div class="ia-item-val" id="piso-val">--.-- Bs</div>
+            </div>
+            <div class="ia-item">
+                <div class="ia-item-label">Techo de Mercado</div>
+                <div class="ia-item-val" id="techo-val">--.-- Bs</div>
+            </div>
         </div>
     </div>
 
-    <div class="chart-container">
-        <div class="chart-controls">
-            <button class="btn-range active" onclick="cambiarRango('1d', this)">1D</button>
-            <button class="btn-range" onclick="cambiarRango('7d', this)">7D</button>
-            <button class="btn-range" onclick="cambiarRango('30d', this)">30D</button>
+    <div class="chart-card">
+        <div class="chart-header">
+            <div class="chart-title">Tendencia P2P</div>
+            <div class="chart-controls">
+                <button class="btn-range active" onclick="cambiarRango('1d', this)">1D</button>
+                <button class="btn-range" onclick="cambiarRango('7d', this)">7D</button>
+                <button class="btn-range" onclick="cambiarRango('30d', this)">30D</button>
+            </div>
         </div>
-        <canvas id="marketChart"></canvas>
+        <div class="canvas-holder">
+            <canvas id="marketChart"></canvas>
+        </div>
     </div>
 
-    <div class="ad-space-bottom">
-        📢 Espacio Publicitario Disponible (Promociones / Aliados)
+    <div class="ad-banner">
+        📢 Espacio Publicitario Disponible (Aliados / Promociones)
     </div>
 </div>
 
@@ -246,7 +316,7 @@
 
             document.getElementById('compra-val').innerText = data.compra.toFixed(2) + ' Bs';
             document.getElementById('venta-val').innerText = data.venta.toFixed(2) + ' Bs';
-            document.getElementById('margin-val').innerText = data.spread.toFixed(2) + ' Bs (' + data.pct_bruto + '%)';
+            document.getElementById('margin-val').innerText = data.spread.toFixed(2) + ' Bs';
 
             if(data.pred) {
                 document.getElementById('trend-val').innerText = data.pred.tendencia;
@@ -256,7 +326,7 @@
                 document.getElementById('techo-val').innerText = data.pred.techo_str;
             }
         } catch(e) {
-            console.error("Error cargando datos actuales:", e);
+            console.error("Error al obtener datos actualizados:", e);
         }
     }
 
@@ -276,17 +346,21 @@
                         {
                             label: 'Compra (10k)',
                             data: data.compras,
-                            borderColor: '#0ecb81',
+                            borderColor: '#089981',
+                            backgroundColor: 'rgba(8, 153, 129, 0.05)',
                             borderWidth: 2,
-                            tension: 0.2,
+                            fill: true,
+                            tension: 0.3,
                             pointRadius: 0
                         },
                         {
                             label: 'Venta (300k)',
                             data: data.ventas,
-                            borderColor: '#f6465d',
+                            borderColor: '#f23645',
+                            backgroundColor: 'rgba(242, 54, 69, 0.05)',
                             borderWidth: 2,
-                            tension: 0.2,
+                            fill: true,
+                            tension: 0.3,
                             pointRadius: 0
                         }
                     ]
@@ -294,15 +368,26 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#848e9c' } } },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: { color: '#848e9c', font: { size: 11 } }
+                        }
+                    },
                     scales: {
-                        x: { ticks: { color: '#848e9c' }, grid: { color: '#2b313a' } },
-                        y: { ticks: { color: '#848e9c' }, grid: { color: '#2b313a' } }
+                        x: {
+                            ticks: { color: '#848e9c', font: { size: 10 } },
+                            grid: { color: 'rgba(42, 46, 57, 0.5)' }
+                        },
+                        y: {
+                            ticks: { color: '#848e9c', font: { size: 10 } },
+                            grid: { color: 'rgba(42, 46, 57, 0.5)' }
+                        }
                     }
                 }
             });
         } catch(e) {
-            console.error("Error cargando historial:", e);
+            console.error("Error al cargar gráfica:", e);
         }
     }
 
