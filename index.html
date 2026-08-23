@@ -25,19 +25,19 @@
         🇻🇪 Hora Oficial VE: <span id="hora-ve" class="font-bold">--:--:--</span>
     </div>
 
-    <!-- Filtro Banner Corregido (10k a 300k) -->
+    <!-- Filtro Banner (10k a 300k) -->
     <div class="bg-sky-600 text-white text-center py-2 px-3 rounded-lg text-xs font-semibold">
         🎯 Filtro: Comerciante No Verificado (10,000 Bs - 300,000 Bs)
     </div>
 
-    <!-- Métricas principales (Se eliminó Ganancia Neta Ciclo) -->
+    <!-- Métricas Principales Ajustadas -->
     <div class="grid grid-cols-3 gap-2">
         <div class="card text-center py-3 px-1">
-            <p class="text-[10px] text-slate-400 font-bold mb-1">COMPRA</p>
+            <p class="text-[10px] text-slate-400 font-bold mb-1">COMPRA (VERDE)</p>
             <p id="precio-compra" class="text-base font-extrabold text-emerald-400">0.00 Bs</p>
         </div>
         <div class="card text-center py-3 px-1">
-            <p class="text-[10px] text-slate-400 font-bold mb-1">RECOMPRA</p>
+            <p class="text-[10px] text-slate-400 font-bold mb-1">VENTA (ROJO)</p>
             <p id="precio-venta" class="text-base font-extrabold text-rose-400">0.00 Bs</p>
         </div>
         <div class="card text-center py-3 px-1">
@@ -59,12 +59,10 @@
         </div>
     </div>
 
-    <!-- Historial -->
-    <div class="card space-y-2">
-        <p class="text-xs font-bold text-slate-400">📊 Histórico de Lecturas (Hora VE)</p>
-        <div id="historial-lista" class="text-xs text-slate-300 space-y-1">
-            Cargando historial...
-        </div>
+    <!-- Espacio Reservado para la Gráfica -->
+    <div class="card flex flex-col items-center justify-center py-8 text-slate-500 border-dashed border-slate-700">
+        <span class="text-2xl mb-1">📈</span>
+        <span class="text-xs font-semibold">Área Reservada para Gráfica Interactiva</span>
     </div>
 
     <script>
@@ -82,9 +80,14 @@
                 const res = await fetch(API_URL);
                 const data = await res.json();
 
-                // Actualizar Precios Base
-                document.getElementById("precio-compra").innerText = (data.compra || 0).toFixed(2) + " Bs";
-                document.getElementById("precio-venta").innerText = (data.venta || 0).toFixed(2) + " Bs";
+                // Asignación correcta de colores y tasas
+                // Verde = Compra (la tasa más baja / recompra)
+                // Rojo = Venta (la tasa más alta)
+                const tasaVerde = data.compra || 0;
+                const tasaRoja = data.venta || 0;
+
+                document.getElementById("precio-compra").innerText = tasaVerde.toFixed(2) + " Bs";
+                document.getElementById("precio-venta").innerText = tasaRoja.toFixed(2) + " Bs";
                 document.getElementById("spread-bruto").innerText = (data.spread || 0).toFixed(2) + " Bs";
 
                 // Actualizar ML / Predicción
@@ -99,17 +102,6 @@
                 document.getElementById("status-tag").innerText = "EN VIVO";
                 document.getElementById("status-tag").className = "px-2 py-1 text-xs rounded-full bg-emerald-900 text-emerald-300 font-semibold";
 
-                // Historial
-                if (data.historial && data.historial.length > 0) {
-                    const html = data.historial.map(h => `
-                        <div class="flex justify-between border-b border-slate-800 py-1">
-                            <span>${h.fecha_hora || 'Reciente'}</span>
-                            <span class="text-emerald-400">${(h.compra||0).toFixed(2)}</span>
-                            <span class="text-rose-400">${(h.venta||0).toFixed(2)}</span>
-                        </div>
-                    `).join('');
-                    document.getElementById("historial-lista").innerHTML = html;
-                }
             } catch (err) {
                 document.getElementById("status-tag").innerText = "RECONECTANDO";
                 document.getElementById("status-tag").className = "px-2 py-1 text-xs rounded-full bg-amber-900 text-amber-300 font-semibold";
