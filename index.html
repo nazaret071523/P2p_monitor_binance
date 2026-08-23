@@ -62,7 +62,7 @@ def obtener_historial(limite=2000):
         datos.append((f, r[1], r[2], r[3]))
     return datos
 
-# --- EXTRACCIÓN REAL Y PRECISA DE BINANCE P2P ---
+# --- CONSULTA BINANCE P2P FILTRADA (PROVINCIAL / MERCANTIL / BNC) ---
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
@@ -70,16 +70,21 @@ def get_p2p_rates():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     
-    # SELL en la API = Pestaña "VENDER" en la APP (Tu precio de Recompra/Compra)
+    # Métodos de pago solicitados: Provincial, Mercantil, BNC
+    bancos_filtro = ["BBVA", "Mercantil", "BNC"]
+
+    # Recompra (Pestaña "Vender" en App Binance)
     payload_compra = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000"
+        "page": 1, "rows": 15, "tradeType": "SELL", "transAmount": "10000",
+        "payTypes": bancos_filtro
     }
     
-    # BUY en la API = Pestaña "COMPRAR" en la APP (Tu precio de Venta)
+    # Venta (Pestaña "Comprar" en App Binance)
     payload_venta = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000"
+        "page": 1, "rows": 15, "tradeType": "BUY", "transAmount": "300000",
+        "payTypes": bancos_filtro
     }
 
     try:
@@ -92,17 +97,16 @@ def get_p2p_rates():
         if not data_c or not data_v:
             return None, None, None, None
 
-        # Filtrar anuncios activos y tomar la mejor opción para cada monto
         precios_c = [float(adv["adv"]["price"]) for adv in data_c if adv.get("adv")]
         precios_v = [float(adv["adv"]["price"]) for adv in data_v if adv.get("adv")]
 
         if not precios_c or not precios_v:
             return None, None, None, None
 
-        # Para Compra (Recompra): Seleccionamos la tasa más competitiva (máxima disponible)
+        # Tasa más competitiva de Recompra (Mayor valor)
         tasa_compra = round(max(precios_c), 2)
         
-        # Para Venta: Seleccionamos la tasa más competitiva (mínima disponible)
+        # Tasa más competitiva de Venta (Menor valor)
         tasa_venta = round(min(precios_v), 2)
 
         if tasa_venta <= tasa_compra:
@@ -115,11 +119,11 @@ def get_p2p_rates():
         return tasa_compra, tasa_venta, spread, pct_bruto
 
     except Exception as e:
-        print(f"Error Binance: {e}")
+        print(f"Error Binance API: {e}")
     
     return None, None, None, None
 
-# --- MOTOR CUANTITATIVO INTELIGENTE DE PREDICCIÓN (+7H) ---
+# --- MOTOR IA QUANT ---
 def motor_quant_inteligente(actual_compra, actual_venta):
     historial = obtener_historial(500)
     
@@ -141,7 +145,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     piso = round(min(compras), 2)
     techo = round(max(ventas), 2)
 
-    # Cálculo EMA (Promedio Móvil Exponencial)
     def calcular_ema(datos, periodo=20):
         k = 2 / (periodo + 1)
         ema = datos[0]
@@ -152,7 +155,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     ema_c = calcular_ema(compras)
     ema_v = calcular_ema(ventas)
 
-    # Proyección con velocidad de cambio
     delta_c = (actual_compra - ema_c) * 0.35
     delta_v = (actual_venta - ema_v) * 0.35
 
@@ -184,12 +186,12 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "muestras": len(compras)
     }
 
-# --- TELEGRAM COMMAND ---
+# --- HANDLER TELEGRAM (SIN NOMBRES DE BANCOS) ---
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
     if not tasa_compra or not tasa_venta:
-        await update.message.reply_text("❌ Error consultando los datos de Binance P2P.")
+        await update.message.reply_text("❌ Error al obtener datos de Binance P2P.")
         return
 
     pred = motor_quant_inteligente(tasa_compra, tasa_venta)
@@ -212,7 +214,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- SERVIDOR FASTAPI & CORS ---
+# --- SERVIDOR FASTAPI CON CORS ---
 telegram_app = None
 
 @asynccontextmanager
@@ -227,7 +229,7 @@ async def lifespan(app_fastapi: FastAPI):
             await telegram_app.initialize()
             await telegram_app.start()
             await telegram_app.updater.start_polling()
-            print("✅ Bot iniciado correctamente.")
+            print("✅ Bot ejecutándose correctamente.")
         except Exception as e:
             print(f"❌ Error al iniciar Telegram Bot: {e}")
     yield
@@ -237,7 +239,7 @@ async def lifespan(app_fastapi: FastAPI):
             await telegram_app.stop()
             await telegram_app.shutdown()
         except Exception as e:
-            print(f"Error al apagar: {e}")
+            print(f"Error al detener: {e}")
 
 app = FastAPI(lifespan=lifespan)
 
