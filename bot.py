@@ -10,9 +10,12 @@ from fastapi.responses import HTMLResponse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# --- DIRECTORIO BASE Y CONFIGURACIÓN ---
+# --- CONFIGURACIÓN BASE ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VET = timezone(timedelta(hours=-4))  # Hora de Venezuela
+VET = timezone(timedelta(hours=-4))  # Hora de Venezuela (UTC-4)
+
+# Métodos de pago permitidos (Provincial, Mercantil, BNC)
+BANCOS_PERMITIDOS = ["BBVA", "Mercantil", "BancoNacionalDeCredito"]
 
 # --- BASE DE DATOS SQLITE ---
 def init_db():
@@ -34,7 +37,7 @@ def init_db():
 init_db()
 
 def asegurar_datos_minimos(actual_compra, actual_venta):
-    """Evita base de datos vacía al reiniciar la instancia gratuita de Render"""
+    """Evita la pérdida de historial en reinicios de Render"""
     db_path = os.path.join(BASE_DIR, "market_data.db")
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -43,10 +46,10 @@ def asegurar_datos_minimos(actual_compra, actual_venta):
     
     if total < 5:
         fecha_base = datetime.now(VET)
-        for i in range(25, 0, -1):
+        for i in range(30, 0, -1):
             f = fecha_base - timedelta(minutes=i * 3)
-            c_sim = round(actual_compra - (i * 0.03), 2)
-            v_sim = round(actual_venta - (i * 0.03), 2)
+            c_sim = round(actual_compra - (i * 0.02), 2)
+            v_sim = round(actual_venta - (i * 0.02), 2)
             s_sim = round(v_sim - c_sim, 2)
             cursor.execute(
                 "INSERT INTO historial (fecha, compra, venta, spread) VALUES (?, ?, ?, ?)",
@@ -84,47 +87,70 @@ def obtener_historial(limite=2000):
         datos.append((f, r[1], r[2], r[3]))
     return datos
 
-# --- CONSULTA API BINANCE P2P ---
+# --- CONSULTA BINANCE P2P CON FILTROS EXACTOS (PROVINCIAL, MERCANTIL, BNC / BLOQUE 4) ---
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
     payload_compra = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 3, "tradeType": "BUY", "transAmount": "10000"
+        "asset": "USDT",
+        "fiat": "VES",
+        "merchantCheck": False,
+        "page": 1,
+        "rows": 10,
+        "tradeType": "BUY",
+        "transAmount": "10000",
+        "payTypes": BANCOS_PERMITIDOS
     }
+    
     payload_venta = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 3, "tradeType": "SELL", "transAmount": "300000"
+        "asset": "USDT",
+        "fiat": "VES",
+        "merchantCheck": False,
+        "page": 1,
+        "rows": 10,
+        "tradeType": "SELL",
+        "transAmount": "300000",
+        "payTypes": BANCOS_PERMITIDOS
     }
 
     try:
-        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=5).json()
-        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=5).json()
+        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=6).json()
+        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=6).json()
 
-        compras = [float(adv["adv"]["price"]) for adv in res_c.get("data", [])]
-        ventas = [float(adv["adv"]["price"]) for adv in res_v.get("data", [])]
+        data_c = res_c.get("data", [])
+        data_v = res_v.get("data", [])
 
-        if compras and ventas:
-            tasa_compra = round(statistics.median(compras), 2)
-            tasa_venta = round(statistics.median(ventas), 2)
+        if len(data_c) >= 4 and len(data_v) >= 4:
+            # Tomar estrictamente el anuncio #4 (Índice 3)
+            tasa_compra = float(data_c[3]["adv"]["price"])
+            tasa_venta = float(data_v[3]["adv"]["price"])
+        elif data_c and data_v:
+            # Resguardo si hay menos de 4 anuncios
+            tasa_compra = float(data_c[-1]["adv"]["price"])
+            tasa_venta = float(data_v[-1]["adv"]["price"])
+        else:
+            return None, None, None, None
 
-            # Corrección de Margen Negativo / Anuncios atípicos
-            if tasa_venta <= tasa_compra:
-                tasa_venta = round(tasa_compra + 7.00, 2)
+        # Validación lógica para asegurar Spread Positivo
+        if tasa_venta <= tasa_compra:
+            tasa_venta = round(tasa_compra + 7.00, 2)
 
-            spread = round(tasa_venta - tasa_compra, 2)
-            pct_bruto = round((spread / tasa_compra) * 100, 2)
-            
-            asegurar_datos_minimos(tasa_compra, tasa_venta)
-            guardar_lectura(tasa_compra, tasa_venta, spread)
-            return tasa_compra, tasa_venta, spread, pct_bruto
+        tasa_compra = round(tasa_compra, 2)
+        tasa_venta = round(tasa_venta, 2)
+        spread = round(tasa_venta - tasa_compra, 2)
+        pct_bruto = round((spread / tasa_compra) * 100, 2)
+        
+        asegurar_datos_minimos(tasa_compra, tasa_venta)
+        guardar_lectura(tasa_compra, tasa_venta, spread)
+        return tasa_compra, tasa_venta, spread, pct_bruto
+
     except Exception as e:
         print(f"Error consultando Binance API: {e}")
     
     return None, None, None, None
 
-# --- MOTOR CUANTITATIVO DE PREDICCIÓN ---
+# --- MOTOR IA / CUANTITATIVO DE PREDICCIONES ---
 def motor_quant_inteligente(actual_compra, actual_venta):
     historial = obtener_historial(2000)
     compras_raw = [h[1] for h in historial]
@@ -133,7 +159,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     def limpiar_datos(series, actual):
         if not series:
             return [actual]
-        limpios = [x for x in series if abs(x - actual) <= 10]
+        limpios = [x for x in series if abs(x - actual) <= 15]
         return limpios if limpios else [actual]
 
     compras = limpiar_datos(compras_raw, actual_compra)
@@ -196,12 +222,12 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = (
         f"**VENBOT PREDICCIONES**\n"
-        f"⏰ {hora_ve} | TOP 1 (No Verificados)\n\n"
-        f"🟢 **COMPRA:**  `{tasa_compra:.2f} Bs`\n"
-        f"🔴 **VENTA:**   `{tasa_venta:.2f} Bs`\n"
+        f"⏰ {hora_ve} | TOP 4 (Provincial / Mercantil / BNC)\n\n"
+        f"🟢 **COMPRA (10k):**  `{tasa_compra:.2f} Bs`\n"
+        f"🔴 **VENTA (300k):**   `{tasa_venta:.2f} Bs`\n"
         f"⚡ **MARGEN:**  `{spread:.2f} Bs` ({pct_bruto:.2f}%)\n\n"
         f"──────────────────\n"
-        f"🔮 **PROYECCIÓN +7H**\n"
+        f"🔮 **PROYECCIÓN +7H (IA QUANT)**\n"
         f"• **Recompra Esperada:** `{pred['pred_compra_str']}`\n"
         f"• **Venta Esperada:**    `{pred['pred_venta_str']}`\n"
         f"• **Dirección:**         {pred['tendencia']}\n"
@@ -211,7 +237,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- LIFESPAN Y FASTAPI ---
+# --- CICLO DE VIDA Y ARRANQUE DE FASTAPI ---
 telegram_app = None
 
 @asynccontextmanager
@@ -228,9 +254,9 @@ async def lifespan(app_fastapi: FastAPI):
             await telegram_app.updater.start_polling()
             print("✅ Bot de Telegram iniciado exitosamente.")
         except Exception as e:
-            print(f"❌ Error al iniciar Telegram Bot: {e}")
+            print(f"❌ Error iniciando Telegram Bot: {e}")
     else:
-        print("⚠️ TELEGRAM_TOKEN no configurado.")
+        print("⚠️ TELEGRAM_TOKEN no configurado en Render.")
     
     yield
     
@@ -240,11 +266,11 @@ async def lifespan(app_fastapi: FastAPI):
             await telegram_app.stop()
             await telegram_app.shutdown()
         except Exception as e:
-            print(f"Error al detener Telegram Bot: {e}")
+            print(f"Error deteniendo el Bot: {e}")
 
 app = FastAPI(lifespan=lifespan)
 
-# --- ENDPOINTS FASTAPI PARA LA WEB ---
+# --- ENDPOINTS API PARA EL MONITOR WEB ---
 @app.get("/", response_class=HTMLResponse)
 def get_web():
     html_path = os.path.join(BASE_DIR, "index.html")
@@ -252,6 +278,20 @@ def get_web():
         with open(html_path, "r", encoding="utf-8") as f:
             return f.read()
     return "<h1>Servidor Venbot Activo</h1>"
+
+@app.get("/api/actual")
+def get_actual_api():
+    tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
+    if not tasa_compra:
+        return {"error": "Sin datos de Binance"}
+    pred = motor_quant_inteligente(tasa_compra, tasa_venta)
+    return {
+        "compra": tasa_compra,
+        "venta": tasa_venta,
+        "spread": spread,
+        "pct_bruto": pct_bruto,
+        "pred": pred
+    }
 
 @app.get("/api/historial")
 def get_historial_api(rango: str = "1d"):
