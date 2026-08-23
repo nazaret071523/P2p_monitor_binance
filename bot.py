@@ -9,14 +9,17 @@ from fastapi.responses import HTMLResponse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# --- CONFIGURACIÓN E INICIALIZACIÓN ---
+# --- DIRECTORIO BASE Y CONFIGURACIÓN ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI()
-TOKEN = os.getenv("TELEGRAM_TOKEN", "TU_TELEGRAM_TOKEN_AQUI")
-VET = timezone(timedelta(hours=-4))  # Hora Venezuela
 
-# Inicializar Base de Datos SQLite
+TOKEN = os.getenv("TELEGRAM_TOKEN", "TU_TELEGRAM_TOKEN_AQUI")
+VET = timezone(timedelta(hours=-4))  # Hora de Venezuela
+
+# --- BASE DE DATOS SQLITE ---
 def init_db():
-    conn = sqlite3.connect("market_data.db")
+    db_path = os.path.join(BASE_DIR, "market_data.db")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS historial (
@@ -32,17 +35,44 @@ def init_db():
 
 init_db()
 
+def guardar_lectura(compra, venta, spread):
+    db_path = os.path.join(BASE_DIR, "market_data.db")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    fecha_actual = datetime.now(VET)
+    cursor.execute(
+        "INSERT INTO historial (fecha, compra, venta, spread) VALUES (?, ?, ?, ?)",
+        (fecha_actual, compra, venta, spread)
+    )
+    conn.commit()
+    conn.close()
+
+def obtener_historial(limite=2000):
+    db_path = os.path.join(BASE_DIR, "market_data.db")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT fecha, compra, venta, spread FROM historial ORDER BY id DESC LIMIT ?", (limite,))
+    registros = cursor.fetchall()
+    conn.close()
+    
+    datos = []
+    for r in registros:
+        try:
+            f = datetime.fromisoformat(r[0])
+        except Exception:
+            f = datetime.now(VET)
+        datos.append((f, r[1], r[2], r[3]))
+    return datos
+
 # --- CONSULTA API BINANCE P2P ---
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
-    # 1. Tasa de Compra (Merchant/Filtro No Verificado)
     payload_compra = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
         "page": 1, "rows": 3, "tradeType": "BUY", "transAmount": "10000"
     }
-    # 2. Tasa de Venta
     payload_venta = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
         "page": 1, "rows": 3, "tradeType": "SELL", "transAmount": "300000"
@@ -61,41 +91,12 @@ def get_p2p_rates():
             spread = round(tasa_venta - tasa_compra, 2)
             pct_bruto = round((spread / tasa_compra) * 100, 2)
             
-            # Guardar en base de datos
             guardar_lectura(tasa_compra, tasa_venta, spread)
             return tasa_compra, tasa_venta, spread, pct_bruto
     except Exception as e:
         print(f"Error consultando Binance API: {e}")
     
     return None, None, None, None
-
-def guardar_lectura(compra, venta, spread):
-    conn = sqlite3.connect("market_data.db")
-    cursor = conn.cursor()
-    fecha_actual = datetime.now(VET)
-    cursor.execute(
-        "INSERT INTO historial (fecha, compra, venta, spread) VALUES (?, ?, ?, ?)",
-        (fecha_actual, compra, venta, spread)
-    )
-    conn.commit()
-    conn.close()
-
-def obtener_historial(limite=2000):
-    conn = sqlite3.connect("market_data.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT fecha, compra, venta, spread FROM historial ORDER BY id DESC LIMIT ?", (limite,))
-    registros = cursor.fetchall()
-    conn.close()
-    
-    # Formatear datos
-    datos = []
-    for r in registros:
-        try:
-            f = datetime.fromisoformat(r[0])
-        except Exception:
-            f = datetime.now(VET)
-        datos.append((f, r[1], r[2], r[3]))
-    return datos
 
 # --- MOTOR CUANTITATIVO DE PREDICCIÓN ---
 def motor_quant_inteligente(actual_compra, actual_venta):
@@ -156,28 +157,25 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "muestras": len(compras)
     }
 
-# --- ENDPOINTS API PARA LA WEB Y LA GRÁFICA ---
+# --- ENDPOINTS FASTAPI PARA LA WEB ---
 @app.get("/", response_class=HTMLResponse)
 def get_web():
-    with open("index.html", "r", encoding="utf-8") as f:
-        return f.read()
+    html_path = os.path.join(BASE_DIR, "index.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>Servidor Venbot Activo</h1>"
 
 @app.get("/api/historial")
 def get_historial_api(rango: str = "1d"):
-    # 1D: ~480 lecturas (24 horas a 3 min por lectura)
-    # 7D: ~3360 lecturas
-    # 1M: ~14400 lecturas
     limite = 480 if rango == "1d" else (3360 if rango == "7d" else 14400)
     data = obtener_historial(limite)
-    data.reverse() # Orden cronológico para el gráfico
+    data.reverse()
 
-    # Muestreo dinámico para no saturar la pantalla en rangos largos
     paso = 1 if rango == "1d" else (7 if rango == "7d" else 30)
     data_filtrada = data[::paso]
 
-    labels = []
-    compras = []
-    ventas = []
+    labels, compras, ventas = [], [], []
 
     for item in data_filtrada:
         fecha_obj = item[0]
@@ -188,7 +186,7 @@ def get_historial_api(rango: str = "1d"):
 
     return {"labels": labels, "compras": compras, "ventas": ventas}
 
-# --- TELEGRAM BOT HANDLERS ---
+# --- HANDLER Y ARRANQUE DE TELEGRAM BOT ---
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
@@ -216,7 +214,6 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- ARRANQUE COMPLETO EN RENDER ---
 telegram_app = Application.builder().token(TOKEN).build()
 telegram_app.add_handler(CommandHandler("prediccion", prediccion_cmd))
 
