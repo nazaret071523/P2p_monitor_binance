@@ -30,14 +30,14 @@
         🎯 Filtro: Comerciante No Verificado (10,000 Bs - 300,000 Bs)
     </div>
 
-    <!-- Métricas Principales Ajustadas -->
+    <!-- Métricas Principales (Etiquetas Limpias) -->
     <div class="grid grid-cols-3 gap-2">
         <div class="card text-center py-3 px-1">
-            <p class="text-[10px] text-slate-400 font-bold mb-1">COMPRA (VERDE)</p>
+            <p class="text-[10px] text-slate-400 font-bold mb-1">COMPRA</p>
             <p id="precio-compra" class="text-base font-extrabold text-emerald-400">0.00 Bs</p>
         </div>
         <div class="card text-center py-3 px-1">
-            <p class="text-[10px] text-slate-400 font-bold mb-1">VENTA (ROJO)</p>
+            <p class="text-[10px] text-slate-400 font-bold mb-1">VENTA</p>
             <p id="precio-venta" class="text-base font-extrabold text-rose-400">0.00 Bs</p>
         </div>
         <div class="card text-center py-3 px-1">
@@ -46,11 +46,16 @@
         </div>
     </div>
 
+    <!-- Tarjeta Tendencia del Mercado -->
+    <div class="card text-center border-blue-500/30">
+        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">📈 Tendencia del Mercado</p>
+        <p id="tendencia-estado" class="text-lg font-black text-blue-400">CARGANDO...</p>
+    </div>
+
     <!-- Tarjeta Morada ML -->
     <div class="card border-purple-500/50 bg-slate-900/80 relative overflow-hidden">
         <div class="flex justify-between items-center mb-2">
             <span class="text-xs font-bold text-purple-400">🔮 PREDICCIÓN ML (<span id="ml-hora">--:--</span>)</span>
-            <span id="ml-tendencia" class="text-xs font-bold text-purple-300">--</span>
         </div>
         <div class="text-3xl font-black text-white mb-3" id="ml-precio">0.00 Bs</div>
         <div class="flex justify-between text-xs pt-2 border-t border-slate-800">
@@ -61,7 +66,7 @@
 
     <!-- Espacio Reservado para la Gráfica -->
     <div class="card flex flex-col items-center justify-center py-8 text-slate-500 border-dashed border-slate-700">
-        <span class="text-2xl mb-1">📈</span>
+        <span class="text-2xl mb-1">📊</span>
         <span class="text-xs font-semibold">Área Reservada para Gráfica Interactiva</span>
     </div>
 
@@ -80,22 +85,20 @@
                 const res = await fetch(API_URL);
                 const data = await res.json();
 
-                // Asignación correcta de colores y tasas
-                // Verde = Compra (la tasa más baja / recompra)
-                // Rojo = Venta (la tasa más alta)
-                const tasaVerde = data.compra || 0;
-                const tasaRoja = data.venta || 0;
-
-                document.getElementById("precio-compra").innerText = tasaVerde.toFixed(2) + " Bs";
-                document.getElementById("precio-venta").innerText = tasaRoja.toFixed(2) + " Bs";
+                // Precios
+                document.getElementById("precio-compra").innerText = (data.compra || 0).toFixed(2) + " Bs";
+                document.getElementById("precio-venta").innerText = (data.venta || 0).toFixed(2) + " Bs";
                 document.getElementById("spread-bruto").innerText = (data.spread || 0).toFixed(2) + " Bs";
 
-                // Actualizar ML / Predicción
+                // Tendencia del Mercado
                 const ml = data.ml_prediccion || {};
+                const estadoTendencia = data.tendencia || ml.tendencia || "ESTABLE";
+                document.getElementById("tendencia-estado").innerText = estadoTendencia;
+
+                // Predicción ML
                 document.getElementById("ml-precio").innerText = (data.prediccion || ml.precio || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-piso").innerText = (data.piso || ml.piso || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-techo").innerText = (data.techo || ml.techo || 0).toFixed(2) + " Bs";
-                document.getElementById("ml-tendencia").innerText = data.tendencia || ml.tendencia || "ESTABLE";
                 document.getElementById("ml-hora").innerText = ml.hora || "+7h";
 
                 // Status
