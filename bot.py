@@ -314,7 +314,7 @@ def background_monitor():
             print(f"Error monitor de fondo: {e}")
         time.sleep(180)
 
-# Handler Telegram (Estilo Trading Terminal)
+# Handler Telegram (Estilo Tarjeta Minimalista de Texto)
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
@@ -326,22 +326,19 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"🦜 **[VENBOT PREDICCIONES]**\n"
-        f"───────────────────\n"
-        f"🕒 **Timestamp:** {hora_ve} VE\n"
-        f"🎯 **Filtro:** TOP 1 (No Verificados)\n\n"
-        f"🟢 **BID (Recompra):** `{tasa_compra:.2f} Bs`\n"
-        f"🔴 **ASK (Venta):**    `{tasa_venta:.2f} Bs`\n"
-        f"⚡ **SPREAD:**         `{spread:.2f} Bs` ({pct_bruto:.2f}%)\n\n"
-        f"**[ PROYECCIÓN QUANT +7H ]**\n"
-        f"🔮 **Target Compra:** `{pred['pred_compra_str']}`\n"
-        f"🔮 **Target Venta:**  `{pred['pred_venta_str']}`\n"
-        f"📐 **Brecha:**        `{pred['brecha_esperada']}`\n"
-        f"📊 **Tendencia:**     {pred['tendencia']}\n\n"
-        f"**[ NIVELES CLAVE 24H ]**\n"
-        f"▲ **Techo:** {pred['techo_str']}\n"
-        f"▼ **Piso:**  {pred['piso_str']}\n"
-        f"🧬 **Data:**  {pred['muestras']} Lecturas Limpias"
+        f"**VENBOT PREDICCIONES**\n"
+        f"⏰ {hora_ve} | TOP 1 (No Verificados)\n\n"
+        f"🟢 **COMPRA:**  `{tasa_compra:.2f} Bs`\n"
+        f"🔴 **VENTA:**   `{tasa_venta:.2f} Bs`\n"
+        f"⚡ **MARGEN:**  `{spread:.2f} Bs` ({pct_bruto:.2f}%)\n\n"
+        f"──────────────────\n"
+        f"🔮 **PROYECCIÓN +7H**\n"
+        f"• **Recompra Esperada:** `{pred['pred_compra_str']}`\n"
+        f"• **Venta Esperada:**    `{pred['pred_venta_str']}`\n"
+        f"• **Dirección:**         {pred['tendencia']}\n"
+        f"──────────────────\n\n"
+        f"📊 **Piso:** {pred['piso_str']}  |  **Techo:** {pred['techo_str']}\n"
+        f"🧠 **Base de Datos:** {pred['muestras']} Muestras"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
