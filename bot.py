@@ -109,17 +109,19 @@ def obtener_historial(limite=100):
 # SCRAPING Y MODELO ML DE PREDICCIÓN
 # ==========================================
 def get_binance_p2p_rates():
-    """Consulta Binance P2P para USDT/VES sin verificar, filtro 5k-300k."""
+    """Consulta Binance P2P obteniendo el precio real de Compra y Venta del Comerciante."""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
+    # SELL en la API = Anuncios de usuarios vendiendo (Tu precio de COMPRA como comerciante)
     payload_buy = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 5, "tradeType": "BUY", "transAmount": "5000"
+        "page": 1, "rows": 5, "tradeType": "SELL", "transAmount": "5000"
     }
+    # BUY en la API = Anuncios de usuarios comprando (Tu precio de VENTA como comerciante)
     payload_sell = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 5, "tradeType": "SELL", "transAmount": "5000"
+        "page": 1, "rows": 5, "tradeType": "BUY", "transAmount": "5000"
     }
     
     try:
@@ -130,7 +132,7 @@ def get_binance_p2p_rates():
         venta = float(r_sell['data'][0]['adv']['price'])
         
         spread = round(venta - compra, 2)
-        # Ganancia neta calculada con 0.50% de comisión total (0.25% compra + 0.25% venta)
+        # Ganancia neta deduciendo 0.50% total de comisión
         ganancia_pct = round(((venta * 0.9975) - (compra * 1.0025)) / compra * 100, 2)
         
         return compra, venta, spread, ganancia_pct
@@ -160,7 +162,6 @@ def calcular_prediccion_ml():
     piso = round(min(precios_venta), 2)
     techo = round(max(precios_venta), 2)
     
-    # Rango estimado próximo
     proxima_est = slope * len(precios_venta) + intercept
     std_dev = np.std(precios_venta) if len(precios_venta) > 1 else 0.5
     rango_min = round(proxima_est - std_dev, 2)
@@ -203,7 +204,7 @@ def background_monitor():
         if compra and venta:
             guardar_lectura(compra, venta, spread, ganancia_pct)
             print(f"📊 [{datetime.now(VET).strftime('%H:%M:%S')}] Registrado - Compra: {compra} | Venta: {venta}")
-        time.sleep(180) # Consulta cada 3 minutos
+        time.sleep(180)
 
 # ==========================================
 # SERVIDOR API WEB
@@ -287,15 +288,12 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     init_db()
 
-    # Hilo para recolección continua de datos
     t_monitor = threading.Thread(target=background_monitor, daemon=True)
     t_monitor.start()
 
-    # Hilo para el servidor API Web (evita suspensión en Render)
     t_api = threading.Thread(target=run_api_server, daemon=True)
     t_api.start()
 
-    # Iniciar bot de Telegram
     if not TELEGRAM_TOKEN:
         print("❌ ERROR CRÍTICO: FALTA LA VARIABLE TELEGRAM_TOKEN")
     else:
