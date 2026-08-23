@@ -7,15 +7,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# --- CONFIGURACIÓN BASE ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VET = timezone(timedelta(hours=-4))  # Hora de Venezuela (UTC-4)
-
-# Métodos de pago permitidos (Provincial, Mercantil, BNC)
-BANCOS_PERMITIDOS = ["BBVA", "Mercantil", "BancoNacionalDeCredito"]
+VET = timezone(timedelta(hours=-4))
 
 # --- BASE DE DATOS SQLITE ---
 def init_db():
@@ -37,7 +34,6 @@ def init_db():
 init_db()
 
 def asegurar_datos_minimos(actual_compra, actual_venta):
-    """Evita la pérdida de historial en reinicios de Render"""
     db_path = os.path.join(BASE_DIR, "market_data.db")
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -87,31 +83,20 @@ def obtener_historial(limite=2000):
         datos.append((f, r[1], r[2], r[3]))
     return datos
 
-# --- CONSULTA BINANCE P2P CON FILTROS EXACTOS (PROVINCIAL, MERCANTIL, BNC / BLOQUE 4) ---
+# --- CONSULTA REAL BINANCE P2P ---
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
+    # Payload exacto sin conflictos de filtros
     payload_compra = {
-        "asset": "USDT",
-        "fiat": "VES",
-        "merchantCheck": False,
-        "page": 1,
-        "rows": 10,
-        "tradeType": "BUY",
-        "transAmount": "10000",
-        "payTypes": BANCOS_PERMITIDOS
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "10000"
     }
     
     payload_venta = {
-        "asset": "USDT",
-        "fiat": "VES",
-        "merchantCheck": False,
-        "page": 1,
-        "rows": 10,
-        "tradeType": "SELL",
-        "transAmount": "300000",
-        "payTypes": BANCOS_PERMITIDOS
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "300000"
     }
 
     try:
@@ -122,17 +107,15 @@ def get_p2p_rates():
         data_v = res_v.get("data", [])
 
         if len(data_c) >= 4 and len(data_v) >= 4:
-            # Tomar estrictamente el anuncio #4 (Índice 3)
+            # Tomar estrictamente el anuncio/bloque #4 (Índice 3)
             tasa_compra = float(data_c[3]["adv"]["price"])
             tasa_venta = float(data_v[3]["adv"]["price"])
         elif data_c and data_v:
-            # Resguardo si hay menos de 4 anuncios
-            tasa_compra = float(data_c[-1]["adv"]["price"])
-            tasa_venta = float(data_v[-1]["adv"]["price"])
+            tasa_compra = float(data_c[0]["adv"]["price"])
+            tasa_venta = float(data_v[0]["adv"]["price"])
         else:
             return None, None, None, None
 
-        # Validación lógica para asegurar Spread Positivo
         if tasa_venta <= tasa_compra:
             tasa_venta = round(tasa_compra + 7.00, 2)
 
@@ -146,11 +129,11 @@ def get_p2p_rates():
         return tasa_compra, tasa_venta, spread, pct_bruto
 
     except Exception as e:
-        print(f"Error consultando Binance API: {e}")
+        print(f"Error Binance: {e}")
     
     return None, None, None, None
 
-# --- MOTOR IA / CUANTITATIVO DE PREDICCIONES ---
+# --- MOTOR IA / CUANTITATIVO ---
 def motor_quant_inteligente(actual_compra, actual_venta):
     historial = obtener_historial(2000)
     compras_raw = [h[1] for h in historial]
@@ -209,7 +192,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "muestras": len(compras)
     }
 
-# --- HANDLER DE TELEGRAM ---
+# --- HANDLER TELEGRAM ---
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
@@ -222,7 +205,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = (
         f"**VENBOT PREDICCIONES**\n"
-        f"⏰ {hora_ve} | TOP 4 (Provincial / Mercantil / BNC)\n\n"
+        f"⏰ {hora_ve} | BLOQUE 4\n\n"
         f"🟢 **COMPRA (10k):**  `{tasa_compra:.2f} Bs`\n"
         f"🔴 **VENTA (300k):**   `{tasa_venta:.2f} Bs`\n"
         f"⚡ **MARGEN:**  `{spread:.2f} Bs` ({pct_bruto:.2f}%)\n\n"
@@ -237,7 +220,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- CICLO DE VIDA Y ARRANQUE DE FASTAPI ---
+# --- LIFESPAN Y SERVIDOR FASTAPI CON CORS HABILITADO ---
 telegram_app = None
 
 @asynccontextmanager
@@ -255,8 +238,6 @@ async def lifespan(app_fastapi: FastAPI):
             print("✅ Bot de Telegram iniciado exitosamente.")
         except Exception as e:
             print(f"❌ Error iniciando Telegram Bot: {e}")
-    else:
-        print("⚠️ TELEGRAM_TOKEN no configurado en Render.")
     
     yield
     
@@ -266,11 +247,19 @@ async def lifespan(app_fastapi: FastAPI):
             await telegram_app.stop()
             await telegram_app.shutdown()
         except Exception as e:
-            print(f"Error deteniendo el Bot: {e}")
+            print(f"Error al apagar: {e}")
 
 app = FastAPI(lifespan=lifespan)
 
-# --- ENDPOINTS API PARA EL MONITOR WEB ---
+# CORS Habilitado para permitir peticiones desde Vercel
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/", response_class=HTMLResponse)
 def get_web():
     html_path = os.path.join(BASE_DIR, "index.html")
