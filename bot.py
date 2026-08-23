@@ -1,5 +1,5 @@
 import os
-import sqlite3
+import psycopg2
 import requests
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -9,52 +9,68 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 VET = timezone(timedelta(hours=-4))
-DB_FILE = "p2p_data.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ==========================================
-# BASE DE DATOS LOCAL
+# BASE DE DATOS POSTGRESQL (SUPABASE)
 # ==========================================
+def get_db_connection():
+    if not DATABASE_URL:
+        return None
+    try:
+        return psycopg2.connect(DATABASE_URL)
+    except Exception as e:
+        print(f"Error conectando a DB: {e}")
+        return None
+
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS historial (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            compra REAL,
-            venta REAL
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    conn = get_db_connection()
+    if conn:
+        with conn.cursor() as cursor:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS historial (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TEXT,
+                    compra REAL,
+                    venta REAL
+                );
+            ''')
+            conn.commit()
+        conn.close()
 
 init_db()
 
 def guardar_muestra_db(compra, venta):
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        hora_str = datetime.now(VET).isoformat()
-        cursor.execute("INSERT INTO historial (timestamp, compra, venta) VALUES (?, ?, ?)", (hora_str, compra, venta))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Error guardando DB: {e}")
+    conn = get_db_connection()
+    if conn:
+        try:
+            hora_str = datetime.now(VET).isoformat()
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO historial (timestamp, compra, venta) VALUES (%s, %s, %s);",
+                    (hora_str, compra, venta)
+                )
+                conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error guardando DB: {e}")
 
 def obtener_estadisticas_db():
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute("SELECT compra, venta FROM historial ORDER BY id ASC")
-        filas = cursor.fetchall()
-        conn.close()
-        return filas
-    except Exception as e:
-        print(f"Error leyendo DB: {e}")
-        return []
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT compra, venta FROM historial ORDER BY id ASC;")
+                filas = cursor.fetchall()
+            conn.close()
+            return filas
+        except Exception as e:
+            print(f"Error leyendo DB: {e}")
+            return []
+    return []
 
 # ==========================================
-# LECTURA P2P BINANCE (CORREGIDA)
+# LECTURA P2P BINANCE
 # ==========================================
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -62,20 +78,13 @@ def get_p2p_rates():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    
-    # Filtro interno de bancos (Provincial/BBVA, Mercantil, BNC) sin mostrarlos
     bancos_filtro = ["BBVA", "Mercantil", "BNC"]
 
-    # En Binance API:
-    # "SELL" muestra anuncios para COMPRAR USDT (Precio mas bajo)
-    # "BUY" muestra anuncios para VENDER USDT (Precio mas alto)
-    
     payload_compra = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
         "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000",
         "payTypes": bancos_filtro
     }
-
     payload_venta = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
         "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000",
@@ -92,16 +101,12 @@ def get_p2p_rates():
         if not data_c or not data_v:
             return None, None, None, None
 
-        # Extraer precios de las listas
         precios_compra = [float(item["adv"]["price"]) for item in data_c]
         precios_venta = [float(item["adv"]["price"]) for item in data_v]
 
-        # Para comprar (10k), tomamos el menor valor disponible
         tasa_compra = min(precios_compra)
-        # Para vender (300k), tomamos el mayor valor disponible
         tasa_venta = max(precios_venta)
 
-        # Asegurar margen positivo coherente
         if tasa_compra >= tasa_venta:
             tasa_compra, tasa_venta = min(precios_compra[0], precios_venta[0]), max(precios_compra[0], precios_venta[0])
 
@@ -115,7 +120,7 @@ def get_p2p_rates():
         return None, None, None, None
 
 # ==========================================
-# CÁLCULOS IA Y BASE DE DATOS
+# CÁLCULOS IA Y PREDICCIÓN
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta):
     filas = obtener_estadisticas_db()
@@ -126,7 +131,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         techo = actual_venta
         pred_c = actual_compra * 0.999
         pred_v = actual_venta * 1.001
-        tendencia = "↔️ ESTABLE / LATERAL"
+        tendencia = "➖ ESTABLE / LATERAL"
     else:
         compras = [f[0] for f in filas]
         ventas = [f[1] for f in filas]
@@ -146,7 +151,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         elif diff < -0.20:
             tendencia = "🔻 BAJISTA"
         else:
-            tendencia = "↔️ ESTABLE / LATERAL"
+            tendencia = "➖ ESTABLE / LATERAL"
 
     return {
         "pred_compra_str": f"{pred_c:.2f} Bs",
@@ -170,19 +175,19 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"<b>VENBOT PREDICCIONES</b>\n"
-        f"⏰ {hora_ve} | BLOQUE 4\n\n"
+        f"🦜 <b>VENBOT PREDICCIONES</b>\n"
+        f"🕒 ({hora_ve}) | BLOQUE 4\n"
         f"🟢 <b>COMPRA (10k):</b> {compra:.2f} Bs\n"
         f"🔴 <b>VENTA (300k):</b> {venta:.2f} Bs\n"
         f"⚡ <b>MARGEN:</b> {spread:.2f} Bs ({pct:.2f}%)\n"
-        f"──────────────────\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🔮 <b>PROYECCIÓN +7H (IA QUANT)</b>\n"
-        f"• Recompra Esperada: <b>{pred['pred_compra_str']}</b>\n"
-        f"• Venta Esperada: <b>{pred['pred_venta_str']}</b>\n"
-        f"• Dirección: <b>{pred['tendencia']}</b>\n"
-        f"──────────────────\n"
+        f"🟢 Recompra Esperada: <b>{pred['pred_compra_str']}</b>\n"
+        f"🔴 Venta Esperada: <b>{pred['pred_venta_str']}</b>\n"
+        f"🎯 Dirección: <b>{pred['tendencia']}</b>\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
         f"📊 Piso: <b>{pred['piso_str']}</b> | Techo: <b>{pred['techo_str']}</b>\n"
-        f"🧠 Base de Datos: <b>{pred['muestras']} Muestras</b>"
+        f"💾 Base de Datos: <b>{pred['muestras']} Muestras</b>"
     )
     await update.message.reply_text(msg, parse_mode="HTML")
 
