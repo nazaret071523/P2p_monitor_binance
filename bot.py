@@ -15,13 +15,12 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 PORT = int(os.environ.get("PORT", 10000))
 VET = timezone(timedelta(hours=-4))
 
-# Servidor HTTP para Render Health Check
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        self.wfile.write(b"Venbot P2P Monitor Live")
+        self.wfile.write(b"Venbot P2P Quant Engine Live")
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
@@ -80,7 +79,7 @@ def obtener_historial(horas=24):
     conn.close()
     return rows
 
-def obtener_tasa_real_binance(trade_type, monto):
+def consultar_ordenes_binance(trade_type, monto):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
@@ -90,7 +89,7 @@ def obtener_tasa_real_binance(trade_type, monto):
         "merchantCheck": False,
         "publisherType": "user",
         "page": 1,
-        "rows": 10,
+        "rows": 5,
         "tradeType": trade_type,
         "transAmount": str(monto)
     }
@@ -99,83 +98,99 @@ def obtener_tasa_real_binance(trade_type, monto):
         r = requests.post(url, json=payload, headers=headers, timeout=10).json()
         data = r.get('data', [])
         if data:
-            return float(data[0]['adv']['price'])
+            # Promedio ponderado de las 3 mejores ofertas para limpiar anomalías puntuales
+            precios = [float(item['adv']['price']) for item in data[:3]]
+            return round(np.mean(precios), 2)
         return None
     except Exception as e:
-        print(f"Error Binance P2P ({trade_type} {monto}): {e}")
+        print(f"Error Binance P2P ({trade_type} - {monto}): {e}")
         return None
 
 def get_p2p_rates():
-    # Compra (Recompra) con filtro de 10,000 VES
-    tasa_compra = obtener_tasa_real_binance("BUY", "10000")
-    # Venta con filtro de 300,000 VES
-    tasa_venta = obtener_tasa_real_binance("SELL", "300000")
+    tasa_recompra = consultar_ordenes_binance("SELL", "10000")
+    tasa_venta = consultar_ordenes_binance("BUY", "300000")
     
-    if not tasa_compra or not tasa_venta:
-        return None, None, None, None, None
+    if not tasa_recompra or not tasa_venta:
+        return None, None, None, None
 
-    spread = round(tasa_venta - tasa_compra, 2)
+    spread = round(tasa_venta - tasa_recompra, 2)
+    porcentaje_bruto = round((spread / tasa_recompra) * 100, 2)
     
-    # Cálculo directo de ganancia estimada para $1,000 USD sin deducir comisión fija
-    inversion_ves = 1000 * tasa_compra
-    retorno_ves = 1000 * tasa_venta
-    ganancia_1000_ves = round(retorno_ves - inversion_ves, 2)
-    porcentaje_bruto = round((spread / tasa_compra) * 100, 2)
-    
-    return tasa_compra, tasa_venta, spread, ganancia_1000_ves, porcentaje_bruto
+    return tasa_recompra, tasa_venta, spread, porcentaje_bruto
 
-def motor_prediccion_7h():
+def motor_prediccion_cuantitativo_7h():
     historial = obtener_historial(24)
     n = len(historial)
     
-    if n < 5:
+    if n < 6:
         return {
             "pred_compra": "Recolectando datos...",
             "pred_venta": "Recolectando datos...",
             "brecha_esperada": "N/A",
-            "tendencia": "↔️ NEUTRA (Iniciando)",
-            "piso": "N/A", "techo": "N/A", "muestras": n
+            "tendencia": "↔️ NEUTRA (Calibrando)",
+            "piso": "N/A", "techo": "N/A", "volatilidad": "Baja", "muestras": n
         }
     
     compras = np.array([h[1] for h in historial])
     ventas = np.array([h[2] for h in historial])
-    timestamps = np.array([h[0] for h in historial])
     
-    piso_soporte = round(np.min(compras), 2)
-    techo_resistencia = round(np.max(ventas), 2)
-    
-    weights = np.exp(np.linspace(-1., 0., n))
-    weights /= weights.sum()
-    
-    ewma_compra = np.sum(compras * weights)
-    ewma_venta = np.sum(ventas * weights)
-    
-    dx = timestamps[-1] - timestamps[0]
-    if dx > 0:
-        slope_c = (compras[-1] - ewma_compra) / (dx / 3600)
-        slope_v = (ventas[-1] - ewma_venta) / (dx / 3600)
-    else:
-        slope_c, slope_v = 0, 0
-        
-    pred_c_7h = round(compras[-1] + (slope_c * 7), 2)
-    pred_v_7h = round(ventas[-1] + (slope_v * 7), 2)
-    
-    if pred_v_7h <= pred_c_7h:
-        pred_v_7h = round(pred_c_7h + (ventas[-1] - compras[-1]), 2)
-        
+    # 1. Filtro Estadístico de Anomalías (IQR Outlier Removal)
+    def limpiar_outliers(data):
+        q25, q75 = np.percentile(data, 25), np.percentile(data, 75)
+        iqr = q75 - q25
+        lim_inf, lim_sup = q25 - (1.5 * iqr), q75 + (1.5 * iqr)
+        filtrados = data[(data >= lim_inf) & (data <= lim_sup)]
+        return filtrados if len(filtrados) > 3 else data
+
+    c_clean = limpiar_outliers(compras)
+    v_clean = limpiar_outliers(ventas)
+
+    piso_soporte = round(np.min(c_clean), 2)
+    techo_resistencia = round(np.max(v_clean), 2)
+
+    # 2. Suavizado Exponencial Doble (Holt's Linear Trend Model)
+    def holt_linear(series, alpha=0.4, beta=0.2, h=7):
+        level = series[0]
+        trend = series[1] - series[0]
+        for i in range(1, len(series)):
+            last_level = level
+            level = alpha * series[i] + (1 - alpha) * (level + trend)
+            trend = beta * (level - last_level) + (1 - beta) * trend
+        return level + (trend * h), trend
+
+    # Proyección a 7 horas (asumiendo mediciones constantes)
+    steps_7h = 7 * 20  # 20 lecturas por hora (cada 3 min)
+    pred_c_raw, trend_c = holt_linear(c_clean, h=steps_7h)
+    pred_v_raw, trend_v = holt_linear(v_clean, h=steps_7h)
+
+    # 3. Mantenimiento del Spread Mínimo Saludable de Mercado
+    spread_historico_mediana = np.median(v_clean - c_clean)
+    pred_c_7h = round(pred_c_raw, 2)
+    pred_v_7h = round(max(pred_v_raw, pred_c_7h + spread_historico_mediana), 2)
     brecha = round(pred_v_7h - pred_c_7h, 2)
+
+    # 4. Análisis de Volatilidad y Tendencia con Bandas
+    std_dev = np.std(c_clean)
+    volatilidad_pct = (std_dev / np.mean(c_clean)) * 100
     
-    var_7h = (slope_c + slope_v) / 2 * 7
-    if var_7h > 0.8:
-        tendencia = "📈 ALCISTA (Fuerte)"
-    elif var_7h > 0.2:
+    trend_score = (trend_c + trend_v) / 2
+    if trend_score > 0.05:
+        tendencia = "🚀 ALCISTA (Fuerte)"
+    elif trend_score > 0.01:
         tendencia = "📈 ALCISTA (Moderada)"
-    elif var_7h < -0.8:
-        tendencia = "📉 BAJISTA (Fuerte)"
-    elif var_7h < -0.2:
+    elif trend_score < -0.05:
+        tendencia = "🔻 BAJISTA (Fuerte)"
+    elif trend_score < -0.01:
         tendencia = "📉 BAJISTA (Moderada)"
     else:
-        tendencia = "↔️ ESTABLE"
+        tendencia = "↔️ ESTABLE / LATERAL"
+
+    if volatilidad_pct > 0.8:
+        estado_vol = "⚠️ ALTA (Inestable)"
+    elif volatilidad_pct > 0.3:
+        estado_vol = "⚡ MODERADA"
+    else:
+        estado_vol = "🛡️ BAJA (Seguro)"
 
     return {
         "pred_compra": f"{pred_c_7h:.2f} Bs",
@@ -184,13 +199,14 @@ def motor_prediccion_7h():
         "tendencia": tendencia,
         "piso": f"{piso_soporte:.2f} Bs",
         "techo": f"{techo_resistencia:.2f} Bs",
+        "volatilidad": estado_vol,
         "muestras": n
     }
 
 def background_monitor():
     while True:
         try:
-            c, v, sp, g1000, pct = get_p2p_rates()
+            c, v, sp, pct = get_p2p_rates()
             if c and v:
                 guardar_lectura(c, v, sp)
         except Exception as e:
@@ -198,30 +214,30 @@ def background_monitor():
         time.sleep(180)
 
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    compra, venta, spread, ganancia_1000, pct_bruto = get_p2p_rates()
-    pred = motor_prediccion_7h()
+    tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
+    pred = motor_prediccion_cuantitativo_7h()
     
-    if not compra:
+    if not tasa_compra or not tasa_venta:
         await update.message.reply_text("❌ Error consultando la API de Binance P2P.")
         return
 
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"🤖 **MONITOR P2P REAL (No Verificados)**\n"
+        f"🧠 **MONITOR QUANT P2P (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_ve}\n"
-        f"🎯 **Filtros:** Compra (10K VES) | Venta (300K VES)\n\n"
-        f"🟢 **Precio Real Recompra:** {compra:.2f} Bs\n"
-        f"🔴 **Precio Real Venta:** {venta:.2f} Bs\n"
-        f"⚡ **Spread Bruto:** {spread:.2f} Bs ({pct_bruto:.2f}%)\n"
-        f"💵 **Margen Est. ($1,000 USD):** +{ganancia_1000:.2f} Bs\n\n"
-        f"🔮 **Proyección Compra (7h):** {pred['pred_compra']}\n"
+        f"🎯 **Filtros:** Recompra (10K VES) | Venta (300K VES)\n\n"
+        f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
+        f"🔴 **Precio Real Venta:** {tasa_venta:.2f} Bs\n"
+        f"⚡ **Spread Bruto:** {spread:.2f} Bs ({pct_bruto:.2f}%)\n\n"
+        f"🔮 **Proyección Recompra (7h):** {pred['pred_compra']}\n"
         f"🔮 **Proyección Venta (7h):** {pred['pred_venta']}\n"
         f"📐 **Brecha Esperada (7h):** {pred['brecha_esperada']}\n"
-        f"📊 **Tendencia:** {pred['tendencia']}\n\n"
+        f"📊 **Tendencia:** {pred['tendencia']}\n"
+        f"🌊 **Volatilidad de Mercado:** {pred['volatilidad']}\n\n"
         f"🛡️ **Soporte (Piso 24h):** {pred['piso']}\n"
         f"🏰 **Resistencia (Techo 24h):** {pred['techo']}\n\n"
-        f"🧠 **Lecturas Acumuladas:** {pred['muestras']}"
+        f"🧠 **Lecturas Validadas:** {pred['muestras']}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -234,5 +250,6 @@ if __name__ == "__main__":
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         app.add_handler(CommandHandler("prediccion", prediccion_cmd))
-        print("Bot iniciado con éxito...")
+        app.add_handler(CommandHandler("p2p", prediccion_cmd))
+        print("Bot Cuantitativo Iniciado...")
         app.run_polling(drop_pending_updates=True)
