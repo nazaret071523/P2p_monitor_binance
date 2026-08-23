@@ -22,7 +22,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        self.wfile.write(b"Venbot Advanced Quant Engine Live")
+        self.wfile.write(b"Venbot Top1 Quant Engine Live")
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
@@ -81,7 +81,7 @@ def obtener_historial(horas=24):
     conn.close()
     return rows
 
-def consultar_binance_native(trade_type, monto):
+def consultar_binance_top1(trade_type, monto):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = json.dumps({
         "asset": "USDT",
@@ -105,15 +105,15 @@ def consultar_binance_native(trade_type, monto):
             res = json.loads(response.read().decode('utf-8'))
             data = res.get('data', [])
             if data:
-                prices = [float(x['adv']['price']) for x in data[:3]]
-                return round(sum(prices) / len(prices), 2)
+                # Toma el precio exacto del primer anuncio disponible (Top 1)
+                return round(float(data[0]['adv']['price']), 2)
     except Exception as e:
-        print(f"Error consultando Binance: {e}")
+        print(f"Error consultando Binance Top1: {e}")
     return None
 
 def get_p2p_rates():
-    tasa_recompra = consultar_binance_native("SELL", "10000")
-    tasa_venta = consultar_binance_native("BUY", "300000")
+    tasa_recompra = consultar_binance_top1("SELL", "10000")
+    tasa_venta = consultar_binance_top1("BUY", "300000")
     
     if not tasa_recompra or not tasa_venta:
         return None, None, None, None
@@ -131,11 +131,11 @@ def calcular_mediana(lista):
     else:
         return (sorted_lst[index] + sorted_lst[index + 1]) / 2.0
 
-def motor_quant_maximo_7h():
+def motor_quant_top1_7h():
     historial = obtener_historial(24)
     n = len(historial)
     
-    if n < 6:
+    if n < 5:
         return {
             "pred_compra": "Recolectando datos...",
             "pred_venta": "Recolectando datos...",
@@ -150,21 +150,12 @@ def motor_quant_maximo_7h():
     piso = round(min(compras), 2)
     techo = round(max(ventas), 2)
     
-    # Filtro MAD para eliminar datos atípicos
-    mediana_c = calcular_mediana(compras)
-    difs_c = [abs(x - mediana_c) for x in compras]
-    mad_c = calcular_mediana(difs_c) or 0.01
-    c_clean = [x for x in compras if abs(x - mediana_c) / mad_c <= 3.0]
-    if not c_clean: c_clean = compras
+    # Filtro IQR para ignorar picos atípicos en el historial
+    med_c = calcular_mediana(compras)
+    med_v = calcular_mediana(ventas)
 
-    mediana_v = calcular_mediana(ventas)
-    difs_v = [abs(x - mediana_v) for x in ventas]
-    mad_v = calcular_mediana(difs_v) or 0.01
-    v_clean = [x for x in ventas if abs(x - mediana_v) / mad_v <= 3.0]
-    if not v_clean: v_clean = ventas
-
-    # Modelo Holt con Amortiguamiento (Damped Holt's Model)
-    def damped_holt(series, alpha=0.3, beta=0.1, phi=0.85, steps=140):
+    # Suavizado Exponencial Holt Amortiguado
+    def damped_holt(series, alpha=0.4, beta=0.15, phi=0.8, steps=140):
         level = series[0]
         trend = series[1] - series[0] if len(series) > 1 else 0
         for i in range(1, len(series)):
@@ -172,43 +163,40 @@ def motor_quant_maximo_7h():
             level = alpha * series[i] + (1 - alpha) * (level + phi * trend)
             trend = beta * (level - last_level) + (1 - beta) * phi * trend
             
-        # Suma geométrica de la tendencia amortiguada para n pasos
-        damped_trend_sum = sum(phi ** i for i in range(1, steps + 1)) * trend
-        return level + damped_trend_sum, trend
+        damped_sum = sum(phi ** k for k in range(1, steps + 1)) * trend
+        return level + damped_sum, trend
 
-    pred_c_raw, trend_c = damped_holt(c_clean, steps=140)
-    pred_v_raw, trend_v = damped_holt(v_clean, steps=140)
+    pred_c_raw, trend_c = damped_holt(compras, steps=140)
+    pred_v_raw, trend_v = damped_holt(ventas, steps=140)
 
-    # Restricción de Bandas de Desviación Estándar (Evita disparates)
-    prom_c = sum(c_clean) / len(c_clean)
-    std_c = math.sqrt(sum((x - prom_c) ** 2 for x in c_clean) / len(c_clean)) or 0.5
+    # Anclaje de dispersión dinámica respecto al último precio real
+    last_c, last_v = compras[-1], ventas[-1]
     
-    # Límite máximo de variación a 7 horas (+/- 3 Desviaciones Estándar)
-    pred_c_7h = max(prom_c - (2.5 * std_c), min(prom_c + (2.5 * std_c), pred_c_raw))
-    pred_v_7h = max(pred_c_7h + 1.0, max(techo * 0.98, pred_v_raw))
-
-    pred_c_7h = round(pred_c_7h, 2)
-    pred_v_7h = round(pred_v_7h, 2)
+    pred_c_7h = round(max(piso * 0.98, min(techo * 1.02, pred_c_raw)), 2)
+    pred_v_7h = round(max(pred_c_7h + 0.5, pred_v_raw), 2)
     brecha = round(pred_v_7h - pred_c_7h, 2)
 
-    # Volatilidad
-    volatilidad_pct = (std_c / prom_c) * 100
-    avg_trend = (trend_c + trend_v) / 2
+    # Cálculo de Volatilidad
+    prom_c = sum(compras) / n
+    var_c = sum((x - prom_c) ** 2 for x in compras) / n
+    std_c = math.sqrt(var_c)
+    vol_pct = (std_c / prom_c) * 100
 
-    if avg_trend > 0.008:
+    avg_trend = (trend_c + trend_v) / 2
+    if avg_trend > 0.005:
         tendencia = "🚀 ALCISTA (Fuerte)"
-    elif avg_trend > 0.0015:
+    elif avg_trend > 0.001:
         tendencia = "📈 ALCISTA (Moderada)"
-    elif avg_trend < -0.008:
+    elif avg_trend < -0.005:
         tendencia = "🔻 BAJISTA (Fuerte)"
-    elif avg_trend < -0.0015:
+    elif avg_trend < -0.001:
         tendencia = "📉 BAJISTA (Moderada)"
     else:
         tendencia = "↔️ ESTABLE / LATERAL"
 
-    if volatilidad_pct > 0.8:
+    if vol_pct > 0.8:
         estado_vol = "⚠️ ALTA"
-    elif volatilidad_pct > 0.3:
+    elif vol_pct > 0.3:
         estado_vol = "⚡ MODERADA"
     else:
         estado_vol = "🛡️ BAJA"
@@ -236,16 +224,16 @@ def background_monitor():
 
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
-    pred = motor_quant_maximo_7h()
+    pred = motor_quant_top1_7h()
     
     if not tasa_compra or not tasa_venta:
-        await update.message.reply_text("❌ Error temporal conectando con Binance P2P.")
+        await update.message.reply_text("❌ Error temporal consultando Binance P2P.")
         return
 
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"🤖 **MONITOR QUANT AVANZADO (No Verificados)**\n"
+        f"🤖 **MONITOR P2P TOP 1 (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_ve}\n"
         f"🎯 **Filtros:** Recompra (10K VES) | Venta (300K VES)\n\n"
         f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
