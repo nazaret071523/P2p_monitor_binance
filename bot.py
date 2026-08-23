@@ -95,8 +95,8 @@ def obtener_historial(horas=24):
         print(f"Error obteniendo historial: {e}")
         return []
 
-# Consulta Directa a API Binance (Filtro Estricto No Verificados)
-def consultar_binance_top1(trade_type, monto):
+# Consulta Directa a API Binance (Filtro Estricto No Verificados + Banco Mercantil)
+def consultar_binance_top1(trade_type, monto, banco="SpecificBank"):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = json.dumps({
         "asset": "USDT",
@@ -105,7 +105,8 @@ def consultar_binance_top1(trade_type, monto):
         "page": 1,
         "rows": 20,
         "tradeType": trade_type,
-        "transAmount": str(monto)
+        "transAmount": str(monto),
+        "payTypes": [banco] if banco != "ALL" else []
     }).encode('utf-8')
     
     headers = {
@@ -119,24 +120,29 @@ def consultar_binance_top1(trade_type, monto):
             res = json.loads(response.read().decode('utf-8'))
             data = res.get('data', [])
             
-            # Recorre la lista descartando comerciantes verificados y tomando el primer usuario común
             for item in data:
+                adv = item.get('adv', {})
                 advertiser = item.get('advertiser', {})
-                user_type = advertiser.get('userType')
                 
-                if user_type == "user":
-                    return round(float(item['adv']['price']), 2)
+                # Ignorar Anuncios Promocionados o de comerciantes verificados
+                is_promoted = adv.get('isPromoted', False)
+                user_type = advertiser.get('userType')
+                user_type_badge = advertiser.get('userStatsRet', {}).get('userType')
+                
+                # 'user' es el rol único de usuario NO verificado
+                if user_type == "user" and not is_promoted:
+                    return round(float(adv['price']), 2)
                     
     except Exception as e:
         print(f"Error consultando Binance Top1 ({trade_type}): {e}")
     return None
 
 def get_p2p_rates():
-    # SELL: Libro de usuarios vendiendo USDT (Tasa de Recompra a 10K VES)
-    tasa_recompra = consultar_binance_top1("SELL", "10000")
+    # VENDER USDT en Binance -> Tasa Recompra (10K VES)
+    tasa_recompra = consultar_binance_top1("SELL", "10000", banco="SpecificBank")
     
-    # BUY: Libro de usuarios comprando USDT (Tasa de Venta a 300K VES)
-    tasa_venta = consultar_binance_top1("BUY", "300000")
+    # COMPRAR USDT en Binance -> Tasa Venta (300K VES)
+    tasa_venta = consultar_binance_top1("BUY", "300000", banco="SpecificBank")
     
     if not tasa_recompra or not tasa_venta:
         return None, None, None, None
@@ -235,7 +241,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"🤖 **MONITOR P2P TOP 1 (No Verificados)**\n"
+        f"🤖 **MONITOR P2P TOP 1 (No Verificados - Mercantil)**\n"
         f"⏰ **Hora VE:** {hora_ve}\n"
         f"🎯 **Filtros:** Recompra (10K VES) | Venta (300K VES)\n\n"
         f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
