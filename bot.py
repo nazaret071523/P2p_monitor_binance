@@ -257,6 +257,9 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         pred = motor_quant_inteligente(tasa_c, tasa_v)
         hist_rows = obtener_historial(15)
         
+        # Calcular hora objetivo (Hora actual VE + 7 horas)
+        hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
+        
         historial_formatted = []
         for h in hist_rows:
             historial_formatted.append({
@@ -283,7 +286,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
                 "piso": pred["piso"],
                 "techo": pred["techo"],
                 "tendencia": pred["tendencia"],
-                "hora": datetime.now(VET).strftime("%I:%M %p")
+                "hora": f"+7h ({hora_objetivo})"
             },
             "historial": historial_formatted,
             "timestamp": time.time()
