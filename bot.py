@@ -196,30 +196,24 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     piso = round(min(compras), 2)
     techo = round(max(ventas), 2)
 
-    def proyectar_con_momentum(series, actual):
-        if len(series) < 2:
+    def proyectar_estable(series, actual):
+        if len(series) < 5:
             return actual
-            
-        # 1. Suavizado Exponencial Ponderado
-        alpha = 0.4
-        smooth = series[0]
-        for v in series:
-            smooth = alpha * v + (1 - alpha) * smooth
-            
-        # 2. Cálculo de Momentum / Tendencia reciente (últimas 20 lecturas = ~1 hora)
-        recientes = series[-20:]
-        momentum = (recientes[-1] - recientes[0]) / len(recientes) if len(recientes) > 1 else 0
+        # Medias móviles corta (última hora) y larga (últimas 6 horas)
+        corta = statistics.mean(series[-20:])
+        larga = statistics.mean(series[-120:]) if len(series) >= 120 else statistics.mean(series)
         
-        # 3. Proyección a 7 horas incorporando la inercia del mercado
-        delta = actual - smooth
-        proyeccion = actual + (delta * 1.5) + (momentum * 140) # 140 lecturas equivalen a 7h
-        return round(proyeccion, 2)
+        # Tendencia orgánica hacia 7h
+        tendencia = (corta - larga) * 0.5
+        return round(actual + tendencia, 2)
 
-    pred_c = proyectar_con_momentum(compras, actual_compra)
-    pred_v = proyectar_con_momentum(ventas, actual_venta)
+    pred_c = proyectar_estable(compras, actual_compra)
+    pred_v = proyectar_estable(ventas, actual_venta)
 
-    if pred_v <= pred_c:
-        pred_v = round(pred_c + 0.50, 2)
+    # REGLA DE ORO: Mantener un spread mínimo lógico de mercado (~0.7%)
+    spread_minimo = round(pred_c * 0.007, 2)
+    if (pred_v - pred_c) < spread_minimo:
+        pred_v = round(pred_c + max(spread_minimo, 6.00), 2)
 
     brecha = round(pred_v - pred_c, 2)
     diff = pred_c - actual_compra
