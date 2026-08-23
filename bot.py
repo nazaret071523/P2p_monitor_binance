@@ -17,7 +17,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 PORT = int(os.environ.get("PORT", 10000))
 VET = timezone(timedelta(hours=-4))
 
-# Reducido a los 3 bancos de mayor estabilidad y rapidez
 BANCOS_OBJETIVO = [
     "Mercantil",
     "BBVAProvincial",
@@ -31,36 +30,6 @@ ULTIMA_LECTURA_VALIDA = {
     "pct": None,
     "timestamp": None
 }
-
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-
-        tasa_c, tasa_v, sp, pct = get_p2p_rates()
-        if not tasa_c or not tasa_v:
-            tasa_c = ULTIMA_LECTURA_VALIDA["compra"] or 0.0
-            tasa_v = ULTIMA_LECTURA_VALIDA["venta"] or 0.0
-            sp = ULTIMA_LECTURA_VALIDA["spread"] or 0.0
-            pct = ULTIMA_LECTURA_VALIDA["pct"] or 0.0
-
-        data_json = {
-            "compra": tasa_c,
-            "venta": tasa_v,
-            "spread": sp,
-            "pct": pct,
-            "timestamp": time.time()
-        }
-        self.wfile.write(json.dumps(data_json).encode('utf-8'))
-
-def run_web_server():
-    try:
-        server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
-        server.serve_forever()
-    except Exception as e:
-        print(f"Error Web Server: {e}")
 
 # Base de Datos
 def get_db_connection():
@@ -116,7 +85,7 @@ def obtener_historial(limite=20):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        q = "SELECT timestamp, compra, venta, spread FROM lecturas ORDER BY id DESC LIMIT %s" if DATABASE_URL else "SELECT timestamp, compra, venta, spread FROM lecturas ORDER BY id DESC LIMIT ?"
+        q = "SELECT timestamp, compra, venta, spread, fecha_hora FROM lecturas ORDER BY id DESC LIMIT %s" if DATABASE_URL else "SELECT timestamp, compra, venta, spread, fecha_hora FROM lecturas ORDER BY id DESC LIMIT ?"
         cursor.execute(q, (limite,))
         rows = cursor.fetchall()
         conn.close()
@@ -125,7 +94,7 @@ def obtener_historial(limite=20):
         print(f"Error obteniendo historial: {e}")
         return []
 
-# Consulta a Binance P2P (Mercantil, Provincial, BNC)
+# Consulta Binance P2P
 def consultar_binance_top3_mediana(trade_type, monto, pay_types=None):
     if pay_types is None:
         pay_types = BANCOS_OBJETIVO
@@ -176,17 +145,14 @@ def consultar_binance_top3_mediana(trade_type, monto, pay_types=None):
 def get_p2p_rates():
     global ULTIMA_LECTURA_VALIDA
 
-    # Intento 1: Consulta directa con los 3 bancos
     tasa_recompra = consultar_binance_top3_mediana("SELL", "10000", BANCOS_OBJETIVO)
     tasa_venta = consultar_binance_top3_mediana("BUY", "300000", BANCOS_OBJETIVO)
     
-    # Intento 2: Consulta sin filtro si falla la especifica
     if not tasa_recompra:
         tasa_recompra = consultar_binance_top3_mediana("SELL", "10000", [])
     if not tasa_venta:
         tasa_venta = consultar_binance_top3_mediana("BUY", "300000", [])
 
-    # Intento 3: Respaldo de memoria/BD
     if not tasa_recompra or not tasa_venta:
         historial = obtener_historial(1)
         if historial:
@@ -211,7 +177,7 @@ def get_p2p_rates():
 
     return tasa_recompra, tasa_venta, spread, pct_bruto
 
-# Motor de Inteligencia Cuantitativa
+# Motor Cuantitativo
 def motor_quant_inteligente(actual_compra, actual_venta):
     historial = obtener_historial(15)
     
@@ -259,15 +225,70 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         tendencia = "↔️ ESTABLE / LATERAL"
 
     return {
-        "pred_compra": f"{pred_c:.2f} Bs",
-        "pred_venta": f"{pred_v:.2f} Bs",
+        "pred_compra": pred_c,
+        "pred_venta": pred_v,
+        "pred_compra_str": f"{pred_c:.2f} Bs",
+        "pred_venta_str": f"{pred_v:.2f} Bs",
         "brecha_esperada": f"{brecha:.2f} Bs",
         "tendencia": tendencia,
-        "piso": f"{piso:.2f} Bs",
-        "techo": f"{techo:.2f} Bs",
+        "piso": piso,
+        "techo": techo,
+        "piso_str": f"{piso:.2f} Bs",
+        "techo_str": f"{techo:.2f} Bs",
         "volatilidad": "🛡️ BAJA",
         "muestras": len(compras)
     }
+
+# Servidor Web Completo para Vercel
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        
+        tasa_c, tasa_v, sp, pct = get_p2p_rates()
+        if not tasa_c or not tasa_v:
+            tasa_c = ULTIMA_LECTURA_VALIDA["compra"] or 0.0
+            tasa_v = ULTIMA_LECTURA_VALIDA["venta"] or 0.0
+            sp = ULTIMA_LECTURA_VALIDA["spread"] or 0.0
+            pct = ULTIMA_LECTURA_VALIDA["pct"] or 0.0
+
+        pred = motor_quant_inteligente(tasa_c, tasa_v)
+        hist_rows = obtener_historial(10)
+        
+        historial_formatted = []
+        for h in hist_rows:
+            historial_formatted.append({
+                "timestamp": h[0],
+                "compra": h[1],
+                "venta": h[2],
+                "spread": h[3],
+                "fecha_hora": h[4] if len(h) > 4 else ""
+            })
+
+        data_json = {
+            "compra": tasa_c,
+            "venta": tasa_v,
+            "spread": sp,
+            "pct": pct,
+            "prediccion": pred["pred_compra"],
+            "pred_compra": pred["pred_compra"],
+            "pred_venta": pred["pred_venta"],
+            "piso": pred["piso"],
+            "techo": pred["techo"],
+            "tendencia": pred["tendencia"],
+            "historial": historial_formatted,
+            "timestamp": time.time()
+        }
+        self.wfile.write(json.dumps(data_json).encode('utf-8'))
+
+def run_web_server():
+    try:
+        server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
+        server.serve_forever()
+    except Exception as e:
+        print(f"Error Web Server: {e}")
 
 def background_monitor():
     while True:
@@ -297,13 +318,13 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
         f"🔴 **Precio Real Venta:** {tasa_venta:.2f} Bs\n"
         f"⚡ **Spread Bruto:** {spread:.2f} Bs ({pct_bruto:.2f}%)\n\n"
-        f"🔮 **Proyección Recompra (7h):** {pred['pred_compra']}\n"
-        f"🔮 **Proyección Venta (7h):** {pred['pred_venta']}\n"
+        f"🔮 **Proyección Recompra (7h):** {pred['pred_compra_str']}\n"
+        f"🔮 **Proyección Venta (7h):** {pred['pred_venta_str']}\n"
         f"📐 **Brecha Esperada (7h):** {pred['brecha_esperada']}\n"
         f"📊 **Tendencia:** {pred['tendencia']}\n"
         f"🌊 **Volatilidad:** {pred['volatilidad']}\n\n"
-        f"🛡️ **Soporte (Piso 24h):** {pred['piso']}\n"
-        f"🏰 **Resistencia (Techo 24h):** {pred['techo']}\n\n"
+        f"🛡️ **Soporte (Piso 24h):** {pred['piso_str']}\n"
+        f"🏰 **Resistencia (Techo 24h):** {pred['techo_str']}\n\n"
         f"🧠 **Lecturas Limpias:** {pred['muestras']}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
