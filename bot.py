@@ -314,7 +314,7 @@ def background_monitor():
             print(f"Error monitor de fondo: {e}")
         time.sleep(180)
 
-# Handler Telegram
+# Handler Telegram (Estilo Trading Terminal)
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
@@ -326,20 +326,22 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"🤖 **MONITOR P2P TOP 1 (No Verificados)**\n"
-        f"⏰ **Hora VE:** {hora_ve}\n"
-        f"🎯 **Filtros:** Recompra (10K VES) | Venta (300K VES)\n\n"
-        f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
-        f"🔴 **Precio Real Venta:** {tasa_venta:.2f} Bs\n"
-        f"⚡ **Spread Bruto:** {spread:.2f} Bs ({pct_bruto:.2f}%)\n\n"
-        f"🔮 **Proyección Recompra (7h):** {pred['pred_compra_str']}\n"
-        f"🔮 **Proyección Venta (7h):** {pred['pred_venta_str']}\n"
-        f"📐 **Brecha Esperada (7h):** {pred['brecha_esperada']}\n"
-        f"📊 **Tendencia:** {pred['tendencia']}\n"
-        f"🌊 **Volatilidad:** {pred['volatilidad']}\n\n"
-        f"🛡️ **Soporte (Piso 24h):** {pred['piso_str']}\n"
-        f"🏰 **Resistencia (Techo 24h):** {pred['techo_str']}\n\n"
-        f"🧠 **Lecturas Limpias:** {pred['muestras']}"
+        f"🦜 **[VENBOT PREDICCIONES]**\n"
+        f"───────────────────\n"
+        f"🕒 **Timestamp:** {hora_ve} VE\n"
+        f"🎯 **Filtro:** TOP 1 (No Verificados)\n\n"
+        f"🟢 **BID (Recompra):** `{tasa_compra:.2f} Bs`\n"
+        f"🔴 **ASK (Venta):**    `{tasa_venta:.2f} Bs`\n"
+        f"⚡ **SPREAD:**         `{spread:.2f} Bs` ({pct_bruto:.2f}%)\n\n"
+        f"**[ PROYECCIÓN QUANT +7H ]**\n"
+        f"🔮 **Target Compra:** `{pred['pred_compra_str']}`\n"
+        f"🔮 **Target Venta:**  `{pred['pred_venta_str']}`\n"
+        f"📐 **Brecha:**        `{pred['brecha_esperada']}`\n"
+        f"📊 **Tendencia:**     {pred['tendencia']}\n\n"
+        f"**[ NIVELES CLAVE 24H ]**\n"
+        f"▲ **Techo:** {pred['techo_str']}\n"
+        f"▼ **Piso:**  {pred['piso_str']}\n"
+        f"🧬 **Data:**  {pred['muestras']} Lecturas Limpias"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
