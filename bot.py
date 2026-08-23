@@ -2,6 +2,7 @@ import os
 import json
 import time
 import math
+import statistics
 import urllib.request
 import threading
 import psycopg2
@@ -89,7 +90,7 @@ def guardar_lectura(compra, venta, spread):
     except Exception as e:
         print(f"Error guardando lectura: {e}")
 
-def obtener_historial(limite=20):
+def obtener_historial(limite=30):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -102,8 +103,8 @@ def obtener_historial(limite=20):
         print(f"Error obteniendo historial: {e}")
         return []
 
-# Consulta a API Binance con Headers Antibloqueo
-def consultar_binance_top1(trade_type, monto, pay_types=None):
+# Consulta P2P obteniendo la MEDIANA de las mejores 3 ofertas de No Verificados
+def consultar_binance_top3_mediana(trade_type, monto, pay_types=None):
     if pay_types is None:
         pay_types = BANCOS_OBJETIVO
 
@@ -113,7 +114,7 @@ def consultar_binance_top1(trade_type, monto, pay_types=None):
         "fiat": "VES",
         "merchantCheck": False,
         "page": 1,
-        "rows": 20,
+        "rows": 30,
         "tradeType": trade_type,
         "transAmount": str(monto),
         "payTypes": pay_types
@@ -132,6 +133,7 @@ def consultar_binance_top1(trade_type, monto, pay_types=None):
             res = json.loads(response.read().decode('utf-8'))
             data = res.get('data', [])
             
+            precios_validos = []
             for item in data:
                 adv = item.get('adv', {})
                 advertiser = item.get('advertiser', {})
@@ -139,23 +141,29 @@ def consultar_binance_top1(trade_type, monto, pay_types=None):
                 is_promoted = adv.get('isPromoted', False)
                 user_type = advertiser.get('userType')
                 
+                # Exclusivo no verificados
                 if user_type == "user" and not is_promoted:
-                    return round(float(adv['price']), 2)
+                    precios_validos.append(float(adv['price']))
+                    if len(precios_validos) == 3:
+                        break
+            
+            if precios_validos:
+                # Retorna la mediana de las 3 ofertas capturadas
+                return round(statistics.median(precios_validos), 2)
                     
     except Exception as e:
         print(f"Error Binance API ({trade_type}): {e}")
     return None
 
 def get_p2p_rates():
-    # Intento 1: Consulta filtrada por los 6 bancos
-    tasa_recompra = consultar_binance_top1("SELL", "10000", BANCOS_OBJETIVO)
-    tasa_venta = consultar_binance_top1("BUY", "300000", BANCOS_OBJETIVO)
+    tasa_recompra = consultar_binance_top3_mediana("SELL", "10000", BANCOS_OBJETIVO)
+    tasa_venta = consultar_binance_top3_mediana("BUY", "300000", BANCOS_OBJETIVO)
     
-    # Intento 2 (Fallback): Consulta abierta si Binance no responde en los 6 bancos
+    # Fallback abierto en caso de baja liquidez
     if not tasa_recompra:
-        tasa_recompra = consultar_binance_top1("SELL", "10000", [])
+        tasa_recompra = consultar_binance_top3_mediana("SELL", "10000", [])
     if not tasa_venta:
-        tasa_venta = consultar_binance_top1("BUY", "300000", [])
+        tasa_venta = consultar_binance_top3_mediana("BUY", "300000", [])
 
     if not tasa_recompra or not tasa_venta:
         return None, None, None, None
@@ -164,53 +172,54 @@ def get_p2p_rates():
     pct_bruto = round((spread / tasa_recompra) * 100, 2)
     return tasa_recompra, tasa_venta, spread, pct_bruto
 
-# Motor Cuantitativo Ajustado
-def motor_quant_top1_7h(actual_compra, actual_venta):
-    historial = obtener_historial(15)
+# Motor Z-Score + Prediccion Cuantitativa Robusta
+def motor_quant_inteligente(actual_compra, actual_venta):
+    historial = obtener_historial(20)
     
-    if len(historial) < 3:
-        return {
-            "pred_compra": f"{actual_compra:.2f} Bs",
-            "pred_venta": f"{actual_venta:.2f} Bs",
-            "brecha_esperada": f"{round(actual_venta - actual_compra, 2):.2f} Bs",
-            "tendencia": "↔️ ESTABLE / LATERAL",
-            "piso": f"{actual_compra:.2f} Bs", 
-            "techo": f"{actual_venta:.2f} Bs", 
-            "volatilidad": "🛡️ BAJA", 
-            "muestras": len(historial)
-        }
+    # Filtrar datos atípicos con Z-Score
+    compras_raw = [h[1] for h in historial]
+    ventas_raw = [h[2] for h in historial]
     
-    compras = [h[1] for h in historial if abs(h[1] - actual_compra) < 15]
-    ventas = [h[2] for h in historial if abs(h[2] - actual_venta) < 15]
+    def filtrar_anomalias(series, valor_actual):
+        if len(series) < 5:
+            return [valor_actual]
+        mean = statistics.mean(series)
+        stdev = statistics.stdev(series) if len(series) > 1 else 0
+        if stdev == 0:
+            return series
+        # Z-Score <= 1.8 (mantiene datos dentro del rango normal)
+        limpios = [x for x in series if abs((x - mean) / stdev) <= 1.8]
+        return limpios if limpios else [valor_actual]
 
-    if not compras: compras = [actual_compra]
-    if not ventas: ventas = [actual_venta]
+    compras_limpias = filtrar_anomalias(compras_raw, actual_compra)
+    ventas_limpias = filtrar_anomalias(ventas_raw, actual_venta)
 
-    piso = round(min(compras), 2)
-    techo = round(max(ventas), 2)
+    piso = round(min(compras_limpias), 2)
+    techo = round(max(ventas_limpias), 2)
 
-    def calc_projection(series, actual):
-        alpha = 0.4
-        smooth = series[0]
+    # Estimador de tendencia EMA (Exponential Moving Average)
+    def proyectar_ema(series, actual):
+        alpha = 0.3
+        ema = series[0]
         for val in series:
-            smooth = alpha * val + (1 - alpha) * smooth
-        momentum = (actual - smooth) * 0.5
-        return round(actual + momentum, 2)
+            ema = alpha * val + (1 - alpha) * ema
+        delta = actual - ema
+        return round(actual + (delta * 0.4), 2)
 
-    pred_c = calc_projection(compras, actual_compra)
-    pred_v = calc_projection(ventas, actual_venta)
-    
+    pred_c = proyectar_ema(compras_limpias, actual_compra)
+    pred_v = proyectar_ema(ventas_limpias, actual_venta)
+
     if pred_v <= pred_c:
         pred_v = round(pred_c + 0.50, 2)
 
     brecha = round(pred_v - pred_c, 2)
     diff = pred_c - actual_compra
 
-    if diff > 0.30:
+    if diff > 0.25:
         tendencia = "🚀 ALCISTA (Fuerte)"
     elif diff > 0.05:
         tendencia = "📈 ALCISTA (Moderada)"
-    elif diff < -0.30:
+    elif diff < -0.25:
         tendencia = "🔻 BAJISTA (Fuerte)"
     elif diff < -0.05:
         tendencia = "📉 BAJISTA (Moderada)"
@@ -225,7 +234,7 @@ def motor_quant_top1_7h(actual_compra, actual_venta):
         "piso": f"{piso:.2f} Bs",
         "techo": f"{techo:.2f} Bs",
         "volatilidad": "🛡️ BAJA",
-        "muestras": len(historial)
+        "muestras": len(compras_limpias)
     }
 
 def background_monitor():
@@ -238,7 +247,7 @@ def background_monitor():
             print(f"Error monitor de fondo: {e}")
         time.sleep(180)
 
-# Telegram Handler
+# Handler Telegram
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
@@ -246,7 +255,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Error temporal consultando la API de Binance P2P.")
         return
 
-    pred = motor_quant_top1_7h(tasa_compra, tasa_venta)
+    pred = motor_quant_inteligente(tasa_compra, tasa_venta)
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
@@ -263,7 +272,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌊 **Volatilidad:** {pred['volatilidad']}\n\n"
         f"🛡️ **Soporte (Piso 24h):** {pred['piso']}\n"
         f"🏰 **Resistencia (Techo 24h):** {pred['techo']}\n\n"
-        f"🧠 **Lecturas Acumuladas:** {pred['muestras']}"
+        f"🧠 **Lecturas Limpias:** {pred['muestras']}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
