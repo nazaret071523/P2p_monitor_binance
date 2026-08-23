@@ -102,28 +102,33 @@ def obtener_historial(limite=20):
         print(f"Error obteniendo historial: {e}")
         return []
 
-# Consulta P2P Top 1 No Verificados
-def consultar_binance_top1(trade_type, monto):
+# Consulta a API Binance con Headers Antibloqueo
+def consultar_binance_top1(trade_type, monto, pay_types=None):
+    if pay_types is None:
+        pay_types = BANCOS_OBJETIVO
+
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = json.dumps({
         "asset": "USDT",
         "fiat": "VES",
         "merchantCheck": False,
         "page": 1,
-        "rows": 30,
+        "rows": 20,
         "tradeType": trade_type,
         "transAmount": str(monto),
-        "payTypes": BANCOS_OBJETIVO
+        "payTypes": pay_types
     }).encode('utf-8')
     
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "Accept": "*/*",
+        "Accept-Language": "es-ES,es;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     
     try:
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=8) as response:
+        with urllib.request.urlopen(req, timeout=6) as response:
             res = json.loads(response.read().decode('utf-8'))
             data = res.get('data', [])
             
@@ -142,9 +147,16 @@ def consultar_binance_top1(trade_type, monto):
     return None
 
 def get_p2p_rates():
-    tasa_recompra = consultar_binance_top1("SELL", "10000")
-    tasa_venta = consultar_binance_top1("BUY", "300000")
+    # Intento 1: Consulta filtrada por los 6 bancos
+    tasa_recompra = consultar_binance_top1("SELL", "10000", BANCOS_OBJETIVO)
+    tasa_venta = consultar_binance_top1("BUY", "300000", BANCOS_OBJETIVO)
     
+    # Intento 2 (Fallback): Consulta abierta si Binance no responde en los 6 bancos
+    if not tasa_recompra:
+        tasa_recompra = consultar_binance_top1("SELL", "10000", [])
+    if not tasa_venta:
+        tasa_venta = consultar_binance_top1("BUY", "300000", [])
+
     if not tasa_recompra or not tasa_venta:
         return None, None, None, None
 
@@ -152,7 +164,7 @@ def get_p2p_rates():
     pct_bruto = round((spread / tasa_recompra) * 100, 2)
     return tasa_recompra, tasa_venta, spread, pct_bruto
 
-# Motor Cuantitativo Ajustado (Filtra ruido e historia corrupta)
+# Motor Cuantitativo Ajustado
 def motor_quant_top1_7h(actual_compra, actual_venta):
     historial = obtener_historial(15)
     
@@ -177,7 +189,6 @@ def motor_quant_top1_7h(actual_compra, actual_venta):
     piso = round(min(compras), 2)
     techo = round(max(ventas), 2)
 
-    # Suavizado adaptativo de corto plazo
     def calc_projection(series, actual):
         alpha = 0.4
         smooth = series[0]
