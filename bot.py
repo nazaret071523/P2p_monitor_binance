@@ -16,7 +16,16 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 PORT = int(os.environ.get("PORT", 10000))
 VET = timezone(timedelta(hours=-4))
 
-# Web Server Render Ping
+# Lista oficial de códigos de bancos en Binance P2P
+BANCOS_OBJETIVO = [
+    "BankOfVenezuela",
+    "Mercantil",
+    "BBVAProvincial",
+    "Banesco",
+    "BNC",
+    "Bancamiga"
+]
+
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -95,7 +104,7 @@ def obtener_historial(horas=24):
         print(f"Error obteniendo historial: {e}")
         return []
 
-# API Binance Top 1 (Todos los Bancos - No Verificados)
+# Consulta a Binance filtrando los 6 Bancos Objetivo y No Verificados
 def consultar_binance_top1(trade_type, monto):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = json.dumps({
@@ -106,7 +115,7 @@ def consultar_binance_top1(trade_type, monto):
         "rows": 20,
         "tradeType": trade_type,
         "transAmount": str(monto),
-        "payTypes": []
+        "payTypes": BANCOS_OBJETIVO
     }).encode('utf-8')
     
     headers = {
@@ -116,7 +125,7 @@ def consultar_binance_top1(trade_type, monto):
     
     try:
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=6) as response:
+        with urllib.request.urlopen(req, timeout=8) as response:
             res = json.loads(response.read().decode('utf-8'))
             data = res.get('data', [])
             
@@ -127,6 +136,7 @@ def consultar_binance_top1(trade_type, monto):
                 is_promoted = adv.get('isPromoted', False)
                 user_type = advertiser.get('userType')
                 
+                # Filtro exclusivo: No verificado ("user") y sin patrocinio
                 if user_type == "user" and not is_promoted:
                     return round(float(adv['price']), 2)
                     
@@ -135,7 +145,10 @@ def consultar_binance_top1(trade_type, monto):
     return None
 
 def get_p2p_rates():
+    # Tasa Recompra (Sell USDT) en filtro 10.000 VES
     tasa_recompra = consultar_binance_top1("SELL", "10000")
+    
+    # Tasa Venta (Buy USDT) en filtro 300.000 VES
     tasa_venta = consultar_binance_top1("BUY", "300000")
     
     if not tasa_recompra or not tasa_venta:
@@ -145,7 +158,7 @@ def get_p2p_rates():
     pct_bruto = round((spread / tasa_recompra) * 100, 2)
     return tasa_recompra, tasa_venta, spread, pct_bruto
 
-# Quantitative Holt Engine
+# Motor Cuantitativo
 def motor_quant_top1_7h():
     historial = obtener_historial(24)
     n = len(historial)
@@ -223,7 +236,6 @@ def background_monitor():
             print(f"Error monitor de fondo: {e}")
         time.sleep(180)
 
-# Handler Telegram
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     pred = motor_quant_top1_7h()
@@ -235,8 +247,9 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"🤖 **MONITOR P2P TOP 1 (Todos los Bancos)**\n"
+        f"🤖 **MONITOR P2P TOP 1 (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_ve}\n"
+        f"🏦 **Bancos:** Venezuela, Mercantil, Provincial, Banesco, BNC, Bancamiga\n"
         f"🎯 **Filtros:** Recompra (10K VES) | Venta (300K VES)\n\n"
         f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
         f"🔴 **Precio Real Venta:** {tasa_venta:.2f} Bs\n"
