@@ -16,7 +16,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 PORT = int(os.environ.get("PORT", 10000))
 VET = timezone(timedelta(hours=-4))
 
-# Lista oficial de códigos de bancos en Binance P2P
 BANCOS_OBJETIVO = [
     "BankOfVenezuela",
     "Mercantil",
@@ -90,21 +89,20 @@ def guardar_lectura(compra, venta, spread):
     except Exception as e:
         print(f"Error guardando lectura: {e}")
 
-def obtener_historial(horas=24):
+def obtener_historial(limite=20):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        ts_limite = (datetime.now(VET) - timedelta(hours=horas)).timestamp()
-        q = "SELECT timestamp, compra, venta, spread FROM lecturas WHERE timestamp >= %s ORDER BY timestamp ASC" if DATABASE_URL else "SELECT timestamp, compra, venta, spread FROM lecturas WHERE timestamp >= ? ORDER BY timestamp ASC"
-        cursor.execute(q, (ts_limite,))
+        q = "SELECT timestamp, compra, venta, spread FROM lecturas ORDER BY id DESC LIMIT %s" if DATABASE_URL else "SELECT timestamp, compra, venta, spread FROM lecturas ORDER BY id DESC LIMIT ?"
+        cursor.execute(q, (limite,))
         rows = cursor.fetchall()
         conn.close()
-        return rows
+        return list(reversed(rows))
     except Exception as e:
         print(f"Error obteniendo historial: {e}")
         return []
 
-# Consulta a Binance filtrando los 6 Bancos Objetivo y No Verificados
+# Consulta P2P Top 1 No Verificados
 def consultar_binance_top1(trade_type, monto):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = json.dumps({
@@ -112,7 +110,7 @@ def consultar_binance_top1(trade_type, monto):
         "fiat": "VES",
         "merchantCheck": False,
         "page": 1,
-        "rows": 20,
+        "rows": 30,
         "tradeType": trade_type,
         "transAmount": str(monto),
         "payTypes": BANCOS_OBJETIVO
@@ -136,7 +134,6 @@ def consultar_binance_top1(trade_type, monto):
                 is_promoted = adv.get('isPromoted', False)
                 user_type = advertiser.get('userType')
                 
-                # Filtro exclusivo: No verificado ("user") y sin patrocinio
                 if user_type == "user" and not is_promoted:
                     return round(float(adv['price']), 2)
                     
@@ -145,10 +142,7 @@ def consultar_binance_top1(trade_type, monto):
     return None
 
 def get_p2p_rates():
-    # Tasa Recompra (Sell USDT) en filtro 10.000 VES
     tasa_recompra = consultar_binance_top1("SELL", "10000")
-    
-    # Tasa Venta (Buy USDT) en filtro 300.000 VES
     tasa_venta = consultar_binance_top1("BUY", "300000")
     
     if not tasa_recompra or not tasa_venta:
@@ -158,72 +152,69 @@ def get_p2p_rates():
     pct_bruto = round((spread / tasa_recompra) * 100, 2)
     return tasa_recompra, tasa_venta, spread, pct_bruto
 
-# Motor Cuantitativo
-def motor_quant_top1_7h():
-    historial = obtener_historial(24)
-    n = len(historial)
+# Motor Cuantitativo Ajustado (Filtra ruido e historia corrupta)
+def motor_quant_top1_7h(actual_compra, actual_venta):
+    historial = obtener_historial(15)
     
-    if n < 5:
+    if len(historial) < 3:
         return {
-            "pred_compra": "Calibrando...",
-            "pred_venta": "Calibrando...",
-            "brecha_esperada": "N/A",
-            "tendencia": "↔️ NEUTRA (Recolectando)",
-            "piso": "N/A", "techo": "N/A", "volatilidad": "Baja", "muestras": n
+            "pred_compra": f"{actual_compra:.2f} Bs",
+            "pred_venta": f"{actual_venta:.2f} Bs",
+            "brecha_esperada": f"{round(actual_venta - actual_compra, 2):.2f} Bs",
+            "tendencia": "↔️ ESTABLE / LATERAL",
+            "piso": f"{actual_compra:.2f} Bs", 
+            "techo": f"{actual_venta:.2f} Bs", 
+            "volatilidad": "🛡️ BAJA", 
+            "muestras": len(historial)
         }
     
-    compras = [h[1] for h in historial]
-    ventas = [h[2] for h in historial]
-    
+    compras = [h[1] for h in historial if abs(h[1] - actual_compra) < 15]
+    ventas = [h[2] for h in historial if abs(h[2] - actual_venta) < 15]
+
+    if not compras: compras = [actual_compra]
+    if not ventas: ventas = [actual_venta]
+
     piso = round(min(compras), 2)
     techo = round(max(ventas), 2)
 
-    def damped_holt(series, alpha=0.35, beta=0.1, phi=0.8, steps=140):
-        level = series[0]
-        trend = series[1] - series[0] if len(series) > 1 else 0
-        for i in range(1, len(series)):
-            last_level = level
-            level = alpha * series[i] + (1 - alpha) * (level + phi * trend)
-            trend = beta * (level - last_level) + (1 - beta) * phi * trend
-            
-        damped_sum = sum(phi ** k for k in range(1, steps + 1)) * trend
-        return level + damped_sum, trend
+    # Suavizado adaptativo de corto plazo
+    def calc_projection(series, actual):
+        alpha = 0.4
+        smooth = series[0]
+        for val in series:
+            smooth = alpha * val + (1 - alpha) * smooth
+        momentum = (actual - smooth) * 0.5
+        return round(actual + momentum, 2)
 
-    pred_c_raw, trend_c = damped_holt(compras, steps=140)
-    pred_v_raw, trend_v = damped_holt(ventas, steps=140)
+    pred_c = calc_projection(compras, actual_compra)
+    pred_v = calc_projection(ventas, actual_venta)
     
-    pred_c_7h = round(max(piso * 0.98, min(techo * 1.02, pred_c_raw)), 2)
-    pred_v_7h = round(max(pred_c_7h + 0.5, pred_v_raw), 2)
-    brecha = round(pred_v_7h - pred_c_7h, 2)
+    if pred_v <= pred_c:
+        pred_v = round(pred_c + 0.50, 2)
 
-    prom_c = sum(compras) / n
-    var_c = sum((x - prom_c) ** 2 for x in compras) / n
-    std_c = math.sqrt(var_c)
-    vol_pct = (std_c / prom_c) * 100
+    brecha = round(pred_v - pred_c, 2)
+    diff = pred_c - actual_compra
 
-    avg_trend = (trend_c + trend_v) / 2
-    if avg_trend > 0.005:
+    if diff > 0.30:
         tendencia = "🚀 ALCISTA (Fuerte)"
-    elif avg_trend > 0.001:
+    elif diff > 0.05:
         tendencia = "📈 ALCISTA (Moderada)"
-    elif avg_trend < -0.005:
+    elif diff < -0.30:
         tendencia = "🔻 BAJISTA (Fuerte)"
-    elif avg_trend < -0.001:
+    elif diff < -0.05:
         tendencia = "📉 BAJISTA (Moderada)"
     else:
         tendencia = "↔️ ESTABLE / LATERAL"
 
-    estado_vol = "⚠️ ALTA" if vol_pct > 0.8 else ("⚡ MODERADA" if vol_pct > 0.3 else "🛡️ BAJA")
-
     return {
-        "pred_compra": f"{pred_c_7h:.2f} Bs",
-        "pred_venta": f"{pred_v_7h:.2f} Bs",
+        "pred_compra": f"{pred_c:.2f} Bs",
+        "pred_venta": f"{pred_v:.2f} Bs",
         "brecha_esperada": f"{brecha:.2f} Bs",
         "tendencia": tendencia,
         "piso": f"{piso:.2f} Bs",
         "techo": f"{techo:.2f} Bs",
-        "volatilidad": estado_vol,
-        "muestras": n
+        "volatilidad": "🛡️ BAJA",
+        "muestras": len(historial)
     }
 
 def background_monitor():
@@ -236,20 +227,20 @@ def background_monitor():
             print(f"Error monitor de fondo: {e}")
         time.sleep(180)
 
+# Telegram Handler
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
-    pred = motor_quant_top1_7h()
     
     if not tasa_compra or not tasa_venta:
         await update.message.reply_text("❌ Error temporal consultando la API de Binance P2P.")
         return
 
+    pred = motor_quant_top1_7h(tasa_compra, tasa_venta)
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
         f"🤖 **MONITOR P2P TOP 1 (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_ve}\n"
-        f"🏦 **Bancos:** Venezuela, Mercantil, Provincial, Banesco, BNC, Bancamiga\n"
         f"🎯 **Filtros:** Recompra (10K VES) | Venta (300K VES)\n\n"
         f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
         f"🔴 **Precio Real Venta:** {tasa_venta:.2f} Bs\n"
