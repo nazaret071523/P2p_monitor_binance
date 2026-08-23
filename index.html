@@ -8,18 +8,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #0b0e14;
-            --surface: #131722;
-            --card: #1e222d;
-            --border: #2a2e39;
+            --bg: #0b0f19;
+            --card-bg: #151a26;
+            --border: #21283b;
             --text-main: #f0f3fa;
             --text-muted: #848e9c;
-            --green: #089981;
-            --green-glow: rgba(8, 153, 129, 0.15);
-            --red: #f23645;
-            --red-glow: rgba(242, 54, 69, 0.15);
+            --green: #0ecb81;
+            --red: #f6465d;
             --gold: #f0b90b;
-            --accent: #2962ff;
+            --blue-accent: #0070f3;
         }
 
         * {
@@ -29,7 +26,7 @@
 
         body {
             margin: 0;
-            padding: 16px 12px;
+            padding: 12px;
             background-color: var(--bg);
             color: var(--text-main);
             display: flex;
@@ -38,197 +35,204 @@
 
         .container {
             width: 100%;
-            max-width: 850px;
+            max-width: 500px;
         }
 
+        /* HEADER PREMIUM Y HORA */
         header {
-            text-align: center;
-            margin-bottom: 20px;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
         }
 
         .brand-title {
-            font-size: 1.35rem;
+            font-size: 1rem;
             font-weight: 700;
-            letter-spacing: 0.5px;
             color: var(--gold);
-            margin: 0;
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 8px;
+            gap: 6px;
         }
 
-        .brand-subtitle {
-            font-size: 0.78rem;
+        .live-badge {
+            background: rgba(14, 203, 129, 0.15);
+            color: var(--green);
+            padding: 4px 8px;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .time-bar {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
+            text-align: center;
+            font-size: 0.75rem;
             color: var(--text-muted);
-            margin-top: 4px;
+            margin-bottom: 10px;
         }
 
+        .time-bar b { color: var(--text-main); }
+
+        /* BANNER PUBLICIDAD COMPACTO */
         .ad-banner {
-            width: 100%;
-            padding: 14px;
-            background: linear-gradient(180deg, #181c27 0%, #131722 100%);
-            border: 1px dashed var(--border);
-            border-radius: 12px;
+            background: linear-gradient(180deg, #182030 0%, #131722 100%);
+            border: 1px dashed #2b354d;
+            border-radius: 8px;
+            padding: 10px;
             text-align: center;
             color: var(--text-muted);
-            font-size: 0.82rem;
-            font-weight: 500;
-            margin-bottom: 18px;
+            font-size: 0.75rem;
+            margin-bottom: 10px;
         }
 
-        /* METRICAS PRINCIPALES (GRID PERFECTO EN MOVIL) */
+        /* TRES TARJETAS SUPERIORES */
         .metrics-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-            margin-bottom: 18px;
+            gap: 8px;
+            margin-bottom: 10px;
         }
 
         .metric-card {
-            background-color: var(--card);
+            background-color: var(--card-bg);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 12px 10px;
+            border-radius: 10px;
+            padding: 10px 6px;
             text-align: center;
-            transition: border-color 0.2s ease;
         }
 
         .metric-label {
-            font-size: 0.68rem;
-            font-weight: 600;
-            text-transform: uppercase;
+            font-size: 0.65rem;
+            font-weight: 700;
             color: var(--text-muted);
-            letter-spacing: 0.3px;
+            text-transform: uppercase;
         }
 
         .metric-value {
-            font-size: 1.15rem;
+            font-size: 1rem;
             font-weight: 700;
-            margin-top: 6px;
+            margin-top: 4px;
         }
 
         .val-buy { color: var(--green); }
         .val-sell { color: var(--red); }
         .val-margin { color: var(--gold); }
 
-        /* BLOQUE MOTOR IA */
-        .ia-card {
-            background-color: var(--surface);
-            border: 1px solid var(--border);
+        /* TARJETA COMPACTA DE PREDICCIÓN (ESTILO FOTO 2) */
+        .pred-card {
+            background-color: var(--card-bg);
+            border: 1px solid #2d2354;
             border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 18px;
+            padding: 14px;
+            margin-bottom: 10px;
+            position: relative;
         }
 
-        .ia-header {
+        .pred-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 14px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--border);
+            margin-bottom: 10px;
         }
 
-        .ia-title {
-            font-size: 0.9rem;
+        .pred-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #9d8ec7;
+            text-transform: uppercase;
+        }
+
+        .pred-trend {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #b197ff;
+        }
+
+        .pred-main-price {
+            text-align: center;
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: #ffffff;
+            margin: 8px 0 12px 0;
+        }
+
+        .pred-sub-row {
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid var(--border);
+            padding-top: 10px;
+            font-size: 0.75rem;
             font-weight: 600;
-            color: var(--text-main);
+        }
+
+        .floor-val { color: var(--green); }
+        .roof-val { color: var(--red); }
+
+        /* BLOQUE ASISTENTE ANALISTA */
+        .analyst-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 10px;
+            font-size: 0.75rem;
+            line-height: 1.4;
+        }
+
+        .analyst-title {
+            color: var(--gold);
+            font-weight: 700;
+            margin-bottom: 6px;
             display: flex;
             align-items: center;
             gap: 6px;
         }
 
-        .ia-badge {
-            background: rgba(41, 98, 255, 0.15);
-            color: #64b5f6;
-            border: 1px solid rgba(41, 98, 255, 0.3);
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .ia-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-
-        .ia-item {
-            background-color: var(--card);
-            padding: 10px 12px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-        }
-
-        .ia-item-label {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            margin-bottom: 4px;
-        }
-
-        .ia-item-val {
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--text-main);
-        }
-
-        /* CONTENEDOR GRAFICA */
+        /* GRAFICA */
         .chart-card {
-            background-color: var(--surface);
+            background-color: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 18px;
+            padding: 12px;
+            margin-bottom: 10px;
         }
 
         .chart-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 12px;
-        }
-
-        .chart-title {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text-muted);
-        }
-
-        .chart-controls {
-            display: flex;
-            gap: 6px;
+            margin-bottom: 8px;
         }
 
         .btn-range {
-            background-color: var(--card);
-            border: 1px solid var(--border);
+            background-color: #1e2538;
+            border: none;
             color: var(--text-muted);
-            padding: 4px 12px;
-            font-size: 0.72rem;
-            font-weight: 600;
-            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 0.7rem;
+            border-radius: 4px;
             cursor: pointer;
-            transition: all 0.2s ease;
         }
 
         .btn-range.active {
             background-color: var(--gold);
-            border-color: var(--gold);
             color: #000;
+            font-weight: 700;
         }
 
         .canvas-holder {
             position: relative;
-            height: 260px;
+            height: 200px;
             width: 100%;
-        }
-
-        @media (max-width: 480px) {
-            .metric-value { font-size: 0.95rem; }
-            .metric-label { font-size: 0.62rem; }
-            .ia-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -236,58 +240,55 @@
 
 <div class="container">
     <header>
-        <div class="brand-title">🦅 VENBOT PREDICCIONES</div>
-        <div class="brand-subtitle">Bloque #4 (10k Recompra / 300k Venta)</div>
+        <div class="brand-title">⚡ COMERCIANTE P2P PRO</div>
+        <div class="live-badge">EN VIVO</div>
     </header>
 
+    <div class="time-bar">
+        🇻🇪 Hora Oficial VE: <b id="clock">--:--:--</b>
+    </div>
+
     <div class="ad-banner">
-        📢 Espacio Publicitario Disponible (Banner Premium 728x90)
+        📢 Filtro: Bloque #4 (10,000 Bs - 300,000 Bs)
     </div>
 
     <div class="metrics-grid">
         <div class="metric-card">
-            <div class="metric-label">🟢 Compra</div>
+            <div class="metric-label">COMPRA</div>
             <div class="metric-value val-buy" id="compra-val">--.--</div>
         </div>
         <div class="metric-card">
-            <div class="metric-label">🔴 Venta</div>
+            <div class="metric-label">VENTA</div>
             <div class="metric-value val-sell" id="venta-val">--.--</div>
         </div>
         <div class="metric-card">
-            <div class="metric-label">⚡ Margen</div>
+            <div class="metric-label">SPREAD</div>
             <div class="metric-value val-margin" id="margin-val">--.--</div>
         </div>
     </div>
 
-    <div class="ia-card">
-        <div class="ia-header">
-            <div class="ia-title">🔮 Proyección IA Quant (+7H)</div>
-            <div class="ia-badge" id="trend-val">ANALIZANDO...</div>
+    <!-- BLOQUE COMPACTO ESTILO IMAGEN 2 -->
+    <div class="pred-card">
+        <div class="pred-header">
+            <div class="pred-title">PREDICCIÓN ML (+7H)</div>
+            <div class="pred-trend" id="trend-val">ANALIZANDO...</div>
         </div>
-        <div class="ia-grid">
-            <div class="ia-item">
-                <div class="ia-item-label">Recompra Estimada</div>
-                <div class="ia-item-val" id="pred-buy">--.-- Bs</div>
-            </div>
-            <div class="ia-item">
-                <div class="ia-item-label">Venta Estimada</div>
-                <div class="ia-item-val" id="pred-sell">--.-- Bs</div>
-            </div>
-            <div class="ia-item">
-                <div class="ia-item-label">Piso de Mercado</div>
-                <div class="ia-item-val" id="piso-val">--.-- Bs</div>
-            </div>
-            <div class="ia-item">
-                <div class="ia-item-label">Techo de Mercado</div>
-                <div class="ia-item-val" id="techo-val">--.-- Bs</div>
-            </div>
+        <div class="pred-main-price" id="pred-sell">--.-- Bs</div>
+        <div class="pred-sub-row">
+            <div>🟢 Piso: <span class="floor-val" id="piso-val">--.-- Bs</span></div>
+            <div>🔴 Techo: <span class="roof-val" id="techo-val">--.-- Bs</span></div>
         </div>
+    </div>
+
+    <div class="analyst-card">
+        <div class="analyst-title">✨ ASISTENTE ANALISTA P2P</div>
+        <div id="analyst-text">Calculando dinámica de precios e indicadores de liquidez para tu operación...</div>
     </div>
 
     <div class="chart-card">
         <div class="chart-header">
-            <div class="chart-title">Tendencia P2P</div>
-            <div class="chart-controls">
+            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight:600;">Histórico Mercado</span>
+            <div>
                 <button class="btn-range active" onclick="cambiarRango('1d', this)">1D</button>
                 <button class="btn-range" onclick="cambiarRango('7d', this)">7D</button>
                 <button class="btn-range" onclick="cambiarRango('30d', this)">30D</button>
@@ -299,7 +300,7 @@
     </div>
 
     <div class="ad-banner">
-        📢 Espacio Publicitario Disponible (Aliados / Promociones)
+        📢 Espacio Publicitario Disponible
     </div>
 </div>
 
@@ -307,6 +308,13 @@
     const API_URL = "https://p2p-monitor-binance.onrender.com";
     let chartInstance = null;
     let rangoActual = '1d';
+
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('clock').innerText = now.toLocaleTimeString('es-VE');
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
 
     async function cargarActual() {
         try {
@@ -320,13 +328,15 @@
 
             if(data.pred) {
                 document.getElementById('trend-val').innerText = data.pred.tendencia;
-                document.getElementById('pred-buy').innerText = data.pred.pred_compra_str;
                 document.getElementById('pred-sell').innerText = data.pred.pred_venta_str;
                 document.getElementById('piso-val').innerText = data.pred.piso_str;
                 document.getElementById('techo-val').innerText = data.pred.techo_str;
+
+                document.getElementById('analyst-text').innerHTML = 
+                    `🚀 <b>Tendencia ${data.pred.tendencia}:</b> Rango proyectado de recompra en <b>${data.pred.pred_compra_str}</b> y venta en <b>${data.pred.pred_venta_str}</b>. Mantén atención al spread neto.`;
             }
         } catch(e) {
-            console.error("Error al obtener datos actualizados:", e);
+            console.error("Error al obtener datos:", e);
         }
     }
 
@@ -346,21 +356,17 @@
                         {
                             label: 'Compra (10k)',
                             data: data.compras,
-                            borderColor: '#089981',
-                            backgroundColor: 'rgba(8, 153, 129, 0.05)',
+                            borderColor: '#0ecb81',
                             borderWidth: 2,
-                            fill: true,
-                            tension: 0.3,
+                            tension: 0.2,
                             pointRadius: 0
                         },
                         {
                             label: 'Venta (300k)',
                             data: data.ventas,
-                            borderColor: '#f23645',
-                            backgroundColor: 'rgba(242, 54, 69, 0.05)',
+                            borderColor: '#f6465d',
                             borderWidth: 2,
-                            fill: true,
-                            tension: 0.3,
+                            tension: 0.2,
                             pointRadius: 0
                         }
                     ]
@@ -368,21 +374,10 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'top',
-                            labels: { color: '#848e9c', font: { size: 11 } }
-                        }
-                    },
+                    plugins: { legend: { display: false } },
                     scales: {
-                        x: {
-                            ticks: { color: '#848e9c', font: { size: 10 } },
-                            grid: { color: 'rgba(42, 46, 57, 0.5)' }
-                        },
-                        y: {
-                            ticks: { color: '#848e9c', font: { size: 10 } },
-                            grid: { color: 'rgba(42, 46, 57, 0.5)' }
-                        }
+                        x: { ticks: { color: '#848e9c', font: { size: 9 } }, grid: { color: '#21283b' } },
+                        y: { ticks: { color: '#848e9c', font: { size: 9 } }, grid: { color: '#21283b' } }
                     }
                 }
             });
