@@ -3,6 +3,7 @@ import asyncio
 import sqlite3
 import requests
 import statistics
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -11,9 +12,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 # --- DIRECTORIO BASE Y CONFIGURACIÓN ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-app = FastAPI()
-
-TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 VET = timezone(timedelta(hours=-4))  # Hora de Venezuela
 
 # --- BASE DE DATOS SQLITE ---
@@ -157,35 +155,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "muestras": len(compras)
     }
 
-# --- ENDPOINTS FASTAPI PARA LA WEB ---
-@app.get("/", response_class=HTMLResponse)
-def get_web():
-    html_path = os.path.join(BASE_DIR, "index.html")
-    if os.path.exists(html_path):
-        with open(html_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>Servidor Venbot Activo</h1>"
-
-@app.get("/api/historial")
-def get_historial_api(rango: str = "1d"):
-    limite = 480 if rango == "1d" else (3360 if rango == "7d" else 14400)
-    data = obtener_historial(limite)
-    data.reverse()
-
-    paso = 1 if rango == "1d" else (7 if rango == "7d" else 30)
-    data_filtrada = data[::paso]
-
-    labels, compras, ventas = [], [], []
-
-    for item in data_filtrada:
-        fecha_obj = item[0]
-        label = fecha_obj.strftime("%H:%M") if rango == "1d" else fecha_obj.strftime("%d/%m %H:%M")
-        labels.append(label)
-        compras.append(item[1])
-        ventas.append(item[2])
-
-    return {"labels": labels, "compras": compras, "ventas": ventas}
-
 # --- HANDLER DE TELEGRAM ---
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
@@ -214,11 +183,11 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- ARRANQUE SEGURO EN RENDER ---
+# --- MANEJO DE CICLO DE VIDA (FASTAPI LIFESPAN) ---
 telegram_app = None
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app_fastapi: FastAPI):
     global telegram_app
     token_actual = os.getenv("TELEGRAM_TOKEN", "").strip()
     
@@ -231,17 +200,47 @@ async def startup_event():
             await telegram_app.updater.start_polling()
             print("✅ Bot de Telegram iniciado exitosamente.")
         except Exception as e:
-            print(f"❌ Error iniciando Telegram Bot (Verifica el Token): {e}")
+            print(f"❌ Error al iniciar Telegram Bot: {e}")
     else:
-        print("⚠️ Advertencia: TELEGRAM_TOKEN no configurado en Environment Variables.")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    global telegram_app
+        print("⚠️ TELEGRAM_TOKEN no configurado.")
+    
+    yield  # El servidor web FastAPI se mantiene activo aquí
+    
     if telegram_app:
         try:
             await telegram_app.updater.stop()
             await telegram_app.stop()
             await telegram_app.shutdown()
         except Exception as e:
-            print(f"Error apagando Telegram Bot: {e}")
+            print(f"Error al detener Telegram Bot: {e}")
+
+app = FastAPI(lifespan=lifespan)
+
+# --- ENDPOINTS FASTAPI PARA LA WEB ---
+@app.get("/", response_class=HTMLResponse)
+def get_web():
+    html_path = os.path.join(BASE_DIR, "index.html")
+    if os.path.exists(html_path):
+        with open(html_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>Servidor Venbot Activo</h1>"
+
+@app.get("/api/historial")
+def get_historial_api(rango: str = "1d"):
+    limite = 480 if rango == "1d" else (3360 if rango == "7d" else 14400)
+    data = obtener_historial(limite)
+    data.reverse()
+
+    paso = 1 if rango == "1d" else (7 if rango == "7d" else 30)
+    data_filtrada = data[::paso]
+
+    labels, compras, ventas = [], [], []
+
+    for item in data_filtrada:
+        fecha_obj = item[0]
+        label = fecha_obj.strftime("%H:%M") if rango == "1d" else fecha_obj.strftime("%d/%m %H:%M")
+        labels.append(label)
+        compras.append(item[1])
+        ventas.append(item[2])
+
+    return {"labels": labels, "compras": compras, "ventas": ventas}
