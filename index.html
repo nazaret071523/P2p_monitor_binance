@@ -30,7 +30,7 @@
         🎯 Filtro: Comerciante No Verificado (10,000 Bs - 300,000 Bs)
     </div>
 
-    <!-- Métricas Principales (Etiquetas Limpias) -->
+    <!-- Métricas Principales -->
     <div class="grid grid-cols-3 gap-2">
         <div class="card text-center py-3 px-1">
             <p class="text-[10px] text-slate-400 font-bold mb-1">COMPRA</p>
@@ -46,16 +46,14 @@
         </div>
     </div>
 
-    <!-- Tarjeta Tendencia del Mercado -->
-    <div class="card text-center border-blue-500/30">
-        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">📈 Tendencia del Mercado</p>
-        <p id="tendencia-estado" class="text-lg font-black text-blue-400">CARGANDO...</p>
-    </div>
-
-    <!-- Tarjeta Morada ML -->
+    <!-- Tarjeta Morada ML con Tendencia Integrada -->
     <div class="card border-purple-500/50 bg-slate-900/80 relative overflow-hidden">
-        <div class="flex justify-between items-center mb-2">
+        <div class="flex justify-between items-start mb-2">
             <span class="text-xs font-bold text-purple-400">🔮 PREDICCIÓN ML (<span id="ml-hora">--:--</span>)</span>
+            <div class="text-right">
+                <span class="text-[10px] block font-bold text-slate-400 uppercase tracking-wider">TENDENCIA DEL MERCADO</span>
+                <span id="ml-tendencia" class="text-xs font-bold text-purple-300">--</span>
+            </div>
         </div>
         <div class="text-3xl font-black text-white mb-3" id="ml-precio">0.00 Bs</div>
         <div class="flex justify-between text-xs pt-2 border-t border-slate-800">
@@ -90,15 +88,12 @@
                 document.getElementById("precio-venta").innerText = (data.venta || 0).toFixed(2) + " Bs";
                 document.getElementById("spread-bruto").innerText = (data.spread || 0).toFixed(2) + " Bs";
 
-                // Tendencia del Mercado
+                // Predicción ML y Tendencia integrada
                 const ml = data.ml_prediccion || {};
-                const estadoTendencia = data.tendencia || ml.tendencia || "ESTABLE";
-                document.getElementById("tendencia-estado").innerText = estadoTendencia;
-
-                // Predicción ML
                 document.getElementById("ml-precio").innerText = (data.prediccion || ml.precio || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-piso").innerText = (data.piso || ml.piso || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-techo").innerText = (data.techo || ml.techo || 0).toFixed(2) + " Bs";
+                document.getElementById("ml-tendencia").innerText = data.tendencia || ml.tendencia || "ESTABLE";
                 document.getElementById("ml-hora").innerText = ml.hora || "+7h";
 
                 // Status
