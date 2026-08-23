@@ -105,69 +105,53 @@ def obtener_historial_horas(horas=24):
     return rows
 
 # ==========================================
-# SCRAPING BINANCE P2P - NO VERIFICADOS (FILTRO REVOLVENTE 10K - 300K)
+# SCRAPING REAL Y DIRECTO BINANCE P2P
 # ==========================================
-def obtener_mejor_precio_filtrado(trade_type, monto):
+def obtener_precio_top1(trade_type, monto="10000"):
+    """Consulta directa al API de Binance obteniendo el primer precio real sin ponderaciones."""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     payload = {
         "asset": "USDT",
         "fiat": "VES",
         "merchantCheck": False,
-        "publisherType": "user",  # Exclusivo No Verificados
+        "publisherType": "user",  # Solo comerciantes no verificados
         "page": 1,
-        "rows": 20,
+        "rows": 10,
         "tradeType": trade_type,
         "transAmount": str(monto)
     }
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=10).json()
         data = r.get('data', [])
-        precios = []
-        for item in data:
-            adv = item.get('adv', {})
-            min_single = float(adv.get('minSingleTransAmount', 0))
-            max_single = float(adv.get('maxSingleTransAmount', 0))
-            price = float(adv.get('price', 0))
-            
-            # Verificar que el anuncio cubra el espectro comercial real
-            if max_single >= 10000 and min_single <= 300000 and price > 0:
-                precios.append(price)
-                
-        if precios:
-            return precios[0]  # El primer anuncio más competitivo válido
-        elif data:
+        if data:
+            # Tomar estrictamente la primera posición del mercado real
             return float(data[0]['adv']['price'])
         return None
     except Exception as e:
-        print(f"⚠️ Error filtrando Binance P2P ({trade_type}): {e}")
+        print(f"⚠️ Error obteniendo top 1 Binance P2P ({trade_type}): {e}")
         return None
 
 def get_binance_p2p_rates():
-    # Evaluamos con volumen operativo de $50,000 VES para filtrar anomalías de micro-montos
-    raw_compra = obtener_mejor_precio_filtrado("BUY", 50000)
-    raw_venta = obtener_mejor_precio_filtrado("SELL", 50000)
+    # Consulta directa respetando el filtro de 10k VES
+    compra_puro = obtener_precio_top1("BUY", "10000")
+    venta_puro = obtener_precio_top1("SELL", "10000")
     
-    if not raw_compra or not raw_venta:
-        # Fallback a 10k si no hay órdenes de 50k
-        raw_compra = obtener_mejor_precio_filtrado("BUY", 10000)
-        raw_venta = obtener_mejor_precio_filtrado("SELL", 10000)
-        
-    if not raw_compra or not raw_venta:
+    if not compra_puro or not venta_puro:
         return None, None, None, None
 
-    # Asignación correcta: Compra (Punta de adquisición comerciante) < Venta (Punta de colocación comerciante)
-    compra = min(raw_compra, raw_venta)
-    venta = max(raw_compra, raw_venta)
+    # Tasa Compra (Comerciante compra USDT al usuario)
+    # Tasa Venta/Recompra (Comerciante vende USDT al usuario)
+    compra = compra_puro
+    venta = venta_puro
     
     spread = round(venta - compra, 2)
-    # Ganancia Neta restando la comisión estándar del 0.50%
     ganancia_pct = round(((venta * 0.9975) - (compra * 1.0025)) / compra * 100, 2)
     
     return compra, venta, spread, ganancia_pct
 
 # ==========================================
-# CÁLCULO PREDICTIVO A 7 HORAS Y NIVELES CLAVE
+# PREDICCIÓN Y CÁLCULO DE ESTRUCTURA
 # ==========================================
 def calcular_prediccion_ml():
     historial = obtener_historial_horas(24)
@@ -187,13 +171,13 @@ def calcular_prediccion_ml():
     ventas = np.array([h[3] for h in historial])
     timestamps = np.array([h[0] for h in historial])
     
-    # Soporte (Piso) y Resistencia (Techo) basados en la liquidez acumulada del día
-    soporte_piso = round(np.percentile(compras, 15), 2)
-    resistencia_techo = round(np.percentile(ventas, 85), 2)
+    # Soportes y Resistencias basados en los mínimos y máximos alcanzados por el Top 1
+    soporte_piso = round(np.min(compras), 2)
+    resistencia_techo = round(np.max(ventas), 2)
     
     x = timestamps - timestamps[0]
     
-    # Pendiente general del mercado usando el promedio del spread
+    # Pendiente basada en el valor medio de los precios reales registrados
     precios_medios = (compras + ventas) / 2
     if len(np.unique(x)) > 1:
         slope, _ = np.polyfit(x, precios_medios, 1)
@@ -204,25 +188,16 @@ def calcular_prediccion_ml():
     venta_act = ventas[-1]
     spread_actual = venta_act - compra_act
     
-    # Proyección a 7 Horas (25,200 segundos) manteniendo la estructura del spread
-    centro_7h = ((compra_act + venta_act) / 2) + (slope * 25200)
-    
-    est_compra_7h = round(centro_7h - (spread_actual / 2), 2)
-    est_venta_7h = round(centro_7h + (spread_actual / 2), 2)
+    # Proyección ajustada a 7 horas (25,200 segundos)
+    est_compra_7h = round(compra_act + (slope * 25200), 2)
+    est_venta_7h = round(est_compra_7h + spread_actual, 2)
     brecha_futura = round(est_venta_7h - est_compra_7h, 2)
     
-    pred_compra_str = f"{est_compra_7h:.2f} Bs"
-    pred_venta_str = f"{est_venta_7h:.2f} Bs"
-    
     cambio_7h = slope * 25200
-    if cambio_7h > 1.5:
-        tendencia = "📈 ALCISTA (Fuerte)"
-    elif cambio_7h > 0.3:
-        tendencia = "📈 ALCISTA (Moderada)"
-    elif cambio_7h < -1.5:
-        tendencia = "📉 BAJISTA (Fuerte)"
-    elif cambio_7h < -0.3:
-        tendencia = "📉 BAJISTA (Moderada)"
+    if cambio_7h > 0.5:
+        tendencia = "📈 ALCISTA"
+    elif cambio_7h < -0.5:
+        tendencia = "📉 BAJISTA"
     else:
         tendencia = "↔️ ESTABLE"
 
@@ -231,8 +206,8 @@ def calcular_prediccion_ml():
     return {
         "soporte_piso": soporte_piso,
         "resistencia_techo": resistencia_techo,
-        "pred_compra_7h": pred_compra_str,
-        "pred_venta_7h": pred_venta_str,
+        "pred_compra_7h": f"{est_compra_7h:.2f} Bs",
+        "pred_venta_7h": f"{est_venta_7h:.2f} Bs",
         "brecha_proyectada": brecha_futura,
         "tendencia": tendencia,
         "precision": precision,
@@ -243,7 +218,7 @@ def calcular_prediccion_ml():
 # MONITOR EN SEGUNDO PLANO Y ALERTAS
 # ==========================================
 async def notificar_cambio_tendencia(app, nueva_tendencia):
-    msg = f"🚨 **ALERTA DE CAMBIO DE TENDENCIA**\n\nEl mercado P2P (No Verificados) ahora está: **{nueva_tendencia}**."
+    msg = f"🚨 **ALERTA DE MERCADO**\n\nCambio de tendencia detectado en no verificados: **{nueva_tendencia}**."
     for chat_id in list(SUSCRIPTORES):
         try:
             await app.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
@@ -258,16 +233,14 @@ def background_monitor(app_telegram):
             guardar_lectura(compra, venta, spread, ganancia_pct)
             pred = calcular_prediccion_ml()
             
-            # Enviar alerta automática solo si cambia la tendencia (y no es estable/neutra)
-            if "ALCISTA" in pred["tendencia"] or "BAJISTA" in pred["tendencia"]:
-                if pred["tendencia"] != ULTIMA_TENDENCIA:
-                    ULTIMA_TENDENCIA = pred["tendencia"]
-                    if app_telegram:
-                        import asyncio
-                        asyncio.run_coroutine_threadsafe(
-                            notificar_cambio_tendencia(app_telegram, ULTIMA_TENDENCIA),
-                            app_telegram.loop
-                        )
+            if pred["tendencia"] in ["📈 ALCISTA", "📉 BAJISTA"] and pred["tendencia"] != ULTIMA_TENDENCIA:
+                ULTIMA_TENDENCIA = pred["tendencia"]
+                if app_telegram:
+                    import asyncio
+                    asyncio.run_coroutine_threadsafe(
+                        notificar_cambio_tendencia(app_telegram, ULTIMA_TENDENCIA),
+                        app_telegram.loop
+                    )
             print(f"📊 [{datetime.now(VET).strftime('%H:%M:%S')}] Compra: {compra} | Venta: {venta} | Tendencia: {pred['tendencia']}")
         time.sleep(180)
 
@@ -296,7 +269,7 @@ class APIHandler(BaseHTTPRequestHandler):
             "venta": venta,
             "spread": spread,
             "ganancia_pct": ganancia,
-            "filtro": "No Verificados | 10K - 300K VES",
+            "filtro": "No Verificados | 10K VES (Top 1 Directo)",
             "prediccion": prediccion,
             "historial_reciente": historial_formatted
         }
@@ -318,9 +291,9 @@ def run_api_server():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     SUSCRIPTORES.add(update.effective_chat.id)
     msg = (
-        "🤖 **Venbot Predicciones - Monitor P2P PRO**\n\n"
-        "Te has suscrito correctamente a las **alertas automáticas de tendencia**.\n"
-        "Usa `/prediccion` para consultar los datos del mercado en tiempo real."
+        "🤖 **Venbot Predicciones - Monitor P2P REAL**\n\n"
+        "Suscripción a alertas automáticas activada.\n"
+        "Consulta datos reales del libro de órdenes con `/prediccion`."
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -330,7 +303,7 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pred = calcular_prediccion_ml()
     
     if not compra:
-        await update.message.reply_text("❌ Error conectando con Binance P2P. Intenta de nuevo.")
+        await update.message.reply_text("❌ Error conectando con Binance P2P.")
         return
 
     hora_actual = datetime.now(VET).strftime("%I:%M %p")
@@ -338,7 +311,7 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"🤖 **MONITOR P2P ML PRO (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_actual}\n"
-        f"🎯 **Filtro:** 10K - 300K VES | **Comisión:** 0.50%\n\n"
+        f"🎯 **Filtro:** 10K VES | **Comisión:** 0.50%\n\n"
         f"🟢 **Tasa Compra Actual:** {compra:.2f} Bs\n"
         f"🔴 **Tasa Venta Actual:** {venta:.2f} Bs\n"
         f"⚡ **Spread Actual:** {spread:.2f} Bs | **Ganancia Neta:** {ganancia:.2f}%\n\n"
