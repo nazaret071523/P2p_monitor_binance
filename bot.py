@@ -255,7 +255,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             pct = ULTIMA_LECTURA_VALIDA["pct"] or 0.0
 
         pred = motor_quant_inteligente(tasa_c, tasa_v)
-        hist_rows = obtener_historial(10)
+        hist_rows = obtener_historial(15)
         
         historial_formatted = []
         for h in hist_rows:
@@ -278,11 +278,17 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             "piso": pred["piso"],
             "techo": pred["techo"],
             "tendencia": pred["tendencia"],
+            "ml_prediccion": {
+                "precio": pred["pred_compra"],
+                "piso": pred["piso"],
+                "techo": pred["techo"],
+                "tendencia": pred["tendencia"],
+                "hora": datetime.now(VET).strftime("%I:%M %p")
+            },
             "historial": historial_formatted,
             "timestamp": time.time()
         }
         self.wfile.write(json.dumps(data_json).encode('utf-8'))
-
 def run_web_server():
     try:
         server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
