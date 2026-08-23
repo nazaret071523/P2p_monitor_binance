@@ -21,6 +21,10 @@ PORT = int(os.environ.get("PORT", 10000))
 # Zona horaria de Venezuela (UTC-4)
 VET = timezone(timedelta(hours=-4))
 
+# Lista global para usuarios suscritos a alertas
+SUSCRIPTORES = set()
+ULTIMA_TENDENCIA = "NEUTRA"
+
 # ==========================================
 # GESTIÓN DE BASE DE DATOS
 # ==========================================
@@ -88,7 +92,6 @@ def guardar_lectura(compra, venta, spread, ganancia_pct):
     conn.close()
 
 def obtener_historial_horas(horas=24):
-    """Obtiene el historial de las últimas N horas almacenadas en DB."""
     conn = get_db_connection()
     cursor = conn.cursor()
     ts_limite = (datetime.now(VET) - timedelta(hours=horas)).timestamp()
@@ -103,35 +106,22 @@ def obtener_historial_horas(horas=24):
     return rows
 
 # ==========================================
-# SCRAPING BINANCE P2P - EXCLUSIVO NO VERIFICADOS
+# SCRAPING BINANCE P2P - NO VERIFICADOS (10K y 300K)
 # ==========================================
 def get_binance_p2p_rates():
-    """Consulta Binance P2P únicamente para Comerciantes NO Verificados ("publisherType": "user")."""
+    """Consulta Binance P2P para no verificados evaluando rango amplio (10k a 300k)."""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
-    # Anuncios de usuarios vendiendo USDT (Tu precio de COMPRA como comerciante)
+    # Anuncios donde la gente VENDE USDT (Tu precio de COMPRA como comerciante)
     payload_compra = {
-        "asset": "USDT", 
-        "fiat": "VES", 
-        "merchantCheck": False,
-        "publisherType": "user",  # Exclusivo para usuarios NO verificados
-        "page": 1, 
-        "rows": 10, 
-        "tradeType": "BUY", 
-        "transAmount": "10000"
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "publisherType": "user", "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "10000"
     }
-    
-    # Anuncios de usuarios comprando USDT (Tu precio de VENTA como comerciante)
+    # Anuncios donde la gente COMPRA USDT (Tu precio de VENTA/RECOMPRA como comerciante)
     payload_venta = {
-        "asset": "USDT", 
-        "fiat": "VES", 
-        "merchantCheck": False,
-        "publisherType": "user",  # Exclusivo para usuarios NO verificados
-        "page": 1, 
-        "rows": 10, 
-        "tradeType": "SELL", 
-        "transAmount": "10000"
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "publisherType": "user", "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000"
     }
     
     try:
@@ -144,16 +134,13 @@ def get_binance_p2p_rates():
         if not compra_list or not venta_list:
             return None, None, None, None
 
-        # Primera oferta real del mercado de no verificados
         compra_raw = compra_list[0]
         venta_raw = venta_list[0]
         
-        # Asignación correcta de puntas
         compra = min(compra_raw, venta_raw)
         venta = max(compra_raw, venta_raw)
         
         spread = round(venta - compra, 2)
-        # Ganancia neta deduciendo 0.50% total de comisión
         ganancia_pct = round(((venta * 0.9975) - (compra * 1.0025)) / compra * 100, 2)
         
         return compra, venta, spread, ganancia_pct
@@ -162,7 +149,7 @@ def get_binance_p2p_rates():
         return None, None, None, None
 
 # ==========================================
-# MODELO PREDICTIVO (1h, 7h, Piso/Techo 24h)
+# PREDICCIÓN A 7 HORAS (COMPRA Y RECOMPRA) + SOPORTE Y RESISTENCIA
 # ==========================================
 def calcular_prediccion_ml():
     historial_24h = obtener_historial_horas(24)
@@ -170,77 +157,90 @@ def calcular_prediccion_ml():
     
     if n_muestras < 3:
         return {
-            "piso_24h": "N/A", "techo_24h": "N/A", 
-            "pred_1h": "N/A", "pred_7h": "N/A",
-            "tendencia": "↔️ ESTABLE (Recolectando Datos)",
-            "precision": "Inicial (En entrenamiento)",
+            "soporte_piso": "N/A", "resistencia_techo": "N/A", 
+            "pred_compra_7h": "N/A", "pred_venta_7h": "N/A",
+            "tendencia": "↔️ NEUTRA (En entrenamiento)",
+            "precision": "Inicial",
             "num_lecturas": n_muestras
         }
     
-    precios_venta = [h[3] for h in historial_24h]
+    compras = [h[2] for h in historial_24h]
+    ventas = [h[3] for h in historial_24h]
     timestamps = [h[0] for h in historial_24h]
     
-    piso_24h = round(min(precios_venta), 2)
-    techo_24h = round(max(precios_venta), 2)
+    # Cálculo de Resistencia (Techo) y Soporte (Piso) usando percentiles
+    soporte_piso = round(np.percentile(compras, 10), 2)
+    resistencia_techo = round(np.percentile(ventas, 90), 2)
     
-    # Tendencia lineal según el tiempo transcurrido
     x = np.array(timestamps) - timestamps[0]
-    y = np.array(precios_venta)
     
-    if len(np.unique(x)) > 1:
-        slope, intercept = np.polyfit(x, y, 1)
-    else:
-        slope, intercept = 0, y[-1]
+    # Tendencia de Compra
+    slope_c, _ = np.polyfit(x, np.array(compras), 1) if len(np.unique(x)) > 1 else (0, 0)
+    # Tendencia de Venta
+    slope_v, _ = np.polyfit(x, np.array(ventas), 1) if len(np.unique(x)) > 1 else (0, 0)
 
-    precio_actual = precios_venta[-1]
+    compra_act = compras[-1]
+    venta_act = ventas[-1]
     
-    # Proyección a 1 Hora (3600s) y 7 Horas (25200s)
-    est_1h = round(precio_actual + (slope * 3600), 2)
-    est_7h = round(precio_actual + (slope * 25200), 2)
+    # Proyección a 7 Horas (25,200 segundos)
+    est_compra_7h = round(compra_act + (slope_c * 25200), 2)
+    est_venta_7h = round(venta_act + (slope_v * 25200), 2)
     
-    std_dev = np.std(precios_venta) if len(precios_venta) > 1 else 0.5
+    std_c = np.std(compras) if len(compras) > 1 else 0.5
+    std_v = np.std(ventas) if len(ventas) > 1 else 0.5
     
-    pred_1h_str = f"{round(est_1h - (std_dev*0.5), 2)} - {round(est_1h + (std_dev*0.5), 2)} Bs"
-    pred_7h_str = f"{round(est_7h - std_dev, 2)} - {round(est_7h + std_dev, 2)} Bs"
+    pred_compra_str = f"{round(est_compra_7h - std_c, 2)} - {round(est_compra_7h + std_c, 2)} Bs"
+    pred_venta_str = f"{round(est_venta_7h - std_v, 2)} - {round(est_venta_7h + std_v, 2)} Bs"
     
-    cambio_hora = slope * 3600
-    if cambio_hora > 0.50:
-        tendencia = "📈 ALCISTA (Fuerte)"
-    elif cambio_hora > 0.10:
-        tendencia = "📈 ALCISTA (Moderada)"
-    elif cambio_hora < -0.50:
-        tendencia = "📉 BAJISTA (Fuerte)"
-    elif cambio_hora < -0.10:
-        tendencia = "📉 BAJISTA (Moderada)"
+    cambio_hora = slope_v * 3600
+    if cambio_hora > 0.15:
+        tendencia = "📈 ALCISTA"
+    elif cambio_hora < -0.15:
+        tendencia = "📉 BAJISTA"
     else:
-        tendencia = "↔️ ESTABLE"
+        tendencia = "↔️ NEUTRA"
 
-    if n_muestras > 100:
-        precision = "Alta (24h completas)"
-    elif n_muestras > 20:
-        precision = "Media"
-    else:
-        precision = "Inicial (En entrenamiento)"
+    precision = "Alta (24h)" if n_muestras > 100 else ("Media" if n_muestras > 20 else "Inicial")
         
     return {
-        "piso_24h": piso_24h,
-        "techo_24h": techo_24h,
-        "pred_1h": pred_1h_str,
-        "pred_7h": pred_7h_str,
+        "soporte_piso": soporte_piso,
+        "resistencia_techo": resistencia_techo,
+        "pred_compra_7h": pred_compra_str,
+        "pred_venta_7h": pred_venta_str,
         "tendencia": tendencia,
         "precision": precision,
         "num_lecturas": n_muestras
     }
 
 # ==========================================
-# MONITOR EN SEGUNDO PLANO
+# MONITOR EN SEGUNDO PLANO Y ALERTAS AUTOMÁTICAS
 # ==========================================
-def background_monitor():
+async def notificar_cambio_tendencia(app, nueva_tendencia):
+    msg = f"🚨 **ALERTA DE MERCADO P2P**\n\nEl mercado de comerciantes no verificados ha cambiado de tendencia a: **{nueva_tendencia}**."
+    for chat_id in list(SUSCRIPTORES):
+        try:
+            await app.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+        except Exception:
+            pass
+
+def background_monitor(app_telegram):
+    global ULTIMA_TENDENCIA
     while True:
         compra, venta, spread, ganancia_pct = get_binance_p2p_rates()
         if compra and venta:
             guardar_lectura(compra, venta, spread, ganancia_pct)
-            print(f"📊 [{datetime.now(VET).strftime('%H:%M:%S')}] Registrado - Compra: {compra} | Venta: {venta}")
+            pred = calcular_prediccion_ml()
+            
+            # Detección de cambio de tendencia para alertas automáticas
+            if pred["tendencia"] in ["📈 ALCISTA", "📉 BAJISTA"] and pred["tendencia"] != ULTIMA_TENDENCIA:
+                ULTIMA_TENDENCIA = pred["tendencia"]
+                if app_telegram:
+                    import asyncio
+                    asyncio.run_coroutine_threadsafe(
+                        notificar_cambio_tendencia(app_telegram, ULTIMA_TENDENCIA),
+                        app_telegram.loop
+                    )
+            print(f"📊 [{datetime.now(VET).strftime('%H:%M:%S')}] Compra: {compra} | Venta: {venta} | Tendencia: {pred['tendencia']}")
         time.sleep(180)
 
 # ==========================================
@@ -268,7 +268,7 @@ class APIHandler(BaseHTTPRequestHandler):
             "venta": venta,
             "spread": spread,
             "ganancia_pct": ganancia,
-            "filtro": "No Verificados | 10K VES | Comisión: 0.50% Total",
+            "filtro": "No Verificados | 10k-300k VES",
             "prediccion": prediccion,
             "historial_reciente": historial_formatted
         }
@@ -288,13 +288,16 @@ def run_api_server():
 # BOT DE TELEGRAM
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    SUSCRIPTORES.add(update.effective_chat.id)
     msg = (
-        "🤖 **Venbot Predicciones - Monitor P2P ML PRO**\n\n"
-        "Usa `/prediccion` para obtener la tasa del mercado de comerciantes no verificados, proyecciones a 1h/7h y piso/techo de 24h."
+        "🤖 **Venbot Predicciones - Monitor P2P PRO**\n\n"
+        "Te has registrado para recibir **alertas automáticas de cambio de tendencia**.\n"
+        "Usa `/prediccion` para obtener las proyecciones a 7 horas de compra y venta."
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    SUSCRIPTORES.add(update.effective_chat.id)
     compra, venta, spread, ganancia = get_binance_p2p_rates()
     pred = calcular_prediccion_ml()
     
@@ -307,26 +310,21 @@ async def prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"🤖 **MONITOR P2P ML PRO (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_actual}\n"
-        f"🎯 **Filtro:** 10K VES | **Comisión:** 0.50% Total\n\n"
-        f"🟢 **Compra:** {compra:.2f} Bs\n"
-        f"🔴 **Venta:** {venta:.2f} Bs\n"
+        f"🎯 **Filtro:** 10K - 300K VES | **Comisión:** 0.50%\n\n"
+        f"🟢 **Tasa Compra Actual:** {compra:.2f} Bs\n"
+        f"🔴 **Tasa Venta Actual:** {venta:.2f} Bs\n"
         f"⚡ **Spread:** {spread:.2f} Bs | **Ganancia Neta:** {ganancia:.2f}%\n\n"
-        f"🔮 **Predicción (1 hora):** {pred['pred_1h']}\n"
-        f"🔮 **Predicción (7 horas):** {pred['pred_7h']}\n"
+        f"🔮 **Proyección Compra (7h):** {pred['pred_compra_7h']}\n"
+        f"🔮 **Proyección Recompra/Venta (7h):** {pred['pred_venta_7h']}\n"
         f"📊 **Tendencia:** {pred['tendencia']}\n"
-        f"🟢 **Piso (24h):** {pred['piso_24h']} Bs | 🔴 **Techo (24h):** {pred['techo_24h']} Bs\n\n"
-        f"🧠 **Muestras (24h):** {pred['num_lecturas']} | **Precisión:** {pred['precision']}"
+        f"🛡️ **Soporte / Piso:** {pred['soporte_piso']} Bs\n"
+        f"🏰 **Resistencia / Techo:** {pred['resistencia_techo']} Bs\n\n"
+        f"🧠 **Muestras 24h:** {pred['num_lecturas']} | **Precisión:** {pred['precision']}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ==========================================
-# INICIO DE APLICACIÓN
-# ==========================================
 if __name__ == "__main__":
     init_db()
-
-    t_monitor = threading.Thread(target=background_monitor, daemon=True)
-    t_monitor.start()
 
     t_api = threading.Thread(target=run_api_server, daemon=True)
     t_api.start()
@@ -334,8 +332,12 @@ if __name__ == "__main__":
     if not TELEGRAM_TOKEN:
         print("❌ ERROR CRÍTICO: FALTA LA VARIABLE TELEGRAM_TOKEN")
     else:
-        print("🤖 Bot de Telegram en ejecución...")
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("prediccion", prediccion))
+        
+        t_monitor = threading.Thread(target=background_monitor, args=(app,), daemon=True)
+        t_monitor.start()
+
+        print("🤖 Bot de Telegram en ejecución...")
         app.run_polling()
