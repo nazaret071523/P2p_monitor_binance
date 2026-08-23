@@ -22,7 +22,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        self.wfile.write(b"Venbot Quant Engine Live")
+        self.wfile.write(b"Venbot Advanced Quant Engine Live")
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
@@ -105,17 +105,14 @@ def consultar_binance_native(trade_type, monto):
             res = json.loads(response.read().decode('utf-8'))
             data = res.get('data', [])
             if data:
-                # Ponderación por volumen de las 3 mejores ofertas
                 prices = [float(x['adv']['price']) for x in data[:3]]
                 return round(sum(prices) / len(prices), 2)
     except Exception as e:
-        print(f"Error consultando Binance Native: {e}")
+        print(f"Error consultando Binance: {e}")
     return None
 
 def get_p2p_rates():
-    # Anuncio COMPRA (Recompra @ 10K VES) -> tradeType SELL
     tasa_recompra = consultar_binance_native("SELL", "10000")
-    # Anuncio VENTA (Vender @ 300K VES) -> tradeType BUY
     tasa_venta = consultar_binance_native("BUY", "300000")
     
     if not tasa_recompra or not tasa_venta:
@@ -134,7 +131,7 @@ def calcular_mediana(lista):
     else:
         return (sorted_lst[index] + sorted_lst[index + 1]) / 2.0
 
-def motor_prediccion_avanzado_7h():
+def motor_quant_maximo_7h():
     historial = obtener_historial(24)
     n = len(historial)
     
@@ -153,55 +150,58 @@ def motor_prediccion_avanzado_7h():
     piso = round(min(compras), 2)
     techo = round(max(ventas), 2)
     
-    # 1. Filtro MAD (Median Absolute Deviation) para limpiar anomalías
+    # Filtro MAD para eliminar datos atípicos
     mediana_c = calcular_mediana(compras)
     difs_c = [abs(x - mediana_c) for x in compras]
     mad_c = calcular_mediana(difs_c) or 0.01
-    c_clean = [x for x in compras if abs(x - mediana_c) / mad_c <= 3.5]
+    c_clean = [x for x in compras if abs(x - mediana_c) / mad_c <= 3.0]
     if not c_clean: c_clean = compras
 
     mediana_v = calcular_mediana(ventas)
     difs_v = [abs(x - mediana_v) for x in ventas]
     mad_v = calcular_mediana(difs_v) or 0.01
-    v_clean = [x for x in ventas if abs(x - mediana_v) / mad_v <= 3.5]
+    v_clean = [x for x in ventas if abs(x - mediana_v) / mad_v <= 3.0]
     if not v_clean: v_clean = ventas
 
-    # 2. Modelo Holt's Exponential Smoothing (Tendencia Doble)
-    def holt_predict(series, alpha=0.35, beta=0.15, steps=140):
+    # Modelo Holt con Amortiguamiento (Damped Holt's Model)
+    def damped_holt(series, alpha=0.3, beta=0.1, phi=0.85, steps=140):
         level = series[0]
         trend = series[1] - series[0] if len(series) > 1 else 0
         for i in range(1, len(series)):
             last_level = level
-            level = alpha * series[i] + (1 - alpha) * (level + trend)
-            trend = beta * (level - last_level) + (1 - beta) * trend
-        return level + (trend * steps), trend
+            level = alpha * series[i] + (1 - alpha) * (level + phi * trend)
+            trend = beta * (level - last_level) + (1 - beta) * phi * trend
+            
+        # Suma geométrica de la tendencia amortiguada para n pasos
+        damped_trend_sum = sum(phi ** i for i in range(1, steps + 1)) * trend
+        return level + damped_trend_sum, trend
 
-    # 140 lecturas equivalen a 7 horas (1 lectura cada 3 minutos)
-    pred_c_raw, trend_c = holt_predict(c_clean, steps=140)
-    pred_v_raw, trend_v = holt_predict(v_clean, steps=140)
+    pred_c_raw, trend_c = damped_holt(c_clean, steps=140)
+    pred_v_raw, trend_v = damped_holt(v_clean, steps=140)
 
-    # Mediana del spread histórico para asegurar coherencia
-    spreads_clean = [v - c for c, v in zip(compras, ventas)]
-    mediana_spread = max(0.5, calcular_mediana(spreads_clean))
+    # Restricción de Bandas de Desviación Estándar (Evita disparates)
+    prom_c = sum(c_clean) / len(c_clean)
+    std_c = math.sqrt(sum((x - prom_c) ** 2 for x in c_clean) / len(c_clean)) or 0.5
+    
+    # Límite máximo de variación a 7 horas (+/- 3 Desviaciones Estándar)
+    pred_c_7h = max(prom_c - (2.5 * std_c), min(prom_c + (2.5 * std_c), pred_c_raw))
+    pred_v_7h = max(pred_c_7h + 1.0, max(techo * 0.98, pred_v_raw))
 
-    pred_c_7h = round(pred_c_raw, 2)
-    pred_v_7h = round(max(pred_v_raw, pred_c_7h + mediana_spread), 2)
+    pred_c_7h = round(pred_c_7h, 2)
+    pred_v_7h = round(pred_v_7h, 2)
     brecha = round(pred_v_7h - pred_c_7h, 2)
 
-    # 3. Cálculo de Volatilidad
-    promedio_c = sum(c_clean) / len(c_clean)
-    varianza = sum((x - promedio_c) ** 2 for x in c_clean) / len(c_clean)
-    desviacion = math.sqrt(varianza)
-    volatilidad_pct = (desviacion / promedio_c) * 100
-
+    # Volatilidad
+    volatilidad_pct = (std_c / prom_c) * 100
     avg_trend = (trend_c + trend_v) / 2
-    if avg_trend > 0.015:
+
+    if avg_trend > 0.008:
         tendencia = "🚀 ALCISTA (Fuerte)"
-    elif avg_trend > 0.003:
+    elif avg_trend > 0.0015:
         tendencia = "📈 ALCISTA (Moderada)"
-    elif avg_trend < -0.015:
+    elif avg_trend < -0.008:
         tendencia = "🔻 BAJISTA (Fuerte)"
-    elif avg_trend < -0.003:
+    elif avg_trend < -0.0015:
         tendencia = "📉 BAJISTA (Moderada)"
     else:
         tendencia = "↔️ ESTABLE / LATERAL"
@@ -236,16 +236,16 @@ def background_monitor():
 
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
-    pred = motor_prediccion_avanzado_7h()
+    pred = motor_quant_maximo_7h()
     
     if not tasa_compra or not tasa_venta:
-        await update.message.reply_text("❌ Error temporal consultando Binance P2P.")
+        await update.message.reply_text("❌ Error temporal conectando con Binance P2P.")
         return
 
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
-        f"🤖 **MONITOR P2P REAL (No Verificados)**\n"
+        f"🤖 **MONITOR QUANT AVANZADO (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_ve}\n"
         f"🎯 **Filtros:** Recompra (10K VES) | Venta (300K VES)\n\n"
         f"🟢 **Precio Real Recompra:** {tasa_compra:.2f} Bs\n"
