@@ -67,17 +67,19 @@
         </div>
     </div>
 
-    <!-- MÓDULO ASISTENTE ANALISTA IA -->
-    <div class="card border-cyan-500/30 bg-slate-900/50 space-y-2">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
-            <span class="text-[11px] font-bold text-cyan-400 flex items-center gap-1">🤖 ASISTENTE ANALISTA P2P</span>
-            <span class="text-[9px] text-slate-500">Auto-Evaluación</span>
+    <!-- MÓDULO ASISTENTE ANALISTA GEMINI AI -->
+    <div class="card border-cyan-500/40 bg-slate-900/90 space-y-2.5 p-3.5">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span class="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                ✨ ASISTENTE ANALISTA P2P
+            </span>
+            <span class="text-[9px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">Auto-Evaluación</span>
         </div>
-        <p id="ai-response" class="text-xs text-slate-300 leading-relaxed italic">
+        <div id="ai-response" class="text-xs text-slate-200 leading-relaxed font-normal">
             Analizando condiciones del mercado en tiempo real...
-        </p>
-        <p class="text-[9px] text-slate-500 pt-1 border-t border-slate-800/50">
-            ⚠️ Disclaimer: Análisis informativo basado en spread y tendencia actual. No representa asesoría financiera.
+        </div>
+        <p class="text-[9px] text-slate-500 pt-1.5 border-t border-slate-800/60 flex items-center gap-1">
+            ⚠️ <span>Análisis informativo basado en spread y tendencia actual. No representa asesoría financiera.</span>
         </p>
     </div>
 
@@ -97,6 +99,11 @@
         }
         setInterval(actualizarHora, 1000);
 
+        function formatearTextoMarkdown(texto) {
+            // Convierte los asteriscos dobles (**texto**) a etiquetas <strong> blancas y resaltadas
+            return texto.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>');
+        }
+
         function generarRecomendacionIA(compra, venta, spread, tendencia) {
             let mensaje = "";
             
@@ -110,7 +117,7 @@
                 mensaje = "⚖️ **Mercado Lateral:** Buen momento para arbitraje regular. Con un spread de " + spread.toFixed(2) + " Bs, puedes colocar órdenes en el **PISO** (" + compra.toFixed(2) + " Bs) para recomprar en el **TECHO**.";
             }
 
-            document.getElementById("ai-response").innerText = mensaje;
+            document.getElementById("ai-response").innerHTML = formatearTextoMarkdown(mensaje);
         }
 
         async function cargarDatos() {
