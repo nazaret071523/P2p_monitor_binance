@@ -1,11 +1,11 @@
 import os
 import time
-import json
 import requests
 import threading
 import psycopg2
 import sqlite3
 import numpy as np
+import asyncio
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
@@ -18,6 +18,18 @@ VET = timezone(timedelta(hours=-4))
 
 SUSCRIPTORES = set()
 ULTIMA_TENDENCIA = "NEUTRA"
+
+# Servidor HTTP para cumplir el Health Check de Render
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"Venbot P2P Monitor is Live!")
+
+def run_web_server():
+    server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
+    server.serve_forever()
 
 def get_db_connection():
     if DATABASE_URL:
@@ -72,20 +84,14 @@ def obtener_historial(horas=24):
     conn.close()
     return rows
 
-# ==========================================
-# SCRAPING REAL POR API DE BINANCE
-# ==========================================
-def obtener_tasa_real_binance(trade_type, monto="10000", pay_types=["Especifico"]):
-    """
-    Obtiene la primera tasa REAL de la lista filtrando por monto y no verificados.
-    """
+def obtener_tasa_real_binance(trade_type, monto="10000"):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
     payload = {
         "asset": "USDT",
         "fiat": "VES",
-        "merchantCheck": False,  # No Verificados
+        "merchantCheck": False,
         "publisherType": "user",
         "page": 1,
         "rows": 10,
@@ -97,7 +103,6 @@ def obtener_tasa_real_binance(trade_type, monto="10000", pay_types=["Especifico"
         r = requests.post(url, json=payload, headers=headers, timeout=10).json()
         data = r.get('data', [])
         if data:
-            # Tomamos el primer precio real activo de la lista oficial de Binance
             return float(data[0]['adv']['price'])
         return None
     except Exception as e:
@@ -105,9 +110,7 @@ def obtener_tasa_real_binance(trade_type, monto="10000", pay_types=["Especifico"
         return None
 
 def get_p2p_rates():
-    # Tasa para COMPRAR USDT (Punta del usuario que vende)
     tasa_compra = obtener_tasa_real_binance("BUY", "10000")
-    # Tasa para RECOMPRAR/VENTA USDT (Punta del usuario que compra)
     tasa_venta = obtener_tasa_real_binance("SELL", "10000")
     
     if not tasa_compra or not tasa_venta:
@@ -118,9 +121,6 @@ def get_p2p_rates():
     
     return tasa_compra, tasa_venta, spread, ganancia_neta
 
-# ==========================================
-# MOTOR PREDICTIVO INTELIGENTE (7 HORAS)
-# ==========================================
 def motor_prediccion_7h():
     historial = obtener_historial(24)
     n = len(historial)
@@ -138,19 +138,15 @@ def motor_prediccion_7h():
     ventas = np.array([h[2] for h in historial])
     timestamps = np.array([h[0] for h in historial])
     
-    # 1. Calculo de Soporte / Resistencia Real del Día
     piso_soporte = round(np.min(compras), 2)
     techo_resistencia = round(np.max(ventas), 2)
     
-    # 2. Motor Predictivo por Media Móvil Ponderada Exponencial (EWMA)
-    # Da mayor peso a las últimas horas para proyección rápida
     weights = np.exp(np.linspace(-1., 0., n))
     weights /= weights.sum()
     
     ewma_compra = np.sum(compras * weights)
     ewma_venta = np.sum(ventas * weights)
     
-    # Pendiente reciente
     dx = timestamps[-1] - timestamps[0]
     if dx > 0:
         slope_c = (compras[-1] - ewma_compra) / (dx / 3600)
@@ -158,17 +154,14 @@ def motor_prediccion_7h():
     else:
         slope_c, slope_v = 0, 0
         
-    # Proyección exacta a 7 Horas
     pred_c_7h = round(compras[-1] + (slope_c * 7), 2)
     pred_v_7h = round(ventas[-1] + (slope_v * 7), 2)
     
-    # Ajuste de consistencia de mercado (Venta > Compra siempre)
     if pred_v_7h <= pred_c_7h:
         pred_v_7h = round(pred_c_7h + (ventas[-1] - compras[-1]), 2)
         
     brecha = round(pred_v_7h - pred_c_7h, 2)
     
-    # Determinación de Tendencia Automática
     var_7h = (slope_c + slope_v) / 2 * 7
     if var_7h > 0.8:
         tendencia = "📈 ALCISTA (Fuerte)"
@@ -191,32 +184,15 @@ def motor_prediccion_7h():
         "muestras": n
     }
 
-# ==========================================
-# MONITOR Y BOT DE TELEGRAM
-# ==========================================
-def background_monitor(app_telegram):
-    global ULTIMA_TENDENCIA
+def background_monitor():
     while True:
-        c, v, sp, gn = get_p2p_rates()
-        if c and v:
-            guardar_lectura(c, v, sp)
-            pred = motor_prediccion_7h()
-            
-            # Alerta automática de cambio de tendencia
-            if pred["tendencia"] in ["📈 ALCISTA (Fuerte)", "📉 BAJISTA (Fuerte)"] and pred["tendencia"] != ULTIMA_TENDENCIA:
-                ULTIMA_TENDENCIA = pred["tendencia"]
-                if app_telegram:
-                    import asyncio
-                    msg = f"🚨 **ALERTA DE CAMBIO DE TENDENCIA**\n\nEl mercado P2P No Verificado acaba de cambiar a: **{ULTIMA_TENDENCIA}**."
-                    for chat_id in list(SUSCRIPTORES):
-                        try:
-                            asyncio.run_coroutine_threadsafe(
-                                app_telegram.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown"),
-                                app_telegram.loop
-                            )
-                        except Exception:
-                            pass
-        time.sleep(180) # Consulta cada 3 minutos
+        try:
+            c, v, sp, gn = get_p2p_rates()
+            if c and v:
+                guardar_lectura(c, v, sp)
+        except Exception as e:
+            print(f"Error en monitor de fondo: {e}")
+        time.sleep(180)
 
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     SUSCRIPTORES.add(update.effective_chat.id)
@@ -248,12 +224,15 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     init_db()
+    
+    # Iniciar Servidor HTTP Web para Render
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
+    # Iniciar Monitor de Fondo
+    threading.Thread(target=background_monitor, daemon=True).start()
+    
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         app.add_handler(CommandHandler("prediccion", prediccion_cmd))
-        
-        t = threading.Thread(target=background_monitor, args=(app,), daemon=True)
-        t.start()
-        
-        print("Bot iniciado...")
-        app.run_polling()
+        print("Bot iniciado con éxito...")
+        app.run_polling(drop_pending_updates=True)
