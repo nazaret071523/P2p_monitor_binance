@@ -1,152 +1,128 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Comerciante P2P Pro - Binance</title>
-  <style>
-    :root {
-      --bg-color: #0f172a;
-      --card-bg: #1e293b;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --green: #22c55e;
-      --red: #ef4444;
-      --yellow: #eab308;
-      --blue: #3b82f6;
-      --purple: #a855f7;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
-    body { background-color: var(--bg-color); color: var(--text-main); padding: 16px; max-width: 600px; margin: 0 auto; }
-    .header { background-color: var(--card-bg); padding: 16px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border: 1px solid #334155; }
-    .header h1 { font-size: 1.1rem; color: var(--yellow); }
-    .badge { background-color: rgba(34, 197, 94, 0.2); color: var(--green); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: bold; border: 1px solid var(--green); }
-    .time-bar { background-color: #1e293b; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 6px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #334155; }
-    .filter-info { background-color: #0284c7; color: white; padding: 6px 12px; border-radius: 8px; font-size: 0.75rem; text-align: center; margin-bottom: 16px; font-weight: bold; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-    .card { background-color: var(--card-bg); padding: 14px; border-radius: 12px; border: 1px solid #334155; }
-    .card-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
-    .card-value { font-size: 1.3rem; font-weight: bold; }
-    .value-compra { color: var(--green); }
-    .value-venta { color: var(--red); }
-    .value-spread { color: var(--yellow); }
-    .value-ganancia { color: var(--blue); }
-    
-    /* Bloque Predicción */
-    .prediction-card { background-color: var(--card-bg); padding: 16px; border-radius: 12px; border: 1px solid var(--purple); margin-bottom: 16px; }
-    .prediction-title { font-size: 0.85rem; color: var(--purple); font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; }
-    .prediction-value { font-size: 1.4rem; font-weight: bold; margin-bottom: 8px; }
-    .prediction-bounds { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); background: #0f172a; padding: 8px 12px; border-radius: 8px; }
-
-    .chart-card { background-color: var(--card-bg); padding: 16px; border-radius: 12px; border: 1px solid #334155; }
-    .chart-title { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; }
-    .history-list { display: flex; flex-direction: column; gap: 8px; }
-    .history-item { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 6px 0; border-bottom: 1px solid #334155; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comerciante P2P Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; padding: 1rem; }
+    </style>
 </head>
-<body>
+<body class="p-4 max-w-md mx-auto space-y-4">
 
-  <div class="header">
-    <h1>⚡ COMERCIANTE P2P PRO</h1>
-    <span class="badge" id="estado">EN VIVO</span>
-  </div>
-
-  <div class="time-bar">
-    🇻🇪 Hora Oficial VE: <strong id="reloj-ve" style="color: var(--text-main);">00:00:00 PM</strong>
-  </div>
-
-  <div class="filter-info">
-    🎯 Filtro: Comerciante No Verificado (5,000 Bs - 300,000 Bs)
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <div class="card-label">Compra</div>
-      <div class="card-value value-compra" id="precio-compra">0.00 Bs</div>
+    <!-- Header Status -->
+    <div class="card flex justify-between items-center">
+        <div class="flex items-center space-x-2">
+            <span class="text-yellow-400 font-bold text-lg">⚡ COMERCIANTE P2P PRO</span>
+        </div>
+        <span id="status-tag" class="px-2 py-1 text-xs rounded-full bg-emerald-900 text-emerald-300 font-semibold">EN VIVO</span>
     </div>
-    <div class="card">
-      <div class="card-label">Venta / Recompra</div>
-      <div class="card-value value-venta" id="precio-venta">0.00 Bs</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Spread Bruto</div>
-      <div class="card-value value-spread" id="spread">0.00 Bs</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Ganancia Neta Ciclo</div>
-      <div class="card-value value-ganancia" id="ganancia">0.00%</div>
-    </div>
-  </div>
 
-  <!-- Bloque de Predicción ML -->
-  <div class="prediction-card">
-    <div class="prediction-title">
-      <span>🔮 PREDICCIÓN ML (<span id="hora-prediccion">--:--</span>)</span>
-      <span id="tendencia">--</span>
+    <!-- Banner Hora -->
+    <div class="bg-slate-800 text-center py-2 rounded-lg text-sm text-slate-300 border border-slate-700">
+        🇻🇪 Hora Oficial VE: <span id="hora-ve" class="font-bold">--:--:--</span>
     </div>
-    <div class="prediction-value" id="valor-prediccion">0.00 Bs</div>
-    <div class="prediction-bounds">
-      <span>🟢 Piso: <strong id="piso-val" style="color: var(--green);">0.00 Bs</strong></span>
-      <span>🔴 Techo: <strong id="techo-val" style="color: var(--red);">0.00 Bs</strong></span>
+
+    <!-- Filtro Banner -->
+    <div class="bg-sky-600 text-white text-center py-2 px-3 rounded-lg text-xs font-semibold">
+        🎯 Filtro: Comerciante No Verificado (5,000 Bs - 300,000 Bs)
     </div>
-  </div>
 
-  <div class="chart-card">
-    <div class="chart-title">📊 Histórico de Lecturas (Hora VE)</div>
-    <div class="history-list" id="historial-container">
-      <div class="history-item" style="color: var(--text-muted);">Cargando historial...</div>
+    <!-- Métricas principales -->
+    <div class="grid grid-cols-2 gap-3">
+        <div class="card text-center">
+            <p class="text-xs text-slate-400 font-bold mb-1">COMPRA</p>
+            <p id="precio-compra" class="text-xl font-extrabold text-emerald-400">0.00 Bs</p>
+        </div>
+        <div class="card text-center">
+            <p class="text-xs text-slate-400 font-bold mb-1">VENTA / RECOMPRA</p>
+            <p id="precio-venta" class="text-xl font-extrabold text-rose-400">0.00 Bs</p>
+        </div>
+        <div class="card text-center">
+            <p class="text-xs text-slate-400 font-bold mb-1">SPREAD BRUTO</p>
+            <p id="spread-bruto" class="text-xl font-extrabold text-amber-400">0.00 Bs</p>
+        </div>
+        <div class="card text-center">
+            <p class="text-xs text-slate-400 font-bold mb-1">GANANCIA NETA CICLO</p>
+            <p id="pct-bruto" class="text-xl font-extrabold text-blue-400">0.00%</p>
+        </div>
     </div>
-  </div>
 
-  <script>
-    function actualizarReloj() {
-      const ahora = new Date();
-      const opciones = { timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true };
-      document.getElementById('reloj-ve').innerText = ahora.toLocaleTimeString('es-VE', opciones);
-    }
-    setInterval(actualizarReloj, 1000);
-    actualizarReloj();
+    <!-- Tarjeta Morada ML -->
+    <div class="card border-purple-500/50 bg-slate-900/80 relative overflow-hidden">
+        <div class="flex justify-between items-center mb-2">
+            <span class="text-xs font-bold text-purple-400">🔮 PREDICCIÓN ML (<span id="ml-hora">--:--</span>)</span>
+            <span id="ml-tendencia" class="text-xs font-bold text-purple-300">--</span>
+        </div>
+        <div class="text-3xl font-black text-white mb-3" id="ml-precio">0.00 Bs</div>
+        <div class="flex justify-between text-xs pt-2 border-t border-slate-800">
+            <span class="text-emerald-400 font-medium">🟢 Piso: <span id="ml-piso">0.00 Bs</span></span>
+            <span class="text-rose-400 font-medium">🔴 Techo: <span id="ml-techo">0.00 Bs</span></span>
+        </div>
+    </div>
 
-    async function actualizarDashboard() {
-      try {
-        const respuesta = await fetch("https://p2p-monitor-binance.onrender.com");
-        const datos = await respuesta.json();
+    <!-- Historial -->
+    <div class="card space-y-2">
+        <p class="text-xs font-bold text-slate-400">📊 Histórico de Lecturas (Hora VE)</p>
+        <div id="historial-lista" class="text-xs text-slate-300 space-y-1">
+            Cargando historial...
+        </div>
+    </div>
 
-        if (datos.compra) document.getElementById("precio-compra").innerText = `${datos.compra.toFixed(2)} Bs`;
-        if (datos.venta) document.getElementById("precio-venta").innerText = `${datos.venta.toFixed(2)} Bs`;
-        if (datos.spread) document.getElementById("spread").innerText = `${datos.spread.toFixed(2)} Bs`;
-        if (datos.ganancia_pct) document.getElementById("ganancia").innerText = `${datos.ganancia_pct.toFixed(2)}%`;
+    <script>
+        const API_URL = "https://p2p-monitor-binance.onrender.com";
 
-        if (datos.prediccion) {
-          document.getElementById("hora-prediccion").innerText = datos.prediccion.hora_proyeccion;
-          document.getElementById("tendencia").innerText = datos.prediccion.tendencia;
-          document.getElementById("valor-prediccion").innerText = `${datos.prediccion.prediccion_ml.toFixed(2)} Bs`;
-          document.getElementById("piso-val").innerText = `${datos.prediccion.piso.toFixed(2)} Bs`;
-          document.getElementById("techo-val").innerText = `${datos.prediccion.techo.toFixed(2)} Bs`;
+        function actualizarHora() {
+            const ahora = new Date();
+            const opciones = { timeZone: "America/Caracas", hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true };
+            document.getElementById("hora-ve").innerText = ahora.toLocaleTimeString('es-VE', opciones);
+        }
+        setInterval(actualizarHora, 1000);
+
+        async function cargarDatos() {
+            try {
+                const res = await fetch(API_URL);
+                const data = await res.json();
+
+                // Actualizar Precios Base
+                document.getElementById("precio-compra").innerText = (data.compra || 0).toFixed(2) + " Bs";
+                document.getElementById("precio-venta").innerText = (data.venta || 0).toFixed(2) + " Bs";
+                document.getElementById("spread-bruto").innerText = (data.spread || 0).toFixed(2) + " Bs";
+                document.getElementById("pct-bruto").innerText = (data.pct || 0).toFixed(2) + "%";
+
+                // Actualizar ML / Predicción
+                const ml = data.ml_prediccion || {};
+                document.getElementById("ml-precio").innerText = (data.prediccion || ml.precio || 0).toFixed(2) + " Bs";
+                document.getElementById("ml-piso").innerText = (data.piso || ml.piso || 0).toFixed(2) + " Bs";
+                document.getElementById("ml-techo").innerText = (data.techo || ml.techo || 0).toFixed(2) + " Bs";
+                document.getElementById("ml-tendencia").innerText = data.tendencia || ml.tendencia || "ESTABLE";
+                document.getElementById("ml-hora").innerText = ml.hora || "En vivo";
+
+                // Status
+                document.getElementById("status-tag").innerText = "EN VIVO";
+                document.getElementById("status-tag").className = "px-2 py-1 text-xs rounded-full bg-emerald-900 text-emerald-300 font-semibold";
+
+                // Historial
+                if (data.historial && data.historial.length > 0) {
+                    const html = data.historial.map(h => `
+                        <div class="flex justify-between border-b border-slate-800 py-1">
+                            <span>${h.fecha_hora || 'Reciente'}</span>
+                            <span class="text-emerald-400">${(h.compra||0).toFixed(2)}</span>
+                            <span class="text-rose-400">${(h.venta||0).toFixed(2)}</span>
+                        </div>
+                    `).join('');
+                    document.getElementById("historial-lista").innerHTML = html;
+                }
+            } catch (err) {
+                document.getElementById("status-tag").innerText = "RECONECTANDO";
+                document.getElementById("status-tag").className = "px-2 py-1 text-xs rounded-full bg-amber-900 text-amber-300 font-semibold";
+            }
         }
 
-        if (datos.historial && datos.historial.length > 0) {
-          const container = document.getElementById("historial-container");
-          container.innerHTML = "";
-          datos.historial.slice().reverse().forEach(item => {
-            const div = document.createElement("div");
-            div.className = "history-item";
-            div.innerHTML = `
-              <span>🕒 ${item.hora}</span>
-              <span>C: <strong style="color: var(--green);">${item.compra.toFixed(2)}</strong> | V: <strong style="color: var(--red);">${item.venta.toFixed(2)}</strong></span>
-            `;
-            container.appendChild(div);
-          });
-        }
-        document.getElementById("estado").innerText = "EN VIVO";
-      } catch (error) {
-        console.error("Error cargando API:", error);
-        document.getElementById("estado").innerText = "RECONECTANDO";
-      }
-    }
-
-    actualizarDashboard();
-    setInterval(actualizarDashboard, 30000);
-  </script>
+        cargarDatos();
+        setInterval(cargarDatos, 5000);
+    </script>
 </body>
 </html>
