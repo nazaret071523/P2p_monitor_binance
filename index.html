@@ -1,212 +1,169 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comerciante P2P Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
-        .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; padding: 0.85rem; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Venbot Predicciones | P2P Monitor</title>
+  <!-- Chart.js para la gráfica interactiva -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #0b0e14; color: #ffffff; padding: 12px; display: flex; justify-content: center; }
+    .container { width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 12px; }
+    
+    /* Tarjetas principales */
+    .card { background: #131822; border: 1px solid #1f293d; border-radius: 14px; padding: 14px; }
+    
+    /* Header */
+    .header { display: flex; justify-content: space-between; align-items: center; }
+    .title { color: #f5b041; font-weight: bold; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+    .badge-live { background: #00e67622; color: #00e676; padding: 4px 8px; border-radius: 20px; font-size: 11px; font-weight: bold; border: 1px solid #00e676; }
+    
+    .time-bar { background: #1a2232; text-align: center; padding: 6px; border-radius: 8px; font-size: 12px; color: #8b9bb4; margin-top: 8px; }
+    .filter-bar { background: #0288d122; color: #29b6f6; border: 1px solid #0288d1; text-align: center; padding: 6px; border-radius: 8px; font-size: 11px; margin-top: 6px; font-weight: 500; }
+    
+    /* Grilla de Métricas */
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .metric-box { background: #1a2232; padding: 10px; border-radius: 10px; text-align: center; }
+    .metric-label { font-size: 10px; color: #8b9bb4; text-transform: uppercase; font-weight: bold; }
+    .metric-value { font-size: 15px; font-weight: bold; margin-top: 4px; }
+    .val-compra { color: #00e676; }
+    .val-venta { color: #ff5252; }
+    .val-spread { color: #f5b041; }
+    
+    /* Sección Predicción */
+    .pred-card { border: 1px solid #7c4dff44; background: linear-gradient(180deg, #18132a 0%, #131822 100%); }
+    .pred-header { display: flex; justify-content: space-between; font-size: 12px; color: #b388ff; font-weight: bold; }
+    .pred-price { font-size: 32px; font-weight: 800; text-align: center; margin: 12px 0; color: #ffffff; }
+    .pred-range { display: flex; justify-content: space-between; font-size: 12px; color: #8b9bb4; }
+    
+    /* Botones de Temporalidad */
+    .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .btn-group { display: flex; gap: 4px; }
+    .btn-time { background: #1a2232; color: #8b9bb4; border: 1px solid #2a364f; padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
+    .btn-time.active { background: #00e676; color: #000000; border-color: #00e676; }
+    
+    .chart-container { position: relative; height: 200px; width: 100%; }
+  </style>
 </head>
-<body class="p-3 max-w-md mx-auto space-y-3">
+<body>
 
-    <!-- Header Status -->
-    <div class="card flex justify-between items-center py-2.5">
-        <span class="text-yellow-400 font-bold text-base flex items-center gap-1">⚡ COMERCIANTE P2P PRO</span>
-        <div class="flex items-center gap-1.5">
-            <button id="btn-notif" onclick="solicitarPermisoNotificaciones()" class="px-2 py-0.5 text-[10px] rounded-full bg-slate-800 text-cyan-400 font-bold border border-cyan-500/30 hover:bg-slate-700">
-                🔔 Notificaciones
-            </button>
-            <span id="status-tag" class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-900 text-emerald-300 font-bold tracking-wide">EN VIVO</span>
-        </div>
+<div class="container">
+
+  <!-- Header -->
+  <div class="card">
+    <div class="header">
+      <div class="title">⚡ COMERCIANTE P2P PRO</div>
+      <span class="badge-live">EN VIVO</span>
+    </div>
+    <div class="time-bar">🇻🇪 Hora Oficial VE: <span id="hora-ve">12:14:30 p. m.</span></div>
+    <div class="filter-bar">🎯 Filtro: No Verificado (10,000 Bs - 300,000 Bs)</div>
+    
+    <div class="grid-3">
+      <div class="metric-box">
+        <div class="metric-label">COMPRA</div>
+        <div class="metric-value val-compra" id="val-compra">913.60 Bs</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">VENTA</div>
+        <div class="metric-value val-venta" id="val-venta">921.00 Bs</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-label">SPREAD BRUTO</div>
+        <div class="metric-value val-spread" id="val-spread">7.40 Bs</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Predicción ML -->
+  <div class="card pred-card">
+    <div class="pred-header">
+      <span>PREDICCIÓN ML (+7h)</span>
+      <span id="pred-tendencia" style="color: #b388ff;">ALCISTA</span>
+    </div>
+    <div class="pred-price" id="pred-precio">914.05 Bs</div>
+    <div class="pred-range">
+      <span>🟢 Piso: <b id="pred-piso" style="color:#fff;">909.00 Bs</b></span>
+      <span>🔴 Techo: <b id="pred-techo" style="color:#fff;">929.00 Bs</b></span>
+    </div>
+  </div>
+
+  <!-- Gráfica Interactiva -->
+  <div class="card">
+    <div class="chart-header">
+      <span style="color:#8b9bb4; font-weight:bold; font-size:12px;">📊 TENDENCIA DE MERCADO</span>
+      <div class="btn-group">
+        <button id="btn-1d" onclick="cargarGrafico('1d')" class="btn-time active">1D</button>
+        <button id="btn-7d" onclick="cargarGrafico('7d')" class="btn-time">7D</button>
+        <button id="btn-1m" onclick="cargarGrafico('1m')" class="btn-time">1M</button>
+      </div>
     </div>
 
-    <!-- Banner Hora Oficial y Filtro -->
-    <div class="grid grid-cols-1 gap-1.5">
-        <div class="bg-slate-800 text-center py-1.5 rounded-lg text-xs text-slate-300 border border-slate-700">
-            🇻🇪 Hora Oficial VE: <span id="hora-ve" class="font-bold text-white">--:--:--</span>
-        </div>
-        <div class="bg-sky-600/90 text-white text-center py-1.5 px-2 rounded-lg text-[11px] font-medium border border-sky-500">
-            🎯 Filtro: No Verificado (10,000 Bs - 300,000 Bs)
-        </div>
+    <div class="chart-container">
+      <canvas id="p2pChart"></canvas>
     </div>
+  </div>
 
-    <!-- Métricas Principales -->
-    <div class="grid grid-cols-3 gap-2">
-        <div class="card text-center py-2 px-1">
-            <p class="text-[9px] text-slate-400 font-bold tracking-wider uppercase mb-1">COMPRA</p>
-            <p id="precio-compra" class="text-sm font-extrabold text-emerald-400 truncate">0.00 Bs</p>
-        </div>
-        <div class="card text-center py-2 px-1">
-            <p class="text-[9px] text-slate-400 font-bold tracking-wider uppercase mb-1">VENTA</p>
-            <p id="precio-venta" class="text-sm font-extrabold text-rose-400 truncate">0.00 Bs</p>
-        </div>
-        <div class="card text-center py-2 px-1">
-            <p class="text-[9px] text-slate-400 font-bold tracking-wider uppercase mb-1">SPREAD BRUTO</p>
-            <p id="spread-bruto" class="text-sm font-extrabold text-amber-400 truncate">0.00 Bs</p>
-        </div>
-    </div>
+</div>
 
-    <!-- Tarjeta Predicción ML + Tendencia Integrada -->
-    <div class="card border-purple-500/40 bg-slate-900/90 space-y-3">
-        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
-            <div>
-                <span class="text-[10px] font-bold text-purple-400 block uppercase tracking-wider">PREDICCIÓN ML</span>
-                <span id="ml-hora" class="text-[11px] font-semibold text-slate-300">--:--</span>
-            </div>
-            <div class="text-right">
-                <span class="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">TENDENCIA</span>
-                <span id="ml-tendencia" class="text-xs font-bold text-purple-300">--</span>
-            </div>
-        </div>
+<script>
+let chartInstance = null;
 
-        <div class="text-center py-1">
-            <div class="text-3xl font-black text-white tracking-tight" id="ml-precio">0.00 Bs</div>
-        </div>
+async function cargarGrafico(rango) {
+  // Cambiar botón activo
+  document.querySelectorAll('.btn-time').forEach(b => b.classList.remove('active'));
+  document.getElementById(`btn-${rango}`).classList.add('active');
 
-        <div class="flex justify-between text-xs pt-2 border-t border-slate-800/80">
-            <span class="text-emerald-400 font-semibold text-[11px]">🟢 Piso: <span id="ml-piso">0.00 Bs</span></span>
-            <span class="text-rose-400 font-semibold text-[11px]">🔴 Techo: <span id="ml-techo">0.00 Bs</span></span>
-        </div>
-    </div>
+  try {
+    const res = await fetch(`/api/historial?rango=${rango}`);
+    const data = await res.json();
 
-    <!-- MÓDULO ASISTENTE ANALISTA GEMINI AI -->
-    <div class="card border-cyan-500/40 bg-slate-900/90 space-y-2.5 p-3.5">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-            <span class="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
-                ✨ ASISTENTE ANALISTA P2P
-            </span>
-            <span class="text-[9px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">Auto-Evaluación</span>
-        </div>
-        <div id="ai-response" class="text-xs text-slate-200 leading-relaxed font-normal">
-            Analizando condiciones del mercado en tiempo real...
-        </div>
-        <p class="text-[9px] text-slate-500 pt-1.5 border-t border-slate-800/60 flex items-center gap-1">
-            ⚠️ <span>Análisis informativo basado en spread y tendencia actual. No representa asesoría financiera.</span>
-        </p>
-    </div>
+    const ctx = document.getElementById('p2pChart').getContext('2d');
+    if (chartInstance) chartInstance.destroy();
 
-    <!-- Espacio Reservado para la Gráfica -->
-    <div class="card flex flex-col items-center justify-center py-6 text-slate-500 border-dashed border-slate-700">
-        <span class="text-xl mb-1">📊</span>
-        <span class="text-xs font-medium text-slate-400">Área Reservada para Gráfica Interactiva</span>
-    </div>
-
-    <script>
-        const API_URL = "https://p2p-monitor-binance.onrender.com";
-        let ultimaTendencia = null;
-
-        function actualizarHora() {
-            const ahora = new Date();
-            const opciones = { timeZone: "America/Caracas", hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true };
-            document.getElementById("hora-ve").innerText = ahora.toLocaleTimeString('es-VE', opciones);
+    chartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          {
+            label: 'Venta',
+            data: data.ventas,
+            borderColor: '#ff5252',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3
+          },
+          {
+            label: 'Compra',
+            data: data.compras,
+            borderColor: '#00e676',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#8b9bb4', font: { size: 10 } } } },
+        scales: {
+          x: { ticks: { color: '#8b9bb4', maxTicksLimit: 5, font: { size: 10 } }, grid: { color: '#1f293d' } },
+          y: { ticks: { color: '#8b9bb4', font: { size: 10 } }, grid: { color: '#1f293d' } }
         }
-        setInterval(actualizarHora, 1000);
+      }
+    });
+  } catch (error) {
+    console.error("Error cargando datos de la gráfica:", error);
+  }
+}
 
-        function solicitarPermisoNotificaciones() {
-            if ("Notification" in window) {
-                Notification.requestPermission().then(permission => {
-                    if (permission === "granted") {
-                        document.getElementById("btn-notif").innerText = "🔔 Alertas Activas";
-                        document.getElementById("btn-notif").className = "px-2 py-0.5 text-[10px] rounded-full bg-emerald-900/60 text-emerald-300 font-bold border border-emerald-500/40";
-                        new Notification("Comerciante P2P Pro", {
-                            body: "¡Notificaciones de tendencia activadas con éxito!",
-                            icon: "https://binance.com/favicon.ico"
-                        });
-                    }
-                });
-            } else {
-                alert("Tu navegador no soporta notificaciones.");
-            }
-        }
+// Carga inicial
+document.addEventListener("DOMContentLoaded", () => {
+  cargarGrafico('1d');
+});
+</script>
 
-        function notificarCambioTendencia(nuevaTendencia) {
-            if ("Notification" in window && Notification.permission === "granted") {
-                new Notification("🚨 ALERTA P2P: Cambio de Tendencia", {
-                    body: `La tendencia del mercado ha cambiado a: ${nuevaTendencia}`,
-                    icon: "https://binance.com/favicon.ico"
-                });
-            }
-        }
-
-        function normalizarTendencia(textoRaw) {
-            const t = (textoRaw || "").toUpperCase();
-            if (t.includes("ALCISTA")) return "ALCISTA";
-            if (t.includes("BAJISTA")) return "BAJISTA";
-            if (t.includes("LATERAL")) return "LATERAL";
-            return "ESTABLE";
-        }
-
-        function formatearTextoMarkdown(texto) {
-            return texto.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>');
-        }
-
-        function generarRecomendacionIA(compra, venta, spread, tendencia) {
-            let mensaje = "";
-            
-            if (spread < 5) {
-                mensaje = "💡 **Mercado apretado:** El spread bruto es muy bajo (" + spread.toFixed(2) + " Bs). Margen ajustado para operar volumen alto.";
-            } else if (tendencia === "ALCISTA") {
-                mensaje = "🚀 **Tendencia Alcista:** Presión al alza. Se recomienda priorizar órdenes de **COMPRA** para asegurar inventario antes de que vuelva a subir.";
-            } else if (tendencia === "BAJISTA") {
-                mensaje = "📉 **Tendencia Bajista:** Presión a la baja. Se recomienda priorizar la **VENTA** rápida para resguardar capital en bolívares.";
-            } else if (tendencia === "LATERAL") {
-                mensaje = "⚖️ **Tendencia Lateral:** Rango ideal de arbitraje. Coloca órdenes en el **PISO** (" + compra.toFixed(2) + " Bs) para recomprar en el **TECHO**.";
-            } else {
-                mensaje = "🟢 **Tendencia Estable:** Mercado sin fluctuaciones bruscas. Spread de " + spread.toFixed(2) + " Bs constante para operaciones regulares.";
-            }
-
-            document.getElementById("ai-response").innerHTML = formatearTextoMarkdown(mensaje);
-        }
-
-        async function cargarDatos() {
-            try {
-                const res = await fetch(API_URL);
-                const data = await res.json();
-
-                const compra = data.compra || 0;
-                const venta = data.venta || 0;
-                const spread = data.spread || 0;
-
-                // Actualizar métricas
-                document.getElementById("precio-compra").innerText = compra.toFixed(2) + " Bs";
-                document.getElementById("precio-venta").innerText = venta.toFixed(2) + " Bs";
-                document.getElementById("spread-bruto").innerText = spread.toFixed(2) + " Bs";
-
-                // ML y Tendencia Normalizada
-                const ml = data.ml_prediccion || {};
-                const tendenciaRaw = data.tendencia || ml.tendencia || "ESTABLE";
-                const tendenciaLimpia = normalizarTendencia(tendenciaRaw);
-
-                document.getElementById("ml-precio").innerText = (data.prediccion || ml.precio || 0).toFixed(2) + " Bs";
-                document.getElementById("ml-piso").innerText = (data.piso || ml.piso || 0).toFixed(2) + " Bs";
-                document.getElementById("ml-techo").innerText = (data.techo || ml.techo || 0).toFixed(2) + " Bs";
-                document.getElementById("ml-tendencia").innerText = tendenciaLimpia;
-                document.getElementById("ml-hora").innerText = ml.hora || "+7h";
-
-                // Disparar notificación si cambia entre ALCISTA, BAJISTA, LATERAL o ESTABLE
-                if (ultimaTendencia !== null && ultimaTendencia !== tendenciaLimpia) {
-                    notificarCambioTendencia(tendenciaLimpia);
-                }
-                ultimaTendencia = tendenciaLimpia;
-
-                // Status
-                document.getElementById("status-tag").innerText = "EN VIVO";
-                document.getElementById("status-tag").className = "px-2 py-0.5 text-[10px] rounded-full bg-emerald-900 text-emerald-300 font-bold tracking-wide";
-
-                // Ejecutar recomendación
-                generarRecomendacionIA(compra, venta, spread, tendenciaLimpia);
-
-            } catch (err) {
-                document.getElementById("status-tag").innerText = "RECONECTANDO";
-                document.getElementById("status-tag").className = "px-2 py-0.5 text-[10px] rounded-full bg-amber-900 text-amber-300 font-bold tracking-wide";
-            }
-        }
-
-        cargarDatos();
-        setInterval(cargarDatos, 5000);
-    </script>
 </body>
 </html>
