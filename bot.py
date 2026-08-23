@@ -95,16 +95,15 @@ def obtener_historial(horas=24):
         print(f"Error obteniendo historial: {e}")
         return []
 
-# Consulta Directa a API Binance (Filtro No Verificados)
+# Consulta Directa a API Binance (Filtro Estricto No Verificados)
 def consultar_binance_top1(trade_type, monto):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = json.dumps({
         "asset": "USDT",
         "fiat": "VES",
         "merchantCheck": False,
-        "publisherType": "user",  # Filtrado nativo para usuarios NO verificados
         "page": 1,
-        "rows": 10,
+        "rows": 20,
         "tradeType": trade_type,
         "transAmount": str(monto)
     }).encode('utf-8')
@@ -119,17 +118,24 @@ def consultar_binance_top1(trade_type, monto):
         with urllib.request.urlopen(req, timeout=6) as response:
             res = json.loads(response.read().decode('utf-8'))
             data = res.get('data', [])
-            if data:
-                return round(float(data[0]['adv']['price']), 2)
+            
+            # Recorre la lista descartando comerciantes verificados y tomando el primer usuario común
+            for item in data:
+                advertiser = item.get('advertiser', {})
+                user_type = advertiser.get('userType')
+                
+                if user_type == "user":
+                    return round(float(item['adv']['price']), 2)
+                    
     except Exception as e:
         print(f"Error consultando Binance Top1 ({trade_type}): {e}")
     return None
 
 def get_p2p_rates():
-    # SELL: Libro donde los usuarios te venden USDT (Tasa de Recompra a 10K VES)
+    # SELL: Libro de usuarios vendiendo USDT (Tasa de Recompra a 10K VES)
     tasa_recompra = consultar_binance_top1("SELL", "10000")
     
-    # BUY: Libro donde los usuarios te compran USDT (Tasa de Venta a 300K VES)
+    # BUY: Libro de usuarios comprando USDT (Tasa de Venta a 300K VES)
     tasa_venta = consultar_binance_top1("BUY", "300000")
     
     if not tasa_recompra or not tasa_venta:
