@@ -35,9 +35,25 @@ ULTIMA_LECTURA_VALIDA = {
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/html')
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(b"Venbot Quant Engine Active")
+
+        tasa_c, tasa_v, sp, pct = get_p2p_rates()
+        if not tasa_c or not tasa_v:
+            tasa_c = ULTIMA_LECTURA_VALIDA["compra"] or 0.0
+            tasa_v = ULTIMA_LECTURA_VALIDA["venta"] or 0.0
+            sp = ULTIMA_LECTURA_VALIDA["spread"] or 0.0
+            pct = ULTIMA_LECTURA_VALIDA["pct"] or 0.0
+
+        data_json = {
+            "compra": tasa_c,
+            "venta": tasa_v,
+            "spread": sp,
+            "pct": pct,
+            "timestamp": time.time()
+        }
+        self.wfile.write(json.dumps(data_json).encode('utf-8'))
 
 def run_web_server():
     try:
