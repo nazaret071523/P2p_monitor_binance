@@ -25,7 +25,6 @@ VET = timezone(timedelta(hours=-4))
 # GESTIÓN DE BASE DE DATOS (Neon Postgres / SQLite Fallback)
 # ==========================================
 def get_db_connection():
-    """Conecta a Neon.tech PostgreSQL si existe DATABASE_URL, de lo contrario a SQLite."""
     if DATABASE_URL:
         try:
             return psycopg2.connect(DATABASE_URL)
@@ -34,7 +33,6 @@ def get_db_connection():
     return sqlite3.connect("p2p_data.db")
 
 def init_db():
-    """Crea la tabla 'lecturas' si no existe."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -69,7 +67,6 @@ def init_db():
     print("✅ Base de datos inicializada correctamente.")
 
 def guardar_lectura(compra, venta, spread, ganancia_pct):
-    """Guarda una nueva lectura de mercado."""
     now_ve = datetime.now(VET)
     ts = now_ve.timestamp()
     fecha_str = now_ve.strftime("%Y-%m-%d %H:%M:%S")
@@ -92,7 +89,6 @@ def guardar_lectura(compra, venta, spread, ganancia_pct):
     conn.close()
 
 def obtener_historial(limite=100):
-    """Obtiene los últimos registros guardados."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -106,30 +102,33 @@ def obtener_historial(limite=100):
     return rows
 
 # ==========================================
-# SCRAPING Y MODELO ML DE PREDICCIÓN
+# SCRAPING REAL Y CORREGIDO DE BINANCE P2P
 # ==========================================
 def get_binance_p2p_rates():
-    """Consulta Binance P2P obteniendo el precio real de Compra y Venta del Comerciante."""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
-    # SELL en la API = Anuncios de usuarios vendiendo (Tu precio de COMPRA como comerciante)
-    payload_buy = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 5, "tradeType": "SELL", "transAmount": "5000"
-    }
-    # BUY en la API = Anuncios de usuarios comprando (Tu precio de VENTA como comerciante)
-    payload_sell = {
+    # Anuncios donde la gente vende USDT (Tus compras como comerciante)
+    payload_compra = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
         "page": 1, "rows": 5, "tradeType": "BUY", "transAmount": "5000"
     }
+    # Anuncios donde la gente compra USDT (Tus ventas como comerciante)
+    payload_venta = {
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 5, "tradeType": "SELL", "transAmount": "5000"
+    }
     
     try:
-        r_buy = requests.post(url, json=payload_buy, headers=headers, timeout=10).json()
-        r_sell = requests.post(url, json=payload_sell, headers=headers, timeout=10).json()
+        r_compra = requests.post(url, json=payload_compra, headers=headers, timeout=10).json()
+        r_venta = requests.post(url, json=payload_venta, headers=headers, timeout=10).json()
         
-        compra = float(r_buy['data'][0]['adv']['price'])
-        venta = float(r_sell['data'][0]['adv']['price'])
+        rate_buy_tab = float(r_compra['data'][0]['adv']['price'])
+        rate_sell_tab = float(r_venta['data'][0]['adv']['price'])
+        
+        # Asignación estricta de puntas: Compra menor, Venta mayor
+        compra = min(rate_buy_tab, rate_sell_tab)
+        venta = max(rate_buy_tab, rate_sell_tab)
         
         spread = round(venta - compra, 2)
         # Ganancia neta deduciendo 0.50% total de comisión
@@ -141,7 +140,6 @@ def get_binance_p2p_rates():
         return None, None, None, None
 
 def calcular_prediccion_ml():
-    """Analiza la tendencia e historial con regresión lineal."""
     historial = obtener_historial(limite=50)
     n_muestras = len(historial)
     
