@@ -81,7 +81,7 @@ def guardar_lectura(compra, venta, spread):
     except Exception as e:
         print(f"Error guardando lectura: {e}")
 
-def obtener_historial(limite=20):
+def obtener_historial(limite=2000):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -179,7 +179,7 @@ def get_p2p_rates():
 
 # Motor Cuantitativo
 def motor_quant_inteligente(actual_compra, actual_venta):
-    historial = obtener_historial(15)
+    historial = obtener_historial(2000) # Carga hasta 2000 lecturas acumuladas
     
     compras_raw = [h[1] for h in historial]
     ventas_raw = [h[2] for h in historial]
@@ -239,7 +239,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "muestras": len(compras)
     }
 
-# Servidor Web Completo para Vercel
+# Servidor Web Completo
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -255,9 +255,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             pct = ULTIMA_LECTURA_VALIDA["pct"] or 0.0
 
         pred = motor_quant_inteligente(tasa_c, tasa_v)
-        hist_rows = obtener_historial(15)
+        hist_rows = obtener_historial(50)
         
-        # Calcular hora objetivo (Hora actual VE + 7 horas)
         hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
         
         historial_formatted = []
@@ -292,6 +291,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             "timestamp": time.time()
         }
         self.wfile.write(json.dumps(data_json).encode('utf-8'))
+
 def run_web_server():
     try:
         server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
