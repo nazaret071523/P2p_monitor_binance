@@ -33,27 +33,6 @@ def init_db():
 
 init_db()
 
-def asegurar_datos_minimos(actual_compra, actual_venta):
-    db_path = os.path.join(BASE_DIR, "market_data.db")
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM historial")
-    total = cursor.fetchone()[0]
-    
-    if total < 5:
-        fecha_base = datetime.now(VET)
-        for i in range(30, 0, -1):
-            f = fecha_base - timedelta(minutes=i * 3)
-            c_sim = round(actual_compra - (i * 0.02), 2)
-            v_sim = round(actual_venta - (i * 0.02), 2)
-            s_sim = round(v_sim - c_sim, 2)
-            cursor.execute(
-                "INSERT INTO historial (fecha, compra, venta, spread) VALUES (?, ?, ?, ?)",
-                (f, c_sim, v_sim, s_sim)
-            )
-        conn.commit()
-    conn.close()
-
 def guardar_lectura(compra, venta, spread):
     db_path = os.path.join(BASE_DIR, "market_data.db")
     conn = sqlite3.connect(db_path)
@@ -83,121 +62,136 @@ def obtener_historial(limite=2000):
         datos.append((f, r[1], r[2], r[3]))
     return datos
 
-# --- CONSULTA REAL BINANCE P2P ---
+# --- CONSULTA BINANCE P2P FILTRADA (PROVINCIAL / MERCANTIL / BNC) ---
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json"}
-    
-    # Payload exacto sin conflictos de filtros
-    payload_compra = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "10000"
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     
+    # Métodos de pago solicitados: Provincial, Mercantil, BNC
+    bancos_filtro = ["BBVA", "Mercantil", "BNC"]
+
+    # Recompra (Pestaña "Vender" en App Binance)
+    payload_compra = {
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 15, "tradeType": "SELL", "transAmount": "10000",
+        "payTypes": bancos_filtro
+    }
+    
+    # Venta (Pestaña "Comprar" en App Binance)
     payload_venta = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "300000"
+        "page": 1, "rows": 15, "tradeType": "BUY", "transAmount": "300000",
+        "payTypes": bancos_filtro
     }
 
     try:
-        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=6).json()
-        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=6).json()
+        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=8).json()
+        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=8).json()
 
         data_c = res_c.get("data", [])
         data_v = res_v.get("data", [])
 
-        if len(data_c) >= 4 and len(data_v) >= 4:
-            # Tomar estrictamente el anuncio/bloque #4 (Índice 3)
-            tasa_compra = float(data_c[3]["adv"]["price"])
-            tasa_venta = float(data_v[3]["adv"]["price"])
-        elif data_c and data_v:
-            tasa_compra = float(data_c[0]["adv"]["price"])
-            tasa_venta = float(data_v[0]["adv"]["price"])
-        else:
+        if not data_c or not data_v:
             return None, None, None, None
+
+        precios_c = [float(adv["adv"]["price"]) for adv in data_c if adv.get("adv")]
+        precios_v = [float(adv["adv"]["price"]) for adv in data_v if adv.get("adv")]
+
+        if not precios_c or not precios_v:
+            return None, None, None, None
+
+        # Tasa más competitiva de Recompra (Mayor valor)
+        tasa_compra = round(max(precios_c), 2)
+        
+        # Tasa más competitiva de Venta (Menor valor)
+        tasa_venta = round(min(precios_v), 2)
 
         if tasa_venta <= tasa_compra:
             tasa_venta = round(tasa_compra + 7.00, 2)
 
-        tasa_compra = round(tasa_compra, 2)
-        tasa_venta = round(tasa_venta, 2)
         spread = round(tasa_venta - tasa_compra, 2)
         pct_bruto = round((spread / tasa_compra) * 100, 2)
         
-        asegurar_datos_minimos(tasa_compra, tasa_venta)
         guardar_lectura(tasa_compra, tasa_venta, spread)
         return tasa_compra, tasa_venta, spread, pct_bruto
 
     except Exception as e:
-        print(f"Error Binance: {e}")
+        print(f"Error Binance API: {e}")
     
     return None, None, None, None
 
-# --- MOTOR IA / CUANTITATIVO ---
+# --- MOTOR IA QUANT ---
 def motor_quant_inteligente(actual_compra, actual_venta):
-    historial = obtener_historial(2000)
-    compras_raw = [h[1] for h in historial]
-    ventas_raw = [h[2] for h in historial]
+    historial = obtener_historial(500)
+    
+    if len(historial) < 5:
+        pred_c = round(actual_compra + 0.15, 2)
+        pred_v = round(actual_venta + 0.15, 2)
+        return {
+            "pred_compra_str": f"{pred_c:.2f} Bs",
+            "pred_venta_str": f"{pred_v:.2f} Bs",
+            "tendencia": "↔️ ESTABLE / LATERAL",
+            "piso_str": f"{actual_compra:.2f} Bs",
+            "techo_str": f"{actual_venta:.2f} Bs",
+            "muestras": len(historial)
+        }
 
-    def limpiar_datos(series, actual):
-        if not series:
-            return [actual]
-        limpios = [x for x in series if abs(x - actual) <= 15]
-        return limpios if limpios else [actual]
-
-    compras = limpiar_datos(compras_raw, actual_compra)
-    ventas = limpiar_datos(ventas_raw, actual_venta)
+    compras = [h[1] for h in historial]
+    ventas = [h[2] for h in historial]
 
     piso = round(min(compras), 2)
     techo = round(max(ventas), 2)
 
-    def proyectar_estable(series, actual):
-        if len(series) < 5:
-            return actual
-        corta = statistics.mean(series[-20:])
-        larga = statistics.mean(series[-120:]) if len(series) >= 120 else statistics.mean(series)
-        tendencia = (corta - larga) * 0.5
-        return round(actual + tendencia, 2)
+    def calcular_ema(datos, periodo=20):
+        k = 2 / (periodo + 1)
+        ema = datos[0]
+        for val in datos[1:]:
+            ema = (val * k) + (ema * (1 - k))
+        return ema
 
-    pred_c = proyectar_estable(compras, actual_compra)
-    pred_v = proyectar_estable(ventas, actual_venta)
+    ema_c = calcular_ema(compras)
+    ema_v = calcular_ema(ventas)
 
-    spread_minimo = round(pred_c * 0.007, 2)
-    if (pred_v - pred_c) < spread_minimo:
-        pred_v = round(pred_c + max(spread_minimo, 6.00), 2)
+    delta_c = (actual_compra - ema_c) * 0.35
+    delta_v = (actual_venta - ema_v) * 0.35
 
-    brecha = round(pred_v - pred_c, 2)
+    pred_c = round(actual_compra + delta_c, 2)
+    pred_v = round(actual_venta + delta_v, 2)
+
+    if (pred_v - pred_c) < 5.00:
+        pred_v = round(pred_c + 7.00, 2)
+
     diff = pred_c - actual_compra
 
-    if diff > 0.25:
+    if diff > 0.30:
         tendencia = "🚀 ALCISTA (Fuerte)"
-    elif diff > 0.05:
+    elif diff > 0.08:
         tendencia = "📈 ALCISTA (Moderada)"
-    elif diff < -0.25:
+    elif diff < -0.30:
         tendencia = "🔻 BAJISTA (Fuerte)"
-    elif diff < -0.05:
+    elif diff < -0.08:
         tendencia = "📉 BAJISTA (Moderada)"
     else:
         tendencia = "↔️ ESTABLE / LATERAL"
 
     return {
-        "pred_compra": pred_c,
-        "pred_venta": pred_v,
         "pred_compra_str": f"{pred_c:.2f} Bs",
         "pred_venta_str": f"{pred_v:.2f} Bs",
-        "brecha_esperada": f"{brecha:.2f} Bs",
         "tendencia": tendencia,
         "piso_str": f"{piso:.2f} Bs",
         "techo_str": f"{techo:.2f} Bs",
         "muestras": len(compras)
     }
 
-# --- HANDLER TELEGRAM ---
+# --- HANDLER TELEGRAM (SIN NOMBRES DE BANCOS) ---
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
     if not tasa_compra or not tasa_venta:
-        await update.message.reply_text("❌ Error consultando la API de Binance P2P.")
+        await update.message.reply_text("❌ Error al obtener datos de Binance P2P.")
         return
 
     pred = motor_quant_inteligente(tasa_compra, tasa_venta)
@@ -206,21 +200,21 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"**VENBOT PREDICCIONES**\n"
         f"⏰ {hora_ve} | BLOQUE 4\n\n"
-        f"🟢 **COMPRA (10k):**  `{tasa_compra:.2f} Bs`\n"
-        f"🔴 **VENTA (300k):**   `{tasa_venta:.2f} Bs`\n"
-        f"⚡ **MARGEN:**  `{spread:.2f} Bs` ({pct_bruto:.2f}%)\n\n"
+        f"🟢 **COMPRA (10k):** `{tasa_compra:.2f} Bs`\n"
+        f"🔴 **VENTA (300k):** `{tasa_venta:.2f} Bs`\n"
+        f"⚡ **MARGEN:** `{spread:.2f} Bs` ({pct_bruto:.2f}%)\n\n"
         f"──────────────────\n"
         f"🔮 **PROYECCIÓN +7H (IA QUANT)**\n"
         f"• **Recompra Esperada:** `{pred['pred_compra_str']}`\n"
-        f"• **Venta Esperada:**    `{pred['pred_venta_str']}`\n"
-        f"• **Dirección:**         {pred['tendencia']}\n"
+        f"• **Venta Esperada:** `{pred['pred_venta_str']}`\n"
+        f"• **Dirección:** {pred['tendencia']}\n"
         f"──────────────────\n\n"
-        f"📊 **Piso:** {pred['piso_str']}  |  **Techo:** {pred['techo_str']}\n"
+        f"📊 **Piso:** {pred['piso_str']} | **Techo:** {pred['techo_str']}\n"
         f"🧠 **Base de Datos:** {pred['muestras']} Muestras"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- LIFESPAN Y SERVIDOR FASTAPI CON CORS HABILITADO ---
+# --- SERVIDOR FASTAPI CON CORS ---
 telegram_app = None
 
 @asynccontextmanager
@@ -235,23 +229,20 @@ async def lifespan(app_fastapi: FastAPI):
             await telegram_app.initialize()
             await telegram_app.start()
             await telegram_app.updater.start_polling()
-            print("✅ Bot de Telegram iniciado exitosamente.")
+            print("✅ Bot ejecutándose correctamente.")
         except Exception as e:
-            print(f"❌ Error iniciando Telegram Bot: {e}")
-    
+            print(f"❌ Error al iniciar Telegram Bot: {e}")
     yield
-    
     if telegram_app:
         try:
             await telegram_app.updater.stop()
             await telegram_app.stop()
             await telegram_app.shutdown()
         except Exception as e:
-            print(f"Error al apagar: {e}")
+            print(f"Error al detener: {e}")
 
 app = FastAPI(lifespan=lifespan)
 
-# CORS Habilitado para permitir peticiones desde Vercel
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -272,7 +263,7 @@ def get_web():
 def get_actual_api():
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     if not tasa_compra:
-        return {"error": "Sin datos de Binance"}
+        return {"error": "Sin datos"}
     pred = motor_quant_inteligente(tasa_compra, tasa_venta)
     return {
         "compra": tasa_compra,
