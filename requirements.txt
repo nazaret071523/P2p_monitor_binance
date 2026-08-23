@@ -1,4 +1,5 @@
 python-telegram-bot
-psycopg2-binary
 requests
+psycopg2-binary
 numpy
+httpx
