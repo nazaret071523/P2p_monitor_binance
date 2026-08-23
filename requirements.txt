@@ -1,4 +1,5 @@
-fastapi
-uvicorn
+flask
+flask-cors
 requests
 python-telegram-bot
+gunicorn
