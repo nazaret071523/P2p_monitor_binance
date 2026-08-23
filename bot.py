@@ -1,4 +1,5 @@
 import os
+import asyncio
 import psycopg2
 import requests
 from datetime import datetime, timedelta, timezone
@@ -163,6 +164,21 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     }
 
 # ==========================================
+# RECOLECCIÓN AUTOMÁTICA
+# ==========================================
+async def tarea_recoleccion_automatica():
+    while True:
+        try:
+            compra, venta, _, _ = get_p2p_rates()
+            if compra and venta:
+                print(f"[{datetime.now(VET).strftime('%I:%M %p')}] Muestra automática guardada: Compra {compra} | Venta {venta}")
+        except Exception as e:
+            print(f"Error en recolección automática: {e}")
+        
+        # Espera 300 segundos (5 minutos) entre capturas
+        await asyncio.sleep(300)
+
+# ==========================================
 # COMANDO TELEGRAM
 # ==========================================
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,7 +208,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==========================================
-# SERVIDOR FASTAPI
+# SERVIDOR FASTAPI CON TAREAS EN SEGUNDO PLANO
 # ==========================================
 telegram_app = None
 
@@ -200,6 +216,10 @@ telegram_app = None
 async def lifespan(app_fastapi: FastAPI):
     global telegram_app
     token = os.getenv("TELEGRAM_TOKEN", "").strip()
+    
+    # Inicia el ciclo de recolección automática en segundo plano
+    asyncio.create_task(tarea_recoleccion_automatica())
+    
     if token:
         telegram_app = Application.builder().token(token).build()
         telegram_app.add_handler(CommandHandler("prediccion", prediccion_cmd))
@@ -214,6 +234,10 @@ async def lifespan(app_fastapi: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "Venbot P2P Activo"}
 
 @app.get("/api/actual")
 def get_actual():
