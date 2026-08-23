@@ -13,7 +13,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI()
 
-TOKEN = os.getenv("TELEGRAM_TOKEN", "TU_TELEGRAM_TOKEN_AQUI")
+TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 VET = timezone(timedelta(hours=-4))  # Hora de Venezuela
 
 # --- BASE DE DATOS SQLITE ---
@@ -186,7 +186,7 @@ def get_historial_api(rango: str = "1d"):
 
     return {"labels": labels, "compras": compras, "ventas": ventas}
 
-# --- HANDLER Y ARRANQUE DE TELEGRAM BOT ---
+# --- HANDLER DE TELEGRAM ---
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasa_compra, tasa_venta, spread, pct_bruto = get_p2p_rates()
     
@@ -214,17 +214,34 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-telegram_app = Application.builder().token(TOKEN).build()
-telegram_app.add_handler(CommandHandler("prediccion", prediccion_cmd))
+# --- ARRANQUE SEGURO EN RENDER ---
+telegram_app = None
 
 @app.on_event("startup")
 async def startup_event():
-    await telegram_app.initialize()
-    await telegram_app.start()
-    await telegram_app.updater.start_polling()
+    global telegram_app
+    token_actual = os.getenv("TELEGRAM_TOKEN", "").strip()
+    
+    if token_actual and token_actual != "TU_TELEGRAM_TOKEN_AQUI":
+        try:
+            telegram_app = Application.builder().token(token_actual).build()
+            telegram_app.add_handler(CommandHandler("prediccion", prediccion_cmd))
+            await telegram_app.initialize()
+            await telegram_app.start()
+            await telegram_app.updater.start_polling()
+            print("✅ Bot de Telegram iniciado exitosamente.")
+        except Exception as e:
+            print(f"❌ Error iniciando Telegram Bot (Verifica el Token): {e}")
+    else:
+        print("⚠️ Advertencia: TELEGRAM_TOKEN no configurado en Environment Variables.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    await telegram_app.updater.stop()
-    await telegram_app.stop()
-    await telegram_app.shutdown()
+    global telegram_app
+    if telegram_app:
+        try:
+            await telegram_app.updater.stop()
+            await telegram_app.stop()
+            await telegram_app.shutdown()
+        except Exception as e:
+            print(f"Error apagando Telegram Bot: {e}")
