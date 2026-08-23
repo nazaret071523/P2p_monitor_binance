@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import requests
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -8,61 +7,49 @@ from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VET = timezone(timedelta(hours=-4))
-DB_PATH = os.path.join(BASE_DIR, "market_data.db")
 
-# --- BASE DE DATOS ---
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS historial (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TIMESTAMP,
-            compra REAL,
-            venta REAL,
-            spread REAL
-        )
-    """)
-    conn.commit()
-    conn.close()
+# ==========================================
+# MEMORIA PERSISTENTE DE MUESTRAS (EN MEMORIA)
+# ==========================================
+MEMORIA_HISTORIAL = []  # Estructura: [{'fecha': ..., 'compra': ..., 'venta': ...}]
 
-init_db()
-
-def guardar_lectura(compra, venta, spread):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+def guardar_muestra(compra, venta):
+    global MEMORIA_HISTORIAL
     fecha_actual = datetime.now(VET)
-    cursor.execute(
-        "INSERT INTO historial (fecha, compra, venta, spread) VALUES (?, ?, ?, ?)",
-        (fecha_actual, compra, venta, spread)
-    )
-    conn.commit()
-    conn.close()
+    MEMORIA_HISTORIAL.append({
+        'fecha': fecha_actual,
+        'compra': compra,
+        'venta': venta
+    })
+    # Mantenemos un máximo de 500 muestras en memoria
+    if len(MEMORIA_HISTORIAL) > 500:
+        MEMORIA_HISTORIAL.pop(0)
 
-def obtener_historial(limite=200):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT fecha, compra, venta, spread FROM historial ORDER BY id DESC LIMIT ?", (limite,))
-    registros = cursor.fetchall()
-    conn.close()
-    return registros
-
-# --- CONSULTA BINANCE P2P ---
+# ==========================================
+# OBTECIÓN DE PRECIOS REALES BINANCE P2P
+# ==========================================
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    
+    # Filtro interno de bancos (BBVA=Provincial, Mercantil, BNC)
     bancos_filtro = ["BBVA", "Mercantil", "BNC"]
 
+    # Consulta Compra USDT (Bloque 10,000 Bs)
     payload_compra = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 15, "tradeType": "SELL", "transAmount": "10000",
+        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "10000",
         "payTypes": bancos_filtro
     }
+
+    # Consulta Venta USDT (Bloque 300,000 Bs)
     payload_venta = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 15, "tradeType": "BUY", "transAmount": "300000",
+        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "300000",
         "payTypes": bancos_filtro
     }
 
@@ -76,58 +63,53 @@ def get_p2p_rates():
         if not data_c or not data_v:
             return None, None, None, None
 
-        precios_c = [float(adv["adv"]["price"]) for adv in data_c if adv.get("adv")]
-        precios_v = [float(adv["adv"]["price"]) for adv in data_v if adv.get("adv")]
-
-        tasa_compra = round(max(precios_c), 2)
-        tasa_venta = round(min(precios_v), 2)
-
-        if tasa_venta <= tasa_compra:
-            tasa_venta = round(tasa_compra + 7.00, 2)
+        # Primeras ofertas del libro de ordenes
+        tasa_compra = float(data_c[0]["adv"]["price"])
+        tasa_venta = float(data_v[0]["adv"]["price"])
 
         spread = round(tasa_venta - tasa_compra, 2)
-        pct_bruto = round((spread / tasa_compra) * 100, 2)
+        pct_bruto = round((spread / tasa_compra) * 100, 2) if tasa_compra > 0 else 0.0
 
-        guardar_lectura(tasa_compra, tasa_venta, spread)
+        guardar_muestra(tasa_compra, tasa_venta)
         return tasa_compra, tasa_venta, spread, pct_bruto
     except Exception as e:
         print(f"Error consultando Binance: {e}")
         return None, None, None, None
 
-# --- MOTOR IA ---
+# ==========================================
+# MOTOR IA QUANT E HISTORIAL ACCUMULADO
+# ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta):
-    historial = obtener_historial(200)
-    muestras = len(historial)
+    muestras_totales = len(MEMORIA_HISTORIAL)
 
-    if muestras < 2:
-        return {
-            "pred_compra_str": f"{actual_compra * 0.998:.2f} Bs",
-            "pred_venta_str": f"{actual_venta * 1.002:.2f} Bs",
-            "tendencia": "↔️ ESTABLE / LATERAL",
-            "piso_str": f"{actual_compra * 0.995:.2f} Bs",
-            "techo_str": f"{actual_venta * 1.005:.2f} Bs",
-            "muestras": muestras
-        }
-
-    compras = [h[1] for h in historial]
-    ventas = [h[2] for h in historial]
-
-    piso = min(compras)
-    techo = max(ventas)
-
-    media_c = sum(compras) / muestras
-    media_v = sum(ventas) / muestras
-
-    pred_c = round((actual_compra * 0.65) + (media_c * 0.35), 2)
-    pred_v = round((actual_venta * 0.65) + (media_v * 0.35), 2)
-
-    diff = compras[0] - compras[-1]
-    if diff > 0.30:
-        tendencia = "🚀 ALCISTA"
-    elif diff < -0.30:
-        tendencia = "🔻 BAJISTA"
-    else:
+    if muestras_totales <= 1:
+        # Estimación inicial cuando recién inicia
+        piso = actual_compra * 0.995
+        techo = actual_venta * 1.005
+        pred_c = actual_compra * 0.998
+        pred_v = actual_venta * 1.002
         tendencia = "↔️ ESTABLE / LATERAL"
+    else:
+        compras = [m['compra'] for m in MEMORIA_HISTORIAL]
+        ventas = [m['venta'] for m in MEMORIA_HISTORIAL]
+
+        piso = min(compras)
+        techo = max(ventas)
+
+        media_c = sum(compras) / muestras_totales
+        media_v = sum(ventas) / muestras_totales
+
+        # Algoritmo de ponderación (65% precio actual, 35% tendencia histórica)
+        pred_c = (actual_compra * 0.65) + (media_c * 0.35)
+        pred_v = (actual_venta * 0.65) + (media_v * 0.35)
+
+        diff = compras[-1] - compras[0]
+        if diff > 0.30:
+            tendencia = "🚀 ALCISTA"
+        elif diff < -0.30:
+            tendencia = "🔻 BAJISTA"
+        else:
+            tendencia = "↔️ ESTABLE / LATERAL"
 
     return {
         "pred_compra_str": f"{pred_c:.2f} Bs",
@@ -135,14 +117,16 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "tendencia": tendencia,
         "piso_str": f"{piso:.2f} Bs",
         "techo_str": f"{techo:.2f} Bs",
-        "muestras": muestras
+        "muestras": muestras_totales
     }
 
-# --- TELEGRAM BOT ---
+# ==========================================
+# COMANDO TELEGRAM
+# ==========================================
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     compra, venta, spread, pct = get_p2p_rates()
     if not compra:
-        await update.message.reply_text("❌ Error al obtener datos de Binance P2P.")
+        await update.message.reply_text("❌ Error al obtener cotizaciones P2P.")
         return
 
     pred = motor_quant_inteligente(compra, venta)
@@ -159,13 +143,15 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Recompra Esperada: <b>{pred['pred_compra_str']}</b>\n"
         f"• Venta Esperada: <b>{pred['pred_venta_str']}</b>\n"
         f"• Dirección: <b>{pred['tendencia']}</b>\n"
-        f"──────────────────\n\n"
+        f"──────────────────\n"
         f"📊 Piso: <b>{pred['piso_str']}</b> | Techo: <b>{pred['techo_str']}</b>\n"
         f"🧠 Base de Datos: <b>{pred['muestras']} Muestras</b>"
     )
     await update.message.reply_text(msg, parse_mode="HTML")
 
-# --- FASTAPI APPS ---
+# ==========================================
+# SERVIDOR FASTAPI
+# ==========================================
 telegram_app = None
 
 @asynccontextmanager
@@ -197,12 +183,11 @@ def get_actual():
 
 @app.get("/api/historial")
 def get_historial(rango: str = "1d"):
-    limite = 24 if rango == "1d" else (168 if rango == "7d" else 720)
-    data = obtener_historial(limite)
-    data.reverse()
-
-    labels = [h[0].split()[1][:5] if " " in str(h[0]) else str(h[0]) for h in data]
-    compras = [h[1] for h in data]
-    ventas = [h[2] for h in data]
+    limite = 24 if rango == "1d" else (168 if rango == "7d" else 500)
+    muestras = MEMORIA_HISTORIAL[-limite:]
+    
+    labels = [m['fecha'].strftime("%H:%M") for m in muestras]
+    compras = [m['compra'] for m in muestras]
+    ventas = [m['venta'] for m in muestras]
 
     return {"labels": labels, "compras": compras, "ventas": ventas}
