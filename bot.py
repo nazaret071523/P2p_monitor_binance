@@ -5,7 +5,6 @@ import threading
 import psycopg2
 import sqlite3
 import numpy as np
-import asyncio
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
@@ -16,16 +15,13 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 PORT = int(os.environ.get("PORT", 10000))
 VET = timezone(timedelta(hours=-4))
 
-SUSCRIPTORES = set()
-ULTIMA_TENDENCIA = "NEUTRA"
-
-# Servidor HTTP para cumplir el Health Check de Render
+# Servidor HTTP para Render Health Check
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        self.wfile.write(b"Venbot P2P Monitor is Live!")
+        self.wfile.write(b"Venbot P2P Monitor Live")
 
 def run_web_server():
     server = HTTPServer(('0.0.0.0', PORT), SimpleHTTPRequestHandler)
@@ -84,7 +80,7 @@ def obtener_historial(horas=24):
     conn.close()
     return rows
 
-def obtener_tasa_real_binance(trade_type, monto="10000"):
+def obtener_tasa_real_binance(trade_type, monto):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {"Content-Type": "application/json"}
     
@@ -106,20 +102,27 @@ def obtener_tasa_real_binance(trade_type, monto="10000"):
             return float(data[0]['adv']['price'])
         return None
     except Exception as e:
-        print(f"Error Binance P2P ({trade_type}): {e}")
+        print(f"Error Binance P2P ({trade_type} {monto}): {e}")
         return None
 
 def get_p2p_rates():
+    # Compra (Recompra) con filtro de 10,000 VES
     tasa_compra = obtener_tasa_real_binance("BUY", "10000")
-    tasa_venta = obtener_tasa_real_binance("SELL", "10000")
+    # Venta con filtro de 300,000 VES
+    tasa_venta = obtener_tasa_real_binance("SELL", "300000")
     
     if not tasa_compra or not tasa_venta:
-        return None, None, None, None
+        return None, None, None, None, None
 
     spread = round(tasa_venta - tasa_compra, 2)
-    ganancia_neta = round(((tasa_venta * 0.9975) - (tasa_compra * 1.0025)) / tasa_compra * 100, 2)
     
-    return tasa_compra, tasa_venta, spread, ganancia_neta
+    # Cálculo directo de ganancia estimada para $1,000 USD sin deducir comisión fija
+    inversion_ves = 1000 * tasa_compra
+    retorno_ves = 1000 * tasa_venta
+    ganancia_1000_ves = round(retorno_ves - inversion_ves, 2)
+    porcentaje_bruto = round((spread / tasa_compra) * 100, 2)
+    
+    return tasa_compra, tasa_venta, spread, ganancia_1000_ves, porcentaje_bruto
 
 def motor_prediccion_7h():
     historial = obtener_historial(24)
@@ -187,7 +190,7 @@ def motor_prediccion_7h():
 def background_monitor():
     while True:
         try:
-            c, v, sp, gn = get_p2p_rates()
+            c, v, sp, g1000, pct = get_p2p_rates()
             if c and v:
                 guardar_lectura(c, v, sp)
         except Exception as e:
@@ -195,8 +198,7 @@ def background_monitor():
         time.sleep(180)
 
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    SUSCRIPTORES.add(update.effective_chat.id)
-    compra, venta, spread, ganancia = get_p2p_rates()
+    compra, venta, spread, ganancia_1000, pct_bruto = get_p2p_rates()
     pred = motor_prediccion_7h()
     
     if not compra:
@@ -208,10 +210,11 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"🤖 **MONITOR P2P REAL (No Verificados)**\n"
         f"⏰ **Hora VE:** {hora_ve}\n"
-        f"🎯 **Filtro:** 10K VES | **Comisión:** 0.50%\n\n"
-        f"🟢 **Precio Real Compra:** {compra:.2f} Bs\n"
-        f"🔴 **Precio Real Recompra/Venta:** {venta:.2f} Bs\n"
-        f"⚡ **Spread Actual:** {spread:.2f} Bs | **Ganancia Neta:** {ganancia:.2f}%\n\n"
+        f"🎯 **Filtros:** Compra (10K VES) | Venta (300K VES)\n\n"
+        f"🟢 **Precio Real Recompra:** {compra:.2f} Bs\n"
+        f"🔴 **Precio Real Venta:** {venta:.2f} Bs\n"
+        f"⚡ **Spread Bruto:** {spread:.2f} Bs ({pct_bruto:.2f}%)\n"
+        f"💵 **Margen Est. ($1,000 USD):** +{ganancia_1000:.2f} Bs\n\n"
         f"🔮 **Proyección Compra (7h):** {pred['pred_compra']}\n"
         f"🔮 **Proyección Venta (7h):** {pred['pred_venta']}\n"
         f"📐 **Brecha Esperada (7h):** {pred['brecha_esperada']}\n"
@@ -225,10 +228,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     init_db()
     
-    # Iniciar Servidor HTTP Web para Render
     threading.Thread(target=run_web_server, daemon=True).start()
-    
-    # Iniciar Monitor de Fondo
     threading.Thread(target=background_monitor, daemon=True).start()
     
     if TELEGRAM_TOKEN:
