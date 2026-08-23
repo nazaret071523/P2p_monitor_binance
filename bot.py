@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import requests
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -8,26 +9,52 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 VET = timezone(timedelta(hours=-4))
+DB_FILE = "p2p_data.db"
 
 # ==========================================
-# MEMORIA PERSISTENTE DE MUESTRAS (EN MEMORIA)
+# BASE DE DATOS LOCAL
 # ==========================================
-MEMORIA_HISTORIAL = []  # Estructura: [{'fecha': ..., 'compra': ..., 'venta': ...}]
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS historial (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            compra REAL,
+            venta REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-def guardar_muestra(compra, venta):
-    global MEMORIA_HISTORIAL
-    fecha_actual = datetime.now(VET)
-    MEMORIA_HISTORIAL.append({
-        'fecha': fecha_actual,
-        'compra': compra,
-        'venta': venta
-    })
-    # Mantenemos un máximo de 500 muestras en memoria
-    if len(MEMORIA_HISTORIAL) > 500:
-        MEMORIA_HISTORIAL.pop(0)
+init_db()
+
+def guardar_muestra_db(compra, venta):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        hora_str = datetime.now(VET).isoformat()
+        cursor.execute("INSERT INTO historial (timestamp, compra, venta) VALUES (?, ?, ?)", (hora_str, compra, venta))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error guardando DB: {e}")
+
+def obtener_estadisticas_db():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT compra, venta FROM historial ORDER BY id ASC")
+        filas = cursor.fetchall()
+        conn.close()
+        return filas
+    except Exception as e:
+        print(f"Error leyendo DB: {e}")
+        return []
 
 # ==========================================
-# OBTECIÓN DE PRECIOS REALES BINANCE P2P
+# LECTURA P2P BINANCE (CORREGIDA)
 # ==========================================
 def get_p2p_rates():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -36,20 +63,22 @@ def get_p2p_rates():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     
-    # Filtro interno de bancos (BBVA=Provincial, Mercantil, BNC)
+    # Filtro interno de bancos (Provincial/BBVA, Mercantil, BNC) sin mostrarlos
     bancos_filtro = ["BBVA", "Mercantil", "BNC"]
 
-    # Consulta Compra USDT (Bloque 10,000 Bs)
+    # En Binance API:
+    # "SELL" muestra anuncios para COMPRAR USDT (Precio mas bajo)
+    # "BUY" muestra anuncios para VENDER USDT (Precio mas alto)
+    
     payload_compra = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "10000",
+        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000",
         "payTypes": bancos_filtro
     }
 
-    # Consulta Venta USDT (Bloque 300,000 Bs)
     payload_venta = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "300000",
+        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000",
         "payTypes": bancos_filtro
     }
 
@@ -63,50 +92,58 @@ def get_p2p_rates():
         if not data_c or not data_v:
             return None, None, None, None
 
-        # Primeras ofertas del libro de ordenes
-        tasa_compra = float(data_c[0]["adv"]["price"])
-        tasa_venta = float(data_v[0]["adv"]["price"])
+        # Extraer precios de las listas
+        precios_compra = [float(item["adv"]["price"]) for item in data_c]
+        precios_venta = [float(item["adv"]["price"]) for item in data_v]
+
+        # Para comprar (10k), tomamos el menor valor disponible
+        tasa_compra = min(precios_compra)
+        # Para vender (300k), tomamos el mayor valor disponible
+        tasa_venta = max(precios_venta)
+
+        # Asegurar margen positivo coherente
+        if tasa_compra >= tasa_venta:
+            tasa_compra, tasa_venta = min(precios_compra[0], precios_venta[0]), max(precios_compra[0], precios_venta[0])
 
         spread = round(tasa_venta - tasa_compra, 2)
         pct_bruto = round((spread / tasa_compra) * 100, 2) if tasa_compra > 0 else 0.0
 
-        guardar_muestra(tasa_compra, tasa_venta)
+        guardar_muestra_db(tasa_compra, tasa_venta)
         return tasa_compra, tasa_venta, spread, pct_bruto
     except Exception as e:
         print(f"Error consultando Binance: {e}")
         return None, None, None, None
 
 # ==========================================
-# MOTOR IA QUANT E HISTORIAL ACCUMULADO
+# CÁLCULOS IA Y BASE DE DATOS
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta):
-    muestras_totales = len(MEMORIA_HISTORIAL)
+    filas = obtener_estadisticas_db()
+    total_muestras = len(filas)
 
-    if muestras_totales <= 1:
-        # Estimación inicial cuando recién inicia
-        piso = actual_compra * 0.995
-        techo = actual_venta * 1.005
-        pred_c = actual_compra * 0.998
-        pred_v = actual_venta * 1.002
+    if total_muestras <= 1:
+        piso = actual_compra
+        techo = actual_venta
+        pred_c = actual_compra * 0.999
+        pred_v = actual_venta * 1.001
         tendencia = "↔️ ESTABLE / LATERAL"
     else:
-        compras = [m['compra'] for m in MEMORIA_HISTORIAL]
-        ventas = [m['venta'] for m in MEMORIA_HISTORIAL]
+        compras = [f[0] for f in filas]
+        ventas = [f[1] for f in filas]
 
         piso = min(compras)
         techo = max(ventas)
 
-        media_c = sum(compras) / muestras_totales
-        media_v = sum(ventas) / muestras_totales
+        media_c = sum(compras) / total_muestras
+        media_v = sum(ventas) / total_muestras
 
-        # Algoritmo de ponderación (65% precio actual, 35% tendencia histórica)
-        pred_c = (actual_compra * 0.65) + (media_c * 0.35)
-        pred_v = (actual_venta * 0.65) + (media_v * 0.35)
+        pred_c = (actual_compra * 0.70) + (media_c * 0.30)
+        pred_v = (actual_venta * 0.70) + (media_v * 0.30)
 
         diff = compras[-1] - compras[0]
-        if diff > 0.30:
+        if diff > 0.20:
             tendencia = "🚀 ALCISTA"
-        elif diff < -0.30:
+        elif diff < -0.20:
             tendencia = "🔻 BAJISTA"
         else:
             tendencia = "↔️ ESTABLE / LATERAL"
@@ -117,7 +154,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "tendencia": tendencia,
         "piso_str": f"{piso:.2f} Bs",
         "techo_str": f"{techo:.2f} Bs",
-        "muestras": muestras_totales
+        "muestras": total_muestras
     }
 
 # ==========================================
@@ -126,7 +163,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     compra, venta, spread, pct = get_p2p_rates()
     if not compra:
-        await update.message.reply_text("❌ Error al obtener cotizaciones P2P.")
+        await update.message.reply_text("❌ Error al consultar la API de Binance.")
         return
 
     pred = motor_quant_inteligente(compra, venta)
@@ -182,12 +219,8 @@ def get_actual():
     return {"compra": compra, "venta": venta, "spread": spread, "pct_bruto": pct, "pred": pred}
 
 @app.get("/api/historial")
-def get_historial(rango: str = "1d"):
-    limite = 24 if rango == "1d" else (168 if rango == "7d" else 500)
-    muestras = MEMORIA_HISTORIAL[-limite:]
-    
-    labels = [m['fecha'].strftime("%H:%M") for m in muestras]
-    compras = [m['compra'] for m in muestras]
-    ventas = [m['venta'] for m in muestras]
-
-    return {"labels": labels, "compras": compras, "ventas": ventas}
+def get_historial():
+    filas = obtener_estadisticas_db()
+    compras = [f[0] for f in filas]
+    ventas = [f[1] for f in filas]
+    return {"compras": compras, "ventas": ventas, "total": len(filas)}
