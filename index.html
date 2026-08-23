@@ -18,7 +18,7 @@
         <span id="status-tag" class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-900 text-emerald-300 font-bold tracking-wide">EN VIVO</span>
     </div>
 
-    <!-- Banner Hora Oficial y Filtro en Grid Compacto -->
+    <!-- Banner Hora Oficial y Filtro -->
     <div class="grid grid-cols-1 gap-1.5">
         <div class="bg-slate-800 text-center py-1.5 rounded-lg text-xs text-slate-300 border border-slate-700">
             🇻🇪 Hora Oficial VE: <span id="hora-ve" class="font-bold text-white">--:--:--</span>
@@ -28,7 +28,7 @@
         </div>
     </div>
 
-    <!-- Métricas Principales (Grid Ajustado) -->
+    <!-- Métricas Principales -->
     <div class="grid grid-cols-3 gap-2">
         <div class="card text-center py-2 px-1">
             <p class="text-[9px] text-slate-400 font-bold tracking-wider uppercase mb-1">COMPRA</p>
@@ -46,7 +46,6 @@
 
     <!-- Tarjeta Predicción ML + Tendencia Integrada -->
     <div class="card border-purple-500/40 bg-slate-900/90 space-y-3">
-        <!-- Encabezado de la Tarjeta -->
         <div class="flex justify-between items-center border-b border-slate-800 pb-2">
             <div>
                 <span class="text-[10px] font-bold text-purple-400 block uppercase tracking-wider">PREDICCIÓN ML</span>
@@ -58,16 +57,28 @@
             </div>
         </div>
 
-        <!-- Precio Central -->
         <div class="text-center py-1">
             <div class="text-3xl font-black text-white tracking-tight" id="ml-precio">0.00 Bs</div>
         </div>
 
-        <!-- Piso y Techo -->
         <div class="flex justify-between text-xs pt-2 border-t border-slate-800/80">
             <span class="text-emerald-400 font-semibold text-[11px]">🟢 Piso: <span id="ml-piso">0.00 Bs</span></span>
             <span class="text-rose-400 font-semibold text-[11px]">🔴 Techo: <span id="ml-techo">0.00 Bs</span></span>
         </div>
+    </div>
+
+    <!-- MÓDULO ASISTENTE ANALISTA IA -->
+    <div class="card border-cyan-500/30 bg-slate-900/50 space-y-2">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
+            <span class="text-[11px] font-bold text-cyan-400 flex items-center gap-1">🤖 ASISTENTE ANALISTA P2P</span>
+            <span class="text-[9px] text-slate-500">Auto-Evaluación</span>
+        </div>
+        <p id="ai-response" class="text-xs text-slate-300 leading-relaxed italic">
+            Analizando condiciones del mercado en tiempo real...
+        </p>
+        <p class="text-[9px] text-slate-500 pt-1 border-t border-slate-800/50">
+            ⚠️ Disclaimer: Análisis informativo basado en spread y tendencia actual. No representa asesoría financiera.
+        </p>
     </div>
 
     <!-- Espacio Reservado para la Gráfica -->
@@ -86,27 +97,52 @@
         }
         setInterval(actualizarHora, 1000);
 
+        function generarRecomendacionIA(compra, venta, spread, tendencia) {
+            let mensaje = "";
+            
+            if (spread < 5) {
+                mensaje = "💡 **Mercado apretado:** El spread bruto es muy bajo (" + spread.toFixed(2) + " Bs). No se recomienda operar volumen alto en este momento salvo que trabajes con comisiones mínimas.";
+            } else if (tendencia.includes("ALCISTA")) {
+                mensaje = "🚀 **Tendencia Alcista:** Se detecta presión al alza. Priorizar posicionar anuncios de **COMPRA** rápidamente para capturar inventario antes de un ajuste superior de precio.";
+            } else if (tendencia.includes("BAJISTA")) {
+                mensaje = "📉 **Tendencia Bajista:** Precaución al acumular inventario USDT. Prioriza la **VENTA** rápida para proteger el capital en bolívares.";
+            } else {
+                mensaje = "⚖️ **Mercado Lateral:** Buen momento para arbitraje regular. Con un spread de " + spread.toFixed(2) + " Bs, puedes colocar órdenes en el **PISO** (" + compra.toFixed(2) + " Bs) para recomprar en el **TECHO**.";
+            }
+
+            document.getElementById("ai-response").innerText = mensaje;
+        }
+
         async function cargarDatos() {
             try {
                 const res = await fetch(API_URL);
                 const data = await res.json();
 
-                // Precios
-                document.getElementById("precio-compra").innerText = (data.compra || 0).toFixed(2) + " Bs";
-                document.getElementById("precio-venta").innerText = (data.venta || 0).toFixed(2) + " Bs";
-                document.getElementById("spread-bruto").innerText = (data.spread || 0).toFixed(2) + " Bs";
+                const compra = data.compra || 0;
+                const venta = data.venta || 0;
+                const spread = data.spread || 0;
+
+                // Actualizar métricas
+                document.getElementById("precio-compra").innerText = compra.toFixed(2) + " Bs";
+                document.getElementById("precio-venta").innerText = venta.toFixed(2) + " Bs";
+                document.getElementById("spread-bruto").innerText = spread.toFixed(2) + " Bs";
 
                 // ML y Tendencia
                 const ml = data.ml_prediccion || {};
+                const tendenciaActual = data.tendencia || ml.tendencia || "ESTABLE / LATERAL";
+                
                 document.getElementById("ml-precio").innerText = (data.prediccion || ml.precio || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-piso").innerText = (data.piso || ml.piso || 0).toFixed(2) + " Bs";
                 document.getElementById("ml-techo").innerText = (data.techo || ml.techo || 0).toFixed(2) + " Bs";
-                document.getElementById("ml-tendencia").innerText = data.tendencia || ml.tendencia || "ESTABLE";
+                document.getElementById("ml-tendencia").innerText = tendenciaActual;
                 document.getElementById("ml-hora").innerText = ml.hora || "+7h";
 
                 // Status
                 document.getElementById("status-tag").innerText = "EN VIVO";
                 document.getElementById("status-tag").className = "px-2 py-0.5 text-[10px] rounded-full bg-emerald-900 text-emerald-300 font-bold tracking-wide";
+
+                // Ejecutar motor de análisis
+                generarRecomendacionIA(compra, venta, spread, tendenciaActual);
 
             } catch (err) {
                 document.getElementById("status-tag").innerText = "RECONECTANDO";
