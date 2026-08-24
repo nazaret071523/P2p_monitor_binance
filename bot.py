@@ -235,7 +235,8 @@ async def lifespan(app_fastapi: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-@app.get("/")
+# ACEPTA TANTO GET COMO HEAD PARA UPTIMEROBOT GRATUITO
+@app.api_route("/", methods=["GET", "HEAD"])
 def home():
     return {"status": "ok", "message": "Venbot P2P Activo"}
 
