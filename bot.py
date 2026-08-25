@@ -2,6 +2,7 @@ import os
 import asyncio
 import psycopg2
 import requests
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -42,26 +43,35 @@ def init_db():
 init_db()
 
 def guardar_muestra_db(compra, venta):
+    """Guarda muestras y mantiene una ventana deslizante estricta de 2000 registros"""
     conn = get_db_connection()
     if conn:
         try:
             hora_str = datetime.now(VET).isoformat()
             with conn.cursor() as cursor:
+                # 1. Insertar nueva muestra
                 cursor.execute(
                     "INSERT INTO historial (timestamp, compra, venta) VALUES (%s, %s, %s);",
                     (hora_str, compra, venta)
                 )
+                # 2. Mantener la ventana deslizante (Borrar si supera 2000 filas)
+                cursor.execute('''
+                    DELETE FROM historial 
+                    WHERE id NOT IN (
+                        SELECT id FROM historial ORDER BY id DESC LIMIT 2000
+                    );
+                ''')
                 conn.commit()
             conn.close()
         except Exception as e:
-            print(f"Error guardando DB: {e}")
+            print(f"Error guardando en DB: {e}")
 
-def obtener_estadisticas_db():
+def obtener_estadisticas_db(limit=2000):
     conn = get_db_connection()
     if conn:
         try:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT compra, venta FROM historial ORDER BY id ASC;")
+                cursor.execute("SELECT compra, venta FROM historial ORDER BY id ASC LIMIT %s;", (limit,))
                 filas = cursor.fetchall()
             conn.close()
             return filas
@@ -73,7 +83,8 @@ def obtener_estadisticas_db():
 # ==========================================
 # LECTURA P2P BINANCE
 # ==========================================
-def get_p2p_rates():
+def fetch_binance_p2p():
+    """Consulta rápida a Binance P2P sin escribir en la DB"""
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
         "Content-Type": "application/json",
@@ -114,45 +125,71 @@ def get_p2p_rates():
         spread = round(tasa_venta - tasa_compra, 2)
         pct_bruto = round((spread / tasa_compra) * 100, 2) if tasa_compra > 0 else 0.0
 
-        guardar_muestra_db(tasa_compra, tasa_venta)
         return tasa_compra, tasa_venta, spread, pct_bruto
     except Exception as e:
         print(f"Error consultando Binance: {e}")
         return None, None, None, None
 
 # ==========================================
-# CÁLCULOS IA Y PREDICCIÓN
+# MOTOR QUANT DE ALTA PRECISIÓN + IA
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta):
     filas = obtener_estadisticas_db()
     total_muestras = len(filas)
 
-    if total_muestras <= 1:
-        piso = actual_compra
-        techo = actual_venta
-        pred_c = actual_compra * 0.999
-        pred_v = actual_venta * 1.001
-        tendencia = "➖ ESTABLE / LATERAL"
+    if total_muestras < 10:
+        # Fallback para arranques limpios
+        return {
+            "pred_compra_str": f"{actual_compra * 0.999:.2f} Bs",
+            "pred_venta_str": f"{actual_venta * 1.001:.2f} Bs",
+            "tendencia": "➖ ESTABLE / LATERAL",
+            "piso_str": f"{actual_compra:.2f} Bs",
+            "techo_str": f"{actual_venta:.2f} Bs",
+            "muestras": total_muestras
+        }
+
+    compras = np.array([f[0] for f in filas])
+    ventas = np.array([f[1] for f in filas])
+
+    piso = np.min(compras)
+    techo = np.max(ventas)
+
+    # 1. MEDIA MÓVIL EXPONENCIAL (EMA-12) PARA RECHAZAR RUIDO
+    alpha = 2 / (12 + 1)
+    ema_c = compras[0]
+    ema_v = ventas[0]
+    for i in range(1, total_muestras):
+        ema_c = (compras[i] * alpha) + (ema_c * (1 - alpha))
+        ema_v = (ventas[i] * alpha) + (ema_v * (1 - alpha))
+
+    # 2. CÁLCULO DE LA TENDENCIA Y VECTOR DE INERCIA (Últimas 30 muestras)
+    ventana_reciente = min(total_muestras, 30)
+    x = np.arange(ventana_reciente)
+    y_c = compras[-ventana_reciente:]
+    
+    # Pendiente por regresión lineal (Slope)
+    slope_c, _ = np.polyfit(x, y_c, 1)
+
+    # 3. PROYECCIÓN A +7 HORAS (84 períodos de 5 min)
+    pasos_7h = 84
+    
+    # Factor de amortiguación (Damping factor) para evitar proyecciones desmedidas
+    factor_amortiguacion = 0.35 
+    delta_proyectado = slope_c * pasos_7h * factor_amortiguacion
+
+    pred_c = actual_compra + delta_proyectado
+    
+    # El spread esperado proyectado mantiene la correlación histórica
+    spread_historico_promedio = np.mean(ventas - compras)
+    pred_v = pred_c + spread_historico_promedio
+
+    # 4. CLASIFICACIÓN DE DIRECCIÓN
+    if slope_c > 0.015:
+        tendencia = "🚀 ALCISTA"
+    elif slope_c < -0.015:
+        tendencia = "🔻 BAJISTA"
     else:
-        compras = [f[0] for f in filas]
-        ventas = [f[1] for f in filas]
-
-        piso = min(compras)
-        techo = max(ventas)
-
-        media_c = sum(compras) / total_muestras
-        media_v = sum(ventas) / total_muestras
-
-        pred_c = (actual_compra * 0.70) + (media_c * 0.30)
-        pred_v = (actual_venta * 0.70) + (media_v * 0.30)
-
-        diff = compras[-1] - compras[0]
-        if diff > 0.20:
-            tendencia = "🚀 ALCISTA"
-        elif diff < -0.20:
-            tendencia = "🔻 BAJISTA"
-        else:
-            tendencia = "➖ ESTABLE / LATERAL"
+        tendencia = "➖ ESTABLE / LATERAL"
 
     return {
         "pred_compra_str": f"{pred_c:.2f} Bs",
@@ -164,25 +201,26 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     }
 
 # ==========================================
-# RECOLECCIÓN AUTOMÁTICA
+# RECOLECCIÓN AUTOMÁTICA (Única fuente de escritura)
 # ==========================================
 async def tarea_recoleccion_automatica():
     while True:
         try:
-            compra, venta, _, _ = get_p2p_rates()
+            compra, venta, _, _ = fetch_binance_p2p()
             if compra and venta:
-                print(f"[{datetime.now(VET).strftime('%I:%M %p')}] Muestra automática guardada: Compra {compra} | Venta {venta}")
+                guardar_muestra_db(compra, venta)
+                print(f"[{datetime.now(VET).strftime('%I:%M %p')}] Muestra guardada (Ventana Max 2000): Compra {compra} | Venta {venta}")
         except Exception as e:
             print(f"Error en recolección automática: {e}")
         
-        # Espera 300 segundos (5 minutos) entre capturas
+        # Espera 5 minutos entre capturas
         await asyncio.sleep(300)
 
 # ==========================================
 # COMANDO TELEGRAM
 # ==========================================
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    compra, venta, spread, pct = get_p2p_rates()
+    compra, venta, spread, pct = fetch_binance_p2p()
     if not compra:
         await update.message.reply_text("❌ Error al consultar la API de Binance.")
         return
@@ -235,14 +273,13 @@ async def lifespan(app_fastapi: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# ACEPTA TANTO GET COMO HEAD PARA UPTIMEROBOT GRATUITO
 @app.api_route("/", methods=["GET", "HEAD"])
 def home():
     return {"status": "ok", "message": "Venbot P2P Activo"}
 
 @app.get("/api/actual")
 def get_actual():
-    compra, venta, spread, pct = get_p2p_rates()
+    compra, venta, spread, pct = fetch_binance_p2p()
     if not compra:
         return {"error": "Sin datos"}
     pred = motor_quant_inteligente(compra, venta)
