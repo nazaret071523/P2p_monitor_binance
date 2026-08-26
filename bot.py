@@ -28,6 +28,33 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # ==========================================
+# AUTODESCUBRIMIENTO AUTÓNOMO DE MODELOS IA
+# ==========================================
+def obtener_modelo_gemini_activo() -> str:
+    """Consulta de forma autónoma los modelos disponibles para usar siempre el Flash más reciente."""
+    modelo_por_defecto = "gemini-2.5-flash"
+    if not gemini_client:
+        return modelo_por_defecto
+    try:
+        models_pager = gemini_client.models.list()
+        candidatos = []
+        for m in models_pager:
+            nombre = getattr(m, "name", "")
+            # Limpiar prefijos comunes devueltos por la API (ej. 'models/')
+            if nombre.startswith("models/"):
+                nombre = nombre.replace("models/", "", 1)
+            if "flash" in nombre.lower():
+                candidatos.append(nombre)
+        
+        if candidatos:
+            # Ordenar para priorizar variantes estables o superiores disponibles
+            candidatos.sort(reverse=True)
+            return candidatos[0]
+    except Exception as e:
+        print(f"Aviso en autodescubrimiento de modelo: {e}. Usando respaldo predeterminado.")
+    return modelo_por_defecto
+
+# ==========================================
 # SCRAPING / OBTENCIÓN TASAS BCV Y EURO EN VIVO
 # ==========================================
 def obtener_tasas_oficiales_bcv():
@@ -249,9 +276,11 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         }}
         """
 
-        # MODELO ACTUALIZADO Y CORREGIDO PARA EVITAR EL ERROR 404
+        # OBTENCIÓN DINÁMICA DEL MODELO ACTIVO (AUTONOMÍA TOTAL)
+        modelo_activo = obtener_modelo_gemini_activo()
+
         response = gemini_client.models.generate_content(
-            model='gemini-3.5-flash',
+            model=modelo_activo,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
