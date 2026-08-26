@@ -101,23 +101,14 @@ def fetch_binance_p2p():
     }
     bancos_filtro = ["BBVA", "Mercantil", "BNC"]
 
-    # Payloads estandarizados para coincidir con la punta de mercado de la Web
     payload_compra = {
-        "asset": "USDT", 
-        "fiat": "VES", 
-        "merchantCheck": False,
-        "page": 1, 
-        "rows": 10, 
-        "tradeType": "SELL",
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000",
         "payTypes": bancos_filtro
     }
     payload_venta = {
-        "asset": "USDT", 
-        "fiat": "VES", 
-        "merchantCheck": False,
-        "page": 1, 
-        "rows": 10, 
-        "tradeType": "BUY",
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000",
         "payTypes": bancos_filtro
     }
 
@@ -323,8 +314,8 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"🦜 <b>VENBOT PREDICCIONES</b>\n"
         f"🕒 ({hora_ve}) | BLOQUE 4\n"
-        f"🟢 <b>COMPRA:</b> {compra:.2f} Bs\n"
-        f"🔴 <b>VENTA:</b> {venta:.2f} Bs\n"
+        f"🟢 <b>COMPRA (10k):</b> {compra:.2f} Bs\n"
+        f"🔴 <b>VENTA (300k):</b> {venta:.2f} Bs\n"
         f"⚡ <b>MARGEN:</b> {spread:.2f} Bs ({pct:.2f}%)\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🔮 <b>PROYECCIÓN +7H (IA QUANT)</b>\n"
