@@ -273,7 +273,6 @@
   </div>
 
   <script>
-    // Conexión principal con Render con rutas de respaldo
     const API_BASE_URL = "https://p2p-monitor-binance.onrender.com";
 
     let RATES = { buy: 0, sell: 0, bcv: 0, euro: 0 };
@@ -305,10 +304,11 @@
 
           const data = await response.json();
           
-          const buyVal = data.buy_price || data.compra || data.buy || data.p2p_buy;
-          const sellVal = data.sell_price || data.venta || data.sell || data.p2p_sell;
-          const bcvVal = data.bcv_price || data.bcv || data.bcv_rate;
-          const euroVal = data.euro_price || data.euro || data.euro_rate;
+          // Compatibilidad total con los nombres de llaves del backend
+          const buyVal = data.buy || data.compra || data.buy_price || data.precio_compra || data.p2p_buy;
+          const sellVal = data.sell || data.venta || data.sell_price || data.precio_venta || data.p2p_sell;
+          const bcvVal = data.bcv || data.bcv_rate || data.tasa_bcv || data.bcv_price;
+          const euroVal = data.euro || data.euro_rate || data.tasa_euro || data.euro_price;
 
           if (buyVal) RATES.buy = parseFloat(buyVal);
           if (sellVal) RATES.sell = parseFloat(sellVal);
@@ -326,7 +326,7 @@
             break;
           }
         } catch (err) {
-          // Intenta con el siguiente endpoint alternativo de la API
+          // Continúa con el siguiente endpoint de respaldo
         }
       }
 
