@@ -16,14 +16,11 @@
     .glass-card{background:rgba(15,23,42,.86);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.08)}
     .focus-ring:focus-visible{outline:2px solid rgb(52 211 153);outline-offset:2px}
     .tabular{font-variant-numeric:tabular-nums}
-    .modal-backdrop{background:rgba(0,0,0,.78);backdrop-filter:blur(10px)}
     .fade-up{animation:fadeUp .22s ease-out}
     @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
     @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.fade-up{animation:none}}
     .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
     .ad-label{letter-spacing:.12em}
-    .ai-chat{background:rgba(3,7,18,.98);border:1px solid rgba(52,211,153,.24);box-shadow:0 24px 70px rgba(0,0,0,.55)}
-    .ai-fab{box-shadow:0 12px 32px rgba(16,185,129,.26)}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
     
     .bottom-nav {
@@ -66,7 +63,7 @@
             <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
           </div>
         </div>
-        <button type="button" onclick="openLoginModal()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
+        <button type="button" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
           <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
         </button>
       </div>
@@ -80,9 +77,9 @@
             <i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>
           </span>
           <span class="text-slate-700">•</span>
-          <button type="button" onclick="openSourceModal()" class="focus-ring">Fuente: <strong class="text-slate-300">Binance Mercado P2P</strong></button>
+          <span>Fuente: <strong class="text-slate-300">Binance Mercado P2P</strong></span>
         </div>
-        <button type="button" onclick="openCommunityModal()" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></button>
+        <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
       </div>
     </div>
 
@@ -97,7 +94,7 @@
           </div>
           <div class="flex items-center gap-2 text-[10px] text-slate-500">
             <span>Valores informativos</span>
-            <button type="button" onclick="openSourceModal()" class="focus-ring text-slate-400 hover:text-white" title="Información"><i class="fa-regular fa-circle-question"></i></button>
+            <i class="fa-regular fa-circle-question text-slate-400"></i>
           </div>
         </div>
 
@@ -247,11 +244,6 @@
             <strong id="m4-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong>
           </div>
         </div>
-
-        <div class="border-t border-slate-800/80 pt-3 flex items-center justify-between text-[10px] text-slate-500">
-          <span>Procesado dinámicamente con tecnología Google Gemini. No constituye asesoramiento financiero.</span>
-          <button type="button" onclick="openAIChat()" class="text-emerald-400 font-bold hover:underline">Hacer una pregunta a Gemini →</button>
-        </div>
       </section>
 
     </main>
@@ -271,7 +263,7 @@
           <i class="fa-solid fa-wand-magic-sparkles text-base mb-1"></i>
           <span class="text-[10px] font-bold">Gemini IA</span>
         </button>
-        <button type="button" onclick="setActiveNav('comunidad', 'sec-comunidad')" id="nav-comunidad" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
+        <button type="button" onclick="setActiveNav('comunidad', 'sec-mercado')" id="nav-comunidad" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
           <i class="fa-brands fa-telegram text-base mb-1"></i>
           <span class="text-[10px] font-bold">Comunidad</span>
         </button>
@@ -281,10 +273,9 @@
   </div>
 
   <script>
-    // Endpoint principal del backend (Asegúrate de que esta ruta responda en Render/FastAPI)
-    const API_ENDPOINT = "/api/v1/p2p-rates";
+    // ⚠️ REEMPLAZA ESTA URL CON TU ENLACE REAL DE RENDER ⚠️
+    const API_ENDPOINT = "https://tu-servicio-en-render.onrender.com/api/v1/p2p-rates";
 
-    // Variables globales
     let RATES = { buy: 945.25, sell: 956.00, bcv: 898.50, euro: 1050.00 };
     let secondsAgo = 0;
     let marketChart = null;
@@ -294,7 +285,6 @@
       return val.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    // Petición asíncrona con mapeo robusto de respuestas JSON
     async function fetchRealTimeData() {
       const syncStatus = document.getElementById('sync-status');
       try {
@@ -302,7 +292,6 @@
         if (!response.ok) throw new Error("HTTP error " + response.status);
         const data = await response.json();
         
-        // Mapeo flexible para prevenir errores si cambian las llaves del backend
         const buyVal = data.buy_price || data.compra || data.buy;
         const sellVal = data.sell_price || data.venta || data.sell;
         const bcvVal = data.bcv_price || data.bcv;
@@ -319,7 +308,7 @@
           syncStatus.innerHTML = `<i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>`;
         }
       } catch (err) {
-        console.warn("API inaccesible o error de CORS. Reintentando...", err);
+        console.warn("API inaccesible. Reintentando...", err);
         if(syncStatus) {
           syncStatus.className = "inline-flex items-center gap-1.5 text-amber-400 font-semibold";
           syncStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Reintentando transmisión...`;
@@ -503,7 +492,6 @@
         if(el) el.innerText = `hace ${secondsAgo} s`;
       }, 1000);
 
-      // Polling cada 10 segundos para mayor sincronización con el bot
       setInterval(fetchRealTimeData, 10000);
     }
 
