@@ -11,8 +11,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 
 from google import genai
 from google.genai import types
@@ -40,14 +38,12 @@ def obtener_modelo_gemini_activo() -> str:
         candidatos = []
         for m in models_pager:
             nombre = getattr(m, "name", "")
-            # Limpiar prefijos comunes devueltos por la API (ej. 'models/')
             if nombre.startswith("models/"):
                 nombre = nombre.replace("models/", "", 1)
             if "flash" in nombre.lower():
                 candidatos.append(nombre)
         
         if candidatos:
-            # Ordenar para priorizar variantes estables o superiores disponibles
             candidatos.sort(reverse=True)
             return candidatos[0]
     except Exception as e:
@@ -276,7 +272,6 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         }}
         """
 
-        # OBTENCIÓN DINÁMICA DEL MODELO ACTIVO (AUTONOMÍA TOTAL)
         modelo_activo = obtener_modelo_gemini_activo()
 
         response = gemini_client.models.generate_content(
@@ -374,57 +369,12 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# COMANDO TELEGRAM
-# ==========================================
-async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-    if not compra:
-        await update.message.reply_text("❌ Error al consultar Binance P2P.")
-        return
-
-    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-    hora_ve = datetime.now(VET).strftime("%I:%M %p")
-
-    msg = (
-        f"🦜 <b>VENBOT PREDICCIONES</b>\n"
-        f"🕒 ({hora_ve}) | BLOQUE 4\n"
-        f"🟢 <b>COMPRA (10k):</b> {compra:.2f} Bs\n"
-        f"🔴 <b>VENTA (300k):</b> {venta:.2f} Bs\n"
-        f"⚡ <b>MARGEN:</b> {spread:.2f} Bs ({pct:.2f}%)\n"
-        f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🔮 <b>PROYECCIÓN +7H (IA QUANT)</b>\n"
-        f"🟢 Recompra Esperada: <b>{pred['pred_compra_str']}</b>\n"
-        f"🔴 Venta Esperada: <b>{pred['pred_venta_str']}</b>\n"
-        f"🎯 Dirección: <b>{pred['tendencia']}</b>\n"
-        f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"📊 Piso: <b>{pred['piso_str']}</b> | Techo: <b>{pred['techo_str']}</b>\n"
-        f"💾 Base de Datos: <b>{pred['muestras']} Muestras</b>"
-    )
-    await update.message.reply_text(msg, parse_mode="HTML")
-
-# ==========================================
 # SERVIDOR FASTAPI Y ENDPOINTS ASÍNCRONOS
 # ==========================================
-telegram_app = None
-
 @asynccontextmanager
 async def lifespan(app_fastapi: FastAPI):
-    global telegram_app
-    token = os.getenv("TELEGRAM_TOKEN", "").strip()
-    
     asyncio.create_task(tarea_recoleccion_automatica())
-    
-    if token:
-        telegram_app = Application.builder().token(token).build()
-        telegram_app.add_handler(CommandHandler("prediccion", prediccion_cmd))
-        await telegram_app.initialize()
-        await telegram_app.start()
-        await telegram_app.updater.start_polling()
     yield
-    if telegram_app:
-        await telegram_app.updater.stop()
-        await telegram_app.stop()
-        await telegram_app.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 
