@@ -12,7 +12,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# SDK Oficial de Gemini
 from google import genai
 from google.genai import types
 
@@ -91,7 +90,7 @@ def obtener_estadisticas_db(limit=2000):
     return []
 
 # ==========================================
-# LECTURA P2P BINANCE (REFERENCIAS BANCARIAS)
+# LECTURA P2P BINANCE (CON FILTROS EXPLICITOS)
 # ==========================================
 def fetch_binance_p2p():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -144,7 +143,7 @@ def fetch_binance_p2p():
         return None, None, None, None
 
 # ==========================================
-# GEMINI IA - ANÁLISIS COHERENTE FRONTEND Y BOT
+# GEMINI IA - ANÁLISIS COHERENTE
 # ==========================================
 def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
     if not gemini_client:
@@ -300,7 +299,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# COMANDO TELEGRAM (ESTRUCTURA EXACTA ORIGINAL)
+# COMANDO TELEGRAM
 # ==========================================
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
@@ -329,7 +328,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==========================================
-# SERVIDOR FASTAPI Y CSS FRONTEND
+# SERVIDOR FASTAPI Y ENDPOINTS SIN CACHÉ
 # ==========================================
 telegram_app = None
 
@@ -403,11 +402,7 @@ def get_actual():
     if not compra:
         return JSONResponse(
             content={"error": "Sin datos"},
-            headers={
-                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                "Pragma": "no-cache",
-                "Expires": "0"
-            }
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
         )
     pred = motor_quant_inteligente(compra, venta)
     data = {
@@ -415,16 +410,13 @@ def get_actual():
         "venta": venta, 
         "spread": spread, 
         "pct_bruto": pct, 
+        "diferencia": spread,
         "bcv": 898.50,
         "prediccion": pred
     }
     return JSONResponse(
         content=data,
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0"
-        }
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
 
 @app.get("/api/historico")
@@ -439,11 +431,7 @@ def get_historico(periodo: str = "1d"):
         resultado.append({"hora": hora_f, "compra": f[0], "venta": f[1]})
     return JSONResponse(
         content=resultado,
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0"
-        }
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
 
 @app.post("/api/chat")
@@ -471,9 +459,5 @@ def get_historial():
     ventas = [f[1] for f in filas]
     return JSONResponse(
         content={"compras": compras, "ventas": ventas, "total": len(filas)},
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0"
-        }
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
