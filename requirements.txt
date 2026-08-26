@@ -5,3 +5,4 @@ psycopg2-binary
 requests
 numpy
 google-genai
+beautifulsoup4
