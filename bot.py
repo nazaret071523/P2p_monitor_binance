@@ -4,6 +4,8 @@ import psycopg2
 import requests
 import json
 import numpy as np
+import urllib3
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body
@@ -15,12 +17,54 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from google import genai
 from google.genai import types
 
+# Deshabilitar advertencias SSL en caso de fluctuaciones en el certificado del BCV
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # Configuración de zona horaria Venezuela
 VET = timezone(timedelta(hours=-4))
 DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+# ==========================================
+# SCRAPING / OBTENCIÓN TASAS BCV Y EURO EN VIVO
+# ==========================================
+def obtener_tasas_oficiales_bcv():
+    usd_bcv = 898.50
+    eur_bcv = 1050.00
+    
+    # 1. Intento por scraping directo al BCV
+    try:
+        url = "https://www.bcv.org.ve/"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, headers=headers, verify=False, timeout=4)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            usd_elem = soup.find('div', {'id': 'dolar'})
+            if usd_elem:
+                val = usd_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
+                usd_bcv = float(val)
+
+            eur_elem = soup.find('div', {'id': 'euro'})
+            if eur_elem:
+                val = eur_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
+                eur_bcv = float(val)
+                
+            return usd_bcv, eur_bcv
+    except Exception as e:
+        print(f"Error consultando sitio oficial BCV: {e}")
+
+    # 2. Respaldo vía CDN pública libre de CORS si la web principal falla
+    try:
+        res_backup = requests.get("https://rates.dolarvzla.com/bcv/current.json", timeout=3).json()
+        usd_bcv = float(res_backup.get("current", {}).get("usd", usd_bcv))
+        eur_bcv = float(res_backup.get("current", {}).get("eur", eur_bcv))
+    except Exception as e:
+        print(f"Error consultando API respaldo BCV: {e}")
+
+    return usd_bcv, eur_bcv
 
 # ==========================================
 # BASE DE DATOS POSTGRESQL (SUPABASE)
@@ -374,6 +418,8 @@ async def event_stream():
         while True:
             try:
                 compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+                usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
+                
                 if not compra:
                     compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
 
@@ -385,7 +431,8 @@ async def event_stream():
                     "diferencia": spread,
                     "buy_price": compra,
                     "sell_price": venta,
-                    "bcv": 898.50,
+                    "bcv": usd_bcv,
+                    "euro": eur_bcv,
                     "status": "connected"
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
@@ -404,14 +451,16 @@ async def event_stream():
 @app.get("/api/v1/p2p-rates")
 async def get_p2p_rates_v1():
     compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
+    
     if not compra:
         compra, venta = 945.25, 956.00
     
     data = {
         "buy_price": compra,
         "sell_price": venta,
-        "bcv_price": 898.50,
-        "euro_price": 1050.00
+        "bcv_price": usd_bcv,
+        "euro_price": eur_bcv
     }
     return JSONResponse(
         content=data,
@@ -452,6 +501,8 @@ async def get_custom_css():
 @app.get("/api/actual")
 async def get_actual():
     compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
+    
     if not compra:
         return JSONResponse(
             content={"error": "Sin datos"},
@@ -464,7 +515,8 @@ async def get_actual():
         "spread": spread, 
         "pct_bruto": pct, 
         "diferencia": spread,
-        "bcv": 898.50,
+        "bcv": usd_bcv,
+        "euro": eur_bcv,
         "prediccion": pred
     }
     return JSONResponse(
