@@ -273,8 +273,8 @@
   </div>
 
   <script>
-    // ⚠️ REEMPLAZA ESTA URL CON TU ENLACE REAL DE RENDER ⚠️
-    const API_ENDPOINT = "https://tu-servicio-en-render.onrender.com/api/v1/p2p-rates";
+    // Conexión principal con Render con rutas de respaldo
+    const API_BASE_URL = "https://p2p-monitor-binance.onrender.com";
 
     let RATES = { buy: 945.25, sell: 956.00, bcv: 898.50, euro: 1050.00 };
     let secondsAgo = 0;
@@ -282,40 +282,56 @@
     let currentAIMode = 1;
 
     function formatVE(val) {
-      return val.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return (val || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
     async function fetchRealTimeData() {
       const syncStatus = document.getElementById('sync-status');
-      try {
-        const response = await fetch(API_ENDPOINT, { cache: 'no-store' });
-        if (!response.ok) throw new Error("HTTP error " + response.status);
-        const data = await response.json();
-        
-        const buyVal = data.buy_price || data.compra || data.buy;
-        const sellVal = data.sell_price || data.venta || data.sell;
-        const bcvVal = data.bcv_price || data.bcv;
-        const euroVal = data.euro_price || data.euro;
+      
+      const endpoints = [
+        `${API_BASE_URL}/api/actual`,
+        `${API_BASE_URL}/api/v1/p2p-rates`,
+        `${API_BASE_URL}/rates`
+      ];
 
-        if (buyVal) RATES.buy = parseFloat(buyVal);
-        if (sellVal) RATES.sell = parseFloat(sellVal);
-        if (bcvVal) RATES.bcv = parseFloat(bcvVal);
-        if (euroVal) RATES.euro = parseFloat(euroVal);
+      let success = false;
 
-        secondsAgo = 0;
-        if(syncStatus) {
-          syncStatus.className = "inline-flex items-center gap-1.5 text-emerald-400 font-semibold";
-          syncStatus.innerHTML = `<i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>`;
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(endpoint, { cache: 'no-store' });
+          if (!response.ok) continue;
+
+          const data = await response.json();
+          
+          const buyVal = data.buy_price || data.compra || data.buy;
+          const sellVal = data.sell_price || data.venta || data.sell;
+          const bcvVal = data.bcv_price || data.bcv;
+          const euroVal = data.euro_price || data.euro;
+
+          if (buyVal) RATES.buy = parseFloat(buyVal);
+          if (sellVal) RATES.sell = parseFloat(sellVal);
+          if (bcvVal) RATES.bcv = parseFloat(bcvVal);
+          if (euroVal) RATES.euro = parseFloat(euroVal);
+
+          secondsAgo = 0;
+          success = true;
+
+          if(syncStatus) {
+            syncStatus.className = "inline-flex items-center gap-1.5 text-emerald-400 font-semibold";
+            syncStatus.innerHTML = `<i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>`;
+          }
+          break;
+        } catch (err) {
+          // Intenta el siguiente endpoint de Render
         }
-      } catch (err) {
-        console.warn("API inaccesible. Reintentando...", err);
-        if(syncStatus) {
-          syncStatus.className = "inline-flex items-center gap-1.5 text-amber-400 font-semibold";
-          syncStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Reintentando transmisión...`;
-        }
-      } finally {
-        updateUI();
       }
+
+      if (!success && syncStatus) {
+        syncStatus.className = "inline-flex items-center gap-1.5 text-amber-400 font-semibold";
+        syncStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Reintentando transmisión...`;
+      }
+
+      updateUI();
     }
 
     function updateUI() {
@@ -323,14 +339,14 @@
       document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       
       const spreadAbs = RATES.sell - RATES.buy;
-      const spreadPct = (spreadAbs / RATES.buy) * 100;
+      const spreadPct = RATES.buy > 0 ? (spreadAbs / RATES.buy) * 100 : 0;
       document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2).replace('.', ',')}%`;
       document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
 
       document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
       document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
       
-      const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
+      const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
       document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2).replace('.', ',')}%`;
 
       calculateRate();
@@ -394,8 +410,8 @@
       titleDisplay.innerText = modes[mode].title;
       badge.innerText = modes[mode].badge;
 
-      const spreadPct = ((RATES.sell - RATES.buy) / RATES.buy) * 100;
-      const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
+      const spreadPct = RATES.buy > 0 ? ((RATES.sell - RATES.buy) / RATES.buy) * 100 : 0;
+      const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
       updateAIMetrics(spreadPct, bcvGap);
     }
 
