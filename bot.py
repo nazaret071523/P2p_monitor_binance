@@ -7,7 +7,7 @@ import numpy as np
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -364,6 +364,42 @@ app.add_middleware(
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
     return {"status": "ok", "message": "Venbot P2P Activo"}
+
+# Endpoint para SSE / Transmisión en Vivo en la Web
+@app.get("/api/stream")
+async def event_stream():
+    async def event_generator():
+        while True:
+            compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+            if compra and venta:
+                payload = {
+                    "buy_price": compra,
+                    "sell_price": venta,
+                    "spread": spread,
+                    "bcv": 898.50,
+                    "status": "connected"
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+            await asyncio.sleep(10)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/api/v1/p2p-rates")
+async def get_p2p_rates_v1():
+    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+    if not compra:
+        compra, venta = 945.25, 956.00
+    
+    data = {
+        "buy_price": compra,
+        "sell_price": venta,
+        "bcv_price": 898.50,
+        "euro_price": 1050.00
+    }
+    return JSONResponse(
+        content=data,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
 
 @app.get("/styles.css")
 async def get_custom_css():
