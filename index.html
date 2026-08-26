@@ -276,13 +276,14 @@
     // Conexión principal con Render con rutas de respaldo
     const API_BASE_URL = "https://p2p-monitor-binance.onrender.com";
 
-    let RATES = { buy: 945.25, sell: 956.00, bcv: 898.50, euro: 1050.00 };
+    let RATES = { buy: 0, sell: 0, bcv: 0, euro: 0 };
     let secondsAgo = 0;
     let marketChart = null;
     let currentAIMode = 1;
 
     function formatVE(val) {
-      return (val || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (!val || isNaN(val)) return '0,00';
+      return val.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
     async function fetchRealTimeData() {
@@ -291,7 +292,8 @@
       const endpoints = [
         `${API_BASE_URL}/api/actual`,
         `${API_BASE_URL}/api/v1/p2p-rates`,
-        `${API_BASE_URL}/rates`
+        `${API_BASE_URL}/rates`,
+        `${API_BASE_URL}/`
       ];
 
       let success = false;
@@ -303,26 +305,28 @@
 
           const data = await response.json();
           
-          const buyVal = data.buy_price || data.compra || data.buy;
-          const sellVal = data.sell_price || data.venta || data.sell;
-          const bcvVal = data.bcv_price || data.bcv;
-          const euroVal = data.euro_price || data.euro;
+          const buyVal = data.buy_price || data.compra || data.buy || data.p2p_buy;
+          const sellVal = data.sell_price || data.venta || data.sell || data.p2p_sell;
+          const bcvVal = data.bcv_price || data.bcv || data.bcv_rate;
+          const euroVal = data.euro_price || data.euro || data.euro_rate;
 
           if (buyVal) RATES.buy = parseFloat(buyVal);
           if (sellVal) RATES.sell = parseFloat(sellVal);
           if (bcvVal) RATES.bcv = parseFloat(bcvVal);
           if (euroVal) RATES.euro = parseFloat(euroVal);
 
-          secondsAgo = 0;
-          success = true;
+          if (buyVal || sellVal) {
+            secondsAgo = 0;
+            success = true;
 
-          if(syncStatus) {
-            syncStatus.className = "inline-flex items-center gap-1.5 text-emerald-400 font-semibold";
-            syncStatus.innerHTML = `<i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>`;
+            if (syncStatus) {
+              syncStatus.className = "inline-flex items-center gap-1.5 text-emerald-400 font-semibold";
+              syncStatus.innerHTML = `<i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>`;
+            }
+            break;
           }
-          break;
         } catch (err) {
-          // Intenta el siguiente endpoint de Render
+          // Intenta con el siguiente endpoint alternativo de la API
         }
       }
 
@@ -335,16 +339,20 @@
     }
 
     function updateUI() {
-      document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      if (RATES.buy > 0) {
+        document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      }
+      if (RATES.sell > 0) {
+        document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      }
       
       const spreadAbs = RATES.sell - RATES.buy;
       const spreadPct = RATES.buy > 0 ? (spreadAbs / RATES.buy) * 100 : 0;
       document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2).replace('.', ',')}%`;
       document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
 
-      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
-      document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
+      if (RATES.euro > 0) document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
+      if (RATES.bcv > 0) document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
       
       const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
       document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2).replace('.', ',')}%`;
@@ -357,10 +365,10 @@
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
       const rateType = document.getElementById('calc-rate').value;
-      const selectedRate = RATES[rateType] || RATES.sell;
+      const selectedRate = RATES[rateType] || RATES.sell || 0;
       
       const total = amount * selectedRate;
-      const totalBCV = amount * RATES.bcv;
+      const totalBCV = amount * (RATES.bcv || selectedRate);
       const diff = total - totalBCV;
 
       document.getElementById('calc-result').innerText = `${formatVE(total)} Bs`;
@@ -370,6 +378,8 @@
     function updateAIMetrics(spreadPct, bcvGap) {
       const insightText = document.getElementById('gemini-insight-text');
       const m1 = document.getElementById('m1-val');
+      const m2 = document.getElementById('m2-val');
+      const m3 = document.getElementById('m3-val');
       const m4 = document.getElementById('m4-val');
 
       if (spreadPct > 1.0) {
@@ -380,16 +390,25 @@
         m1.className = 'text-xs sm:text-sm font-black text-amber-400 mt-1 block';
       }
 
-      const lowRange = formatVE(RATES.sell * 0.995);
-      const highRange = formatVE(RATES.sell * 1.008);
+      if (bcvGap > 15) {
+        m2.innerHTML = '⚡ MUY ALTA (< 3 min)';
+        m3.innerHTML = '⚠️ ALTA DEMANDA DE USDT';
+      } else {
+        m2.innerHTML = '⚡ ALTA (< 5 min)';
+        m3.innerHTML = '🟢 LIQUIDEZ ESTABLE';
+      }
+
+      const currentSell = RATES.sell || 0;
+      const lowRange = formatVE(currentSell * 0.995);
+      const highRange = formatVE(currentSell * 1.008);
       m4.innerText = `${lowRange} – ${highRange} Bs`;
 
       if (currentAIMode === 1) {
         insightText.innerText = `El mercado P2P presenta una brecha del ${bcvGap.toFixed(2)}% respecto a la tasa BCV oficial. El spread P2P se ubica en ${spreadPct.toFixed(2)}%, con flujo constante en bancos nacionales.`;
       } else if (currentAIMode === 2) {
-        insightText.innerText = `La liquidez entrante en la punta compradora muestra velocidad de ejecución moderada. Se aconseja fraccionar órdenes superiores a 500 USDT.`;
+        insightText.innerText = `La liquidez entrante en la punta compradora muestra velocidad de ejecución alta. Se aconseja fraccionar órdenes superiores a 500 USDT para evitar deslizamientos de precio.`;
       } else if (currentAIMode === 3) {
-        insightText.innerText = `Nivel clave de soporte identificado en ${formatVE(RATES.buy)} Bs y resistencia técnica en ${formatVE(RATES.sell * 1.01)} Bs para las próximas 4 horas.`;
+        insightText.innerText = `Nivel clave de soporte identificado en ${formatVE(RATES.buy)} Bs y resistencia técnica estimada en ${formatVE(currentSell * 1.01)} Bs para las próximas 4 horas.`;
       }
     }
 
@@ -469,8 +488,8 @@
       let labels = [];
       let buyData = [];
       let sellData = [];
-      const baseBuy = RATES.buy;
-      const baseSell = RATES.sell;
+      const baseBuy = RATES.buy || 945.25;
+      const baseSell = RATES.sell || 956.00;
 
       if (period === '1d') {
         labels = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Ahora'];
@@ -497,7 +516,7 @@
       const minVal = Math.min(...buyData);
       const maxVal = Math.max(...sellData);
       document.getElementById('chart-low').innerText = `${formatVE(minVal)} Bs`;
-      document.getElementById('chart-current').innerText = `${formatVE(RATES.sell)} Bs`;
+      document.getElementById('chart-current').innerText = `${formatVE(baseSell)} Bs`;
       document.getElementById('chart-high').innerText = `${formatVE(maxVal)} Bs`;
     }
 
