@@ -1,405 +1,295 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" class="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Venbot Predicciones | Monitor P2P</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #0b0f19;
-            --card-bg: #151a26;
-            --border: #21283b;
-            --text-main: #f0f3fa;
-            --text-muted: #848e9c;
-            --green: #0ecb81;
-            --red: #f6465d;
-            --gold: #f0b90b;
-            --blue-accent: #0070f3;
-        }
-
-        * {
-            box-sizing: border-box;
-            font-family: 'Inter', -apple-system, sans-serif;
-        }
-
-        body {
-            margin: 0;
-            padding: 12px;
-            background-color: var(--bg);
-            color: var(--text-main);
-            display: flex;
-            justify-content: center;
-        }
-
-        .container {
-            width: 100%;
-            max-width: 500px;
-        }
-
-        /* HEADER PREMIUM Y HORA */
-        header {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 12px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .brand-title {
-            font-size: 1rem;
-            font-weight: 700;
-            color: var(--gold);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .live-badge {
-            background: rgba(14, 203, 129, 0.15);
-            color: var(--green);
-            padding: 4px 8px;
-            border-radius: 20px;
-            font-size: 0.65rem;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }
-
-        .time-bar {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px;
-            text-align: center;
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            margin-bottom: 10px;
-        }
-
-        .time-bar b { color: var(--text-main); }
-
-        /* BANNER PUBLICIDAD COMPACTO */
-        .ad-banner {
-            background: linear-gradient(180deg, #182030 0%, #131722 100%);
-            border: 1px dashed #2b354d;
-            border-radius: 8px;
-            padding: 10px;
-            text-align: center;
-            color: var(--text-muted);
-            font-size: 0.75rem;
-            margin-bottom: 10px;
-        }
-
-        /* TRES TARJETAS SUPERIORES */
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-
-        .metric-card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 10px 6px;
-            text-align: center;
-        }
-
-        .metric-label {
-            font-size: 0.65rem;
-            font-weight: 700;
-            color: var(--text-muted);
-            text-transform: uppercase;
-        }
-
-        .metric-value {
-            font-size: 1rem;
-            font-weight: 700;
-            margin-top: 4px;
-        }
-
-        .val-buy { color: var(--green); }
-        .val-sell { color: var(--red); }
-        .val-margin { color: var(--gold); }
-
-        /* TARJETA COMPACTA DE PREDICCIÓN (ESTILO FOTO 2) */
-        .pred-card {
-            background-color: var(--card-bg);
-            border: 1px solid #2d2354;
-            border-radius: 12px;
-            padding: 14px;
-            margin-bottom: 10px;
-            position: relative;
-        }
-
-        .pred-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .pred-title {
-            font-size: 0.75rem;
-            font-weight: 700;
-            color: #9d8ec7;
-            text-transform: uppercase;
-        }
-
-        .pred-trend {
-            font-size: 0.75rem;
-            font-weight: 700;
-            color: #b197ff;
-        }
-
-        .pred-main-price {
-            text-align: center;
-            font-size: 1.8rem;
-            font-weight: 800;
-            color: #ffffff;
-            margin: 8px 0 12px 0;
-        }
-
-        .pred-sub-row {
-            display: flex;
-            justify-content: space-between;
-            border-top: 1px solid var(--border);
-            padding-top: 10px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        .floor-val { color: var(--green); }
-        .roof-val { color: var(--red); }
-
-        /* BLOQUE ASISTENTE ANALISTA */
-        .analyst-card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px;
-            margin-bottom: 10px;
-            font-size: 0.75rem;
-            line-height: 1.4;
-        }
-
-        .analyst-title {
-            color: var(--gold);
-            font-weight: 700;
-            margin-bottom: 6px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        /* GRAFICA */
-        .chart-card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 12px;
-            margin-bottom: 10px;
-        }
-
-        .chart-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-
-        .btn-range {
-            background-color: #1e2538;
-            border: none;
-            color: var(--text-muted);
-            padding: 3px 8px;
-            font-size: 0.7rem;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        .btn-range.active {
-            background-color: var(--gold);
-            color: #000;
-            font-weight: 700;
-        }
-
-        .canvas-holder {
-            position: relative;
-            height: 200px;
-            width: 100%;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#070a11">
+  <meta name="description" content="Venbot: consulta y análisis del mercado P2P USDT/VES, tasas de referencia y herramientas de mercado.">
+  <title>Venbot · USDT/VES</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    :root{--bg:#070a11;--panel:#0f172a;--panel2:#0b0f17}
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);-webkit-tap-highlight-color:transparent}
+    .glass-card{background:rgba(15,23,42,.86);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.08)}
+    .focus-ring:focus-visible{outline:2px solid rgb(52 211 153);outline-offset:2px}
+    .tabular{font-variant-numeric:tabular-nums}
+    .modal-backdrop{background:rgba(0,0,0,.78);backdrop-filter:blur(10px)}
+    .fade-up{animation:fadeUp .22s ease-out}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.fade-up{animation:none}}
+    .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
+    .ad-label{letter-spacing:.12em}
+    .ai-chat{background:rgba(3,7,18,.98);border:1px solid rgba(52,211,153,.24);box-shadow:0 24px 70px rgba(0,0,0,.55)}
+    .ai-fab{box-shadow:0 12px 32px rgba(16,185,129,.26)}
+    .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
+  </style>
 </head>
-<body>
+<body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
+  <div class="min-h-screen flex flex-col">
 
-<div class="container">
-    <header>
-        <div class="brand-title">⚡ COMERCIANTE P2P PRO</div>
-        <div class="live-badge">EN VIVO</div>
+    <header class="border-b border-slate-800/80 bg-[#0b0f17]/95 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
+      <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
+        <div class="min-w-0 shrink-0">
+          <div class="flex items-center gap-2">
+            <h1 class="font-extrabold text-lg tracking-wider text-emerald-400 leading-none">VENBOT</h1>
+            <span class="bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Consulta</span>
+          </div>
+          <p class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
+        </div>
+        <div class="hidden md:block flex-1 max-w-xl mx-3">
+          <div class="ad-slot rounded-xl px-4 py-2 text-center">
+            <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
+            <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
+          </div>
+        </div>
+        <button type="button" onclick="openLoginModal(this)" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
+          <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
+        </button>
+      </div>
     </header>
 
-    <div class="time-bar">
-        🇻🇪 Hora Oficial VE: <b id="clock">--:--:--</b>
+    <div class="w-full bg-slate-900/60 border-b border-slate-800 px-4 py-2">
+      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center gap-1.5 text-emerald-400 font-semibold"><i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span></span>
+          <span class="text-slate-700">•</span>
+          <button type="button" onclick="openSourceModal(this)" class="focus-ring">Fuente: <strong class="text-slate-300">Binance Mercado P2P</strong></button>
+        </div>
+        <button type="button" onclick="openCommunityModal(this)" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></button>
+      </div>
     </div>
 
-    <div class="ad-banner">
-        📢 Filtro: Bloque #4 (10,000 Bs - 300,000 Bs)
+    <div class="md:hidden px-4 pt-3">
+      <div class="max-w-7xl mx-auto">
+        <div class="ad-slot rounded-xl px-4 py-2 text-center">
+          <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
+          <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación móvil</div>
+        </div>
+      </div>
     </div>
 
-    <div class="metrics-grid">
-        <div class="metric-card">
-            <div class="metric-label">COMPRA</div>
-            <div class="metric-value val-buy" id="compra-val">--.--</div>
+    <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-28">
+      <section aria-labelledby="market-title" class="space-y-3">
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <div>
+            <p class="text-[10px] text-emerald-400 font-black uppercase tracking-[0.18em]">Mercado principal</p>
+            <h2 id="market-title" class="text-xl md:text-2xl font-black text-white mt-1">USDT / VES</h2>
+          </div>
+          <div class="flex items-center gap-2 text-[10px] text-slate-500">
+            <span>Valores informativos</span>
+            <button type="button" onclick="openSourceModal(this)" class="focus-ring text-slate-400 hover:text-white" title="Información sobre las cotizaciones" aria-label="Información sobre las cotizaciones"><i class="fa-regular fa-circle-question"></i></button>
+          </div>
         </div>
-        <div class="metric-card">
-            <div class="metric-label">VENTA</div>
-            <div class="metric-value val-sell" id="venta-val">--.--</div>
-        </div>
-        <div class="metric-card">
-            <div class="metric-label">SPREAD</div>
-            <div class="metric-value val-margin" id="margin-val">--.--</div>
-        </div>
-    </div>
 
-    <!-- BLOQUE COMPACTO ESTILO IMAGEN 2 -->
-    <div class="pred-card">
-        <div class="pred-header">
-            <div class="pred-title">PREDICCIÓN ML (+7H)</div>
-            <div class="pred-trend" id="trend-val">ANALIZANDO...</div>
-        </div>
-        <div class="pred-main-price" id="pred-sell">--.-- Bs</div>
-        <div class="pred-sub-row">
-            <div>🟢 Piso: <span class="floor-val" id="piso-val">--.-- Bs</span></div>
-            <div>🔴 Techo: <span class="roof-val" id="techo-val">--.-- Bs</span></div>
-        </div>
-    </div>
-
-    <div class="analyst-card">
-        <div class="analyst-title">✨ ASISTENTE ANALISTA P2P</div>
-        <div id="analyst-text">Calculando dinámica de precios e indicadores de liquidez para tu operación...</div>
-    </div>
-
-    <div class="chart-card">
-        <div class="chart-header">
-            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight:600;">Histórico Mercado</span>
-            <div>
-                <button class="btn-range active" onclick="cambiarRango('1d', this)">1D</button>
-                <button class="btn-range" onclick="cambiarRango('7d', this)">7D</button>
-                <button class="btn-range" onclick="cambiarRango('30d', this)">30D</button>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <article class="glass-card p-4 rounded-2xl border-l-4 border-l-emerald-500">
+            <div class="flex items-start justify-between gap-3">
+              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Comprar USDT</p><p id="buy-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">913,62 <span class="text-xs font-medium text-slate-400">Bs</span></p></div>
+              <span class="inline-flex items-center gap-1.5 text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-down"></i> Mejor compra</span>
             </div>
+            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Precio observado</span><span class="text-slate-300 font-semibold">Binance P2P</span></div>
+          </article>
+
+          <article class="glass-card p-4 rounded-2xl border-l-4 border-l-rose-500">
+            <div class="flex items-start justify-between gap-3">
+              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Vender USDT</p><p id="sell-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">923,00 <span class="text-xs font-medium text-slate-400">Bs</span></p></div>
+              <span class="inline-flex items-center gap-1.5 text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-up"></i> Mejor venta</span>
+            </div>
+            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Precio observado</span><span class="text-slate-300 font-semibold">Binance P2P</span></div>
+          </article>
+
+          <article class="glass-card p-4 rounded-2xl border-l-4 border-l-amber-400">
+            <div class="flex items-start justify-between gap-3">
+              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Spread P2P</p><p id="spread-value" class="tabular text-2xl md:text-3xl font-black text-amber-300 mt-1">1,03%</p></div>
+              <span class="inline-flex items-center gap-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-chart-line"></i> Diferencial</span>
+            </div>
+            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Diferencia</span><span id="spread-absolute" class="text-slate-300 font-semibold">9,38 Bs / USDT</span></div>
+          </article>
         </div>
-        <div class="canvas-holder">
-            <canvas id="marketChart"></canvas>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-amber-500/15">
+            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-slate-500 mt-0.5">Referencia cambiaria</p></div></div>
+            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">1.050,00 Bs/EUR</p><p class="text-[10px] text-slate-500 font-bold">Valor de demostración</p></div>
+          </article>
+          <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-blue-500/15">
+            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400"><i class="fa-solid fa-building-columns"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-slate-500 mt-0.5">Dólar de referencia</p></div></div>
+            <div class="text-right"><p id="bcv-rate" class="tabular text-lg font-black text-blue-300">898,50 Bs/USD</p><p id="bcv-gap" class="text-[10px] text-amber-300 font-bold">Brecha P2P: +2,73%</p></div>
+          </article>
         </div>
+      </section>
+
+      <section class="glass-card p-4 rounded-2xl space-y-4" aria-labelledby="calculator-title">
+        <div class="flex items-start justify-between gap-3">
+          <div><h3 id="calculator-title" class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USDT / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
+          <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div>
+            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USDT</label>
+            <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="handleCalculatorInteraction(); calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
+            <div class="ad-slot rounded-xl px-3 py-2 mt-2 text-center"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600 mt-0.5">Espacio de prueba junto a la entrada de cantidad</div></div>
+          </div>
+          <div>
+            <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
+            <select id="calc-rate" onchange="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
+              <option value="923">Venta P2P · 923,00 Bs/USDT</option>
+              <option value="913.62">Compra P2P · 913,62 Bs/USDT</option>
+              <option value="898.5">Tasa BCV · 898,50 Bs/USD</option>
+              <option value="1050">Tasa Euro · 1.050,00 Bs/EUR</option>
+            </select>
+          </div>
+          <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
+            <span class="text-[10px] text-slate-400 block">Resultado estimado</span>
+            <strong id="calc-result" class="tabular text-lg font-black text-emerald-400 mt-0.5 block">92.300,00 Bs</strong>
+            <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">+2.450,00 Bs vs. Tasa BCV</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="glass-card p-4 rounded-2xl space-y-3" aria-labelledby="chart-title">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div><div class="flex items-center gap-2"><h3 id="chart-title" class="font-bold text-slate-100 text-sm">USDT / VES · Evolución P2P</h3><span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">1 día</span></div><p class="text-[10px] text-slate-500 mt-1">Comparación del precio observado en el mercado P2P.</p></div>
+          <div role="tablist" aria-label="Periodo del gráfico" class="flex items-center gap-1 bg-slate-950/70 border border-slate-800 rounded-xl p-1">
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="true" onclick="setChartPeriod('1d',this)">1D</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('7d',this)">7D</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('30d',this)">30D</button>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3 text-[10px] text-slate-400"><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Comprar</span><span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Vender</span></div>
+        <div class="relative h-64 w-full"><canvas id="marketChart" aria-label="Gráfico de evolución P2P USDT/VES"></canvas></div>
+        <div class="grid grid-cols-3 gap-2 text-[10px]">
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Mínimo</span><strong id="chart-low" class="tabular text-white">904,80 Bs</strong></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Actual</span><strong id="chart-current" class="tabular text-emerald-300">923,00 Bs</strong></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Máximo</span><strong id="chart-high" class="tabular text-white">926,40 Bs</strong></div>
+        </div>
+      </section>
+
+      <section class="relative glass-card p-4 rounded-2xl border border-indigo-500/25 overflow-hidden" aria-labelledby="analysis-title">
+        <div class="space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><div class="flex items-center gap-2"><h3 id="analysis-title" class="text-sm font-extrabold text-indigo-200 tracking-wide uppercase">Análisis de mercado</h3><span class="text-[9px] font-bold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full">AVANZADO</span></div><p class="text-[10px] text-slate-500 mt-1">Lecturas estadísticas y proyecciones para apoyar la interpretación del mercado.</p></div><div class="text-left sm:text-right"><p class="text-[10px] text-slate-500">Horizonte</p><p class="text-xs font-bold text-white">Próximas 4 horas</p></div></div>
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><span class="text-[10px] text-slate-500 block">Tendencia</span><strong class="text-sm text-emerald-300 mt-1 block">↗ Alcista moderada</strong></div>
+            <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><span class="text-[10px] text-slate-500 block">Presión compradora</span><strong class="text-sm text-white mt-1 block">Moderada</strong></div>
+            <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><span class="text-[10px] text-slate-500 block">Volatilidad</span><strong class="text-sm text-white mt-1 block">Baja</strong></div>
+            <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3"><span class="text-[10px] text-slate-500 block">Rango estimado</span><strong class="text-sm text-white mt-1 block">919–928 Bs</strong></div>
+          </div>
+          <div class="border-t border-slate-800/80 pt-3 text-[10px] text-slate-500">El análisis es informativo y no constituye asesoramiento financiero personalizado.</div>
+        </div>
+      </section>
+
+      <section class="glass-card p-4 rounded-2xl border border-emerald-500/15" aria-labelledby="ai-teaser-title">
+        <div class="flex items-center gap-3"><div class="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300"><i class="fa-solid fa-brain text-lg"></i></div><div class="flex-1 min-w-0"><div class="flex items-center gap-2"><h3 id="ai-teaser-title" class="text-sm font-bold text-white">Venbot AI</h3><span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">ASISTENTE</span></div><p class="text-[10px] text-slate-500 mt-1">Pregunta por el mercado P2P, tendencias, spreads e indicadores.</p></div><button type="button" onclick="openAIChat(this)" class="focus-ring shrink-0 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] px-3 py-2 rounded-xl transition">Abrir IA</button></div>
+      </section>
+
+      <section class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <article class="glass-card p-4 rounded-2xl border border-amber-500/15"><div class="flex items-start gap-3"><div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-regular fa-bell"></i></div><div class="flex-1"><h3 class="text-sm font-bold text-white">Alertas de precio</h3><p class="text-[10px] text-slate-500 mt-1">Configura un nivel de USDT para recibir una alerta cuando se alcance.</p><button type="button" onclick="openAlertModal(this)" class="focus-ring text-[11px] text-amber-300 hover:text-amber-200 font-bold mt-3">Configurar alertas →</button></div></div></article>
+        <article class="glass-card p-4 rounded-2xl border border-sky-500/15"><div class="flex items-start gap-3"><div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-300"><i class="fa-brands fa-telegram"></i></div><div class="flex-1"><h3 class="text-sm font-bold text-white">Comunidad Venbot</h3><p class="text-[10px] text-slate-500 mt-1">Novedades, alertas y soporte de la aplicación.</p><button type="button" onclick="openCommunityModal(this)" class="focus-ring text-[11px] text-sky-300 hover:text-sky-200 font-bold mt-3">Abrir comunidad →</button></div></div></article>
+      </section>
+
+      <section class="rounded-2xl border border-slate-800 bg-slate-950/50 p-3.5">
+        <div class="flex gap-3"><div class="mt-0.5 text-slate-500"><i class="fa-solid fa-circle-info"></i></div><div><p class="text-[10px] font-bold text-slate-300">Sobre los datos mostrados</p><p class="text-[10px] leading-relaxed text-slate-500 mt-1">Los precios P2P pueden variar entre anuncios, métodos de pago, liquidez y momento de consulta. Las cotizaciones deben interpretarse como referencias informativas.</p><p class="text-[10px] leading-relaxed text-slate-600 mt-1">Venbot no custodia fondos, no ejecuta operaciones ni procesa pagos. El análisis de mercado es informativo y no constituye asesoramiento financiero personalizado.</p></div></div>
+      </section>
+
+      <section class="rounded-2xl border border-slate-800 bg-slate-950/40 p-3.5" aria-label="Redes sociales de Venbot">
+        <div class="flex flex-wrap items-center justify-center gap-5 text-slate-400 text-sm">
+          <a href="https://x.com/" target="_blank" rel="noopener noreferrer" class="focus-ring hover:text-white transition flex items-center gap-2" title="X (antes Twitter)"><i class="fa-brands fa-x-twitter"></i><span class="text-[10px] font-semibold">X</span></a>
+          <a href="https://instagram.com/" target="_blank" rel="noopener noreferrer" class="focus-ring hover:text-pink-400 transition flex items-center gap-2" title="Instagram"><i class="fa-brands fa-instagram"></i><span class="text-[10px] font-semibold">Instagram</span></a>
+          <a href="https://www.tiktok.com/" target="_blank" rel="noopener noreferrer" class="focus-ring hover:text-slate-100 transition flex items-center gap-2" title="TikTok"><i class="fa-brands fa-tiktok"></i><span class="text-[10px] font-semibold">TikTok</span></a>
+        </div>
+      </section>
+
+      <div class="ad-slot rounded-2xl p-3 text-center">
+        <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
+        <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · debajo de las redes</div>
+      </div>
+    </main>
+
+    <button type="button" onclick="openAIChat(this)" class="ai-fab fixed right-4 bottom-24 z-40 w-14 h-14 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 text-white flex items-center justify-center hover:scale-105 active:scale-95 transition focus-ring" aria-label="Abrir Venbot AI" title="Venbot AI"><i class="fa-solid fa-robot text-xl"></i><span class="absolute -top-1 -left-1 w-5 h-5 rounded-full bg-slate-900 border border-slate-600 text-[7px] flex items-center justify-center text-emerald-300"><i class="fa-solid fa-sparkles"></i></span></button>
+
+    <div id="ai-chat-window" class="hidden ai-chat fixed bottom-24 right-4 z-50 w-[calc(100%-2rem)] sm:w-[380px] h-[500px] rounded-2xl overflow-hidden flex flex-col" role="dialog" aria-modal="true" aria-labelledby="ai-chat-title">
+      <div class="bg-slate-900/95 px-4 py-3 border-b border-slate-800 flex items-center justify-between"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300"><i class="fa-solid fa-brain"></i></div><div><h4 id="ai-chat-title" class="text-xs font-bold text-white">Venbot AI</h4><p class="text-[10px] text-slate-500">Asistente de mercado</p></div></div><button type="button" onclick="closeAIChat()" class="focus-ring text-slate-400 hover:text-white p-1" aria-label="Cerrar Venbot AI"><i class="fa-solid fa-xmark"></i></button></div>
+      <div class="ad-slot mx-3 mt-3 rounded-xl px-3 py-2 text-center shrink-0"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · apertura de IA</div></div>
+      <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-[#060a12]">
+        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola. Puedo ayudarte a interpretar USDT/VES, spreads, tendencias e indicadores. <span class="text-slate-500">No sustituyo asesoramiento financiero profesional.</span></div></div>
+      </div>
+      <div class="border-t border-slate-800 bg-slate-900/95 p-3"><div class="flex items-center gap-2"><input id="ai-input" type="text" maxlength="500" placeholder="Pregunta sobre el mercado..." onkeydown="if(event.key==='Enter')sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"><button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 text-slate-950 font-black rounded-xl px-3 py-2 text-xs" aria-label="Enviar mensaje"><i class="fa-solid fa-paper-plane"></i></button></div><div class="flex items-center justify-between mt-2"><span class="text-[9px] text-slate-600">Las respuestas pueden contener errores.</span><button type="button" onclick="reportAIContent()" class="focus-ring text-[9px] text-slate-500 hover:text-slate-300">Reportar respuesta</button></div></div>
     </div>
 
-    <div class="ad-banner">
-        📢 Espacio Publicitario Disponible
+    <!-- LOGIN MODAL + AD SLOT 1 -->
+    <div id="login-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <div class="glass-card bg-slate-950 border border-emerald-500/30 rounded-2xl max-w-md w-full p-6 relative shadow-2xl fade-up">
+        <button type="button" onclick="closeLoginModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white" aria-label="Cerrar"><i class="fa-solid fa-xmark text-lg"></i></button>
+        <div class="ad-slot rounded-xl p-2.5 mb-4 text-center"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600 mt-0.5">Espacio de prueba mostrado al abrir el acceso</div></div>
+        <div class="flex items-center gap-3 border-b border-slate-800 pb-3"><div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300 text-lg"><i class="fa-solid fa-user-lock"></i></div><div><h3 id="login-title" class="text-base font-extrabold text-white">Iniciar sesión</h3><p class="text-xs text-slate-500">El acceso es opcional en esta versión de prueba.</p></div></div>
+        <form onsubmit="handleLogin(event)" class="space-y-4 mt-5"><div class="space-y-1.5"><label for="login-email" class="text-xs font-semibold text-slate-300 block">Correo electrónico</label><input id="login-email" type="email" autocomplete="email" required placeholder="correo@ejemplo.com" class="focus-ring w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white"></div><div class="space-y-1.5"><label for="login-password" class="text-xs font-semibold text-slate-300 block">Contraseña</label><input id="login-password" type="password" autocomplete="current-password" required placeholder="••••••••" class="focus-ring w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white"></div><button type="submit" class="focus-ring w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 rounded-xl text-xs uppercase tracking-wider transition"><i class="fa-solid fa-right-to-bracket mr-1"></i> Continuar</button><p class="text-center text-[10px] text-slate-500">¿No tienes cuenta? <button type="button" onclick="placeholderAction('Crear cuenta')" class="focus-ring text-emerald-300 hover:text-emerald-200 font-bold">Crear cuenta</button></p></form>
+      </div>
     </div>
-</div>
+
+    <div id="community-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="community-title"><div class="glass-card bg-slate-950 border border-sky-500/30 rounded-2xl max-w-md w-full p-6 space-y-5 relative shadow-2xl fade-up"><button type="button" onclick="closeCommunityModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white" aria-label="Cerrar"><i class="fa-solid fa-xmark text-lg"></i></button><div class="text-center"><div class="w-12 h-12 rounded-full bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-300 text-2xl mx-auto"><i class="fa-brands fa-telegram"></i></div><h3 id="community-title" class="text-lg font-black text-white mt-2">Comunidad Venbot</h3><p class="text-xs text-slate-500">Novedades, alertas y soporte.</p></div><div class="space-y-3"><a href="https://t.me/" target="_blank" rel="noopener noreferrer" class="focus-ring block p-3.5 bg-slate-900 border border-slate-800 rounded-xl hover:border-sky-500 transition"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-lg bg-sky-500/10 flex items-center justify-center text-sky-300 text-xl"><i class="fa-brands fa-telegram"></i></div><div><h4 class="text-xs font-bold text-white">Canal de novedades</h4><p class="text-[11px] text-slate-500">Alertas y actualizaciones del mercado.</p></div></div></a><button type="button" onclick="placeholderAction('Soporte')" class="focus-ring w-full text-left p-3.5 bg-slate-900 border border-slate-800 rounded-xl hover:border-emerald-500 transition"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-300 text-xl"><i class="fa-solid fa-headset"></i></div><div><h4 class="text-xs font-bold text-white">Soporte</h4><p class="text-[11px] text-slate-500">Ayuda con la aplicación y tu cuenta.</p></div></div></button></div></div></div>
+
+    <div id="source-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="source-title"><div class="glass-card bg-slate-950 border border-blue-500/30 rounded-2xl max-w-lg w-full p-6 relative shadow-2xl fade-up"><button type="button" onclick="closeSourceModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white" aria-label="Cerrar"><i class="fa-solid fa-xmark text-lg"></i></button><h3 id="source-title" class="text-lg font-black text-white">Fuente y metodología</h3><div class="mt-4 space-y-3 text-[11px] text-slate-400 leading-relaxed"><div class="bg-slate-900 border border-slate-800 rounded-xl p-3"><strong class="text-slate-200">Fuente del monitor:</strong> Binance Mercado P2P.</div><div class="bg-slate-900 border border-slate-800 rounded-xl p-3"><strong class="text-slate-200">Precios P2P:</strong> en producción deberán mostrar timestamp y la metodología concreta utilizada para seleccionar/agregar anuncios.</div><div class="bg-slate-900 border border-slate-800 rounded-xl p-3"><strong class="text-slate-200">Spread:</strong> diferencia relativa entre los precios observados de compra y venta, según la metodología del sistema.</div></div></div></div>
+
+    <div id="alert-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="alert-title"><div class="glass-card bg-slate-950 border border-amber-500/30 rounded-2xl max-w-sm w-full p-6 relative shadow-2xl fade-up"><button type="button" onclick="closeAlertModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white" aria-label="Cerrar"><i class="fa-solid fa-xmark text-lg"></i></button><h3 id="alert-title" class="text-base font-black text-white">Alerta de precio</h3><p class="text-[10px] text-slate-500 mt-1">Configura un nivel de referencia para la prueba.</p><label for="alert-level" class="text-xs font-semibold text-slate-300 block mt-4 mb-1">Precio USDT (Bs)</label><input id="alert-level" type="number" value="923" min="0" step="0.01" class="focus-ring w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white"><button type="button" onclick="saveAlert()" class="focus-ring w-full mt-4 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black py-2.5 rounded-xl text-xs">Guardar alerta</button></div></div>
+
+    <div id="legal-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="legal-title"><div class="glass-card bg-slate-950 border border-slate-700 rounded-2xl max-w-2xl w-full p-6 relative shadow-2xl fade-up max-h-[85vh] overflow-y-auto"><button type="button" onclick="closeLegalModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white" aria-label="Cerrar"><i class="fa-solid fa-xmark text-lg"></i></button><h3 id="legal-title" class="text-lg font-black text-white">Información legal</h3><div id="legal-content" class="mt-4 space-y-3 text-[11px] text-slate-400 leading-relaxed"></div></div></div>
+
+    <footer class="border-t border-slate-800/80 bg-[#0b0f17] py-5 px-4 mt-auto">
+      <div class="max-w-7xl mx-auto space-y-3">
+        <div class="flex flex-col items-center justify-center gap-2 text-center">
+          <div class="text-xs text-slate-400"><strong class="text-slate-200">VENBOT</strong> © 2026</div>
+          <div class="flex items-center justify-center flex-wrap gap-3 text-[10px]"><button type="button" onclick="openLegalModal('privacy')" class="focus-ring text-slate-500 hover:text-slate-200">Política de privacidad</button><span class="text-slate-700">•</span><button type="button" onclick="openLegalModal('terms')" class="focus-ring text-slate-500 hover:text-slate-200">Términos</button></div>
+        </div>
+        <p class="text-[10px] text-slate-600 text-center">Venbot es una plataforma de consulta y análisis. No custodia fondos, no ejecuta operaciones y no procesa pagos.</p>
+      </div>
+    </footer>
+  </div>
 
 <script>
-    const API_URL = "https://p2p-monitor-binance.onrender.com";
-    let chartInstance = null;
-    let rangoActual = '1d';
+  const DEMO={buy:913.62,sell:923,bcv:898.5,euro:1050,lastUpdated:Date.now()};
+  const CHARTS={
+    '1d':{label:'1 día',labels:['00h','03h','06h','09h','12h','15h','18h','21h','Ahora'],buy:[906.2,907.5,909.2,910.4,911.7,912.3,913,913.4,913.62],sell:[914.9,916.4,918,919.1,920.2,921.1,921.9,922.5,923]},
+    '7d':{label:'7 días',labels:['Hace 6d','5d','4d','3d','2d','Ayer','Hoy','Ahora'],buy:[894.2,899.8,902.5,906.4,908.7,911.1,912.8,913.62],sell:[903.6,909.1,912.4,916.2,918.1,920.4,922.2,923]},
+    '30d':{label:'30 días',labels:['30d','26d','22d','18d','14d','10d','7d','4d','Ayer','Ahora'],buy:[858.3,865.7,876.9,882.4,889.8,895.6,902.2,908.4,911.1,913.62],sell:[872.1,879.4,891.6,897.8,904.6,909.2,915.7,919.4,921.8,923]}
+  };
+  let marketChart=null,lastFocusedElement=null,calculatorAdShown=false;
 
-    function updateClock() {
-        const now = new Date();
-        document.getElementById('clock').innerText = now.toLocaleTimeString('es-VE');
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
+  function formatVES(v){return Number(v).toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2});}
+  function updateMarketUI(){const spread=DEMO.sell-DEMO.buy,spreadPct=(spread/DEMO.buy)*100,gap=((DEMO.sell-DEMO.bcv)/DEMO.bcv)*100;document.getElementById('buy-price').innerHTML=`${formatVES(DEMO.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;document.getElementById('sell-price').innerHTML=`${formatVES(DEMO.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;document.getElementById('spread-value').textContent=`${formatVES(spreadPct)}%`;document.getElementById('spread-absolute').textContent=`${formatVES(spread)} Bs / USDT`;document.getElementById('bcv-rate').textContent=`${formatVES(DEMO.bcv)} Bs/USD`;document.getElementById('bcv-gap').textContent=`Brecha P2P: +${formatVES(gap)}%`;document.getElementById('euro-rate').textContent=`${formatVES(DEMO.euro)} Bs/EUR`;calculateRate();}
 
-    async function cargarActual() {
-        try {
-            const res = await fetch(`${API_URL}/api/actual`);
-            const data = await res.json();
-            if(data.error) return;
+  function handleCalculatorInteraction(){if(!calculatorAdShown){calculatorAdShown=true;document.getElementById('calc-amount').scrollIntoView({behavior:'smooth',block:'center'});}}
+  function calculateRate(){const amount=Math.max(0,parseFloat(document.getElementById('calc-amount').value)||0);const rate=parseFloat(document.getElementById('calc-rate').value)||DEMO.sell;const result=amount*rate;const diff=result-(amount*DEMO.bcv);document.getElementById('calc-result').textContent=`${formatVES(result)} Bs`;document.getElementById('calc-diff').textContent=`${diff>=0?'+':''}${formatVES(diff)} Bs vs. Tasa BCV`;}
 
-            document.getElementById('compra-val').innerText = data.compra.toFixed(2) + ' Bs';
-            document.getElementById('venta-val').innerText = data.venta.toFixed(2) + ' Bs';
-            document.getElementById('margin-val').innerText = data.spread.toFixed(2) + ' Bs';
+  function openModal(id,trigger=null){lastFocusedElement=trigger||document.activeElement;const m=document.getElementById(id);m.classList.remove('hidden');document.body.classList.add('overflow-hidden');const f=m.querySelector('button,input,select,textarea,[tabindex]:not([tabindex="-1"])');if(f)setTimeout(()=>f.focus(),0)}
+  function closeModal(id){document.getElementById(id).classList.add('hidden');const open=['community-modal','source-modal','login-modal','alert-modal','legal-modal'].some(x=>!document.getElementById(x).classList.contains('hidden'));const aiOpen=!document.getElementById('ai-chat-window').classList.contains('hidden');if(!open&&!aiOpen)document.body.classList.remove('overflow-hidden');if(lastFocusedElement&&typeof lastFocusedElement.focus==='function')lastFocusedElement.focus();}
+  function openLoginModal(t){openModal('login-modal',t)} function closeLoginModal(){closeModal('login-modal')} function openCommunityModal(t){openModal('community-modal',t)} function closeCommunityModal(){closeModal('community-modal')} function openSourceModal(t){openModal('source-modal',t)} function closeSourceModal(){closeModal('source-modal')} function openAlertModal(t){openModal('alert-modal',t)} function closeAlertModal(){closeModal('alert-modal')}
+  function saveAlert(){const v=parseFloat(document.getElementById('alert-level').value)||0;closeAlertModal();alert(`Alerta guardada en ${formatVES(v)} Bs (modo de prueba).`)}
+  function handleLogin(e){e.preventDefault();alert('Inicio de sesión preparado para conectar con el backend. En esta versión todas las funciones permanecen abiertas.');closeLoginModal();}
+  function placeholderAction(n){alert(`${n}: función preparada para conectar con el backend.`)}
 
-            if(data.pred) {
-                document.getElementById('trend-val').innerText = data.pred.tendencia;
-                document.getElementById('pred-sell').innerText = data.pred.pred_venta_str;
-                document.getElementById('piso-val').innerText = data.pred.piso_str;
-                document.getElementById('techo-val').innerText = data.pred.techo_str;
+  function openLegalModal(type){const title=document.getElementById('legal-title'),content=document.getElementById('legal-content');if(type==='privacy'){title.textContent='Política de privacidad';content.innerHTML='<p><strong class="text-slate-200">Versión de interfaz.</strong> Antes de publicar, este enlace deberá apuntar a una política pública y completa que describa qué datos se recopilan, cómo se usan y comparten, cómo se protegen, cuánto tiempo se conservan y cómo pueden eliminarse.</p><p>Si se habilita la creación de cuentas, la versión de producción deberá ofrecer un proceso claro para solicitar la eliminación de la cuenta y los datos asociados.</p>'}else{title.textContent='Términos del servicio';content.innerHTML='<p><strong class="text-slate-200">Versión de interfaz.</strong> Este espacio deberá sustituirse por los términos definitivos de Venbot antes de su publicación.</p><p>Venbot se plantea como una plataforma de consulta y análisis del mercado P2P, no como plataforma de custodia, intercambio o ejecución de operaciones.</p>'}openModal('legal-modal')}
+  function closeLegalModal(){closeModal('legal-modal')}
 
-                document.getElementById('analyst-text').innerHTML = 
-                    `🚀 <b>Tendencia ${data.pred.tendencia}:</b> Rango proyectado de recompra en <b>${data.pred.pred_compra_str}</b> y venta en <b>${data.pred.pred_venta_str}</b>. Mantén atención al spread neto.`;
-            }
-        } catch(e) {
-            console.error("Error al obtener datos:", e);
-        }
-    }
+  function initChart(period='1d'){const d=CHARTS[period],ctx=document.getElementById('marketChart').getContext('2d');if(marketChart)marketChart.destroy();marketChart=new Chart(ctx,{type:'line',data:{labels:d.labels,datasets:[{label:'Comprar',data:d.buy,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.08)',borderWidth:2,tension:.32,pointRadius:0,fill:false},{label:'Vender',data:d.sell,borderColor:'#fb7185',backgroundColor:'rgba(251,113,133,.08)',borderWidth:2,tension:.32,pointRadius:0,fill:false}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#0b0f17',titleColor:'#e2e8f0',bodyColor:'#cbd5e1',borderColor:'rgba(255,255,255,.08)',borderWidth:1,callbacks:{label:c=>`${c.dataset.label}: ${formatVES(c.parsed.y)} Bs`}}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'rgba(148,163,184,.08)'},ticks:{color:'#64748b',font:{size:9},callback:v=>formatVES(v)},border:{display:false}}}}});const all=[...d.buy,...d.sell];document.getElementById('chart-period-label').textContent=d.label;document.getElementById('chart-low').textContent=`${formatVES(Math.min(...all))} Bs`;document.getElementById('chart-high').textContent=`${formatVES(Math.max(...all))} Bs`;document.getElementById('chart-current').textContent=`${formatVES(DEMO.sell)} Bs`;}
+  function setChartPeriod(period,button){document.querySelectorAll('.period-btn').forEach(b=>b.setAttribute('aria-selected','false'));button.setAttribute('aria-selected','true');initChart(period)}
 
-    async function cargarGrafica(rango) {
-        try {
-            const res = await fetch(`${API_URL}/api/historial?rango=` + rango);
-            const data = await res.json();
+  function openAIChat(trigger=null){openModalLikeAI();}
+  function openModalLikeAI(){document.getElementById('ai-chat-window').classList.remove('hidden');document.body.classList.add('overflow-hidden');setTimeout(()=>document.getElementById('ai-input')?.focus(),0)}
+  function closeAIChat(){document.getElementById('ai-chat-window').classList.add('hidden');const anyOpen=['community-modal','source-modal','login-modal','alert-modal','legal-modal'].some(x=>!document.getElementById(x).classList.contains('hidden'));if(!anyOpen)document.body.classList.remove('overflow-hidden')}
+  function sendAIMessage(){const input=document.getElementById('ai-input'),box=document.getElementById('ai-messages'),text=input.value.trim();if(!text)return;const u=document.createElement('div');u.className='flex items-start justify-end gap-2';u.innerHTML='<div class="max-w-[82%] bg-emerald-500/10 border border-emerald-500/20 rounded-2xl rounded-tr-sm px-3 py-2 text-[11px] text-emerald-100"></div>';u.firstElementChild.textContent=text;box.appendChild(u);input.value='';const r=document.createElement('div');r.className='flex items-start gap-2';r.innerHTML='<div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300"></div>';r.lastElementChild.textContent='Modo demostración: cuando se conecte el backend podré responder con los datos del mercado y el motor analítico de Venbot.';box.appendChild(r);box.scrollTop=box.scrollHeight}
+  function reportAIContent(){alert('Reporte recibido en modo de prueba.')}
 
-            const ctx = document.getElementById('marketChart').getContext('2d');
-            if (chartInstance) chartInstance.destroy();
+  function updateTimestamp(){const s=Math.max(0,Math.floor((Date.now()-DEMO.lastUpdated)/1000));document.getElementById('updated-ago').textContent=s<60?`hace ${s} s`:`hace ${Math.floor(s/60)} min`}
 
-            chartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.labels,
-                    datasets: [
-                        {
-                            label: 'Compra (10k)',
-                            data: data.compras,
-                            borderColor: '#0ecb81',
-                            borderWidth: 2,
-                            tension: 0.2,
-                            pointRadius: 0
-                        },
-                        {
-                            label: 'Venta (300k)',
-                            data: data.ventas,
-                            borderColor: '#f6465d',
-                            borderWidth: 2,
-                            tension: 0.2,
-                            pointRadius: 0
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#848e9c', font: { size: 9 } }, grid: { color: '#21283b' } },
-                        y: { ticks: { color: '#848e9c', font: { size: 9 } }, grid: { color: '#21283b' } }
-                    }
-                }
-            });
-        } catch(e) {
-            console.error("Error al cargar gráfica:", e);
-        }
-    }
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){['community-modal','source-modal','login-modal','alert-modal','legal-modal'].forEach(id=>{const el=document.getElementById(id);if(!el.classList.contains('hidden'))closeModal(id)});if(!document.getElementById('ai-chat-window').classList.contains('hidden'))closeAIChat()}});
+  ['community-modal','source-modal','login-modal','alert-modal','legal-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',e=>{if(e.target.id===id)closeModal(id)})});
 
-    function cambiarRango(rango, btn) {
-        rangoActual = rango;
-        document.querySelectorAll('.btn-range').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        cargarGrafica(rango);
-    }
-
-    cargarActual();
-    cargarGrafica('1d');
-
-    setInterval(() => {
-        cargarActual();
-        cargarGrafica(rangoActual);
-    }, 30000);
+  updateMarketUI();initChart('1d');updateTimestamp();setInterval(updateTimestamp,1000);
 </script>
 </body>
 </html>
