@@ -25,6 +25,18 @@
     .ai-chat{background:rgba(3,7,18,.98);border:1px solid rgba(52,211,153,.24);box-shadow:0 24px 70px rgba(0,0,0,.55)}
     .ai-fab{box-shadow:0 12px 32px rgba(16,185,129,.26)}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
+    
+    /* Estilos de la Barra de Navegación Inferior */
+    .bottom-nav {
+      background: rgba(11, 15, 23, 0.95);
+      backdrop-filter: blur(16px);
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .nav-item.active {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: #34d399;
+    }
   </style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
@@ -73,10 +85,10 @@
       </div>
     </div>
 
-    <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-28">
+    <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-32">
       
       <!-- Mercado Principal -->
-      <section aria-labelledby="market-title" class="space-y-3">
+      <section id="sec-mercado" aria-labelledby="market-title" class="space-y-3 scroll-mt-24">
         <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
             <p class="text-[10px] text-emerald-400 font-black uppercase tracking-[0.18em]">Mercado principal</p>
@@ -117,8 +129,8 @@
         <!-- Tasas Referenciales -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-amber-500/15">
-            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-slate-500 mt-0.5">Referencia cambiaria</p></div></div>
-            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">1.050,00 Bs/EUR</p><p class="text-[10px] text-slate-500 font-bold">Valor de demostración</p></div>
+            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-slate-500 mt-0.5">Oficial BCV</p></div></div>
+            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">1.050,00 Bs/EUR</p><p class="text-[10px] text-slate-500 font-bold">Oficial Banco Central</p></div>
           </article>
           <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-blue-500/15">
             <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400"><i class="fa-solid fa-building-columns"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-slate-500 mt-0.5">Dólar de referencia</p></div></div>
@@ -127,8 +139,8 @@
         </div>
       </section>
 
-      <!-- Calculadora -->
-      <section class="glass-card p-4 rounded-2xl space-y-4" aria-labelledby="calculator-title">
+      <!-- Calculadora (Sin Publicidad) -->
+      <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24" aria-labelledby="calculator-title">
         <div class="flex items-start justify-between gap-3">
           <div><h3 id="calculator-title" class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USDT / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
           <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
@@ -138,15 +150,14 @@
           <div>
             <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USDT</label>
             <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
-            <div class="ad-slot rounded-xl px-3 py-2 mt-2 text-center"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600 mt-0.5">Espacio de prueba junto a la entrada de cantidad</div></div>
           </div>
           <div>
             <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
             <select id="calc-rate" onchange="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
               <option value="sell">Venta P2P · En Vivo</option>
               <option value="buy">Compra P2P · En Vivo</option>
-              <option value="898.5">Tasa BCV · 898,50 Bs/USD</option>
-              <option value="1050">Tasa Euro · 1.050,00 Bs/EUR</option>
+              <option value="bcv">Tasa BCV · Oficial</option>
+              <option value="euro">Tasa Euro · Oficial</option>
             </select>
           </div>
           <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
@@ -198,8 +209,8 @@
 
       <!-- Alertas y Comunidad Cards -->
       <section class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <article class="glass-card p-4 rounded-2xl border border-amber-500/15"><div class="flex items-start gap-3"><div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-regular fa-bell"></i></div><div class="flex-1"><h3 class="text-sm font-bold text-white">Alertas de precio</h3><p class="text-[10px] text-slate-500 mt-1">Configura un nivel de USDT para recibir una alerta cuando se alcance.</p><button type="button" onclick="openAlertModal(this)" class="focus-ring text-[11px] text-amber-300 hover:text-amber-200 font-bold mt-3">Configurar alertas →</button></div></div></article>
-        <article class="glass-card p-4 rounded-2xl border border-sky-500/15"><div class="flex items-start gap-3"><div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-300"><i class="fa-brands fa-telegram"></i></div><div class="flex-1"><h3 class="text-sm font-bold text-white">Comunidad Venbot</h3><p class="text-[10px] text-slate-500 mt-1">Novedades, alertas y soporte de la aplicación.</p><button type="button" onclick="openCommunityModal(this)" class="focus-ring text-[11px] text-sky-300 hover:text-sky-200 font-bold mt-3">Abrir comunidad →</button></div></div></article>
+        <article id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/15 scroll-mt-24"><div class="flex items-start gap-3"><div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-regular fa-bell"></i></div><div class="flex-1"><h3 class="text-sm font-bold text-white">Alertas de precio</h3><p class="text-[10px] text-slate-500 mt-1">Configura un nivel de USDT para recibir una alerta cuando se alcance.</p><button type="button" onclick="openAlertModal(this)" class="focus-ring text-[11px] text-amber-300 hover:text-amber-200 font-bold mt-3">Configurar alertas →</button></div></div></article>
+        <article id="sec-comunidad" class="glass-card p-4 rounded-2xl border border-sky-500/15 scroll-mt-24"><div class="flex items-start gap-3"><div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-300"><i class="fa-brands fa-telegram"></i></div><div class="flex-1"><h3 class="text-sm font-bold text-white">Comunidad Venbot</h3><p class="text-[10px] text-slate-500 mt-1">Novedades, alertas y soporte de la aplicación.</p><button type="button" onclick="openCommunityModal(this)" class="focus-ring text-[11px] text-sky-300 hover:text-sky-200 font-bold mt-3">Abrir comunidad →</button></div></div></article>
       </section>
 
       <!-- Disclaimer Legal / Información -->
@@ -222,15 +233,37 @@
       </div>
     </main>
 
+    <!-- Barra de Navegación Inferior (Icons Bar) -->
+    <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
+      <div class="max-w-md mx-auto grid grid-cols-4 gap-2 text-center">
+        <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
+          <i class="fa-solid fa-chart-simple text-base mb-1"></i>
+          <span class="text-[10px] font-bold">Mercado</span>
+        </button>
+        <button type="button" onclick="setActiveNav('calculadora', 'sec-calculadora')" id="nav-calculadora" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
+          <i class="fa-solid fa-calculator text-base mb-1"></i>
+          <span class="text-[10px] font-bold">Calculadora</span>
+        </button>
+        <button type="button" onclick="setActiveNav('alertas', 'sec-alertas')" id="nav-alertas" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
+          <i class="fa-regular fa-bell text-base mb-1"></i>
+          <span class="text-[10px] font-bold">Alertas</span>
+        </button>
+        <button type="button" onclick="setActiveNav('comunidad', 'sec-comunidad')" id="nav-comunidad" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
+          <i class="fa-brands fa-telegram text-base mb-1"></i>
+          <span class="text-[10px] font-bold">Comunidad</span>
+        </button>
+      </div>
+    </nav>
+
     <!-- Botón Flotante Asistente IA -->
-    <button type="button" onclick="openAIChat(this)" class="ai-fab fixed right-4 bottom-24 z-40 w-14 h-14 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 text-white flex items-center justify-center hover:scale-105 active:scale-95 transition focus-ring" aria-label="Abrir Venbot AI" title="Venbot AI"><i class="fa-solid fa-robot text-xl"></i><span class="absolute -top-1 -left-1 w-5 h-5 rounded-full bg-slate-900 border border-slate-600 text-[7px] flex items-center justify-center text-emerald-300"><i class="fa-solid fa-sparkles"></i></span></button>
+    <button type="button" onclick="openAIChat(this)" class="ai-fab fixed right-4 bottom-20 z-40 w-12 h-12 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 text-white flex items-center justify-center hover:scale-105 active:scale-95 transition focus-ring" aria-label="Abrir Venbot AI" title="Venbot AI"><i class="fa-solid fa-robot text-lg"></i><span class="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-slate-900 border border-slate-600 text-[7px] flex items-center justify-center text-emerald-300"><i class="fa-solid fa-sparkles"></i></span></button>
 
     <!-- Ventana Chat IA -->
-    <div id="ai-chat-window" class="hidden ai-chat fixed bottom-24 right-4 z-50 w-[calc(100%-2rem)] sm:w-[380px] h-[500px] rounded-2xl overflow-hidden flex flex-col" role="dialog" aria-modal="true" aria-labelledby="ai-chat-title">
+    <div id="ai-chat-window" class="hidden ai-chat fixed bottom-20 right-4 z-50 w-[calc(100%-2rem)] sm:w-[380px] h-[480px] rounded-2xl overflow-hidden flex flex-col" role="dialog" aria-modal="true" aria-labelledby="ai-chat-title">
       <div class="bg-slate-900/95 px-4 py-3 border-b border-slate-800 flex items-center justify-between"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300"><i class="fa-solid fa-brain"></i></div><div><h4 id="ai-chat-title" class="text-xs font-bold text-white">Venbot AI</h4><p class="text-[10px] text-slate-500">Asistente de mercado</p></div></div><button type="button" onclick="closeAIChat()" class="focus-ring text-slate-400 hover:text-white p-1" aria-label="Cerrar Venbot AI"><i class="fa-solid fa-xmark"></i></button></div>
       <div class="ad-slot mx-3 mt-3 rounded-xl px-3 py-2 text-center shrink-0"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · apertura de IA</div></div>
       <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-[#060a12]">
-        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola. Puedo ayudarte a interpretar USDT/VES, spreads, tendencias e indicadores. <span class="text-slate-500">No sustituyo asesoramiento financiero profesional.</span></div></div>
+        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola. Puedo ayudarte a interpretar USDT/VES, tasas del BCV/Euro, spreads y tendencias. <span class="text-slate-500">No sustituyo asesoramiento financiero profesional.</span></div></div>
       </div>
       <div class="border-t border-slate-800 bg-slate-900/95 p-3"><div class="flex items-center gap-2"><input id="ai-input" type="text" maxlength="500" placeholder="Pregunta sobre el mercado..." onkeydown="if(event.key==='Enter')sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"><button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 text-slate-950 font-black rounded-xl px-3 py-2 text-xs" aria-label="Enviar mensaje"><i class="fa-solid fa-paper-plane"></i></button></div><div class="flex items-center justify-between mt-2"><span class="text-[9px] text-slate-600">Las respuestas pueden contener errores.</span><button type="button" onclick="placeholderAction('Reportar respuesta')" class="focus-ring text-[9px] text-slate-500 hover:text-slate-300">Reportar respuesta</button></div></div>
     </div>
@@ -261,6 +294,7 @@
     let buyRate = 937.00;
     let sellRate = 948.40;
     let bcvRate = 898.50;
+    let euroRate = 1050.00;
     let timer = 0;
     let chartInstance = null;
 
@@ -270,6 +304,7 @@
       if (el) el.innerText = `hace ${timer} s`;
     }, 1000);
 
+    // Conexión para sincronizar en vivo precios P2P y tasas oficiales (BCV/Euro)
     async function syncBackend() {
       try {
         const res = await fetch(`${API_BASE_URL}/api/actual`, {
@@ -281,13 +316,18 @@
         
         const compra = data.compra || data.buy || data.precio_compra;
         const venta = data.venta || data.sell || data.precio_venta;
+        const bcv = data.bcv || data.tasa_bcv || data.dolar_bcv;
+        const euro = data.euro || data.tasa_euro;
 
         if (compra && venta) {
           buyRate = parseFloat(compra);
           sellRate = parseFloat(venta);
-          updateUI();
-          timer = 0;
         }
+        if (bcv) bcvRate = parseFloat(bcv);
+        if (euro) euroRate = parseFloat(euro);
+
+        updateUI();
+        timer = 0;
       } catch (e) {
         console.log("Manteniendo valores actuales en pantalla...");
       }
@@ -296,6 +336,8 @@
     function updateUI() {
       document.getElementById('buy-price').innerHTML = `${buyRate.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       document.getElementById('sell-price').innerHTML = `${sellRate.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById('bcv-rate').innerText = `${bcvRate.toFixed(2).replace('.', ',')} Bs/USD`;
+      document.getElementById('euro-rate').innerText = `${euroRate.toFixed(2).replace('.', ',')} Bs/EUR`;
 
       const spreadAbs = Math.abs(sellRate - buyRate);
       const spreadPct = buyRate > 0 ? ((spreadAbs / buyRate) * 100).toFixed(2) : "0.00";
@@ -303,7 +345,7 @@
       document.getElementById('spread-value').innerText = `${spreadPct.replace('.', ',')}%`;
       document.getElementById('spread-absolute').innerText = `${spreadAbs.toFixed(2).replace('.', ',')} Bs / USDT`;
 
-      if (sellRate > 0) {
+      if (sellRate > 0 && bcvRate > 0) {
         const gap = (((sellRate - bcvRate) / bcvRate) * 100).toFixed(2);
         document.getElementById('bcv-gap').innerText = `Brecha P2P: +${gap.replace('.', ',')}%`;
       }
@@ -324,6 +366,8 @@
       let rate = 0;
       if (rateType === 'sell') rate = sellRate;
       else if (rateType === 'buy') rate = buyRate;
+      else if (rateType === 'bcv') rate = bcvRate;
+      else if (rateType === 'euro') rate = euroRate;
       else rate = parseFloat(rateType);
 
       const total = amount * rate;
@@ -333,6 +377,24 @@
         const diffBCV = total - (amount * bcvRate);
         const sign = diffBCV >= 0 ? '+' : '';
         document.getElementById('calc-diff').innerText = `${sign}${diffBCV.toLocaleString('es-VE', {minimumFractionDigits:2, maximumFractionDigits:2})} Bs vs. Tasa BCV`;
+      }
+    }
+
+    function setActiveNav(tabId, elementId) {
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active', 'text-emerald-400');
+        item.classList.add('text-slate-400');
+      });
+
+      const activeBtn = document.getElementById(`nav-${tabId}`);
+      if (activeBtn) {
+        activeBtn.classList.add('active');
+        activeBtn.classList.remove('text-slate-400');
+      }
+
+      const targetElement = document.getElementById(elementId);
+      if (targetElement) {
+        targetElement.scrollIntoView({ behavior: 'smooth' });
       }
     }
 
@@ -396,7 +458,7 @@
       container.scrollTop = container.scrollHeight;
 
       setTimeout(() => {
-        container.innerHTML += `<div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Actualmente la tasa de compra es ${buyRate.toFixed(2)} Bs y la venta es ${sellRate.toFixed(2)} Bs.</div></div>`;
+        container.innerHTML += `<div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Actualmente la tasa de compra USDT es ${buyRate.toFixed(2)} Bs, venta ${sellRate.toFixed(2)} Bs y la tasa oficial BCV es ${bcvRate.toFixed(2)} Bs.</div></div>`;
         container.scrollTop = container.scrollHeight;
       }, 500);
     }
