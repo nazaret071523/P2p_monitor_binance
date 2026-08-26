@@ -187,7 +187,7 @@
         </div>
       </section>
 
-      <!-- PROYECCIÓN Y ANÁLISIS DEL MERCADO IA (Gemini IA con Proyección en tiempo real de BCV y Euro) -->
+      <!-- PROYECCIÓN Y ANÁLISIS DEL MERCADO IA -->
       <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/30 overflow-hidden scroll-mt-24" aria-labelledby="analysis-title">
         <div class="space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -198,7 +198,7 @@
                 </h3>
                 <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">GEMINI AI</span>
               </div>
-              <p class="text-[10px] text-slate-500 mt-1">Lecturas estadísticas y proyecciones multimoneda en tiempo real generadas por Gemini IA.</p>
+              <p class="text-[10px] text-slate-500 mt-1">Lecturas estadísticas y proyecciones en tiempo real generadas por Gemini IA.</p>
             </div>
             <div class="text-left sm:text-right">
               <p class="text-[10px] text-slate-500">Horizonte</p>
@@ -206,7 +206,23 @@
             </div>
           </div>
 
-          <!-- 4 Bloques Principales -->
+          <!-- 1. Análisis y Opinión de Gemini IA (ARRIBA) -->
+          <div class="bg-slate-900/90 border border-indigo-500/20 rounded-xl p-3.5 flex items-start gap-3">
+            <div class="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 shrink-0 mt-0.5">
+              <i class="fa-solid fa-robot text-sm"></i>
+            </div>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <h4 class="text-xs font-bold text-indigo-200">Análisis y Opinión de Gemini IA</h4>
+                <span class="text-[9px] text-slate-500">En tiempo real</span>
+              </div>
+              <p id="gemini-insight-text" class="text-[11px] text-slate-300 mt-1 leading-relaxed">
+                El mercado P2P proyecta resistencia en 951 Bs. La brecha con la tasa oficial BCV (898.50 Bs) marca un incremento diferencial del 5.55%, lo que sugiere baja volatilidad e interés sostenido en compra para las próximas horas.
+              </p>
+            </div>
+          </div>
+
+          <!-- 2. Bloques de Métricas (ABAJO DEL ANÁLISIS) -->
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
             <!-- Bloque 1: Tendencia -->
             <div class="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-3">
@@ -226,45 +242,7 @@
             <!-- Bloque 4: Rango estimado USDT -->
             <div class="bg-purple-950/30 border border-purple-500/30 rounded-xl p-3">
               <span class="text-[10px] text-purple-300 font-bold block">Rango USDT Est.</span>
-              <strong id="analysis-range" class="text-sm text-purple-400 mt-1 block">935–950 Bs</strong>
-            </div>
-          </div>
-
-          <!-- Bloque de Proyección en Tiempo Real: BCV y EURO -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div class="bg-blue-950/20 border border-blue-500/20 rounded-xl p-3 flex items-center justify-between">
-              <div>
-                <span class="text-[10px] text-blue-400 font-bold block uppercase">Proyección BCV (USD)</span>
-                <p id="gemini-bcv-proj" class="text-xs font-black text-white mt-0.5">Cierre est.: 901,20 Bs</p>
-              </div>
-              <div class="text-right">
-                <span id="gemini-bcv-change" class="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">+0,30%</span>
-              </div>
-            </div>
-            <div class="bg-amber-950/20 border border-amber-500/20 rounded-xl p-3 flex items-center justify-between">
-              <div>
-                <span class="text-[10px] text-amber-400 font-bold block uppercase">Proyección Tasa Euro</span>
-                <p id="gemini-euro-proj" class="text-xs font-black text-white mt-0.5">Cierre est.: 1.053,50 Bs</p>
-              </div>
-              <div class="text-right">
-                <span id="gemini-euro-change" class="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">+0,33%</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Mensaje / Insight Directo de Gemini IA -->
-          <div class="bg-slate-900/90 border border-indigo-500/20 rounded-xl p-3.5 flex items-start gap-3">
-            <div class="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 shrink-0 mt-0.5">
-              <i class="fa-solid fa-robot text-sm"></i>
-            </div>
-            <div class="flex-1">
-              <div class="flex items-center justify-between">
-                <h4 class="text-xs font-bold text-indigo-200">Análisis y Opinión de Gemini IA</h4>
-                <span class="text-[9px] text-slate-500">En tiempo real</span>
-              </div>
-              <p id="gemini-insight-text" class="text-[11px] text-slate-300 mt-1 leading-relaxed">
-                El mercado P2P mantiene una brecha estable con la tasa oficial BCV. Las proyecciones sugieren movimientos moderados para las próximas horas manteniendo liquidez constante en la compra y venta.
-              </p>
+              <strong id="analysis-range" class="text-sm text-purple-400 mt-1 block">935–951 Bs</strong>
             </div>
           </div>
 
@@ -273,11 +251,6 @@
             <button type="button" onclick="openAIChat(this)" class="text-emerald-400 font-bold hover:underline">Hacer una pregunta a Gemini →</button>
           </div>
         </div>
-      </section>
-
-      <!-- Asistente Teaser -->
-      <section class="glass-card p-4 rounded-2xl border border-emerald-500/15" aria-labelledby="ai-teaser-title">
-        <div class="flex items-center gap-3"><div class="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300"><i class="fa-solid fa-brain text-lg"></i></div><div class="flex-1 min-w-0"><div class="flex items-center gap-2"><h3 id="ai-teaser-title" class="text-sm font-bold text-white">Venbot AI</h3><span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">ASISTENTE</span></div><p class="text-[10px] text-slate-500 mt-1">Pregunta por el mercado P2P, tendencias, spreads e indicadores.</p></div><button type="button" onclick="openAIChat(this)" class="focus-ring shrink-0 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px] px-3 py-2 rounded-xl transition">Abrir IA</button></div>
       </section>
 
       <!-- Comunidad Card -->
@@ -292,7 +265,7 @@
         </div>
       </section>
 
-      <!-- Disclaimer Legal -->
+      <!-- Legal Disclaimer -->
       <section class="rounded-2xl border border-slate-800 bg-slate-950/50 p-3.5">
         <div class="flex gap-3"><div class="mt-0.5 text-slate-500"><i class="fa-solid fa-circle-info"></i></div><div><p class="text-[10px] font-bold text-slate-300">Sobre los datos mostrados</p><p class="text-[10px] leading-relaxed text-slate-500 mt-1">Los precios P2P pueden variar entre anuncios, métodos de pago, liquidez y momento de consulta. Las cotizaciones deben interpretarse como referencias informativas.</p><p class="text-[10px] leading-relaxed text-slate-600 mt-1">Venbot no custodia fondos, no ejecuta operaciones ni procesa pagos. El análisis de mercado es informativo y no constituye asesoramiento financiero personalizado.</p></div></div>
       </section>
@@ -312,9 +285,9 @@
       </div>
     </main>
 
-    <!-- Barra de Navegación Inferior -->
+    <!-- Barra de Navegación Inferior (4 Opciones: Mercado, Calculadora, Gemini IA, Comunidad) -->
     <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
-      <div class="max-w-md mx-auto grid grid-cols-4 gap-2 text-center">
+      <div class="max-w-md mx-auto grid grid-cols-4 gap-1 text-center">
         <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
           <i class="fa-solid fa-chart-simple text-base mb-1"></i>
           <span class="text-[10px] font-bold">Mercado</span>
@@ -324,7 +297,7 @@
           <span class="text-[10px] font-bold">Calculadora</span>
         </button>
         <button type="button" onclick="setActiveNav('gemini', 'sec-gemini')" id="nav-gemini" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
-          <i class="fa-solid fa-wand-magic-sparkles text-base mb-1 text-emerald-400"></i>
+          <i class="fa-solid fa-wand-magic-sparkles text-base mb-1"></i>
           <span class="text-[10px] font-bold">Gemini IA</span>
         </button>
         <button type="button" onclick="setActiveNav('comunidad', 'sec-comunidad')" id="nav-comunidad" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
@@ -342,7 +315,7 @@
       <div class="bg-slate-900/95 px-4 py-3 border-b border-slate-800 flex items-center justify-between"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300"><i class="fa-solid fa-brain"></i></div><div><h4 id="ai-chat-title" class="text-xs font-bold text-white">Venbot AI (Gemini)</h4><p class="text-[10px] text-slate-500">Asistente de mercado</p></div></div><button type="button" onclick="closeAIChat()" class="focus-ring text-slate-400 hover:text-white p-1" aria-label="Cerrar Venbot AI"><i class="fa-solid fa-xmark"></i></button></div>
       <div class="ad-slot mx-3 mt-3 rounded-xl px-3 py-2 text-center shrink-0"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · apertura de IA</div></div>
       <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-[#060a12]">
-        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola, soy Gemini IA. Te asisto con análisis del mercado USDT/VES, tasa BCV y proyecciones en vivo.</div></div>
+        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola, soy Gemini IA. Te asisto con análisis del mercado USDT/VES y tasa BCV en vivo.</div></div>
       </div>
       <div class="border-t border-slate-800 bg-slate-900/95 p-3"><div class="flex items-center gap-2"><input id="ai-input" type="text" maxlength="500" placeholder="Pregunta sobre el mercado..." onkeydown="if(event.key==='Enter')sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"><button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 text-slate-950 font-black rounded-xl px-3 py-2 text-xs" aria-label="Enviar mensaje"><i class="fa-solid fa-paper-plane"></i></button></div><div class="flex items-center justify-between mt-2"><span class="text-[9px] text-slate-600">Las respuestas pueden contener errores.</span><button type="button" onclick="placeholderAction('Reportar respuesta')" class="focus-ring text-[9px] text-slate-500 hover:text-slate-300">Reportar respuesta</button></div></div>
     </div>
@@ -424,19 +397,11 @@
         document.getElementById('bcv-gap').innerText = `Brecha P2P: +${gap.replace('.', ',')}%`;
       }
 
-      // Proyecciones dinámicas actualizadas por Gemini
-      const projectedBCV = (bcvRate * 1.003).toFixed(2).replace('.', ',');
-      const projectedEuro = (euroRate * 1.0033).toFixed(2).replace('.', ',');
-
-      document.getElementById('gemini-bcv-proj').innerText = `Cierre est.: ${projectedBCV} Bs`;
-      document.getElementById('gemini-euro-proj').innerText = `Cierre est.: ${projectedEuro} Bs`;
-
       document.getElementById('analysis-range').innerText = `${Math.floor(buyRate - 2)}–${Math.ceil(sellRate + 2)} Bs`;
       document.getElementById('chart-current').innerText = `${sellRate.toFixed(2).replace('.', ',')} Bs`;
       document.getElementById('chart-low').innerText = `${(buyRate - 1.5).toFixed(2).replace('.', ',')} Bs`;
       document.getElementById('chart-high').innerText = `${(sellRate + 1.5).toFixed(2).replace('.', ',')} Bs`;
 
-      // Texto de Gemini contextual a los valores en tiempo real
       document.getElementById('gemini-insight-text').innerText = 
         `El mercado P2P proyecta resistencia en ${Math.ceil(sellRate + 2)} Bs. La brecha con la tasa oficial BCV (${bcvRate.toFixed(2)} Bs) marca un incremento diferencial del ${(((sellRate - bcvRate) / bcvRate) * 100).toFixed(2)}%, lo que sugiere baja volatilidad e interés sostenido en compra para las próximas horas.`;
 
@@ -540,7 +505,7 @@
       container.scrollTop = container.scrollHeight;
 
       setTimeout(() => {
-        container.innerHTML += `<div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Gemini IA: Con la tasa compra P2P en ${buyRate.toFixed(2)} Bs y el oficial BCV en ${bcvRate.toFixed(2)} Bs, el mercado muestra firmeza. El Euro proyecta estabilidad hacia los ${ (euroRate * 1.0033).toFixed(2) } Bs.</div></div>`;
+        container.innerHTML += `<div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Gemini IA: Con la tasa compra P2P en ${buyRate.toFixed(2)} Bs y el oficial BCV en ${bcvRate.toFixed(2)} Bs, el mercado muestra estabilidad.</div></div>`;
         container.scrollTop = container.scrollHeight;
       }, 500);
     }
