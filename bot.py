@@ -7,7 +7,7 @@ import numpy as np
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -393,9 +393,12 @@ def get_custom_css():
 def get_actual():
     compra, venta, spread, pct = fetch_binance_p2p()
     if not compra:
-        return {"error": "Sin datos"}
+        return JSONResponse(
+            content={"error": "Sin datos"},
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
+        )
     pred = motor_quant_inteligente(compra, venta)
-    return {
+    data = {
         "compra": compra, 
         "venta": venta, 
         "spread": spread, 
@@ -403,6 +406,14 @@ def get_actual():
         "bcv": 898.50,
         "prediccion": pred
     }
+    return JSONResponse(
+        content=data,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 @app.get("/api/historico")
 def get_historico(periodo: str = "1d"):
