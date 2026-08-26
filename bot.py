@@ -34,7 +34,6 @@ def obtener_tasas_oficiales_bcv():
     usd_bcv = 898.50
     eur_bcv = 1050.00
     
-    # 1. Intento por scraping directo al BCV
     try:
         url = "https://www.bcv.org.ve/"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -56,7 +55,6 @@ def obtener_tasas_oficiales_bcv():
     except Exception as e:
         print(f"Error consultando sitio oficial BCV: {e}")
 
-    # 2. Respaldo vía CDN pública libre de CORS si la web principal falla
     try:
         res_backup = requests.get("https://rates.dolarvzla.com/bcv/current.json", timeout=3).json()
         usd_bcv = float(res_backup.get("current", {}).get("usd", usd_bcv))
@@ -251,8 +249,9 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         }}
         """
 
+        # MODELO ACTUALIZADO Y CORREGIDO PARA EVITAR EL ERROR 404
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -412,7 +411,6 @@ app.add_middleware(
 async def home():
     return {"status": "ok", "message": "Venbot P2P Activo"}
 
-# Endpoint SSE Corregido para responder a la App Web Vercel
 @app.get("/api/stream")
 async def event_stream():
     async def event_generator():
@@ -481,22 +479,18 @@ async def get_custom_css():
       color: #FFFFFF !important;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
     }
-
     p, span, label, div, .description, .ia-report-text {
       color: #E2E8F0 !important;
       font-size: 0.95rem !important;
       line-height: 1.5 !important;
     }
-
     .text-secondary, .text-muted, small, footer p, .ia-disclaimer-text {
       color: #94A3B8 !important;
     }
-
     h1, h2, h3, h4, h5, .card-title, .metric-label {
       color: #38BDF8 !important;
       font-weight: 600 !important;
     }
-
     .metric-value, .highlight-text {
       color: #FFFFFF !important;
       font-weight: 700 !important;
