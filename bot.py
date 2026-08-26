@@ -136,73 +136,61 @@ def fetch_binance_p2p():
         return None, None, None, None
 
 # ==========================================
-# GEMINI IA - ANÁLISIS UNIFICADO Y COHERENTE
+# GEMINI IA - ANÁLISIS COHERENTE FRONTEND Y BOT
 # ==========================================
 def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
-    """Genera un análisis unificado sin contradicciones entre las pestañas del frontend"""
     if not gemini_client:
         return {
+            "estado_actual": f"Mercado P2P en {actual_compra:.2f} Bs y {actual_venta:.2f} Bs. Spread: {spread:.2f} Bs.",
+            "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Recompra esperada en {pred_compra:.2f} Bs.",
+            "recomendacion_tactica": "Mantener postura competitiva en anuncios de compra y rotación continua.",
             "tactica": {
-                "texto": f"Se proyecta estabilidad en la zona de {actual_compra:.2f} Bs. Momento adecuado para publicar anuncios de compra y rotar saldo con rapidez.",
-                "senal": "COMPRA MODERADA",
-                "velocidad": "ALTA (< 5 min)",
-                "sombra": "EQUILIBRADA",
-                "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
+                "texto": "Momento de publicar anuncios de compra y rotar saldo rápido.",
+                "senal": "COMPRA MODERADA", "velocidad": "ALTA (< 5 min)", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
             },
             "flujo": {
-                "texto": f"Absorción regular de liquidez en bancos principales. Mantener anuncios en la punta competitiva para asegurar flujo.",
-                "dominio": "COMPRADORES ACTIVOS",
-                "spread_status": f"{spread:.2f} Bs (Normal)",
-                "riesgo": "BAJO",
-                "proyeccion_12h": f"{pred_venta:.2f} Bs"
+                "texto": "Absorción constante de oferta en la punta competitiva.",
+                "dominio": "COMPRADORES ACTIVOS", "spread_status": f"{spread:.2f} Bs", "riesgo": "BAJO", "proyeccion_12h": f"{pred_venta:.2f} Bs"
             },
             "niveles": {
-                "texto": f"Rango operativo acotado entre {actual_compra:.2f} Bs y {pred_venta:.2f} Bs. Densidad de capital constante.",
-                "momentum": "MEDIO (65%)",
-                "liquidez": "ESTABLE",
-                "quiebre": f"{actual_compra:.2f} Bs",
-                "techo": f"{pred_venta:.2f} Bs"
+                "texto": "Rango definido entre soporte actual y techo estimado.",
+                "momentum": "MEDIO (65%)", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{pred_venta:.2f} Bs"
             }
         }
 
     try:
         system_instruction = (
-            "Eres el motor analítico cuantitativo de VENBOT para comerciantes P2P NO VERIFICADOS de Binance Venezuela. "
-            "Debes generar un único informe coherente estructurado en 3 visiones (Táctica, Flujo y Niveles) asegurándote "
-            "de que NO EXISTAN contradicciones numéricas ni estratégicas entre ellas. "
-            "Toda recomendación debe orientarse a un comerciante P2P no verificado que busca ganar spread colocando anuncios "
-            "de compra/venta de USDT/VES. Responde en formato JSON válido."
+            "Eres el asesor cuantitativo de VENBOT para comerciantes P2P NO VERIFICADOS en Binance Venezuela. "
+            "Genera un informe unificado en JSON orientado a la operativa de anuncios (USDT/VES) sin contradicciones."
         )
 
         prompt = f"""
-        Datos actuales de Binance P2P:
-        - Compra Anuncio: {actual_compra:.2f} Bs
-        - Venta Anuncio: {actual_venta:.2f} Bs
-        - Spread Operativo: {spread:.2f} Bs
-        - Tendencia Quant: {tendencia_quant}
-        - Recompra Esperada: {pred_compra:.2f} Bs
-        - Venta Esperada: {pred_venta:.2f} Bs
+        Datos P2P Binance: Compra {actual_compra:.2f} Bs, Venta {actual_venta:.2f} Bs, Spread {spread:.2f} Bs.
+        Proyección 7-12h: Recompra {pred_compra:.2f} Bs, Venta {pred_venta:.2f} Bs, Tendencia {tendencia_quant}.
 
-        Genera este JSON con coherencia total entre las 3 pestañas:
+        Genera este JSON exacto:
         {{
+          "estado_actual": "Diagnóstico rápido del mercado para Telegram (1 frase).",
+          "proyeccion_7_12h": "Lectura a 7-12h para Telegram (1 frase).",
+          "recomendacion_tactica": "Acción directa del comerciante P2P para Telegram (1 frase).",
           "tactica": {{
-            "texto": "Explicación táctica para el comerciante no verificado (máx 2 frases).",
+            "texto": "Análisis pestaña táctica del web UI.",
             "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
-            "velocidad": "ALTA (< 5 min) | MEDIA (5-15 min) | LENTA",
-            "sombra": "ESCASEZ DE USDT | LIQUIDEZ ALTA | NORMAL",
-            "rango": "Rango de precio proyectado corto plazo"
+            "velocidad": "ALTA (< 5 min) | MEDIA",
+            "sombra": "ESCASEZ DE USDT | NORMAL",
+            "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
           }},
           "flujo": {{
-            "texto": "Lectura sobre la absorción de oferta/demanda P2P (máx 2 frases).",
-            "dominio": "COMPRADORES AGRESIVOS | VENDEDORES AGRESIVOS | LATERAL",
-            "spread_status": "{spread:.2f} Bs (Excelente / Regular)",
-            "riesgo": "BAJO | MEDIO | ALTO",
+            "texto": "Análisis pestaña flujo del web UI.",
+            "dominio": "COMPRADORES AGRESIVOS | LATERAL",
+            "spread_status": "{spread:.2f} Bs (Excelente)",
+            "riesgo": "BAJO | MEDIO",
             "proyeccion_12h": "{pred_venta:.2f} Bs"
           }},
           "niveles": {{
-            "texto": "Lectura de pisos, techos y densidad de capital (máx 2 frases).",
-            "momentum": "ALTO (80%) | MEDIO (50%) | BAJO (20%)",
-            "liquidez": "ABUNDANTE | MODERADA | ESCASA",
+            "texto": "Análisis pestaña niveles del web UI.",
+            "momentum": "ALTO (80%) | MEDIO",
+            "liquidez": "ABUNDANTE | ESTABLE",
             "quiebre": "{pred_compra:.2f} Bs",
             "techo": "{pred_venta:.2f} Bs"
           }}
@@ -221,20 +209,14 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
 
         return json.loads(response.text)
     except Exception as e:
-        print(f"Error en Gemini IA: {e}")
+        print(f"Error Gemini: {e}")
         return {
-            "tactica": {
-                "texto": "Mercado P2P operando en parámetros estándar de liquidez.",
-                "senal": "COMPRA MODERADA", "velocidad": "MEDIA", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} Bs"
-            },
-            "flujo": {
-                "texto": "Rotación de capital estable en las puntas de anuncios.",
-                "dominio": "LATERAL", "spread_status": f"{spread:.2f} Bs", "riesgo": "MEDIO", "proyeccion_12h": f"{actual_venta:.2f} Bs"
-            },
-            "niveles": {
-                "texto": "Niveles de soporte y resistencia acotados al rango actual.",
-                "momentum": "MEDIO", "liquidez": "MODERADA", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{actual_venta:.2f} Bs"
-            }
+            "estado_actual": f"Mercado P2P en {actual_compra:.2f} / {actual_venta:.2f} Bs.",
+            "proyeccion_7_12h": f"Tendencia {tendencia_quant}.",
+            "recomendacion_tactica": "Ajustar anuncios en la punta competitiva.",
+            "tactica": {"texto": "Mercado estable.", "senal": "COMPRA MODERADA", "velocidad": "MEDIA", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} Bs"},
+            "flujo": {"texto": "Rotación normal.", "dominio": "LATERAL", "spread_status": f"{spread:.2f} Bs", "riesgo": "MEDIO", "proyeccion_12h": f"{actual_venta:.2f} Bs"},
+            "niveles": {"texto": "Rango acotado.", "momentum": "MEDIO", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{actual_venta:.2f} Bs"}
         }
 
 # ==========================================
@@ -310,7 +292,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# COMANDO TELEGRAM
+# COMANDO TELEGRAM (ESTRUCTURA EXACTA ORIGINAL)
 # ==========================================
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     compra, venta, spread, pct = fetch_binance_p2p()
@@ -320,28 +302,26 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pred = motor_quant_inteligente(compra, venta)
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
-    ia = pred["analisis_ia"]["tactica"]
 
     msg = (
-        f"🤖 <b>VENBOT PREDICCIONES P2P</b>\n"
-        f"🕒 ({hora_ve})\n"
-        f"🟢 <b>COMPRA:</b> {compra:.2f} Bs\n"
-        f"🔴 <b>VENTA:</b> {venta:.2f} Bs\n"
-        f"⚡ <b>SPREAD:</b> {spread:.2f} Bs ({pct:.2f}%)\n"
+        f"🦜 <b>VENBOT PREDICCIONES</b>\n"
+        f"🕒 ({hora_ve}) | BLOQUE 4\n"
+        f"🟢 <b>COMPRA (10k):</b> {compra:.2f} Bs\n"
+        f"🔴 <b>VENTA (300k):</b> {venta:.2f} Bs\n"
+        f"⚡ <b>MARGEN:</b> {spread:.2f} Bs ({pct:.2f}%)\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🔮 <b>PROYECCIÓN QUANT</b>\n"
-        f"🟢 Recompra: <b>{pred['pred_compra_str']}</b>\n"
-        f"🔴 Venta: <b>{pred['pred_venta_str']}</b>\n"
-        f"🎯 Tendencia: <b>{pred['tendencia']}</b>\n"
+        f"🔮 <b>PROYECCIÓN +7H (IA QUANT)</b>\n"
+        f"🟢 Recompra Esperada: <b>{pred['pred_compra_str']}</b>\n"
+        f"🔴 Venta Esperada: <b>{pred['pred_venta_str']}</b>\n"
+        f"🎯 Dirección: <b>{pred['tendencia']}</b>\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🧠 <b>ANÁLISIS COMERCIANTE P2P</b>\n"
-        f"{ia['texto']}\n"
-        f"💡 Señal: <b>{ia['senal']}</b>"
+        f"📊 Piso: <b>{pred['piso_str']}</b> | Techo: <b>{pred['techo_str']}</b>\n"
+        f"💾 Base de Datos: <b>{pred['muestras']} Muestras</b>"
     )
     await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==========================================
-# SERVIDOR FASTAPI Y CSS MEJORADO DE ALTO CONTRASTE
+# SERVIDOR FASTAPI Y CSS FRONTEND
 # ==========================================
 telegram_app = None
 
@@ -378,36 +358,30 @@ app.add_middleware(
 def home():
     return {"status": "ok", "message": "Venbot P2P Activo"}
 
-# ENDPOINT CSS PARA LEER TODO DE FORMA CLARA Y LEGIBLE EN EL FRONTEND
 @app.get("/styles.css")
 def get_custom_css():
     css_content = """
-    /* CORRECCIÓN GLOBAL DE LEGIBILIDAD VISUAL */
     body {
       background-color: #0B1120 !important;
       color: #FFFFFF !important;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
     }
 
-    /* Párrafos, descripciones e informes de la IA */
     p, span, label, div, .description, .ia-report-text {
-      color: #E2E8F0 !important; /* Blanco suave de alta visibilidad */
+      color: #E2E8F0 !important;
       font-size: 0.95rem !important;
       line-height: 1.5 !important;
     }
 
-    /* Subtítulos oscuros corregidos a color claro legibles */
     .text-secondary, .text-muted, small, footer p, .ia-disclaimer-text {
-      color: #94A3B8 !important; /* Gris claro legible */
+      color: #94A3B8 !important;
     }
 
-    /* Títulos y nombres de métricas */
     h1, h2, h3, h4, h5, .card-title, .metric-label {
-      color: #38BDF8 !important; /* Azul celestino resplandeciente */
+      color: #38BDF8 !important;
       font-weight: 600 !important;
     }
 
-    /* Destacado de valores numéricos en tarjetas */
     .metric-value, .highlight-text {
       color: #FFFFFF !important;
       font-weight: 700 !important;
@@ -434,18 +408,12 @@ def get_actual():
 def get_historico(periodo: str = "1d"):
     filas = obtener_estadisticas_db()
     resultado = []
-    
     for f in filas:
         try:
             hora_f = datetime.fromisoformat(f[2]).strftime("%I:%M %p")
         except:
             hora_f = "12:00"
-            
-        resultado.append({
-            "hora": hora_f,
-            "compra": f[0],
-            "venta": f[1]
-        })
+        resultado.append({"hora": hora_f, "compra": f[0], "venta": f[1]})
     return resultado
 
 @app.post("/api/chat")
@@ -453,16 +421,16 @@ def api_chat(payload: dict = Body(...)):
     prompt = payload.get("prompt", "").lower()
     compra, venta, spread, _ = fetch_binance_p2p()
     pred = motor_quant_inteligente(compra, venta)
-    ia = pred["analisis_ia"]["tactica"]
+    ia = pred["analisis_ia"]
     
     if "precio" in prompt or "cuanto" in prompt:
-        respuesta = f"La compra en anuncio P2P cotiza en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
+        respuesta = f"La compra P2P está en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
     elif "comprar" in prompt:
-        respuesta = f"La tasa recomendada para colocar orden de compra P2P es {compra:.2f} Bs."
+        respuesta = f"Tasa recomendada para comprar P2P: {compra:.2f} Bs."
     elif "vender" in prompt:
-        respuesta = f"Puedes publicar tu anuncio de venta P2P a {venta:.2f} Bs."
+        respuesta = f"Tasa recomendada para vender P2P: {venta:.2f} Bs."
     else:
-        respuesta = f"Diagnóstico P2P: {ia['texto']} (Señal: {ia['senal']})"
+        respuesta = f"Diagnóstico: {ia.get('estado_actual', '')} Recomendación: {ia.get('recomendacion_tactica', '')}"
 
     return {"response": respuesta}
 
