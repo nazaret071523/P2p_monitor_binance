@@ -193,60 +193,56 @@ def fetch_binance_p2p():
 def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
     if not gemini_client:
         return {
-            "estado_actual": f"Mercado P2P en {actual_compra:.2f} Bs y {actual_venta:.2f} Bs. Spread: {spread:.2f} Bs.",
-            "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Recompra esperada en {pred_compra:.2f} Bs.",
-            "recomendacion_tactica": "Mantener postura competitiva en anuncios de compra y rotación continua.",
+            "estado_actual": f"El spread P2P actual se ubica en {spread:.2f} Bs con ordenes activas en compra ({actual_compra:.2f} Bs) y venta ({actual_venta:.2f} Bs).",
+            "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Nivel óptimo de recompra estimado en {pred_compra:.2f} Bs.",
+            "recomendacion_tactica": "Mantener margen dinámico en los anuncios de compra para acelerar la rotación de capital.",
             "tactica": {
-                "texto": f"El spread P2P se ubica en {spread:.2f} Bs con flujo dinámico de órdenes en la punta competitiva.",
+                "texto": f"El spread P2P de {spread:.2f} Bs permite colocación rápida de órdenes en la punta competitiva.",
                 "senal": "COMPRA MODERADA", "velocidad": "ALTA (< 5 min)", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
             },
             "flujo": {
-                "texto": "Absorción constante de oferta de USDT dentro de la liquidez P2P.",
+                "texto": "Absorción constante de volumen P2P orientada a comerciantes no verificados.",
                 "dominio": "COMPRADORES ACTIVOS", "spread_status": f"{spread:.2f} Bs", "riesgo": "BAJO", "proyeccion_12h": f"{pred_venta:.2f} Bs"
             },
             "niveles": {
-                "texto": "Rango delimitado estrictamente por la profundidad de puntas P2P.",
+                "texto": "Comportamiento del libro de órdenes ajustado al canal actual de USDT/VES.",
                 "momentum": "MEDIO (65%)", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{pred_venta:.2f} Bs"
             }
         }
 
     try:
         system_instruction = (
-            "Eres el asesor cuantitativo exclusivo de VENBOT para comerciantes P2P NO VERIFICADOS en Binance Venezuela (par USDT/VES). "
-            "REGLA STRICTA Y OBLIGATORIA: Analiza ÚNICAMENTE la dinámica interna de oferta, demanda, spread y liquidez de Binance P2P. "
-            "ESTÁ TOTALMENTE PROHIBIDO mencionar, comparar o calcular la brecha con la tasa BCV, dólar oficial, Euro o entes bancarios tradicionales. "
-            "Toda la lectura debe enfocarse exclusivamente en la estrategia de colocación de anuncios P2P para maximizar el margen de ganancia."
+            "Eres el analista de mercado P2P para VENBOT en Binance Venezuela (USDT/VES). "
+            "PROHIBIDO ABSOLUTAMENTE: Mencionar BCV, tasa oficial, Euro, brechas cambiarías institucionales o entes gubernamentales. "
+            "Tus respuestas deben tratar exclusivamente sobre: libro de órdenes P2P, spread, punta de compra/venta y estrategia de anuncios."
         )
 
         prompt = f"""
-        Métricas Exclusivas Binance P2P (USDT/VES):
-        - Precio Compra P2P: {actual_compra:.2f} Bs
-        - Precio Venta P2P: {actual_venta:.2f} Bs
-        - Spread Operativo: {spread:.2f} Bs
-        - Proyección Quant (+7h a 12h): Recompra en {pred_compra:.2f} Bs, Venta en {pred_venta:.2f} Bs
-        - Tendencia de Mercado: {tendencia_quant}
+        Datos Binance P2P Tiempo Real:
+        - Compra: {actual_compra:.2f} Bs | Venta: {actual_venta:.2f} Bs | Spread: {spread:.2f} Bs
+        - Tendencia: {tendencia_quant} | Recompra Proyectada: {pred_compra:.2f} Bs | Venta Proyectada: {pred_venta:.2f} Bs
 
-        Genera este JSON exacto enfocado 100% en operativa P2P (SIN MENCIONAR BCV NI EURO):
+        Genera este formato JSON estricto enfocando el análisis exclusivamente en Binance P2P:
         {{
-          "estado_actual": "Diagnóstico rápido centrado únicamente en el spread y dinámica P2P (1 frase).",
-          "proyeccion_7_12h": "Lectura de rotación y precios de recompra/venta P2P (1 frase).",
-          "recomendacion_tactica": "Acción directa para el comerciante P2P en sus anuncios (1 frase).",
+          "estado_actual": "Análisis exclusivo de las puntas P2P y spread actual en Binance (1 frase corta).",
+          "proyeccion_7_12h": "Proyección de rotación P2P y recompra esperada en Binance (1 frase corta).",
+          "recomendacion_tactica": "Recomendación de colocación de anuncios P2P (1 frase corta).",
           "tactica": {{
-            "texto": "Análisis táctico P2P. Enfócate solo en la profundidad de puntas, margen P2P y estrategia de anuncios.",
+            "texto": "Lectura operativa P2P. Evalúa la dinámica entre anuncios de compra y venta en Binance.",
             "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
             "velocidad": "ALTA (< 5 min) | MEDIA",
             "sombra": "ESCASEZ DE USDT | NORMAL",
             "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
           }},
           "flujo": {{
-            "texto": "Análisis de volumen y velocidad de absorción de USDT exclusivamente dentro de Binance P2P.",
+            "texto": "Análisis del flujo de liquidez P2P y velocidad de ejecución de órdenes.",
             "dominio": "COMPRADORES AGRESIVOS | LATERAL | VENDEDORES ACTIVOS",
-            "spread_status": "{spread:.2f} Bs (Excelente)",
+            "spread_status": "{spread:.2f} Bs",
             "riesgo": "BAJO | MEDIO | ALTO",
             "proyeccion_12h": "{pred_venta:.2f} Bs"
           }},
           "niveles": {{
-            "texto": "Comportamiento del libro de órdenes P2P entre soporte de compra y techo de venta.",
+            "texto": "Evaluación del soporte de compra y resistencia de venta en el libro P2P.",
             "momentum": "ALTO (80%) | MEDIO (65%) | BAJO",
             "liquidez": "ABUNDANTE | ESTABLE | ESCASA",
             "quiebre": "{pred_compra:.2f} Bs",
@@ -261,7 +257,7 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
-                temperature=0.2
+                temperature=0.3
             ),
         )
 
@@ -269,12 +265,12 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
     except Exception as e:
         print(f"Error Gemini: {e}")
         return {
-            "estado_actual": f"Mercado P2P en {actual_compra:.2f} / {actual_venta:.2f} Bs.",
-            "proyeccion_7_12h": f"Tendencia P2P {tendencia_quant}.",
-            "recomendacion_tactica": "Ajustar anuncios en la punta competitiva.",
-            "tactica": {"texto": f"Spread actual de {spread:.2f} Bs. Rotación continua de saldo P2P.", "senal": "COMPRA MODERADA", "velocidad": "MEDIA", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} Bs"},
-            "flujo": {"texto": "Absorción regular de volumen en el libro de órdenes P2P.", "dominio": "LATERAL", "spread_status": f"{spread:.2f} Bs", "riesgo": "MEDIO", "proyeccion_12h": f"{actual_venta:.2f} Bs"},
-            "niveles": {"texto": "Rango acotado dentro del spread del mercado P2P.", "momentum": "MEDIO", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{actual_venta:.2f} Bs"}
+            "estado_actual": f"Mercado P2P cotizando en {actual_compra:.2f} Bs compra y {actual_venta:.2f} Bs venta.",
+            "proyeccion_7_12h": f"Tendencia general P2P: {tendencia_quant}.",
+            "recomendacion_tactica": "Ajustar anuncios P2P en el primer bloque competitivo.",
+            "tactica": {"texto": f"Spread de {spread:.2f} Bs. Rotación regular de USDT.", "senal": "COMPRA MODERADA", "velocidad": "MEDIA", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} Bs"},
+            "flujo": {"texto": "Volumen P2P operando dentro del canal proyectado.", "dominio": "LATERAL", "spread_status": f"{spread:.2f} Bs", "riesgo": "MEDIO", "proyeccion_12h": f"{actual_venta:.2f} Bs"},
+            "niveles": {"texto": "Límites operativos del mercado P2P delimitados.", "momentum": "MEDIO", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{actual_venta:.2f} Bs"}
         }
 
 # ==========================================
@@ -429,6 +425,8 @@ async def event_stream():
                 if not compra:
                     compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
 
+                pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
+
                 payload = {
                     "compra": compra,
                     "venta": venta,
@@ -439,6 +437,8 @@ async def event_stream():
                     "sell_price": venta,
                     "bcv": usd_bcv,
                     "euro": eur_bcv,
+                    "prediccion": pred,
+                    "timestamp": datetime.now(VET).isoformat(),
                     "status": "connected"
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
