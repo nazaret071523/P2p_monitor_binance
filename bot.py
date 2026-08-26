@@ -101,14 +101,23 @@ def fetch_binance_p2p():
     }
     bancos_filtro = ["BBVA", "Mercantil", "BNC"]
 
+    # Payloads estandarizados para coincidir con la punta de mercado de la Web
     payload_compra = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000",
+        "asset": "USDT", 
+        "fiat": "VES", 
+        "merchantCheck": False,
+        "page": 1, 
+        "rows": 10, 
+        "tradeType": "SELL",
         "payTypes": bancos_filtro
     }
     payload_venta = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000",
+        "asset": "USDT", 
+        "fiat": "VES", 
+        "merchantCheck": False,
+        "page": 1, 
+        "rows": 10, 
+        "tradeType": "BUY",
         "payTypes": bancos_filtro
     }
 
@@ -292,7 +301,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
 async def tarea_recoleccion_automatica():
     while True:
         try:
-            # Ejecuta la consulta síncrona en un hilo separado para no bloquear el Event Loop
             compra, venta, _, _ = await asyncio.to_thread(fetch_binance_p2p)
             if compra and venta:
                 await asyncio.to_thread(guardar_muestra_db, compra, venta)
@@ -315,8 +323,8 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"🦜 <b>VENBOT PREDICCIONES</b>\n"
         f"🕒 ({hora_ve}) | BLOQUE 4\n"
-        f"🟢 <b>COMPRA (10k):</b> {compra:.2f} Bs\n"
-        f"🔴 <b>VENTA (300k):</b> {venta:.2f} Bs\n"
+        f"🟢 <b>COMPRA:</b> {compra:.2f} Bs\n"
+        f"🔴 <b>VENTA:</b> {venta:.2f} Bs\n"
         f"⚡ <b>MARGEN:</b> {spread:.2f} Bs ({pct:.2f}%)\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"🔮 <b>PROYECCIÓN +7H (IA QUANT)</b>\n"
@@ -404,7 +412,11 @@ def get_actual():
     if not compra:
         return JSONResponse(
             content={"error": "Sin datos"},
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
         )
     pred = motor_quant_inteligente(compra, venta)
     data = {
@@ -434,7 +446,14 @@ def get_historico(periodo: str = "1d"):
         except:
             hora_f = "12:00"
         resultado.append({"hora": hora_f, "compra": f[0], "venta": f[1]})
-    return resultado
+    return JSONResponse(
+        content=resultado,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 @app.post("/api/chat")
 def api_chat(payload: dict = Body(...)):
@@ -459,4 +478,11 @@ def get_historial():
     filas = obtener_estadisticas_db()
     compras = [f[0] for f in filas]
     ventas = [f[1] for f in filas]
-    return {"compras": compras, "ventas": ventas, "total": len(filas)}
+    return JSONResponse(
+        content={"compras": compras, "ventas": ventas, "total": len(filas)},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
