@@ -252,7 +252,7 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         """
 
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',  # <--- MODELO ACTUALIZADO AQUÍ
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
