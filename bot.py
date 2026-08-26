@@ -2,6 +2,7 @@ import os
 import asyncio
 import psycopg2
 import requests
+import json
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -10,8 +11,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+# Integración con la SDK Oficial de Gemini
+from google import genai
+from google.genai import types
+
 VET = timezone(timedelta(hours=-4))
 DATABASE_URL = os.getenv("DATABASE_URL")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Inicialización de Gemini Client si existe la API Key
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # ==========================================
 # BASE DE DATOS POSTGRESQL (SUPABASE)
@@ -49,12 +58,10 @@ def guardar_muestra_db(compra, venta):
         try:
             hora_str = datetime.now(VET).isoformat()
             with conn.cursor() as cursor:
-                # 1. Insertar nueva muestra
                 cursor.execute(
                     "INSERT INTO historial (timestamp, compra, venta) VALUES (%s, %s, %s);",
                     (hora_str, compra, venta)
                 )
-                # 2. Mantener la ventana deslizante (Borrar si supera 2000 filas)
                 cursor.execute('''
                     DELETE FROM historial 
                     WHERE id NOT IN (
@@ -131,6 +138,62 @@ def fetch_binance_p2p():
         return None, None, None, None
 
 # ==========================================
+# GEMINI IA - ANÁLISIS SIN CONTRADICCIONES
+# ==========================================
+def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
+    """Genera un análisis de 3 partes totalmente estructurado y libre de contradicciones"""
+    if not gemini_client:
+        return {
+            "estado_actual": f"Mercado operando con compra en {actual_compra:.2f} Bs y venta en {actual_venta:.2f} Bs (Spread: {spread:.2f} Bs).",
+            "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Recompra esperada cerca de {pred_compra:.2f} Bs.",
+            "recomendacion_tactica": "Mantener rotación continua aprovechando el spread actual del mercado P2P."
+        }
+
+    try:
+        system_instruction = (
+            "Eres un analista cuantitativo experto en el mercado P2P USDT/VES en Venezuela. "
+            "Tu objetivo es dar un reporte conciso y 100% COHERENTE para comerciantes P2P. "
+            "DEBES definir una sola tesis de mercado basada en los datos (alcista, bajista o lateral) "
+            "y asegurar que las 3 secciones sigan estrictamente esa lógica sin contradecirse jamás."
+        )
+
+        prompt = f"""
+        Datos actuales del mercado Binance P2P (Filtro Bancos Nacionales):
+        - Tasa Compra Actual: {actual_compra:.2f} Bs
+        - Tasa Venta Actual: {actual_venta:.2f} Bs
+        - Spread Actual: {spread:.2f} Bs
+        - Tendencia Calculada: {tendencia_quant}
+        - Recompra Proyectada (+7h): {pred_compra:.2f} Bs
+        - Venta Proyectada (+7h): {pred_venta:.2f} Bs
+
+        Genera una respuesta en formato JSON con la siguiente estructura exacta:
+        {{
+          "estado_actual": "Breve diagnóstico del presente (1-2 frases).",
+          "proyeccion_7_12h": "Lectura dinámica de lo que pasará en 7 a 12 horas (1-2 frases).",
+          "recomendacion_tactica": "Acción directa y clara de entrada/salida o posición para el comerciante (1-2 frases)."
+        }}
+        """
+
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                temperature=0.2 # Temperatura baja para maximizar coherencia lógica
+            ),
+        )
+
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error generando análisis con Gemini: {e}")
+        return {
+            "estado_actual": f"Mercado estable en {actual_compra:.2f} Bs / {actual_venta:.2f} Bs.",
+            "proyeccion_7_12h": f"Proyección estimada según algoritmo quant: {tendencia_quant}.",
+            "recomendacion_tactica": "Ejecutar operaciones en ventanas cortas según disponibilidad de capital."
+        }
+
+# ==========================================
 # MOTOR QUANT DE ALTA PRECISIÓN + IA
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta):
@@ -138,68 +201,67 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     total_muestras = len(filas)
 
     if total_muestras < 10:
-        return {
-            "pred_compra_str": f"{actual_compra * 0.999:.2f} Bs",
-            "pred_venta_str": f"{actual_venta * 1.001:.2f} Bs",
-            "tendencia": "➖ ESTABLE / LATERAL",
-            "direccion": "LATERAL",
-            "recompra": round(actual_compra * 0.999, 2),
-            "venta_esperada": round(actual_venta * 1.001, 2),
-            "piso_str": f"{actual_compra:.2f} Bs",
-            "techo_str": f"{actual_venta:.2f} Bs",
-            "muestras": total_muestras
-        }
-
-    compras = np.array([f[0] for f in filas])
-    ventas = np.array([f[1] for f in filas])
-
-    piso = np.min(compras)
-    techo = np.max(ventas)
-
-    # 1. MEDIA MÓVIL EXPONENCIAL (EMA-12)
-    alpha = 2 / (12 + 1)
-    ema_c = compras[0]
-    ema_v = ventas[0]
-    for i in range(1, total_muestras):
-        ema_c = (compras[i] * alpha) + (ema_c * (1 - alpha))
-        ema_v = (ventas[i] * alpha) + (ema_v * (1 - alpha))
-
-    # 2. CÁLCULO DE LA TENDENCIA
-    ventana_reciente = min(total_muestras, 30)
-    x = np.arange(ventana_reciente)
-    y_c = compras[-ventana_reciente:]
-    slope_c, _ = np.polyfit(x, y_c, 1)
-
-    # 3. PROYECCIÓN A +7 HORAS
-    pasos_7h = 84
-    factor_amortiguacion = 0.35 
-    delta_proyectado = slope_c * pasos_7h * factor_amortiguacion
-
-    pred_c = actual_compra + delta_proyectado
-    spread_historico_promedio = np.mean(ventas - compras)
-    pred_v = pred_c + spread_historico_promedio
-
-    # 4. CLASIFICACIÓN
-    if slope_c > 0.015:
-        tendencia = "🚀 ALCISTA"
-        direccion = "ALCISTA"
-    elif slope_c < -0.015:
-        tendencia = "🔻 BAJISTA"
-        direccion = "BAJISTA"
-    else:
+        pred_c = round(actual_compra * 0.999, 2)
+        pred_v = round(actual_venta * 1.001, 2)
         tendencia = "➖ ESTABLE / LATERAL"
         direccion = "LATERAL"
+        piso = actual_compra
+        techo = actual_venta
+    else:
+        compras = np.array([f[0] for f in filas])
+        ventas = np.array([f[1] for f in filas])
+
+        piso = np.min(compras)
+        techo = np.max(ventas)
+
+        # 1. MEDIA MÓVIL EXPONENCIAL (EMA-12)
+        alpha = 2 / (12 + 1)
+        ema_c = compras[0]
+        ema_v = ventas[0]
+        for i in range(1, total_muestras):
+            ema_c = (compras[i] * alpha) + (ema_c * (1 - alpha))
+            ema_v = (ventas[i] * alpha) + (ema_v * (1 - alpha))
+
+        # 2. CÁLCULO DE LA TENDENCIA
+        ventana_reciente = min(total_muestras, 30)
+        x = np.arange(ventana_reciente)
+        y_c = compras[-ventana_reciente:]
+        slope_c, _ = np.polyfit(x, y_c, 1)
+
+        # 3. PROYECCIÓN A +7 HORAS
+        pasos_7h = 84
+        factor_amortiguacion = 0.35 
+        delta_proyectado = slope_c * pasos_7h * factor_amortiguacion
+
+        pred_c = round(actual_compra + delta_proyectado, 2)
+        spread_historico_promedio = np.mean(ventas - compras)
+        pred_v = round(pred_c + spread_historico_promedio, 2)
+
+        # 4. CLASIFICACIÓN
+        if slope_c > 0.015:
+            tendencia = "🚀 ALCISTA"
+            direccion = "ALCISTA"
+        elif slope_c < -0.015:
+            tendencia = "🔻 BAJISTA"
+            direccion = "BAJISTA"
+        else:
+            tendencia = "➖ ESTABLE / LATERAL"
+            direccion = "LATERAL"
+
+    spread = round(actual_venta - actual_compra, 2)
+    analisis_ia = obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia, pred_c, pred_v)
 
     return {
         "pred_compra_str": f"{pred_c:.2f} Bs",
         "pred_venta_str": f"{pred_v:.2f} Bs",
         "tendencia": tendencia,
         "direccion": direccion,
-        "recompra": round(pred_c, 2),
-        "venta_esperada": round(pred_v, 2),
+        "recompra": pred_c,
+        "venta_esperada": pred_v,
         "piso_str": f"{piso:.2f} Bs",
         "techo_str": f"{techo:.2f} Bs",
-        "muestras": total_muestras
+        "muestras": total_muestras,
+        "analisis_ia": analisis_ia
     }
 
 # ==========================================
@@ -228,6 +290,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pred = motor_quant_inteligente(compra, venta)
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
+    ia = pred["analisis_ia"]
 
     msg = (
         f"🦜 <b>VENBOT PREDICCIONES</b>\n"
@@ -240,6 +303,11 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🟢 Recompra Esperada: <b>{pred['pred_compra_str']}</b>\n"
         f"🔴 Venta Esperada: <b>{pred['pred_venta_str']}</b>\n"
         f"🎯 Dirección: <b>{pred['tendencia']}</b>\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"🧠 <b>ANÁLISIS ESTRATÉGICO IA</b>\n"
+        f"📌 <b>Estado:</b> {ia['estado_actual']}\n"
+        f"📈 <b>Proyección (7-12h):</b> {ia['proyeccion_7_12h']}\n"
+        f"💡 <b>Acción:</b> {ia['recomendacion_tactica']}\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"📊 Piso: <b>{pred['piso_str']}</b> | Techo: <b>{pred['techo_str']}</b>\n"
         f"💾 Base de Datos: <b>{pred['muestras']} Muestras</b>"
@@ -272,7 +340,6 @@ async def lifespan(app_fastapi: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Configuración de CORS habilitada para conectar la web sin bloqueos
 app.add_middleware(
     CORSMiddleware, 
     allow_origins=["*"], 
@@ -285,7 +352,6 @@ app.add_middleware(
 def home():
     return {"status": "ok", "message": "Venbot P2P Activo"}
 
-# Endpoint para cargar tarjetas principales en el monitor web
 @app.get("/api/actual")
 def get_actual():
     compra, venta, spread, pct = fetch_binance_p2p()
@@ -297,11 +363,10 @@ def get_actual():
         "venta": venta, 
         "spread": spread, 
         "pct_bruto": pct, 
-        "bcv": 898.50, # Puedes conectar la API oficial del BCV aquí si la tienes
+        "bcv": 898.50,
         "prediccion": pred
     }
 
-# Endpoint optimizado para alimentar la gráfica de Chart.js
 @app.get("/api/historico")
 def get_historico(periodo: str = "1d"):
     filas = obtener_estadisticas_db()
@@ -320,23 +385,23 @@ def get_historico(periodo: str = "1d"):
         })
     return resultado
 
-# Endpoint para responder al Chatbot IA de la interfaz
 @app.post("/api/chat")
 def api_chat(payload: dict = Body(...)):
     prompt = payload.get("prompt", "").lower()
     compra, venta, spread, _ = fetch_binance_p2p()
+    pred = motor_quant_inteligente(compra, venta)
+    ia = pred["analisis_ia"]
     
     if "precio" in prompt or "cuanto" in prompt:
-        respuesta = f"Actualmente la compra en Binance P2P está en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
+        respuesta = f"Actualmente la compra P2P está en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
     elif "comprar" in prompt:
-        respuesta = f"La mejor tasa de compra P2P filtrada en bancos nacionales es de {compra:.2f} Bs por USDT."
+        respuesta = f"La mejor tasa de compra P2P en bancos nacionales es {compra:.2f} Bs."
     elif "vender" in prompt:
-        respuesta = f"Puedes vender tus USDT en el mercado P2P a una tasa media de {venta:.2f} Bs."
+        respuesta = f"Puedes vender tus USDT en P2P a una tasa media de {venta:.2f} Bs."
     elif "tendencia" in prompt or "proyeccion" in prompt:
-        pred = motor_quant_inteligente(compra, venta)
-        respuesta = f"Nuestra IA Quant indica una tendencia {pred['tendencia']} con una recompra esperada de {pred['pred_compra_str']}."
+        respuesta = f"IA: {ia['proyeccion_7_12h']} (Acción sugerida: {ia['recomendacion_tactica']})"
     else:
-        respuesta = f"Hola, soy VenBot AI. El spread actual del mercado es de {spread:.2f} Bs. ¿En qué puedo ayudarte hoy sobre Binance P2P?"
+        respuesta = f"Hola, soy VenBot AI. Estado actual: {ia['estado_actual']} Recomiendo: {ia['recomendacion_tactica']}"
 
     return {"response": respuesta}
 
