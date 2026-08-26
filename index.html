@@ -76,20 +76,13 @@
     <div class="w-full bg-slate-900/60 border-b border-slate-800 px-4 py-2">
       <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
         <div class="flex items-center gap-2">
-          <span class="inline-flex items-center gap-1.5 text-emerald-400 font-semibold"><i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span></span>
+          <span id="sync-status" class="inline-flex items-center gap-1.5 text-emerald-400 font-semibold">
+            <i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>
+          </span>
           <span class="text-slate-700">•</span>
           <button type="button" onclick="openSourceModal()" class="focus-ring">Fuente: <strong class="text-slate-300">Binance Mercado P2P</strong></button>
         </div>
         <button type="button" onclick="openCommunityModal()" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></button>
-      </div>
-    </div>
-
-    <div class="md:hidden px-4 pt-3">
-      <div class="max-w-7xl mx-auto">
-        <div class="ad-slot rounded-xl px-4 py-2 text-center">
-          <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-          <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación móvil</div>
-        </div>
       </div>
     </div>
 
@@ -261,36 +254,6 @@
         </div>
       </section>
 
-      <!-- Comunidad Card -->
-      <section id="sec-comunidad" class="glass-card p-4 rounded-2xl border border-sky-500/15 scroll-mt-24">
-        <div class="flex items-start gap-3">
-          <div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-300"><i class="fa-brands fa-telegram"></i></div>
-          <div class="flex-1">
-            <h3 class="text-sm font-bold text-white">Comunidad Venbot</h3>
-            <p class="text-[10px] text-slate-500 mt-1">Novedades, alertas y soporte de la aplicación.</p>
-            <button type="button" onclick="openCommunityModal()" class="focus-ring text-[11px] text-sky-300 hover:text-sky-200 font-bold mt-3">Abrir comunidad →</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- Legal Disclaimer -->
-      <section class="rounded-2xl border border-slate-800 bg-slate-950/50 p-3.5">
-        <div class="flex gap-3"><div class="mt-0.5 text-slate-500"><i class="fa-solid fa-circle-info"></i></div><div><p class="text-[10px] font-bold text-slate-300">Sobre los datos mostrados</p><p class="text-[10px] leading-relaxed text-slate-500 mt-1">Los precios P2P pueden variar entre anuncios, métodos de pago, liquidez y momento de consulta. Las cotizaciones deben interpretarse como referencias informativas.</p><p class="text-[10px] leading-relaxed text-slate-600 mt-1">Venbot no custodia fondos, no ejecuta operaciones ni procesa pagos. El análisis de mercado es informativo y no constituye asesoramiento financiero personalizado.</p></div></div>
-      </section>
-
-      <!-- Redes Sociales -->
-      <section class="rounded-2xl border border-slate-800 bg-slate-950/40 p-3.5">
-        <div class="flex flex-wrap items-center justify-center gap-5 text-slate-400 text-sm">
-          <a href="https://x.com/" target="_blank" rel="noopener noreferrer" class="focus-ring hover:text-white transition flex items-center gap-2"><i class="fa-brands fa-x-twitter"></i><span class="text-[10px] font-semibold">X</span></a>
-          <a href="https://instagram.com/" target="_blank" rel="noopener noreferrer" class="focus-ring hover:text-pink-400 transition flex items-center gap-2"><i class="fa-brands fa-instagram"></i><span class="text-[10px] font-semibold">Instagram</span></a>
-          <a href="https://www.tiktok.com/" target="_blank" rel="noopener noreferrer" class="focus-ring hover:text-slate-100 transition flex items-center gap-2"><i class="fa-brands fa-tiktok"></i><span class="text-[10px] font-semibold">TikTok</span></a>
-        </div>
-      </section>
-
-      <div class="ad-slot rounded-2xl p-3 text-center">
-        <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-        <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · debajo de las redes</div>
-      </div>
     </main>
 
     <!-- Navegación Inferior Móvil -->
@@ -315,82 +278,57 @@
       </div>
     </nav>
 
-    <!-- Botón Flotante IA -->
-    <button type="button" onclick="openAIChat()" class="ai-fab fixed right-4 bottom-20 z-40 w-12 h-12 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-600 text-white flex items-center justify-center hover:scale-105 active:scale-95 transition focus-ring"><i class="fa-solid fa-robot text-lg"></i></button>
-
-    <!-- Ventana Chat IA -->
-    <div id="ai-chat-window" class="hidden ai-chat fixed bottom-20 right-4 z-50 w-[calc(100%-2rem)] sm:w-[380px] h-[480px] rounded-2xl overflow-hidden flex flex-col">
-      <div class="bg-slate-900/95 px-4 py-3 border-b border-slate-800 flex items-center justify-between"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300"><i class="fa-solid fa-brain"></i></div><div><h4 class="text-xs font-bold text-white">Venbot AI (Gemini)</h4><p class="text-[10px] text-slate-500">Asistente de mercado</p></div></div><button type="button" onclick="closeAIChat()" class="focus-ring text-slate-400 hover:text-white p-1"><i class="fa-solid fa-xmark"></i></button></div>
-      <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-[#060a12]">
-        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola, soy Gemini IA. Te asisto con análisis del mercado P2P USDT/VES en vivo.</div></div>
-      </div>
-      <div class="border-t border-slate-800 bg-slate-900/95 p-3"><div class="flex items-center gap-2"><input id="ai-input" type="text" maxlength="500" placeholder="Pregunta sobre el mercado..." onkeydown="if(event.key==='Enter')sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"><button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 text-slate-950 font-black rounded-xl px-3 py-2 text-xs"><i class="fa-solid fa-paper-plane"></i></button></div></div>
-    </div>
-
-    <!-- Modales -->
-    <div id="login-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
-      <div class="glass-card bg-slate-950 border border-emerald-500/30 rounded-2xl max-w-md w-full p-6 relative shadow-2xl fade-up">
-        <button type="button" onclick="closeLoginModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
-        <div class="flex items-center gap-3 border-b border-slate-800 pb-3"><div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300 text-lg"><i class="fa-solid fa-user-lock"></i></div><div><h3 class="text-base font-extrabold text-white">Iniciar sesión</h3><p class="text-xs text-slate-500">Acceso opcional.</p></div></div>
-        <form onsubmit="event.preventDefault(); closeLoginModal();" class="space-y-4 mt-5"><div class="space-y-1.5"><label class="text-xs font-semibold text-slate-300 block">Correo electrónico</label><input type="email" required placeholder="correo@ejemplo.com" class="focus-ring w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white"></div><div class="space-y-1.5"><label class="text-xs font-semibold text-slate-300 block">Contraseña</label><input type="password" required placeholder="••••••••" class="focus-ring w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white"></div><button type="submit" class="focus-ring w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 rounded-xl text-xs uppercase tracking-wider transition">Continuar</button></form>
-      </div>
-    </div>
-
-    <div id="community-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
-      <div class="glass-card bg-slate-950 border border-sky-500/30 rounded-2xl max-w-md w-full p-6 space-y-5 relative shadow-2xl fade-up">
-        <button type="button" onclick="closeCommunityModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
-        <div class="text-center"><div class="w-12 h-12 rounded-full bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-300 text-2xl mx-auto"><i class="fa-brands fa-telegram"></i></div><h3 class="text-lg font-black text-white mt-2">Comunidad Venbot</h3><p class="text-xs text-slate-400 mt-1">Únete a nuestro canal oficial.</p></div>
-        <a href="https://t.me/" target="_blank" rel="noopener noreferrer" class="focus-ring w-full bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition"><i class="fa-brands fa-telegram text-base"></i> Ir al Canal de Telegram</a>
-      </div>
-    </div>
-
-    <div id="source-modal" class="hidden fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4">
-      <div class="glass-card bg-slate-950 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 relative shadow-2xl fade-up">
-        <button type="button" onclick="closeSourceModal()" class="focus-ring absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
-        <h3 class="text-sm font-extrabold text-white">Fuentes de Información</h3>
-        <p class="text-xs text-slate-300">Datos obtenidos de Binance P2P y Banco Central de Venezuela.</p>
-        <button type="button" onclick="closeSourceModal()" class="focus-ring w-full bg-slate-900 hover:bg-slate-800 text-slate-300 font-semibold py-2.5 rounded-xl text-xs transition">Cerrar</button>
-      </div>
-    </div>
-
   </div>
 
-  <!-- JavaScript Dinámico -->
   <script>
+    // Endpoint principal del backend (Asegúrate de que esta ruta responda en Render/FastAPI)
     const API_ENDPOINT = "/api/v1/p2p-rates";
 
-    let RATES = { buy: 937.00, sell: 948.40, bcv: 898.50, euro: 1050.00 };
+    // Variables globales
+    let RATES = { buy: 945.25, sell: 956.00, bcv: 898.50, euro: 1050.00 };
     let secondsAgo = 0;
-    let timerInterval = null;
     let marketChart = null;
     let currentAIMode = 1;
 
-    // Formateador estándar de moneda local
     function formatVE(val) {
       return val.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    // 1. Obtener datos de la API
+    // Petición asíncrona con mapeo robusto de respuestas JSON
     async function fetchRealTimeData() {
+      const syncStatus = document.getElementById('sync-status');
       try {
-        const response = await fetch(API_ENDPOINT);
-        if (!response.ok) throw new Error("Servidor offline");
+        const response = await fetch(API_ENDPOINT, { cache: 'no-store' });
+        if (!response.ok) throw new Error("HTTP error " + response.status);
         const data = await response.json();
         
-        if (data.buy_price) RATES.buy = parseFloat(data.buy_price);
-        if (data.sell_price) RATES.sell = parseFloat(data.sell_price);
-        if (data.bcv_price) RATES.bcv = parseFloat(data.bcv_price);
-        if (data.euro_price) RATES.euro = parseFloat(data.euro_price);
+        // Mapeo flexible para prevenir errores si cambian las llaves del backend
+        const buyVal = data.buy_price || data.compra || data.buy;
+        const sellVal = data.sell_price || data.venta || data.sell;
+        const bcvVal = data.bcv_price || data.bcv;
+        const euroVal = data.euro_price || data.euro;
+
+        if (buyVal) RATES.buy = parseFloat(buyVal);
+        if (sellVal) RATES.sell = parseFloat(sellVal);
+        if (bcvVal) RATES.bcv = parseFloat(bcvVal);
+        if (euroVal) RATES.euro = parseFloat(euroVal);
 
         secondsAgo = 0;
+        if(syncStatus) {
+          syncStatus.className = "inline-flex items-center gap-1.5 text-emerald-400 font-semibold";
+          syncStatus.innerHTML = `<i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>`;
+        }
       } catch (err) {
-        console.warn("API inaccesible, usando datos predeterminados.");
+        console.warn("API inaccesible o error de CORS. Reintentando...", err);
+        if(syncStatus) {
+          syncStatus.className = "inline-flex items-center gap-1.5 text-amber-400 font-semibold";
+          syncStatus.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Reintentando transmisión...`;
+        }
       } finally {
         updateUI();
       }
     }
 
-    // 2. Actualizar UI General
     function updateUI() {
       document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
@@ -411,7 +349,6 @@
       if (marketChart) renderChart('1d');
     }
 
-    // 3. Calculadora
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
       const rateType = document.getElementById('calc-rate').value;
@@ -425,13 +362,12 @@
       document.getElementById('calc-diff').innerText = `${diff >= 0 ? '+' : ''}${formatVE(diff)} Bs vs. Tasa BCV`;
     }
 
-    // 4. Lógica e Inteligencia Gemini
     function updateAIMetrics(spreadPct, bcvGap) {
       const insightText = document.getElementById('gemini-insight-text');
       const m1 = document.getElementById('m1-val');
       const m4 = document.getElementById('m4-val');
 
-      if (spreadPct > 1.2) {
+      if (spreadPct > 1.0) {
         m1.innerHTML = '🟢 COMPRA FUERTE';
         m1.className = 'text-xs sm:text-sm font-black text-emerald-400 mt-1 block';
       } else {
@@ -474,7 +410,6 @@
       updateAIMetrics(spreadPct, bcvGap);
     }
 
-    // 5. Gráfico Chart.js
     function initChart() {
       const ctx = document.getElementById('marketChart').getContext('2d');
       marketChart = new Chart(ctx, {
@@ -544,7 +479,7 @@
       }
 
       for (let i = 0; i < points; i++) {
-        const factor = 1 + (Math.sin(i) * 0.008);
+        const factor = 1 + (Math.sin(i) * 0.005);
         buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
         sellData.push(parseFloat((baseSell * factor).toFixed(2)));
       }
@@ -561,56 +496,15 @@
       document.getElementById('chart-high').innerText = `${formatVE(maxVal)} Bs`;
     }
 
-    // 6. Timers
     function startTimers() {
       setInterval(() => {
         secondsAgo++;
-        document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
+        const el = document.getElementById('updated-ago');
+        if(el) el.innerText = `hace ${secondsAgo} s`;
       }, 1000);
 
-      setInterval(fetchRealTimeData, 30000);
-    }
-
-    // 7. Modales y Ventanas
-    function openLoginModal() { document.getElementById('login-modal').classList.remove('hidden'); }
-    function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
-    function openCommunityModal() { document.getElementById('community-modal').classList.remove('hidden'); }
-    function closeCommunityModal() { document.getElementById('community-modal').classList.add('hidden'); }
-    function openSourceModal() { document.getElementById('source-modal').classList.remove('hidden'); }
-    function closeSourceModal() { document.getElementById('source-modal').classList.add('hidden'); }
-
-    function openAIChat() { document.getElementById('ai-chat-window').classList.remove('hidden'); }
-    function closeAIChat() { document.getElementById('ai-chat-window').classList.add('hidden'); }
-
-    function sendAIMessage() {
-      const input = document.getElementById('ai-input');
-      const text = input.value.trim();
-      if (!text) return;
-
-      const msgBox = document.getElementById('ai-messages');
-      msgBox.innerHTML += `
-        <div class="flex items-start justify-end gap-2">
-          <div class="max-w-[82%] bg-emerald-500/10 border border-emerald-500/20 rounded-2xl rounded-tr-sm px-3 py-2 text-[11px] text-emerald-200">
-            ${text}
-          </div>
-        </div>
-      `;
-      input.value = '';
-      msgBox.scrollTop = msgBox.scrollHeight;
-
-      setTimeout(() => {
-        msgBox.innerHTML += `
-          <div class="flex items-start gap-2">
-            <div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0">
-              <i class="fa-solid fa-robot text-[10px]"></i>
-            </div>
-            <div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">
-              Analizando mercado P2P para "${text}"... La tasa actual de Venta es ${formatVE(RATES.sell)} Bs/USDT y BCV es ${formatVE(RATES.bcv)} Bs.
-            </div>
-          </div>
-        `;
-        msgBox.scrollTop = msgBox.scrollHeight;
-      }, 700);
+      // Polling cada 10 segundos para mayor sincronización con el bot
+      setInterval(fetchRealTimeData, 10000);
     }
 
     function setActiveNav(name, sectionId) {
@@ -620,7 +514,6 @@
       if (el) el.scrollIntoView({ behavior: 'smooth' });
     }
 
-    // Inicialización al cargar la ventana
     window.addEventListener('DOMContentLoaded', () => {
       initChart();
       fetchRealTimeData();
