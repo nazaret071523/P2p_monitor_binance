@@ -37,17 +37,19 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     if conn:
-        with conn.cursor() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS historial (
-                    id SERIAL PRIMARY KEY,
-                    timestamp TEXT,
-                    compra REAL,
-                    venta REAL
-                );
-            ''')
-            conn.commit()
-        conn.close()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS historial (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TEXT,
+                        compra REAL,
+                        venta REAL
+                    );
+                ''')
+                conn.commit()
+        finally:
+            conn.close()
 
 init_db()
 
@@ -68,9 +70,10 @@ def guardar_muestra_db(compra, venta):
                     );
                 ''')
                 conn.commit()
-            conn.close()
         except Exception as e:
             print(f"Error guardando en DB: {e}")
+        finally:
+            conn.close()
 
 def obtener_estadisticas_db(limit=2000):
     conn = get_db_connection()
@@ -79,11 +82,12 @@ def obtener_estadisticas_db(limit=2000):
             with conn.cursor() as cursor:
                 cursor.execute("SELECT compra, venta, timestamp FROM historial ORDER BY id ASC LIMIT %s;", (limit,))
                 filas = cursor.fetchall()
-            conn.close()
             return filas
         except Exception as e:
             print(f"Error leyendo DB: {e}")
             return []
+        finally:
+            conn.close()
     return []
 
 # ==========================================
@@ -118,14 +122,18 @@ def fetch_binance_p2p():
         if not data_c or not data_v:
             return None, None, None, None
 
-        precios_compra = [float(item["adv"]["price"]) for item in data_c]
-        precios_venta = [float(item["adv"]["price"]) for item in data_v]
+        precios_compra = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
+        precios_venta = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
+
+        if not precios_compra or not precios_venta:
+            return None, None, None, None
 
         tasa_compra = min(precios_compra)
         tasa_venta = max(precios_venta)
 
         if tasa_compra >= tasa_venta:
-            tasa_compra, tasa_venta = min(precios_compra[0], precios_venta[0]), max(precios_venta[0], precios_venta[0])
+            tasa_compra = precios_compra[0]
+            tasa_venta = precios_venta[0]
 
         spread = round(tasa_venta - tasa_compra, 2)
         pct_bruto = round((spread / tasa_compra) * 100, 2) if tasa_compra > 0 else 0.0
@@ -284,9 +292,10 @@ def motor_quant_inteligente(actual_compra, actual_venta):
 async def tarea_recoleccion_automatica():
     while True:
         try:
-            compra, venta, _, _ = fetch_binance_p2p()
+            # Ejecuta la consulta síncrona en un hilo separado para no bloquear el Event Loop
+            compra, venta, _, _ = await asyncio.to_thread(fetch_binance_p2p)
             if compra and venta:
-                guardar_muestra_db(compra, venta)
+                await asyncio.to_thread(guardar_muestra_db, compra, venta)
         except Exception as e:
             print(f"Error en recolección: {e}")
         await asyncio.sleep(300)
@@ -295,12 +304,12 @@ async def tarea_recoleccion_automatica():
 # COMANDO TELEGRAM (ESTRUCTURA EXACTA ORIGINAL)
 # ==========================================
 async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    compra, venta, spread, pct = fetch_binance_p2p()
+    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
     if not compra:
         await update.message.reply_text("❌ Error al consultar Binance P2P.")
         return
 
-    pred = motor_quant_inteligente(compra, venta)
+    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
     hora_ve = datetime.now(VET).strftime("%I:%M %p")
 
     msg = (
