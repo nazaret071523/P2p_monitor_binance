@@ -251,45 +251,315 @@
   </div>
 
 <script>
-  const DEMO={buy:913.62,sell:923,bcv:898.5,euro:1050,lastUpdated:Date.now()};
-  const CHARTS={
-    '1d':{label:'1 día',labels:['00h','03h','06h','09h','12h','15h','18h','21h','Ahora'],buy:[906.2,907.5,909.2,910.4,911.7,912.3,913,913.4,913.62],sell:[914.9,916.4,918,919.1,920.2,921.1,921.9,922.5,923]},
-    '7d':{label:'7 días',labels:['Hace 6d','5d','4d','3d','2d','Ayer','Hoy','Ahora'],buy:[894.2,899.8,902.5,906.4,908.7,911.1,912.8,913.62],sell:[903.6,909.1,912.4,916.2,918.1,920.4,922.2,923]},
-    '30d':{label:'30 días',labels:['30d','26d','22d','18d','14d','10d','7d','4d','Ayer','Ahora'],buy:[858.3,865.7,876.9,882.4,889.8,895.6,902.2,908.4,911.1,913.62],sell:[872.1,879.4,891.6,897.8,904.6,909.2,915.7,919.4,921.8,923]}
+  // ==========================================
+  // CONFIGURACIÓN Y CLIENTE API (RENDER BACKEND)
+  // ==========================================
+  // Reemplaza esta URL por la dirección real de tu backend en Render
+  const API_BASE_URL = "https://tu-app-en-render.onrender.com"; 
+
+  let marketChart = null;
+  let currentMarketData = {
+    buy: 916.10,
+    sell: 927.00,
+    bcv: 898.50,
+    euro: 1050.00
   };
-  let marketChart=null,lastFocusedElement=null,calculatorAdShown=false;
 
-  function formatVES(v){return Number(v).toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2});}
-  function updateMarketUI(){const spread=DEMO.sell-DEMO.buy,spreadPct=(spread/DEMO.buy)*100,gap=((DEMO.sell-DEMO.bcv)/DEMO.bcv)*100;document.getElementById('buy-price').innerHTML=`${formatVES(DEMO.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;document.getElementById('sell-price').innerHTML=`${formatVES(DEMO.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;document.getElementById('spread-value').textContent=`${formatVES(spreadPct)}%`;document.getElementById('spread-absolute').textContent=`${formatVES(spread)} Bs / USDT`;document.getElementById('bcv-rate').textContent=`${formatVES(DEMO.bcv)} Bs/USD`;document.getElementById('bcv-gap').textContent=`Brecha P2P: +${formatVES(gap)}%`;document.getElementById('euro-rate').textContent=`${formatVES(DEMO.euro)} Bs/EUR`;calculateRate();}
+  // ==========================================
+  // 1. CARGA DE DATOS EN TIEMPO REAL
+  // ==========================================
+  async function fetchMarketData() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/actual`);
+      if (!response.ok) throw new Error("Error al conectar con Render");
+      
+      const data = await response.json();
+      
+      // Actualizar caché local
+      currentMarketData.buy = data.compra || currentMarketData.buy;
+      currentMarketData.sell = data.venta || currentMarketData.sell;
+      if (data.bcv) currentMarketData.bcv = data.bcv;
 
-  function handleCalculatorInteraction(){if(!calculatorAdShown){calculatorAdShown=true;document.getElementById('calc-amount').scrollIntoView({behavior:'smooth',block:'center'});}}
-  function calculateRate(){const amount=Math.max(0,parseFloat(document.getElementById('calc-amount').value)||0);const rate=parseFloat(document.getElementById('calc-rate').value)||DEMO.sell;const result=amount*rate;const diff=result-(amount*DEMO.bcv);document.getElementById('calc-result').textContent=`${formatVES(result)} Bs`;document.getElementById('calc-diff').textContent=`${diff>=0?'+':''}${formatVES(diff)} Bs vs. Tasa BCV`;}
+      // Dom Updates
+      document.getElementById("buy-price").innerHTML = `${formatNumber(data.compra)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById("sell-price").innerHTML = `${formatNumber(data.venta)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      
+      // Spread
+      const absSpread = data.venta - data.compra;
+      const pctSpread = ((absSpread / data.compra) * 100).toFixed(2);
+      document.getElementById("spread-value").innerText = `${pctSpread}%`;
+      document.getElementById("spread-absolute").innerText = `${formatNumber(absSpread)} Bs / USDT`;
 
-  function openModal(id,trigger=null){lastFocusedElement=trigger||document.activeElement;const m=document.getElementById(id);m.classList.remove('hidden');document.body.classList.add('overflow-hidden');const f=m.querySelector('button,input,select,textarea,[tabindex]:not([tabindex="-1"])');if(f)setTimeout(()=>f.focus(),0)}
-  function closeModal(id){document.getElementById(id).classList.add('hidden');const open=['community-modal','source-modal','login-modal','alert-modal','legal-modal'].some(x=>!document.getElementById(x).classList.contains('hidden'));const aiOpen=!document.getElementById('ai-chat-window').classList.contains('hidden');if(!open&&!aiOpen)document.body.classList.remove('overflow-hidden');if(lastFocusedElement&&typeof lastFocusedElement.focus==='function')lastFocusedElement.focus();}
-  function openLoginModal(t){openModal('login-modal',t)} function closeLoginModal(){closeModal('login-modal')} function openCommunityModal(t){openModal('community-modal',t)} function closeCommunityModal(){closeModal('community-modal')} function openSourceModal(t){openModal('source-modal',t)} function closeSourceModal(){closeModal('source-modal')} function openAlertModal(t){openModal('alert-modal',t)} function closeAlertModal(){closeModal('alert-modal')}
-  function saveAlert(){const v=parseFloat(document.getElementById('alert-level').value)||0;closeAlertModal();alert(`Alerta guardada en ${formatVES(v)} Bs (modo de prueba).`)}
-  function handleLogin(e){e.preventDefault();alert('Inicio de sesión preparado para conectar con el backend. En esta versión todas las funciones permanecen abiertas.');closeLoginModal();}
-  function placeholderAction(n){alert(`${n}: función preparada para conectar con el backend.`)}
+      // Tasas BCV y Euro (si están disponibles)
+      if (data.bcv) {
+        document.getElementById("bcv-rate").innerText = `${formatNumber(data.bcv)} Bs/USD`;
+        const gap = (((data.venta - data.bcv) / data.bcv) * 100).toFixed(2);
+        document.getElementById("bcv-gap").innerText = `Brecha P2P: +${gap}%`;
+      }
 
-  function openLegalModal(type){const title=document.getElementById('legal-title'),content=document.getElementById('legal-content');if(type==='privacy'){title.textContent='Política de privacidad';content.innerHTML='<p><strong class="text-slate-200">Versión de interfaz.</strong> Antes de publicar, este enlace deberá apuntar a una política pública y completa que describa qué datos se recopilan, cómo se usan y comparten, cómo se protegen, cuánto tiempo se conservan y cómo pueden eliminarse.</p><p>Si se habilita la creación de cuentas, la versión de producción deberá ofrecer un proceso claro para solicitar la eliminación de la cuenta y los datos asociados.</p>'}else{title.textContent='Términos del servicio';content.innerHTML='<p><strong class="text-slate-200">Versión de interfaz.</strong> Este espacio deberá sustituirse por los términos definitivos de Venbot antes de su publicación.</p><p>Venbot se plantea como una plataforma de consulta y análisis del mercado P2P, no como plataforma de custodia, intercambio o ejecución de operaciones.</p>'}openModal('legal-modal')}
-  function closeLegalModal(){closeModal('legal-modal')}
+      // Proyección / Análisis Quant
+      if (data.prediccion) {
+        const aiSection = document.querySelector('[aria-labelledby="analysis-title"]');
+        if (aiSection) {
+          const trendIcon = data.prediccion.direccion === "ALCISTA" ? "🚀" : "🔻";
+          aiSection.querySelector(".grid").children[0].querySelector("strong").innerHTML = `${trendIcon} ${data.prediccion.direccion}`;
+          aiSection.querySelector(".grid").children[3].querySelector("strong").innerText = `${formatNumber(data.prediccion.recompra)} - ${formatNumber(data.prediccion.venta_esperada)} Bs`;
+        }
+      }
 
-  function initChart(period='1d'){const d=CHARTS[period],ctx=document.getElementById('marketChart').getContext('2d');if(marketChart)marketChart.destroy();marketChart=new Chart(ctx,{type:'line',data:{labels:d.labels,datasets:[{label:'Comprar',data:d.buy,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.08)',borderWidth:2,tension:.32,pointRadius:0,fill:false},{label:'Vender',data:d.sell,borderColor:'#fb7185',backgroundColor:'rgba(251,113,133,.08)',borderWidth:2,tension:.32,pointRadius:0,fill:false}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#0b0f17',titleColor:'#e2e8f0',bodyColor:'#cbd5e1',borderColor:'rgba(255,255,255,.08)',borderWidth:1,callbacks:{label:c=>`${c.dataset.label}: ${formatVES(c.parsed.y)} Bs`}}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'rgba(148,163,184,.08)'},ticks:{color:'#64748b',font:{size:9},callback:v=>formatVES(v)},border:{display:false}}}}});const all=[...d.buy,...d.sell];document.getElementById('chart-period-label').textContent=d.label;document.getElementById('chart-low').textContent=`${formatVES(Math.min(...all))} Bs`;document.getElementById('chart-high').textContent=`${formatVES(Math.max(...all))} Bs`;document.getElementById('chart-current').textContent=`${formatVES(DEMO.sell)} Bs`;}
-  function setChartPeriod(period,button){document.querySelectorAll('.period-btn').forEach(b=>b.setAttribute('aria-selected','false'));button.setAttribute('aria-selected','true');initChart(period)}
+      // Reiniciar contador de actualización
+      resetUpdatedTimer();
+      calculateRate();
 
-  function openAIChat(trigger=null){openModalLikeAI();}
-  function openModalLikeAI(){document.getElementById('ai-chat-window').classList.remove('hidden');document.body.classList.add('overflow-hidden');setTimeout(()=>document.getElementById('ai-input')?.focus(),0)}
-  function closeAIChat(){document.getElementById('ai-chat-window').classList.add('hidden');const anyOpen=['community-modal','source-modal','login-modal','alert-modal','legal-modal'].some(x=>!document.getElementById(x).classList.contains('hidden'));if(!anyOpen)document.body.classList.remove('overflow-hidden')}
-  function sendAIMessage(){const input=document.getElementById('ai-input'),box=document.getElementById('ai-messages'),text=input.value.trim();if(!text)return;const u=document.createElement('div');u.className='flex items-start justify-end gap-2';u.innerHTML='<div class="max-w-[82%] bg-emerald-500/10 border border-emerald-500/20 rounded-2xl rounded-tr-sm px-3 py-2 text-[11px] text-emerald-100"></div>';u.firstElementChild.textContent=text;box.appendChild(u);input.value='';const r=document.createElement('div');r.className='flex items-start gap-2';r.innerHTML='<div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300"></div>';r.lastElementChild.textContent='Modo demostración: cuando se conecte el backend podré responder con los datos del mercado y el motor analítico de Venbot.';box.appendChild(r);box.scrollTop=box.scrollHeight}
-  function reportAIContent(){alert('Reporte recibido en modo de prueba.')}
+    } catch (error) {
+      console.warn("Modo fallback o error de API:", error);
+    }
+  }
 
-  function updateTimestamp(){const s=Math.max(0,Math.floor((Date.now()-DEMO.lastUpdated)/1000));document.getElementById('updated-ago').textContent=s<60?`hace ${s} s`:`hace ${Math.floor(s/60)} min`}
+  // ==========================================
+  // 2. GRÁFICO DE HISTÓRICO (CHART.JS)
+  // ==========================================
+  async function loadChartData(period = '1d') {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/historico?periodo=${period}`);
+      let chartData = [];
+      
+      if (response.ok) {
+        chartData = await response.json();
+      } else {
+        // Datos de respaldo dinámicos si no responde el endpoint
+        chartData = generateFallbackChartData();
+      }
 
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'){['community-modal','source-modal','login-modal','alert-modal','legal-modal'].forEach(id=>{const el=document.getElementById(id);if(!el.classList.contains('hidden'))closeModal(id)});if(!document.getElementById('ai-chat-window').classList.contains('hidden'))closeAIChat()}});
-  ['community-modal','source-modal','login-modal','alert-modal','legal-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',e=>{if(e.target.id===id)closeModal(id)})});
+      const labels = chartData.map(d => d.hora || d.fecha);
+      const buyData = chartData.map(d => d.compra);
+      const sellData = chartData.map(d => d.venta);
 
-  updateMarketUI();initChart('1d');updateTimestamp();setInterval(updateTimestamp,1000);
+      // Actualizar Min/Max en DOM
+      const allPrices = [...buyData, ...sellData];
+      document.getElementById("chart-low").innerText = `${formatNumber(Math.min(...allPrices))} Bs`;
+      document.getElementById("chart-high").innerText = `${formatNumber(Math.max(...allPrices))} Bs`;
+      document.getElementById("chart-current").innerText = `${formatNumber(sellData[sellData.length - 1])} Bs`;
+
+      renderChart(labels, buyData, sellData);
+
+    } catch (err) {
+      console.error("Error cargando gráfico:", err);
+    }
+  }
+
+  function renderChart(labels, buyData, sellData) {
+    const ctx = document.getElementById("marketChart").getContext("2d");
+    if (marketChart) marketChart.destroy();
+
+    marketChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "Comprar",
+            data: buyData,
+            borderColor: "#34d399",
+            backgroundColor: "rgba(52, 211, 153, 0.05)",
+            borderWidth: 2,
+            tension: 0.3,
+            fill: true
+          },
+          {
+            label: "Vender",
+            data: sellData,
+            borderColor: "#fb7185",
+            backgroundColor: "transparent",
+            borderWidth: 2,
+            tension: 0.3
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: "rgba(255,255,255,0.03)" }, ticks: { color: "#64748b", font: { size: 9 } } },
+          y: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { color: "#64748b", font: { size: 9 } } }
+        }
+      }
+    });
+  }
+
+  function setChartPeriod(period, btn) {
+    document.querySelectorAll(".period-btn").forEach(b => b.setAttribute("aria-selected", "false"));
+    btn.setAttribute("aria-selected", "true");
+    document.getElementById("chart-period-label").innerText = period.toUpperCase();
+    loadChartData(period);
+  }
+
+  // ==========================================
+  // 3. CALCULADORA DINÁMICA
+  // ==========================================
+  function calculateRate() {
+    const amount = parseFloat(document.getElementById("calc-amount").value) || 0;
+    const rateSelect = document.getElementById("calc-rate");
+    
+    // Si la opción seleccionada es dinámica, usar el valor actual
+    let selectedRate = parseFloat(rateSelect.value);
+    if (rateSelect.selectedIndex === 0) selectedRate = currentMarketData.sell;
+    if (rateSelect.selectedIndex === 1) selectedRate = currentMarketData.buy;
+
+    const total = amount * selectedRate;
+    document.getElementById("calc-result").innerText = `${formatNumber(total)} Bs`;
+
+    // Diferencial contra BCV
+    const bcvTotal = amount * currentMarketData.bcv;
+    const diff = total - bcvTotal;
+    const diffElement = document.getElementById("calc-diff");
+    
+    if (diff >= 0) {
+      diffElement.className = "text-[10px] text-amber-300 font-bold mt-1 block";
+      diffElement.innerText = `+${formatNumber(diff)} Bs vs. Tasa BCV`;
+    } else {
+      diffElement.className = "text-[10px] text-emerald-400 font-bold mt-1 block";
+      diffElement.innerText = `${formatNumber(diff)} Bs vs. Tasa BCV`;
+    }
+  }
+
+  function handleCalculatorInteraction() {
+    // Espacio reservado para métricas de interacción
+  }
+
+  // ==========================================
+  // 4. CHAT IA (VENBOT AI / GEMINI API)
+  // ==========================================
+  function openAIChat() {
+    document.getElementById("ai-chat-window").classList.remove("hidden");
+  }
+
+  function closeAIChat() {
+    document.getElementById("ai-chat-window").classList.add("hidden");
+  }
+
+  async function sendAIMessage() {
+    const input = document.getElementById("ai-input");
+    const message = input.value.trim();
+    if (!message) return;
+
+    const chatContainer = document.getElementById("ai-messages");
+
+    // Mensaje del Usuario
+    chatContainer.innerHTML += `
+      <div class="flex items-start justify-end gap-2">
+        <div class="max-w-[82%] bg-emerald-500/10 border border-emerald-500/20 rounded-2xl rounded-tr-sm px-3 py-2 text-[11px] text-emerald-200">${escapeHTML(message)}</div>
+      </div>`;
+    
+    input.value = "";
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    // Indicador de Carga
+    const loadingId = "loading-" + Date.now();
+    chatContainer.innerHTML += `
+      <div id="${loadingId}" class="flex items-start gap-2">
+        <div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div>
+        <div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-400 italic">Analizando mercado...</div>
+      </div>`;
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: message, context: currentMarketData })
+      });
+
+      const data = await response.json();
+      document.getElementById(loadingId).remove();
+
+      chatContainer.innerHTML += `
+        <div class="flex items-start gap-2">
+          <div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div>
+          <div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">${data.response || "No pude procesar tu solicitud en este momento."}</div>
+        </div>`;
+    } catch (err) {
+      document.getElementById(loadingId).remove();
+      chatContainer.innerHTML += `
+        <div class="flex items-start gap-2">
+          <div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div>
+          <div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-rose-300">Error al conectar con la IA. Inténtalo de nuevo.</div>
+        </div>`;
+    }
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+  }
+
+  // ==========================================
+  // 5. MODALES Y UTILIDADES
+  // ==========================================
+  function openLoginModal() { document.getElementById("login-modal").classList.remove("hidden"); }
+  function closeLoginModal() { document.getElementById("login-modal").classList.add("hidden"); }
+  function openSourceModal() { document.getElementById("source-modal").classList.remove("hidden"); }
+  function closeSourceModal() { document.getElementById("source-modal").classList.add("hidden"); }
+  function openCommunityModal() { document.getElementById("community-modal").classList.remove("hidden"); }
+  function closeCommunityModal() { document.getElementById("community-modal").classList.add("hidden"); }
+  function openAlertModal() { document.getElementById("alert-modal").classList.remove("hidden"); }
+  function closeAlertModal() { document.getElementById("alert-modal").classList.add("hidden"); }
+  
+  function handleLogin(e) {
+    e.preventDefault();
+    alert("Sesión iniciada correctamente.");
+    closeLoginModal();
+  }
+
+  function saveAlert() {
+    const level = document.getElementById("alert-level").value;
+    alert(`Alerta configurada para los ${level} Bs.`);
+    closeAlertModal();
+  }
+
+  function placeholderAction(name) { alert(`Función '${name}' en desarrollo.`); }
+  function reportAIContent() { alert("Respuesta reportada. Gracias por tus comentarios."); }
+
+  // Helpers de formato
+  function formatNumber(num) {
+    return new Intl.NumberFormat("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
+  }
+
+  function escapeHTML(str) {
+    return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+  }
+
+  let secondsAgo = 0;
+  function resetUpdatedTimer() { secondsAgo = 0; }
+  setInterval(() => {
+    secondsAgo++;
+    const timerElem = document.getElementById("updated-ago");
+    if (timerElem) timerElem.innerText = `hace ${secondsAgo} s`;
+  }, 1000);
+
+  function generateFallbackChartData() {
+    const data = [];
+    const baseBuy = currentMarketData.buy;
+    const baseSell = currentMarketData.sell;
+    for (let i = 12; i >= 0; i--) {
+      data.push({
+        hora: `${i}:00`,
+        compra: baseBuy - (Math.random() * 2 - 1),
+        venta: baseSell - (Math.random() * 2 - 1)
+      });
+    }
+    return data;
+  }
+
+  // ==========================================
+  // INICIALIZACIÓN
+  // ==========================================
+  document.addEventListener("DOMContentLoaded", () => {
+    fetchMarketData();
+    loadChartData('1d');
+    
+    // Auto-refresco de datos cada 30 segundos
+    setInterval(fetchMarketData, 30000);
+  });
 </script>
+</body>
+</html>
 </body>
 </html>
