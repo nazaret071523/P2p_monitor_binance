@@ -19,7 +19,7 @@ VET = timezone(timedelta(hours=-4))
 DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Inicialización de Gemini Client si existe la API Key
+# Inicialización del cliente de Gemini si existe la API Key
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # ==========================================
@@ -52,7 +52,7 @@ def init_db():
 init_db()
 
 def guardar_muestra_db(compra, venta):
-    """Guarda muestras y mantiene una ventana deslizante estricta de 2000 registros"""
+    """Guarda muestras y mantiene una ventana deslizante de 2000 registros"""
     conn = get_db_connection()
     if conn:
         try:
@@ -138,39 +138,40 @@ def fetch_binance_p2p():
         return None, None, None, None
 
 # ==========================================
-# GEMINI IA - ANÁLISIS SIN CONTRADICCIONES
+# GEMINI IA - ANÁLISIS ENFOCADO EN COMERCIANTE P2P
 # ==========================================
 def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
-    """Genera un análisis de 3 partes totalmente estructurado y libre de contradicciones"""
+    """Genera un análisis enfocado exclusivamente en la operativa del comerciante P2P no verificado"""
     if not gemini_client:
         return {
-            "estado_actual": f"Mercado operando con compra en {actual_compra:.2f} Bs y venta en {actual_venta:.2f} Bs (Spread: {spread:.2f} Bs).",
-            "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Recompra esperada cerca de {pred_compra:.2f} Bs.",
-            "recomendacion_tactica": "Mantener rotación continua aprovechando el spread actual del mercado P2P."
+            "estado_actual": f"Mercado P2P operando con compra en {actual_compra:.2f} Bs y venta en {actual_venta:.2f} Bs (Spread: {spread:.2f} Bs).",
+            "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Recompra esperada cerca de {pred_compra:.2f} Bs a 7-12h.",
+            "recomendacion_tactica": "Mantener rotación de inventario ajustando anuncios en la punta competitiva del mercado P2P."
         }
 
     try:
         system_instruction = (
-            "Eres un analista cuantitativo experto en el mercado P2P USDT/VES en Venezuela. "
-            "Tu objetivo es dar un reporte conciso y 100% COHERENTE para comerciantes P2P. "
-            "DEBES definir una sola tesis de mercado basada en los datos (alcista, bajista o lateral) "
-            "y asegurar que las 3 secciones sigan estrictamente esa lógica sin contradecirse jamás."
+            "Eres un asesor cuantitativo especializado en la operativa del comerciante P2P no verificado de Binance en Venezuela. "
+            "El usuario es un comerciante que busca publicar anuncios de compra y venta para obtener spread en USDT/VES. "
+            "DEBES redactar el informe 100% enfocado en su postura operativa (cuándo colocar órdenes de compra, cuándo vender, "
+            "gestión de inventario y velocidad de rotación). Usa un tono profesional, claro y directo. "
+            "Mantén una sola tesis lógica de mercado (alcista, bajista o lateral) para garantizar coherencia estricta entre las 3 secciones."
         )
 
         prompt = f"""
-        Datos actuales del mercado Binance P2P (Filtro Bancos Nacionales):
-        - Tasa Compra Actual: {actual_compra:.2f} Bs
-        - Tasa Venta Actual: {actual_venta:.2f} Bs
-        - Spread Actual: {spread:.2f} Bs
-        - Tendencia Calculada: {tendencia_quant}
-        - Recompra Proyectada (+7h): {pred_compra:.2f} Bs
-        - Venta Proyectada (+7h): {pred_venta:.2f} Bs
+        Datos actuales del mercado Binance P2P:
+        - Tasa de Compra Anuncio: {actual_compra:.2f} Bs
+        - Tasa de Venta Anuncio: {actual_venta:.2f} Bs
+        - Spread Operativo: {spread:.2f} Bs
+        - Tendencia Quant: {tendencia_quant}
+        - Recompra Proyectada (7-12h): {pred_compra:.2f} Bs
+        - Venta Proyectada (7-12h): {pred_venta:.2f} Bs
 
         Genera una respuesta en formato JSON con la siguiente estructura exacta:
         {{
-          "estado_actual": "Breve diagnóstico del presente (1-2 frases).",
-          "proyeccion_7_12h": "Lectura dinámica de lo que pasará en 7 a 12 horas (1-2 frases).",
-          "recomendacion_tactica": "Acción directa y clara de entrada/salida o posición para el comerciante (1-2 frases)."
+          "estado_actual": "Diagnóstico de liquidez y spread enfocado en la posición del comerciante P2P (1-2 frases).",
+          "proyeccion_7_12h": "Lectura a 7-12h indicando al comerciante si acumular USDT o rotar saldo rápido (1-2 frases).",
+          "recomendacion_tactica": "Estrategia directa de posicionamiento de anuncios (compra/venta) para el comerciante P2P (1-2 frases)."
         }}
         """
 
@@ -180,7 +181,7 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
-                temperature=0.2 # Temperatura baja para maximizar coherencia lógica
+                temperature=0.2
             ),
         )
 
@@ -188,9 +189,9 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
     except Exception as e:
         print(f"Error generando análisis con Gemini: {e}")
         return {
-            "estado_actual": f"Mercado estable en {actual_compra:.2f} Bs / {actual_venta:.2f} Bs.",
-            "proyeccion_7_12h": f"Proyección estimada según algoritmo quant: {tendencia_quant}.",
-            "recomendacion_tactica": "Ejecutar operaciones en ventanas cortas según disponibilidad de capital."
+            "estado_actual": f"Mercado P2P cotizando en {actual_compra:.2f} Bs / {actual_venta:.2f} Bs.",
+            "proyeccion_7_12h": f"Dirección del mercado estimada: {tendencia_quant}.",
+            "recomendacion_tactica": "Ajustar anuncios de compra y venta según la liquidez de la bancafactorial disponible."
         }
 
 # ==========================================
@@ -273,7 +274,7 @@ async def tarea_recoleccion_automatica():
             compra, venta, _, _ = fetch_binance_p2p()
             if compra and venta:
                 guardar_muestra_db(compra, venta)
-                print(f"[{datetime.now(VET).strftime('%I:%M %p')}] Muestra guardada (Ventana Max 2000): Compra {compra} | Venta {venta}")
+                print(f"[{datetime.now(VET).strftime('%I:%M %p')}] Muestra guardada: Compra {compra} | Venta {venta}")
         except Exception as e:
             print(f"Error en recolección automática: {e}")
         
@@ -293,21 +294,21 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ia = pred["analisis_ia"]
 
     msg = (
-        f"🦜 <b>VENBOT PREDICCIONES</b>\n"
+        f"🦜 <b>VENBOT PREDICCIONES P2P</b>\n"
         f"🕒 ({hora_ve}) | BLOQUE 4\n"
         f"🟢 <b>COMPRA (10k):</b> {compra:.2f} Bs\n"
         f"🔴 <b>VENTA (300k):</b> {venta:.2f} Bs\n"
         f"⚡ <b>MARGEN:</b> {spread:.2f} Bs ({pct:.2f}%)\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🔮 <b>PROYECCIÓN +7H (IA QUANT)</b>\n"
+        f"🔮 <b>PROYECCIÓN 7-12H (IA QUANT)</b>\n"
         f"🟢 Recompra Esperada: <b>{pred['pred_compra_str']}</b>\n"
         f"🔴 Venta Esperada: <b>{pred['pred_venta_str']}</b>\n"
         f"🎯 Dirección: <b>{pred['tendencia']}</b>\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
-        f"🧠 <b>ANÁLISIS ESTRATÉGICO IA</b>\n"
+        f"🧠 <b>LECTURA ESTRATÉGICA P2P (IA)</b>\n"
         f"📌 <b>Estado:</b> {ia['estado_actual']}\n"
         f"📈 <b>Proyección (7-12h):</b> {ia['proyeccion_7_12h']}\n"
-        f"💡 <b>Acción:</b> {ia['recomendacion_tactica']}\n"
+        f"💡 <b>Acción Comerciante:</b> {ia['recomendacion_tactica']}\n"
         f"➖➖➖➖➖➖➖➖➖➖\n"
         f"📊 Piso: <b>{pred['piso_str']}</b> | Techo: <b>{pred['techo_str']}</b>\n"
         f"💾 Base de Datos: <b>{pred['muestras']} Muestras</b>"
@@ -393,15 +394,15 @@ def api_chat(payload: dict = Body(...)):
     ia = pred["analisis_ia"]
     
     if "precio" in prompt or "cuanto" in prompt:
-        respuesta = f"Actualmente la compra P2P está en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
+        respuesta = f"Actualmente el anuncio de compra P2P está en {compra:.2f} Bs y el de venta en {venta:.2f} Bs."
     elif "comprar" in prompt:
-        respuesta = f"La mejor tasa de compra P2P en bancos nacionales es {compra:.2f} Bs."
+        respuesta = f"La mejor tasa para publicar anuncio de compra en bancos seleccionados es {compra:.2f} Bs."
     elif "vender" in prompt:
-        respuesta = f"Puedes vender tus USDT en P2P a una tasa media de {venta:.2f} Bs."
+        respuesta = f"Puedes publicar tu anuncio de venta a una tasa media de {venta:.2f} Bs."
     elif "tendencia" in prompt or "proyeccion" in prompt:
-        respuesta = f"IA: {ia['proyeccion_7_12h']} (Acción sugerida: {ia['recomendacion_tactica']})"
+        respuesta = f"IA P2P: {ia['proyeccion_7_12h']} (Estrategia sugerida: {ia['recomendacion_tactica']})"
     else:
-        respuesta = f"Hola, soy VenBot AI. Estado actual: {ia['estado_actual']} Recomiendo: {ia['recomendacion_tactica']}"
+        respuesta = f"Hola, soy VenBot AI. Estado actual del mercado P2P: {ia['estado_actual']} Recomendación para el comerciante: {ia['recomendacion_tactica']}"
 
     return {"response": respuesta}
 
