@@ -36,6 +36,16 @@
       border: 1px solid rgba(16, 185, 129, 0.25);
       color: #34d399;
     }
+
+    /* Estilos del selector de Modos IA */
+    .ai-mode-btn {
+      transition: all 0.2s ease;
+    }
+    .ai-mode-btn.active {
+      background: rgba(52, 211, 153, 0.15);
+      border-color: rgba(52, 211, 153, 0.4);
+      color: #6ee7b7;
+    }
   </style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
@@ -187,69 +197,78 @@
         </div>
       </section>
 
-      <!-- PROYECCIÓN Y ANÁLISIS DEL MERCADO IA -->
-      <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/30 overflow-hidden scroll-mt-24" aria-labelledby="analysis-title">
-        <div class="space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <div class="flex items-center gap-2">
-                <h3 id="analysis-title" class="text-xs sm:text-sm font-extrabold text-indigo-200 tracking-wide uppercase flex items-center gap-1.5">
-                  <i class="fa-solid fa-wand-magic-sparkles text-emerald-400"></i> PROYECCIÓN Y ANÁLISIS DEL MERCADO IA
-                </h3>
-                <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">GEMINI AI</span>
-              </div>
-              <p class="text-[10px] text-slate-500 mt-1">Lecturas estadísticas y proyecciones en tiempo real generadas por Gemini IA.</p>
+      <!-- SECCIÓN IA INTELIGENCIA P2P (REDiseñada para Comerciantes P2P) -->
+      <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4" aria-labelledby="analysis-title">
+        
+        <!-- Header de la sección IA -->
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 id="analysis-title" class="text-xs sm:text-sm font-extrabold text-indigo-200 tracking-wider uppercase flex items-center gap-1.5">
+                <i class="fa-solid fa-wand-magic-sparkles text-emerald-400"></i> INTELIGENCIA Y LECTURA P2P
+              </h3>
+              <span id="ai-badge-mode" class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">P2P TRADER</span>
             </div>
-            <div class="text-left sm:text-right">
-              <p class="text-[10px] text-slate-500">Horizonte</p>
-              <p class="text-xs font-bold text-white">Próximas 4 a 24 horas</p>
-            </div>
+            <p class="text-[11px] text-slate-400 mt-1 font-medium">Análisis operativo enfocado en el comerciante USDT/VES en tiempo real.</p>
           </div>
 
-          <!-- 1. Análisis y Opinión de Gemini IA (ARRIBA) -->
-          <div class="bg-slate-900/90 border border-indigo-500/20 rounded-xl p-3.5 flex items-start gap-3">
-            <div class="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 shrink-0 mt-0.5">
-              <i class="fa-solid fa-robot text-sm"></i>
-            </div>
-            <div class="flex-1">
-              <div class="flex items-center justify-between">
-                <h4 class="text-xs font-bold text-indigo-200">Análisis y Opinión de Gemini IA</h4>
-                <span class="text-[9px] text-slate-500">En tiempo real</span>
-              </div>
-              <p id="gemini-insight-text" class="text-[11px] text-slate-300 mt-1 leading-relaxed">
-                El mercado P2P proyecta resistencia en 951 Bs. La brecha con la tasa oficial BCV (898.50 Bs) marca un incremento diferencial del 5.55%, lo que sugiere baja volatilidad e interés sostenido en compra para las próximas horas.
-              </p>
-            </div>
+          <!-- Selector de los 3 Modos (Pestañas) -->
+          <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800/80 rounded-xl p-1 shrink-0">
+            <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1">
+              <i class="fa-solid fa-bolt text-amber-400"></i> Táctica
+            </button>
+            <button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1">
+              <i class="fa-solid fa-chart-pie text-sky-400"></i> Flujo
+            </button>
+            <button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1">
+              <i class="fa-solid fa-bullseye text-purple-400"></i> Niveles
+            </button>
           </div>
+        </div>
 
-          <!-- 2. Bloques de Métricas (ABAJO DEL ANÁLISIS) -->
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
-            <!-- Bloque 1: Tendencia -->
-            <div class="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-3">
-              <span class="text-[10px] text-emerald-300 font-bold block">Tendencia P2P</span>
-              <strong id="gemini-trend" class="text-sm text-emerald-400 mt-1 block">↗ Alcista moderada</strong>
-            </div>
-            <!-- Bloque 2: Presión compradora -->
-            <div class="bg-sky-950/30 border border-sky-500/30 rounded-xl p-3">
-              <span class="text-[10px] text-sky-300 font-bold block">Presión compradora</span>
-              <strong id="gemini-pressure" class="text-sm text-sky-400 mt-1 block">Moderada</strong>
-            </div>
-            <!-- Bloque 3: Volatilidad -->
-            <div class="bg-amber-950/30 border border-amber-500/30 rounded-xl p-3">
-              <span class="text-[10px] text-amber-300 font-bold block">Volatilidad</span>
-              <strong id="gemini-volatility" class="text-sm text-amber-400 mt-1 block">Baja</strong>
-            </div>
-            <!-- Bloque 4: Rango estimado USDT -->
-            <div class="bg-purple-950/30 border border-purple-500/30 rounded-xl p-3">
-              <span class="text-[10px] text-purple-300 font-bold block">Rango USDT Est.</span>
-              <strong id="analysis-range" class="text-sm text-purple-400 mt-1 block">935–951 Bs</strong>
-            </div>
+        <!-- Caja de Análisis Textual IA -->
+        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5">
+            <i class="fa-solid fa-robot text-sm"></i>
           </div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <h4 id="ai-title-display" class="text-xs font-bold text-slate-100">Proyección Operativa P2P</h4>
+              <span class="text-[10px] text-slate-500 font-semibold">En vivo</span>
+            </div>
+            <p id="gemini-insight-text" class="text-xs text-slate-300 mt-1 leading-relaxed font-normal">
+              Se observa alta acumulación de órdenes en 948 Bs con fuerte rotación en bancos de rápida acreditación. Se proyecta un empuje alcista en las próximas 2 horas por escasez de vendedores en la punta baja. Margen de arbitraje estimado: +1.2% en ciclos rápidos.
+            </p>
+          </div>
+        </div>
 
-          <div class="border-t border-slate-800/80 pt-3 flex items-center justify-between text-[10px] text-slate-500">
-            <span>Procesado dinámicamente con tecnología Google Gemini. No constituye asesoramiento financiero.</span>
-            <button type="button" onclick="openAIChat(this)" class="text-emerald-400 font-bold hover:underline">Hacer una pregunta a Gemini →</button>
+        <!-- Grid de Métricas (Colores Suaves y Fuentes Ultra Legibles) -->
+        <div id="ai-metrics-grid" class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <!-- Tarjeta 1 -->
+          <div class="bg-slate-900/60 border border-emerald-500/20 rounded-xl p-3">
+            <span id="m1-title" class="text-[11px] font-bold text-emerald-400 uppercase tracking-wide block">SEÑAL OPERATIVA</span>
+            <strong id="m1-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">🟢 COMPRA FUERTE</strong>
           </div>
+          <!-- Tarjeta 2 -->
+          <div class="bg-slate-900/60 border border-sky-500/20 rounded-xl p-3">
+            <span id="m2-title" class="text-[11px] font-bold text-sky-400 uppercase tracking-wide block">VELOCIDAD DE SALIDA</span>
+            <strong id="m2-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">⚡ ALTA (&lt; 5 min)</strong>
+          </div>
+          <!-- Tarjeta 3 -->
+          <div class="bg-slate-900/60 border border-amber-500/20 rounded-xl p-3">
+            <span id="m3-title" class="text-[11px] font-bold text-amber-400 uppercase tracking-wide block">SOMBRA DE LIQUIDEZ</span>
+            <strong id="m3-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">⚠️ ESCASEZ DE USDT</strong>
+          </div>
+          <!-- Tarjeta 4 -->
+          <div class="bg-slate-900/60 border border-purple-500/20 rounded-xl p-3">
+            <span id="m4-title" class="text-[11px] font-bold text-purple-400 uppercase tracking-wide block">RANGO OBJETIVO 4H</span>
+            <strong id="m4-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">945,00 – 954,50 Bs</strong>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800/80 pt-3 flex items-center justify-between text-[10px] text-slate-500">
+          <span>Procesado dinámicamente con tecnología Google Gemini. No constituye asesoramiento financiero.</span>
+          <button type="button" onclick="openAIChat(this)" class="text-emerald-400 font-bold hover:underline">Hacer una pregunta a Gemini →</button>
         </div>
       </section>
 
@@ -315,7 +334,7 @@
       <div class="bg-slate-900/95 px-4 py-3 border-b border-slate-800 flex items-center justify-between"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-300"><i class="fa-solid fa-brain"></i></div><div><h4 id="ai-chat-title" class="text-xs font-bold text-white">Venbot AI (Gemini)</h4><p class="text-[10px] text-slate-500">Asistente de mercado</p></div></div><button type="button" onclick="closeAIChat()" class="focus-ring text-slate-400 hover:text-white p-1" aria-label="Cerrar Venbot AI"><i class="fa-solid fa-xmark"></i></button></div>
       <div class="ad-slot mx-3 mt-3 rounded-xl px-3 py-2 text-center shrink-0"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · apertura de IA</div></div>
       <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-[#060a12]">
-        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola, soy Gemini IA. Te asisto con análisis del mercado USDT/VES y tasa BCV en vivo.</div></div>
+        <div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Hola, soy Gemini IA. Te asisto con análisis del mercado P2P USDT/VES en vivo.</div></div>
       </div>
       <div class="border-t border-slate-800 bg-slate-900/95 p-3"><div class="flex items-center gap-2"><input id="ai-input" type="text" maxlength="500" placeholder="Pregunta sobre el mercado..." onkeydown="if(event.key==='Enter')sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"><button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 text-slate-950 font-black rounded-xl px-3 py-2 text-xs" aria-label="Enviar mensaje"><i class="fa-solid fa-paper-plane"></i></button></div><div class="flex items-center justify-between mt-2"><span class="text-[9px] text-slate-600">Las respuestas pueden contener errores.</span><button type="button" onclick="placeholderAction('Reportar respuesta')" class="focus-ring text-[9px] text-slate-500 hover:text-slate-300">Reportar respuesta</button></div></div>
     </div>
@@ -345,6 +364,64 @@
     let euroRate = 1050.00;
     let timer = 0;
     let chartInstance = null;
+    let currentAIMode = 1;
+
+    // Datos estáticos para los 3 modos de IA P2P
+    const aiModesData = {
+      1: {
+        badge: "P2P TRADER",
+        title: "Proyección Operativa Gemini P2P",
+        insight: "Se observa alta acumulación de órdenes en 948 Bs con fuerte rotación en bancos de rápida acreditación. Se proyecta un empuje alcista en las próximas 2 horas por escasez de vendedores en la punta baja. Margen de arbitraje estimado: +1.2% en ciclos rápidos.",
+        m1Title: "SEÑAL OPERATIVA", m1Val: "🟢 COMPRA FUERTE",
+        m2Title: "VELOCIDAD DE SALIDA", m2Val: "⚡ ALTA (< 5 min)",
+        m3Title: "SOMBRA DE LIQUIDEZ", m3Val: "⚠️ ESCASEZ DE USDT",
+        m4Title: "RANGO OBJETIVO 4H", m4Val: "945,00 – 954,50 Bs"
+      },
+      2: {
+        badge: "P2P RADAR",
+        title: "Lectura de Flujo P2P",
+        insight: "Comerciantes no verificados están absorbiendo la oferta a ritmo acelerado. La demanda se desplaza hacia la banda superior. Se sugiere ajustar órdenes de venta a 950+ Bs para maximizar retorno antes del cierre de sesión nocturna.",
+        m1Title: "DOMINIO DEL MERCADO", m1Val: "🛒 COMPRADORES AGRESIVOS",
+        m2Title: "SPREAD OPERATIVO", m2Val: "11,40 Bs (Excelente)",
+        m3Title: "RIESGO DE DESCALCE", m3Val: "🟡 MEDIO (Variación rápida)",
+        m4Title: "PROYECCIÓN 12H", m4Val: "952,00 Bs (+0.8%)"
+      },
+      3: {
+        badge: "P2P METRICS",
+        title: "Análisis Técnico P2P",
+        insight: "Proyección de rompimiento en 950 Bs activa. Alta densidad de capital buscando USDT en plataformas P2P. Momento favorable para posiciones cortas de compra y rotación rápida de inventario.",
+        m1Title: "FUERZA DEL MOMENTUM", m1Val: "🚀 ALTO (88%)",
+        m2Title: "LIQUIDEZ EN MERCADO", m2Val: "💧 ABUNDANTE",
+        m3Title: "PUNTO DE QUIEBRE", m3Val: "🎯 950,00 Bs",
+        m4Title: "TECHO ESTIMADO", m4Val: "📈 956,00 Bs"
+      }
+    };
+
+    function switchAIMode(mode) {
+      currentAIMode = mode;
+      
+      // Cambiar clases de botones activos
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
+
+      // Actualizar datos en pantalla
+      const data = aiModesData[mode];
+      document.getElementById('ai-badge-mode').innerText = data.badge;
+      document.getElementById('ai-title-display').innerText = data.title;
+      document.getElementById('gemini-insight-text').innerText = data.insight;
+
+      document.getElementById('m1-title').innerText = data.m1Title;
+      document.getElementById('m1-val').innerText = data.m1Val;
+
+      document.getElementById('m2-title').innerText = data.m2Title;
+      document.getElementById('m2-val').innerText = data.m2Val;
+
+      document.getElementById('m3-title').innerText = data.m3Title;
+      document.getElementById('m3-val').innerText = data.m3Val;
+
+      document.getElementById('m4-title').innerText = data.m4Title;
+      document.getElementById('m4-val').innerText = data.m4Val;
+    }
 
     setInterval(() => {
       timer++;
@@ -397,13 +474,9 @@
         document.getElementById('bcv-gap').innerText = `Brecha P2P: +${gap.replace('.', ',')}%`;
       }
 
-      document.getElementById('analysis-range').innerText = `${Math.floor(buyRate - 2)}–${Math.ceil(sellRate + 2)} Bs`;
       document.getElementById('chart-current').innerText = `${sellRate.toFixed(2).replace('.', ',')} Bs`;
       document.getElementById('chart-low').innerText = `${(buyRate - 1.5).toFixed(2).replace('.', ',')} Bs`;
       document.getElementById('chart-high').innerText = `${(sellRate + 1.5).toFixed(2).replace('.', ',')} Bs`;
-
-      document.getElementById('gemini-insight-text').innerText = 
-        `El mercado P2P proyecta resistencia en ${Math.ceil(sellRate + 2)} Bs. La brecha con la tasa oficial BCV (${bcvRate.toFixed(2)} Bs) marca un incremento diferencial del ${(((sellRate - bcvRate) / bcvRate) * 100).toFixed(2)}%, lo que sugiere baja volatilidad e interés sostenido en compra para las próximas horas.`;
 
       updateChartData(buyRate, sellRate);
       calculateRate();
@@ -505,7 +578,7 @@
       container.scrollTop = container.scrollHeight;
 
       setTimeout(() => {
-        container.innerHTML += `<div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm px-3 py-2 text-[11px] text-slate-300">Gemini IA: Con la tasa compra P2P en ${buyRate.toFixed(2)} Bs y el oficial BCV en ${bcvRate.toFixed(2)} Bs, el mercado muestra estabilidad.</div></div>`;
+        container.innerHTML += `<div class="flex items-start gap-2"><div class="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-300 flex items-center justify-center shrink-0"><i class="fa-solid fa-robot text-[10px]"></i></div><div class="max-w-[82%] bg-slate-900 border border-slate-800 rounded-2xl rounded-tr-sm px-3 py-2 text-[11px] text-slate-300">Gemini IA: Con la tasa compra P2P en ${buyRate.toFixed(2)} Bs y venta en ${sellRate.toFixed(2)} Bs, el margen sugiere buen volumen de rotación.</div></div>`;
         container.scrollTop = container.scrollHeight;
       }, 500);
     }
