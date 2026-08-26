@@ -5,7 +5,7 @@ import requests
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -71,7 +71,7 @@ def obtener_estadisticas_db(limit=2000):
     if conn:
         try:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT compra, venta FROM historial ORDER BY id ASC LIMIT %s;", (limit,))
+                cursor.execute("SELECT compra, venta, timestamp FROM historial ORDER BY id ASC LIMIT %s;", (limit,))
                 filas = cursor.fetchall()
             conn.close()
             return filas
@@ -138,11 +138,13 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     total_muestras = len(filas)
 
     if total_muestras < 10:
-        # Fallback para arranques limpios
         return {
             "pred_compra_str": f"{actual_compra * 0.999:.2f} Bs",
             "pred_venta_str": f"{actual_venta * 1.001:.2f} Bs",
             "tendencia": "➖ ESTABLE / LATERAL",
+            "direccion": "LATERAL",
+            "recompra": round(actual_compra * 0.999, 2),
+            "venta_esperada": round(actual_venta * 1.001, 2),
             "piso_str": f"{actual_compra:.2f} Bs",
             "techo_str": f"{actual_venta:.2f} Bs",
             "muestras": total_muestras
@@ -154,7 +156,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     piso = np.min(compras)
     techo = np.max(ventas)
 
-    # 1. MEDIA MÓVIL EXPONENCIAL (EMA-12) PARA RECHAZAR RUIDO
+    # 1. MEDIA MÓVIL EXPONENCIAL (EMA-12)
     alpha = 2 / (12 + 1)
     ema_c = compras[0]
     ema_v = ventas[0]
@@ -162,46 +164,46 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         ema_c = (compras[i] * alpha) + (ema_c * (1 - alpha))
         ema_v = (ventas[i] * alpha) + (ema_v * (1 - alpha))
 
-    # 2. CÁLCULO DE LA TENDENCIA Y VECTOR DE INERCIA (Últimas 30 muestras)
+    # 2. CÁLCULO DE LA TENDENCIA
     ventana_reciente = min(total_muestras, 30)
     x = np.arange(ventana_reciente)
     y_c = compras[-ventana_reciente:]
-    
-    # Pendiente por regresión lineal (Slope)
     slope_c, _ = np.polyfit(x, y_c, 1)
 
-    # 3. PROYECCIÓN A +7 HORAS (84 períodos de 5 min)
+    # 3. PROYECCIÓN A +7 HORAS
     pasos_7h = 84
-    
-    # Factor de amortiguación (Damping factor) para evitar proyecciones desmedidas
     factor_amortiguacion = 0.35 
     delta_proyectado = slope_c * pasos_7h * factor_amortiguacion
 
     pred_c = actual_compra + delta_proyectado
-    
-    # El spread esperado proyectado mantiene la correlación histórica
     spread_historico_promedio = np.mean(ventas - compras)
     pred_v = pred_c + spread_historico_promedio
 
-    # 4. CLASIFICACIÓN DE DIRECCIÓN
+    # 4. CLASIFICACIÓN
     if slope_c > 0.015:
         tendencia = "🚀 ALCISTA"
+        direccion = "ALCISTA"
     elif slope_c < -0.015:
         tendencia = "🔻 BAJISTA"
+        direccion = "BAJISTA"
     else:
         tendencia = "➖ ESTABLE / LATERAL"
+        direccion = "LATERAL"
 
     return {
         "pred_compra_str": f"{pred_c:.2f} Bs",
         "pred_venta_str": f"{pred_v:.2f} Bs",
         "tendencia": tendencia,
+        "direccion": direccion,
+        "recompra": round(pred_c, 2),
+        "venta_esperada": round(pred_v, 2),
         "piso_str": f"{piso:.2f} Bs",
         "techo_str": f"{techo:.2f} Bs",
         "muestras": total_muestras
     }
 
 # ==========================================
-# RECOLECCIÓN AUTOMÁTICA (Única fuente de escritura)
+# RECOLECCIÓN AUTOMÁTICA
 # ==========================================
 async def tarea_recoleccion_automatica():
     while True:
@@ -213,7 +215,6 @@ async def tarea_recoleccion_automatica():
         except Exception as e:
             print(f"Error en recolección automática: {e}")
         
-        # Espera 5 minutos entre capturas
         await asyncio.sleep(300)
 
 # ==========================================
@@ -255,7 +256,6 @@ async def lifespan(app_fastapi: FastAPI):
     global telegram_app
     token = os.getenv("TELEGRAM_TOKEN", "").strip()
     
-    # Inicia el ciclo de recolección automática en segundo plano
     asyncio.create_task(tarea_recoleccion_automatica())
     
     if token:
@@ -271,19 +271,74 @@ async def lifespan(app_fastapi: FastAPI):
         await telegram_app.shutdown()
 
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Configuración de CORS habilitada para conectar la web sin bloqueos
+app.add_middleware(
+    CORSMiddleware, 
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"]
+)
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def home():
     return {"status": "ok", "message": "Venbot P2P Activo"}
 
+# Endpoint para cargar tarjetas principales en el monitor web
 @app.get("/api/actual")
 def get_actual():
     compra, venta, spread, pct = fetch_binance_p2p()
     if not compra:
         return {"error": "Sin datos"}
     pred = motor_quant_inteligente(compra, venta)
-    return {"compra": compra, "venta": venta, "spread": spread, "pct_bruto": pct, "pred": pred}
+    return {
+        "compra": compra, 
+        "venta": venta, 
+        "spread": spread, 
+        "pct_bruto": pct, 
+        "bcv": 898.50, # Puedes conectar la API oficial del BCV aquí si la tienes
+        "prediccion": pred
+    }
+
+# Endpoint optimizado para alimentar la gráfica de Chart.js
+@app.get("/api/historico")
+def get_historico(periodo: str = "1d"):
+    filas = obtener_estadisticas_db()
+    resultado = []
+    
+    for f in filas:
+        try:
+            hora_f = datetime.fromisoformat(f[2]).strftime("%I:%M %p")
+        except:
+            hora_f = "12:00"
+            
+        resultado.append({
+            "hora": hora_f,
+            "compra": f[0],
+            "venta": f[1]
+        })
+    return resultado
+
+# Endpoint para responder al Chatbot IA de la interfaz
+@app.post("/api/chat")
+def api_chat(payload: dict = Body(...)):
+    prompt = payload.get("prompt", "").lower()
+    compra, venta, spread, _ = fetch_binance_p2p()
+    
+    if "precio" in prompt or "cuanto" in prompt:
+        respuesta = f"Actualmente la compra en Binance P2P está en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
+    elif "comprar" in prompt:
+        respuesta = f"La mejor tasa de compra P2P filtrada en bancos nacionales es de {compra:.2f} Bs por USDT."
+    elif "vender" in prompt:
+        respuesta = f"Puedes vender tus USDT en el mercado P2P a una tasa media de {venta:.2f} Bs."
+    elif "tendencia" in prompt or "proyeccion" in prompt:
+        pred = motor_quant_inteligente(compra, venta)
+        respuesta = f"Nuestra IA Quant indica una tendencia {pred['tendencia']} con una recompra esperada de {pred['pred_compra_str']}."
+    else:
+        respuesta = f"Hola, soy VenBot AI. El spread actual del mercado es de {spread:.2f} Bs. ¿En qué puedo ayudarte hoy sobre Binance P2P?"
+
+    return {"response": respuesta}
 
 @app.get("/api/historial")
 def get_historial():
