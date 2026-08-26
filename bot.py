@@ -188,7 +188,7 @@ def fetch_binance_p2p():
         return None, None, None, None
 
 # ==========================================
-# GEMINI IA
+# GEMINI IA (EXCLUSIVO P2P BINANCE)
 # ==========================================
 def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
     if not gemini_client:
@@ -197,52 +197,58 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
             "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Recompra esperada en {pred_compra:.2f} Bs.",
             "recomendacion_tactica": "Mantener postura competitiva en anuncios de compra y rotación continua.",
             "tactica": {
-                "texto": "Momento de publicar anuncios de compra y rotar saldo rápido.",
+                "texto": f"El spread P2P se ubica en {spread:.2f} Bs con flujo dinámico de órdenes en la punta competitiva.",
                 "senal": "COMPRA MODERADA", "velocidad": "ALTA (< 5 min)", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
             },
             "flujo": {
-                "texto": "Absorción constante de oferta en la punta competitiva.",
+                "texto": "Absorción constante de oferta de USDT dentro de la liquidez P2P.",
                 "dominio": "COMPRADORES ACTIVOS", "spread_status": f"{spread:.2f} Bs", "riesgo": "BAJO", "proyeccion_12h": f"{pred_venta:.2f} Bs"
             },
             "niveles": {
-                "texto": "Rango definido entre soporte actual y techo estimado.",
+                "texto": "Rango delimitado estrictamente por la profundidad de puntas P2P.",
                 "momentum": "MEDIO (65%)", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{pred_venta:.2f} Bs"
             }
         }
 
     try:
         system_instruction = (
-            "Eres el asesor cuantitativo de VENBOT para comerciantes P2P NO VERIFICADOS en Binance Venezuela. "
-            "Genera un informe unificado en JSON orientado a la operativa de anuncios (USDT/VES) sin contradicciones."
+            "Eres el asesor cuantitativo exclusivo de VENBOT para comerciantes P2P NO VERIFICADOS en Binance Venezuela (par USDT/VES). "
+            "REGLA STRICTA Y OBLIGATORIA: Analiza ÚNICAMENTE la dinámica interna de oferta, demanda, spread y liquidez de Binance P2P. "
+            "ESTÁ TOTALMENTE PROHIBIDO mencionar, comparar o calcular la brecha con la tasa BCV, dólar oficial, Euro o entes bancarios tradicionales. "
+            "Toda la lectura debe enfocarse exclusivamente en la estrategia de colocación de anuncios P2P para maximizar el margen de ganancia."
         )
 
         prompt = f"""
-        Datos P2P Binance: Compra {actual_compra:.2f} Bs, Venta {actual_venta:.2f} Bs, Spread {spread:.2f} Bs.
-        Proyección 7-12h: Recompra {pred_compra:.2f} Bs, Venta {pred_venta:.2f} Bs, Tendencia {tendencia_quant}.
+        Métricas Exclusivas Binance P2P (USDT/VES):
+        - Precio Compra P2P: {actual_compra:.2f} Bs
+        - Precio Venta P2P: {actual_venta:.2f} Bs
+        - Spread Operativo: {spread:.2f} Bs
+        - Proyección Quant (+7h a 12h): Recompra en {pred_compra:.2f} Bs, Venta en {pred_venta:.2f} Bs
+        - Tendencia de Mercado: {tendencia_quant}
 
-        Genera este JSON exacto:
+        Genera este JSON exacto enfocado 100% en operativa P2P (SIN MENCIONAR BCV NI EURO):
         {{
-          "estado_actual": "Diagnóstico rápido del mercado para Telegram (1 frase).",
-          "proyeccion_7_12h": "Lectura a 7-12h para Telegram (1 frase).",
-          "recomendacion_tactica": "Acción directa del comerciante P2P para Telegram (1 frase).",
+          "estado_actual": "Diagnóstico rápido centrado únicamente en el spread y dinámica P2P (1 frase).",
+          "proyeccion_7_12h": "Lectura de rotación y precios de recompra/venta P2P (1 frase).",
+          "recomendacion_tactica": "Acción directa para el comerciante P2P en sus anuncios (1 frase).",
           "tactica": {{
-            "texto": "Análisis pestaña táctica del web UI.",
+            "texto": "Análisis táctico P2P. Enfócate solo en la profundidad de puntas, margen P2P y estrategia de anuncios.",
             "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
             "velocidad": "ALTA (< 5 min) | MEDIA",
             "sombra": "ESCASEZ DE USDT | NORMAL",
             "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
           }},
           "flujo": {{
-            "texto": "Análisis pestaña flujo del web UI.",
-            "dominio": "COMPRADORES AGRESIVOS | LATERAL",
+            "texto": "Análisis de volumen y velocidad de absorción de USDT exclusivamente dentro de Binance P2P.",
+            "dominio": "COMPRADORES AGRESIVOS | LATERAL | VENDEDORES ACTIVOS",
             "spread_status": "{spread:.2f} Bs (Excelente)",
-            "riesgo": "BAJO | MEDIO",
+            "riesgo": "BAJO | MEDIO | ALTO",
             "proyeccion_12h": "{pred_venta:.2f} Bs"
           }},
           "niveles": {{
-            "texto": "Análisis pestaña niveles del web UI.",
-            "momentum": "ALTO (80%) | MEDIO",
-            "liquidez": "ABUNDANTE | ESTABLE",
+            "texto": "Comportamiento del libro de órdenes P2P entre soporte de compra y techo de venta.",
+            "momentum": "ALTO (80%) | MEDIO (65%) | BAJO",
+            "liquidez": "ABUNDANTE | ESTABLE | ESCASA",
             "quiebre": "{pred_compra:.2f} Bs",
             "techo": "{pred_venta:.2f} Bs"
           }}
@@ -264,11 +270,11 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         print(f"Error Gemini: {e}")
         return {
             "estado_actual": f"Mercado P2P en {actual_compra:.2f} / {actual_venta:.2f} Bs.",
-            "proyeccion_7_12h": f"Tendencia {tendencia_quant}.",
+            "proyeccion_7_12h": f"Tendencia P2P {tendencia_quant}.",
             "recomendacion_tactica": "Ajustar anuncios en la punta competitiva.",
-            "tactica": {"texto": "Mercado estable.", "senal": "COMPRA MODERADA", "velocidad": "MEDIA", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} Bs"},
-            "flujo": {"texto": "Rotación normal.", "dominio": "LATERAL", "spread_status": f"{spread:.2f} Bs", "riesgo": "MEDIO", "proyeccion_12h": f"{actual_venta:.2f} Bs"},
-            "niveles": {"texto": "Rango acotado.", "momentum": "MEDIO", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{actual_venta:.2f} Bs"}
+            "tactica": {"texto": f"Spread actual de {spread:.2f} Bs. Rotación continua de saldo P2P.", "senal": "COMPRA MODERADA", "velocidad": "MEDIA", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} Bs"},
+            "flujo": {"texto": "Absorción regular de volumen en el libro de órdenes P2P.", "dominio": "LATERAL", "spread_status": f"{spread:.2f} Bs", "riesgo": "MEDIO", "proyeccion_12h": f"{actual_venta:.2f} Bs"},
+            "niveles": {"texto": "Rango acotado dentro del spread del mercado P2P.", "momentum": "MEDIO", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{actual_venta:.2f} Bs"}
         }
 
 # ==========================================
@@ -553,7 +559,7 @@ async def api_chat(payload: dict = Body(...)):
     elif "vender" in prompt:
         respuesta = f"Tasa recomendada para vender P2P: {venta:.2f} Bs."
     else:
-        respuesta = f"Diagnóstico: {ia.get('estado_actual', '')} Recomendación: {ia.get('recomendacion_tactica', '')}"
+        respuesta = f"Diagnóstico P2P: {ia.get('estado_actual', '')} Recomendación: {ia.get('recomendacion_tactica', '')}"
 
     return {"response": respuesta}
 
