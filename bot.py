@@ -328,7 +328,7 @@ async def prediccion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==========================================
-# SERVIDOR FASTAPI
+# SERVIDOR FASTAPI Y ENDPOINTS ASÍNCRONOS
 # ==========================================
 telegram_app = None
 
@@ -372,6 +372,26 @@ async def get_custom_css():
       background-color: #0B1120 !important;
       color: #FFFFFF !important;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    }
+
+    p, span, label, div, .description, .ia-report-text {
+      color: #E2E8F0 !important;
+      font-size: 0.95rem !important;
+      line-height: 1.5 !important;
+    }
+
+    .text-secondary, .text-muted, small, footer p, .ia-disclaimer-text {
+      color: #94A3B8 !important;
+    }
+
+    h1, h2, h3, h4, h5, .card-title, .metric-label {
+      color: #38BDF8 !important;
+      font-weight: 600 !important;
+    }
+
+    .metric-value, .highlight-text {
+      color: #FFFFFF !important;
+      font-weight: 700 !important;
     }
     """
     return Response(content=css_content, media_type="text/css")
