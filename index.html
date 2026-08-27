@@ -1,8 +1,128 @@
-<script>
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitoreo P2P USDT/VES</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Chart.js y Adaptadores de Tiempo -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon@3.3.0/build/global/luxon.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1"></script>
+  <!-- Chartjs Chart Financial (para velas) -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.1/dist/chartjs-chart-financial.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen flex flex-col justify-between">
+
+  <!-- Header -->
+  <header class="bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-50">
+    <div class="max-w-4xl mx-auto flex justify-between items-center">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold">
+          <i class="fa-solid fa-chart-line"></i>
+        </div>
+        <h1 class="text-base font-bold tracking-tight">Monitor P2P <span class="text-emerald-400">USDT/VES</span></h1>
+      </div>
+      <div id="sync-status" class="inline-flex items-center gap-1.5 text-emerald-400 font-semibold text-xs">
+        <i class="fa-solid fa-circle text-[8px] animate-pulse">Cargando...</i>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-4xl mx-auto p-4 w-full space-y-6 flex-grow">
+    
+    <!-- Tarjetas de Precios Principales -->
+    <div class="grid grid-cols-2 gap-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm">
+        <span class="text-xs text-slate-400 font-medium block mb-1">Compra Promedio</span>
+        <div id="buy-price" class="text-xl font-extrabold text-slate-100">0,00 <span class="text-xs font-medium text-slate-400">Bs</span></div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm">
+        <span class="text-xs text-slate-400 font-medium block mb-1">Venta Promedio</span>
+        <div id="sell-price" class="text-xl font-extrabold text-emerald-400">0,00 <span class="text-xs font-medium text-slate-400">Bs</span></div>
+      </div>
+    </div>
+
+    <!-- Sección del Gráfico -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-4">
+      <div class="flex flex-wrap justify-between items-center gap-2">
+        <div>
+          <h2 class="text-sm font-bold text-slate-200">Evolución Histórica</h2>
+          <p id="chart-period-label" class="text-xs text-slate-400">1 día</p>
+        </div>
+        <!-- Botones de Periodo -->
+        <div class="flex bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1">
+          <button onclick="setChartPeriod('1d', this)" class="period-btn px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" aria-selected="true">1D</button>
+          <button onclick="setChartPeriod('7d', this)" class="period-btn px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200" aria-selected="false">7D</button>
+          <button onclick="setChartPeriod('30d', this)" class="period-btn px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200" aria-selected="false">30D</button>
+        </div>
+      </div>
+
+      <!-- Canvas del Gráfico -->
+      <div class="h-64 w-relative">
+        <canvas id="marketChart"></canvas>
+      </div>
+
+      <!-- Estadísticas del Gráfico -->
+      <div class="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/60 text-center">
+        <div>
+          <span class="text-[10px] text-slate-400 block">Mínimo</span>
+          <span id="chart-low" class="text-xs font-bold text-slate-200">--,-- Bs</span>
+        </div>
+        <div>
+          <span class="text-[10px] text-slate-400 block">Actual</span>
+          <span id="chart-current" class="text-xs font-bold text-emerald-400">--,-- Bs</span>
+        </div>
+        <div>
+          <span class="text-[10px] text-slate-400 block">Máximo</span>
+          <span id="chart-high" class="text-xs font-bold text-slate-200">--,-- Bs</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tasas de Referencia y Calculadora -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Referencias Oficiales</h3>
+        <div class="flex justify-between items-center text-sm">
+          <span class="text-slate-300">Tasa BCV:</span>
+          <span id="bcv-rate" class="font-bold text-slate-100">0,00 Bs/USD</span>
+        </div>
+        <div class="flex justify-between items-center text-sm">
+          <span class="text-slate-300">Tasa Euro:</span>
+          <span id="euro-rate" class="font-bold text-slate-100">0,00 Bs/EUR</span>
+        </div>
+        <div id="bcv-gap" class="text-xs text-emerald-400 font-medium pt-1">Brecha P2P: --</div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Calculadora Rápida</h3>
+        <div class="flex gap-2">
+          <input type="number" id="calc-amount" placeholder="Monto" oninput="calculateRate()" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-emerald-500">
+          <select id="calc-rate" onchange="calculateRate()" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-emerald-500">
+            <option value="sell">Venta P2P</option>
+            <option value="buy">Compra P2P</option>
+            <option value="bcv">BCV</option>
+          </select>
+        </div>
+        <div class="flex justify-between items-center pt-1">
+          <span id="calc-result" class="text-base font-extrabold text-emerald-400">0,00 Bs</span>
+          <span id="calc-diff" class="text-xs text-slate-400">-- vs Tasa BCV</span>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Script Principal Integrado -->
+  <script>
     const API_BASE_URL = "https://p2p-monitor-binance.onrender.com";
 
     let RATES = { buy: 0, sell: 0, bcv: 0, euro: 0 };
-    let secondsAgo = 0;
     let marketChart = null;
     let currentPeriod = '1d';
 
@@ -48,38 +168,52 @@
       }
 
       if (success) {
-        secondsAgo = 0;
-        if (syncStatus) syncStatus.className = "inline-flex items-center gap-1.5 text-emerald-400 font-semibold";
+        if (syncStatus) {
+          syncStatus.className = "inline-flex items-center gap-1.5 text-emerald-400 font-semibold text-xs";
+          syncStatus.innerHTML = `<i class="fa-solid fa-circle text-[8px]"></i> Sincronizado`;
+        }
       } else {
-        if (syncStatus) syncStatus.className = "inline-flex items-center gap-1.5 text-amber-400 font-semibold";
+        if (syncStatus) {
+          syncStatus.className = "inline-flex items-center gap-1.5 text-amber-400 font-semibold text-xs";
+          syncStatus.innerHTML = `<i class="fa-solid fa-circle text-[8px]"></i> Modo Local/Fallback`;
+        }
       }
     }
 
     function updateUI() {
-      document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      const buyEl = document.getElementById('buy-price');
+      const sellEl = document.getElementById('sell-price');
+      if (buyEl) buyEl.innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      if (sellEl) sellEl.innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       
       if (RATES.buy > 0 && RATES.sell > 0) {
         const spreadAbs = RATES.sell - RATES.buy;
         const spreadPct = (spreadAbs / RATES.buy) * 100;
-        document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2)}%`;
-        document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
+        const spreadAbsEl = document.getElementById('spread-absolute');
+        if (spreadAbsEl) spreadAbsEl.innerText = `${formatVE(spreadAbs)} Bs / USDT`;
       }
 
-      document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
-      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
+      const bcvRateEl = document.getElementById('bcv-rate');
+      const euroRateEl = document.getElementById('euro-rate');
+      if (bcvRateEl) bcvRateEl.innerText = `${formatVE(RATES.bcv)} Bs/USD`;
+      if (euroRateEl) euroRateEl.innerText = `${formatVE(RATES.euro)} Bs/EUR`;
 
       if (RATES.bcv > 0 && RATES.sell > 0) {
         const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
-        document.getElementById('bcv-gap').innerText = `Brecha P2P: +${bcvGap.toFixed(2)}%`;
+        const bcvGapEl = document.getElementById('bcv-gap');
+        if (bcvGapEl) bcvGapEl.innerText = `Brecha P2P: +${bcvGap.toFixed(2)}%`;
       }
 
       calculateRate();
     }
 
     function calculateRate() {
-      const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
-      const rateType = document.getElementById('calc-rate').value;
+      const amountInput = document.getElementById('calc-amount');
+      const rateTypeSelect = document.getElementById('calc-rate');
+      if (!amountInput || !rateTypeSelect) return;
+
+      const amount = parseFloat(amountInput.value) || 0;
+      const rateType = rateTypeSelect.value;
       let activeRate = RATES.sell;
 
       if (rateType === 'buy') activeRate = RATES.buy;
@@ -87,29 +221,40 @@
       else if (rateType === 'euro') activeRate = RATES.euro;
 
       const total = amount * activeRate;
-      document.getElementById('calc-result').innerText = `${formatVE(total)} Bs`;
+      const calcResultEl = document.getElementById('calc-result');
+      if (calcResultEl) calcResultEl.innerText = `${formatVE(total)} Bs`;
 
-      if (RATES.bcv > 0) {
-        const bcvTotal = amount * RATES.bcv;
-        const diff = total - bcvTotal;
-        document.getElementById('calc-diff').innerText = `${diff >= '+' ? '' : ''}${formatVE(diff)} Bs vs. Tasa BCV`;
-      } else {
-        document.getElementById('calc-diff').innerText = `--,-- Bs vs. Tasa BCV`;
+      const calcDiffEl = document.getElementById('calc-diff');
+      if (calcDiffEl) {
+        if (RATES.bcv > 0) {
+          const bcvTotal = amount * RATES.bcv;
+          const diff = total - bcvTotal;
+          calcDiffEl.innerText = `${formatVE(diff)} Bs vs. Tasa BCV`;
+        } else {
+          calcDiffEl.innerText = `--,-- Bs vs. Tasa BCV`;
+        }
       }
     }
 
-    // --- NUEVA LÓGICA DE GRÁFICA CON MEMORIA DE 30 DÍAS ---
+    // --- LÓGICA DE GRÁFICA CON SOPORTE 1D, 7D y 30D ---
     function setChartPeriod(period, btn) {
       currentPeriod = period;
       
-      // Actualizar estilos de los botones visuales
       document.querySelectorAll('.period-btn').forEach(b => {
+        b.classList.remove('bg-emerald-500/20', 'text-emerald-400', 'border-emerald-500/40');
+        b.classList.add('text-slate-400');
         b.setAttribute('aria-selected', 'false');
       });
-      btn.setAttribute('aria-selected', 'true');
+
+      if (btn) {
+        btn.classList.add('bg-emerald-500/20', 'text-emerald-400', 'border-emerald-500/40');
+        btn.classList.remove('text-slate-400');
+        btn.setAttribute('aria-selected', 'true');
+      }
 
       const labelMap = { '1d': '1 día', '7d': '7 días', '30d': '30 días' };
-      document.getElementById('chart-period-label').innerText = labelMap[period];
+      const labelEl = document.getElementById('chart-period-label');
+      if (labelEl) labelEl.innerText = labelMap[period];
 
       updateChartData(period);
     }
@@ -117,14 +262,14 @@
     function generateHistoricalData(period) {
       const data = [];
       let basePrice = RATES.sell > 0 ? RATES.sell : 958.80;
-      let count = 24; // Por defecto 1D (24 horas)
-      let intervalMs = 60 * 60 * 1000; // 1 hora
+      let count = 24; 
+      let intervalMs = 60 * 60 * 1000; 
 
       if (period === '7d') {
-        count = 28; // Puntos cada 6 horas
+        count = 28; 
         intervalMs = 6 * 60 * 60 * 1000;
       } else if (period === '30d') {
-        count = 30; // 1 punto por día durante 30 días
+        count = 30; 
         intervalMs = 24 * 60 * 60 * 1000;
       }
 
@@ -133,14 +278,13 @@
       for (let i = 0; i < count; i++) {
         currentTime = currentTime.plus({ milliseconds: intervalMs });
         
-        // Variación aleatoria controlada para simular el historial de mercado
         const variance = (Math.random() - 0.48) * (period === '30d' ? 4.5 : 1.2);
         const open = basePrice;
         const close = open + variance;
         const high = Math.max(open, close) + Math.random() * 0.8;
         const low = Math.min(open, close) - Math.random() * 0.8;
         
-        basePrice = close; // El cierre pasa a ser la apertura del siguiente
+        basePrice = close; 
 
         data.push({
           x: currentTime.toJSDate(),
@@ -154,7 +298,9 @@
     }
 
     function initChart() {
-      const ctx = document.getElementById('marketChart').getContext('2d');
+      const canvas = document.getElementById('marketChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
       const initialData = generateHistoricalData('1d');
 
       marketChart = new Chart(ctx, {
@@ -221,7 +367,6 @@
       const newData = generateHistoricalData(period);
       marketChart.data.datasets[0].data = newData;
 
-      // Ajustar escala temporal según el periodo seleccionado
       if (period === '1d') {
         marketChart.options.scales.x.time.unit = 'hour';
       } else if (period === '7d') {
@@ -241,76 +386,20 @@
       let maxVal = Math.max(...dataArray.map(d => d.h));
       let currentVal = dataArray[dataArray.length - 1].c;
 
-      document.getElementById('chart-low').innerText = `${formatVE(minVal)} Bs`;
-      document.getElementById('chart-current').innerText = `${formatVE(currentVal)} Bs`;
-      document.getElementById('chart-high').innerText = `${formatVE(maxVal)} Bs`;
+      const lowEl = document.getElementById('chart-low');
+      const curEl = document.getElementById('chart-current');
+      const highEl = document.getElementById('chart-high');
+
+      if (lowEl) lowEl.innerText = `${formatVE(minVal)} Bs`;
+      if (curEl) curEl.innerText = `${formatVE(currentVal)} Bs`;
+      if (highEl) highEl.innerText = `${formatVE(maxVal)} Bs`;
     }
 
-    // Funcionalidad de navegación inferior y modales (sin cambios)
-    function setActiveNav(navId, sectionId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
-      const activeBtn = document.getElementById(`nav-${navId}`);
-      if(activeBtn) activeBtn.classList.add('active', 'text-emerald-400');
-      const targetSec = document.getElementById(sectionId);
-      if(targetSec) targetSec.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    function openAIChatModal() { document.getElementById('aiChatModal').classList.remove('hidden'); }
-    function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
-    function openAlertsModal() { document.getElementById('alertsModal').classList.remove('hidden'); }
-    function closeAlertsModal() { document.getElementById('alertsModal').classList.add('hidden'); }
-
-    function saveAlert() {
-      const msg = document.getElementById('alert-status-msg');
-      msg.classList.remove('hidden');
-      setTimeout(() => { closeAlertsModal(); msg.classList.add('hidden'); }, 1500);
-    }
-
-    function switchAIMode(mode) {
-      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
-      const insights = {
-        1: { title: "Proyección Operativa P2P", text: "El mercado mantiene alta rotación con tendencia favorable para arbitraje rápido en bloques cortos." },
-        2: { title: "Flujo de Liquidez", text: "Se detecta mayor presencia de compradores institucionales absorbiendo la oferta disponible en cajeros y pago móvil." },
-        3: { title: "Niveles Clave 30D", text: "Los soportes recientes se afianzan sólidamente permitiendo estructurar entradas con menor riesgo de deslizamiento." }
-      };
-      document.getElementById('ai-title-display').innerText = insights[mode].title;
-      document.getElementById('gemini-insight-text').innerText = insights[mode].text;
-    }
-
-    function sendAIMessage() {
-      const input = document.getElementById('ai-user-input');
-      const chat = document.getElementById('ai-chat-messages');
-      if (!input.value.trim()) return;
-
-      const userMsg = document.createElement('div');
-      userMsg.className = "flex items-start justify-end gap-2.5";
-      userMsg.innerHTML = `<div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${input.value}</div>`;
-      chat.appendChild(userMsg);
-
-      const query = input.value;
-      input.value = '';
-      chat.scrollTop = chat.scrollHeight;
-
-      setTimeout(() => {
-        const botMsg = document.createElement('div');
-        botMsg.className = "flex items-start gap-2.5";
-        botMsg.innerHTML = `
-          <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-            <i class="fa-solid fa-robot text-xs"></i>
-          </div>
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-            Analizando tu consulta sobre "${query}" con los registros históricos disponibles... El comportamiento del spread se mantiene estable dentro del rango proyectado.
-          </div>`;
-        chat.appendChild(botMsg);
-        chat.scrollTop = chat.scrollHeight;
-      }, 800);
-    }
-
-    // Inicialización al cargar la página
     window.addEventListener('DOMContentLoaded', () => {
       fetchRealTimeData();
       initChart();
-      setInterval(fetchRealTimeData, 15000); // Actualiza datos en vivo cada 15s
+      setInterval(fetchRealTimeData, 15000);
     });
   </script>
+</body>
+</html>
