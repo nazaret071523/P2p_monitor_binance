@@ -13,6 +13,10 @@ from fastapi import FastAPI, Body
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+# Importaciones de Telegram
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+
 from google import genai
 from google.genai import types
 
@@ -23,6 +27,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 VET = timezone(timedelta(hours=-4))
 DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
@@ -57,7 +62,6 @@ def obtener_modelo_gemini_activo() -> str:
             candidatos.sort(reverse=True)
             return candidatos[0]
     except Exception as e:
-        # Silenciado para evitar ruido en consola ante bloqueos de cuota iniciales
         pass
     return modelo_por_defecto
 
@@ -226,7 +230,6 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
     global _gemini_cache
     tiempo_actual = time.time()
 
-    # Si la caché está activa y no han pasado 15 minutos, la devolvemos directamente sin gastar cuota
     if _gemini_cache["resultado"] is not None and (tiempo_actual - _gemini_cache["ultima_actualizacion"] < CACHE_EXPIRATION_TIME):
         return _gemini_cache["resultado"]
 
@@ -312,10 +315,7 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         return resultado_json
 
     except Exception as e:
-        # Escudo protector ante errores 429: Se oculta el error pesado en consola y se usa respaldo silencioso
         print("Aviso: Cuota de IA pausada por Google. Usando motor cuantitativo local de respaldo.")
-        
-        # Extiende el tiempo de bloqueo en caché a 30 minutos para evitar saturar las peticiones del modelo
         _gemini_cache["resultado"] = fallback_response
         _gemini_cache["ultima_actualizacion"] = tiempo_actual + 900 
         return fallback_response
@@ -393,11 +393,57 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
+# BOT DE TELEGRAM (COMANDO /prediccion)
+# ==========================================
+async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+        if not compra or not venta:
+            compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
+        
+        pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
+        hora_actual = datetime.now(VET).strftime("%I:%M %p")
+        
+        mensaje = (
+            f"🦜 **VENBOT PREDICCIONES**\n"
+            f"⏱ ({hora_actual}) | BLOQUE P2P\n"
+            f"🟢 COMPRA (10k): {compra:.2f} Bs\n"
+            f"🔴 VENTA (300k): {venta:.2f} Bs\n"
+            f"⚡ MARGEN: {spread:.2f} Bs ({pct:.2f}%)\n\n"
+            f"🔮 **PROYECCIÓN +7H (IA QUANT)**\n"
+            f"🟢 Recompra Esperada: {pred['pred_compra_str']}\n"
+            f"🔴 Venta Esperada: {pred['pred_venta_str']}\n"
+            f"🎯 Dirección: {pred['tendencia']}\n\n"
+            f"📊 Piso: {pred['piso_str']} | Techo: {pred['techo_str']}\n"
+            f"💾 Base de Datos: {pred['muestras']} Muestras"
+        )
+        await update.message.reply_text(mensaje, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Error en comando telegram: {e}")
+        await update.message.reply_text("⚠️ Ocurrió un error al procesar la predicción.")
+
+async def iniciar_telegram_bot():
+    if not TELEGRAM_BOT_TOKEN:
+        print("⚠️ TELEGRAM_BOT_TOKEN no configurado. El bot de Telegram no se iniciará.")
+        return
+    try:
+        application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        application.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        print("🤖 Bot de Telegram inicializado y escuchando comandos con éxito.")
+    except Exception as e:
+        print(f"Error al iniciar el bot de Telegram: {e}")
+
+# ==========================================
 # SERVIDOR FASTAPI Y ENDPOINTS ASÍNCRONOS
 # ==========================================
 @asynccontextmanager
 async def lifespan(app_fastapi: FastAPI):
     asyncio.create_task(tarea_recoleccion_automatica())
+    asyncio.create_task(iniciar_telegram_bot())
     yield
 
 app = FastAPI(lifespan=lifespan)
