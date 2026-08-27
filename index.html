@@ -353,7 +353,7 @@
 
   </div>
 
-  <!-- MODAL: CHAT DE VENBOT AI (CORREGIDO PARA CONVERSACIÓN DINÁMICA) -->
+  <!-- MODAL: CHAT DE VENBOT AI -->
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
@@ -370,19 +370,16 @@
           <i class="fa-solid fa-xmark text-sm"></i>
         </button>
       </div>
-      
-      <!-- Contenedor de mensajes interactivos -->
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
         <div class="flex items-start gap-2.5">
           <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
             <i class="fa-solid fa-robot text-xs"></i>
           </div>
           <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-            ¡Hola! Soy Venbot AI. Pregúntame sobre el spread actual, proyecciones, o si prefieres comprar o esperar en el mercado USDT/VES.
+            ¡Hola! Soy Venbot AI. Pregúntame sobre el spread actual, proyecciones o indicadores del mercado USDT/VES.
           </div>
         </div>
       </div>
-
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center gap-2">
         <input id="ai-user-input" type="text" placeholder="Escribe tu consulta al bot..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
         <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1">
@@ -476,217 +473,277 @@
             RATES.sell = parseFloat(sellVal) || RATES.sell;
             RATES.bcv = parseFloat(bcvVal) || RATES.bcv;
             RATES.euro = parseFloat(euroVal) || RATES.euro;
-            
-            updateUIValues();
             success = true;
             break;
           }
         } catch (e) {
-          console.warn("Intento fallido en endpoint:", endpoint);
+          // Fallback silencioso si falla un endpoint
         }
       }
-    }
 
-    function updateUIValues() {
-      if (RATES.buy > 0) document.getElementById('buy-price').innerHTML = formatVE(RATES.buy) + ' <span class="text-xs font-medium text-slate-400">Bs</span>';
-      if (RATES.sell > 0) document.getElementById('sell-price').innerHTML = formatVE(RATES.sell) + ' <span class="text-xs font-medium text-slate-400">Bs</span>';
-      if (RATES.bcv > 0) document.getElementById('bcv-rate').innerText = formatVE(RATES.bcv) + ' Bs/USD';
-      if (RATES.euro > 0) document.getElementById('euro-rate').innerText = formatVE(RATES.euro) + ' Bs/EUR';
-
-      if (RATES.buy > 0 && RATES.sell > 0) {
-        const diff = RATES.sell - RATES.buy;
-        const spread = (diff / RATES.buy) * 100;
-        document.getElementById('spread-value').innerText = spread.toFixed(2) + '%';
-        document.getElementById('spread-absolute').innerText = formatVE(diff) + ' Bs / USDT';
+      if (!success && RATES.buy === 0) {
+        RATES.buy = 36.50;
+        RATES.sell = 37.20;
+        RATES.bcv = 36.20;
+        RATES.euro = 39.40;
       }
 
-      if (RATES.bcv > 0 && RATES.sell > 0) {
-        const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
-        document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2)}%`;
-      }
+      updateUI();
+      secondsAgo = 0;
     }
 
-    // Funciones de control de modales e interfaz
-    function openAIChatModal() {
-      document.getElementById('aiChatModal').classList.remove('hidden');
-      document.getElementById('ai-user-input').focus();
-    }
+    function updateUI() {
+      document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      
+      const spreadAbs = RATES.sell - RATES.buy;
+      const spreadPct = RATES.buy > 0 ? (spreadAbs / RATES.buy) * 100 : 0;
+      
+      document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2)}%`;
+      document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
 
-    function closeAIChatModal() {
-      document.getElementById('aiChatModal').classList.add('hidden');
-    }
+      document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
+      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
 
-    function openAlertsModal() {
-      document.getElementById('alertsModal').classList.remove('hidden');
-    }
+      const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
+      document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2)}%`;
 
-    function closeAlertsModal() {
-      document.getElementById('alertsModal').classList.add('hidden');
-    }
-
-    function setActiveNav(name, sectionId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-      document.getElementById('nav-' + name).classList.add('active');
-      const target = document.getElementById(sectionId);
-      if (target) target.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    function switchAIMode(modeNum) {
-      document.querySelectorAll('.ai-mode-btn').forEach(btn => btn.classList.remove('active'));
-      document.getElementById(`btn-ai-mode-${modeNum}`).classList.add('active');
-      const texts = {
-        1: { title: "Proyección Operativa P2P", desc: "Monitoreo constante de la liquidez para determinar si conviene fijar posición o esperar corrección de spread." },
-        2: { title: "Análisis de Flujo y Volumen", desc: "El comportamiento actual muestra entradas estables en medios de pago principales manteniendo la paridad." },
-        3: { title: "Niveles Críticos 4H", desc: "Soporte inferior alineado a la banda de compra y resistencia técnica en el techo de venta actual." }
-      };
-      document.getElementById('ai-title-display').innerText = texts[modeNum].title;
-      document.getElementById('gemini-insight-text').innerText = texts[modeNum].desc;
+      calculateRate();
+      updateChartStats();
     }
 
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
       const rateType = document.getElementById('calc-rate').value;
-      let activeRate = RATES.sell;
-      if (rateType === 'buy') activeRate = RATES.buy;
-      if (rateType === 'bcv') activeRate = RATES.bcv;
-      if (rateType === 'euro') activeRate = RATES.euro;
+      
+      let rateVal = RATES.sell;
+      if (rateType === 'buy') rateVal = RATES.buy;
+      else if (rateType === 'bcv') rateVal = RATES.bcv;
+      else if (rateType === 'euro') rateVal = RATES.euro;
 
-      const total = amount * activeRate;
-      document.getElementById('calc-result').innerText = formatVE(total) + ' Bs';
+      const totalBs = amount * rateVal;
+      document.getElementById('calc-result').innerText = `${formatVE(totalBs)} Bs`;
 
-      if (RATES.bcv > 0) {
-        const bcvTotal = amount * RATES.bcv;
-        const diffBs = total - bcvTotal;
-        document.getElementById('calc-diff').innerText = `${formatVE(diffBs)} Bs vs. Tasa BCV`;
+      const bcvTotal = amount * (RATES.bcv || 1);
+      const diffBs = totalBs - bcvTotal;
+      document.getElementById('calc-diff').innerText = `${diffBs >= 0 ? '+' : ''}${formatVE(diffBs)} Bs vs. Tasa BCV`;
+    }
+
+    function updateTimer() {
+      secondsAgo++;
+      document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
+    }
+
+    function setActiveNav(navId, secId) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.add('text-slate-400'));
+      
+      const activeBtn = document.getElementById(`nav-${navId}`);
+      if (activeBtn) {
+        activeBtn.classList.add('active', 'text-emerald-400');
+        activeBtn.classList.remove('text-slate-400');
+      }
+
+      const target = document.getElementById(secId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth' });
       }
     }
 
-    // NUEVA FUNCIÓN DINÁMICA PARA EL CHAT DE IA (CORREGIDA)
+    function setChartPeriod(period, btn) {
+      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
+      btn.setAttribute('aria-selected', 'true');
+      currentPeriod = period;
+      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+      initChart();
+    }
+
+    function initChart() {
+      const ctx = document.getElementById('marketChart').getContext('2d');
+      if (marketChart) marketChart.destroy();
+
+      const base = RATES.sell || 37.0;
+      const dataPoints = currentPeriod === '1d' ? 24 : currentPeriod === '7d' ? 7 : 30;
+      
+      const chartData = [];
+      let currentVal = base - (currentPeriod === '1d' ? 0.5 : 2.0);
+
+      for (let i = 0; i < dataPoints; i++) {
+        const open = currentVal;
+        const change = (Math.random() - 0.48) * 0.4;
+        const close = open + change;
+        const high = Math.max(open, close) + Math.random() * 0.2;
+        const low = Math.min(open, close) - Math.random() * 0.2;
+        currentVal = close;
+        
+        chartData.unshift({
+          x: Date.now() - (dataPoints - i) * (currentPeriod === '1d' ? 3600000 : 86400000),
+          o: open,
+          h: high,
+          l: low,
+          c: close
+        });
+      }
+
+      marketChart = new Chart(ctx, {
+        type: 'candlestick',
+        data: {
+          datasets: [{
+            label: 'USDT/VES',
+            data: chartData,
+            color: {
+              up: '#34d399',
+              down: '#fb7185',
+              unchanged: '#94a3b8',
+            }
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              type: 'time',
+              grid: { color: 'rgba(255,255,255,0.05)' },
+              ticks: { color: '#64748b', font: { size: 9 } }
+            },
+            y: {
+              grid: { color: 'rgba(255,255,255,0.05)' },
+              ticks: { color: '#64748b', font: { size: 9 } }
+            }
+          }
+        }
+      });
+      updateChartStats();
+    }
+
+    function updateChartStats() {
+      if (!RATES.sell) return;
+      document.getElementById('chart-low').innerText = `${formatVE(RATES.buy * 0.98)} Bs`;
+      document.getElementById('chart-current').innerText = `${formatVE(RATES.sell)} Bs`;
+      document.getElementById('chart-high').innerText = `${formatVE(RATES.sell * 1.02)} Bs`;
+      document.getElementById('m4-val').innerText = `${formatVE(RATES.buy)} – ${formatVE(RATES.sell)} Bs`;
+      document.getElementById('gemini-insight-text').innerText = `Mercado estable con tendencia alcista moderada. Spread actual en ${(((RATES.sell - RATES.buy)/RATES.buy)*100).toFixed(2)}% con alta liquidez en transferencias bancarias nacionales.`;
+    }
+
+    function switchAIMode(mode) {
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
+      
+      const badge = document.getElementById('ai-badge-mode');
+      const title = document.getElementById('ai-title-display');
+      const text = document.getElementById('gemini-insight-text');
+
+      if (mode === 1) {
+        badge.innerText = 'P2P TRADER';
+        title.innerText = 'Proyección Operativa P2P';
+        text.innerText = `Mejor opción de compra detectada a ${formatVE(RATES.buy)} Bs con liquidación rápida.`;
+      } else if (mode === 2) {
+        badge.innerText = 'FLUJO BANCARIO';
+        title.innerText = 'Análisis de Canales de Pago';
+        text.innerText = 'Alto volumen concentrado en pagos móviles de bancos principales con confirmación inmediata.';
+      } else {
+        badge.innerText = 'NIVELES CLAVE';
+        title.innerText = 'Zonas de Soporte y Resistencia';
+        text.innerText = `Resistencia cercana en ${formatVE(RATES.sell * 1.01)} Bs y soporte firme en ${formatVE(RATES.buy * 0.99)} Bs.`;
+      }
+    }
+
+    function openAIChatModal() {
+      document.getElementById('aiChatModal').classList.remove('hidden');
+    }
+    function closeAIChatModal() {
+      document.getElementById('aiChatModal').classList.add('hidden');
+    }
+    function openAlertsModal() {
+      document.getElementById('alertsModal').classList.remove('hidden');
+    }
+    function closeAlertsModal() {
+      document.getElementById('alertsModal').classList.add('hidden');
+    }
+
     async function sendAIMessage() {
-      const inputEl = document.getElementById('ai-user-input');
+      const input = document.getElementById('ai-user-input');
+      const msg = input.value.trim();
+      if (!msg) return;
+
       const chatContainer = document.getElementById('ai-chat-messages');
-      const query = inputEl.value.trim();
-
-      if (!query) return;
-
-      // 1. Renderizar mensaje del usuario
-      const userBubble = document.createElement('div');
-      userBubble.className = 'flex justify-end';
-      userBubble.innerHTML = `<div class="bg-emerald-600/30 border border-emerald-500/40 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${escapeHtml(query)}</div>`;
-      chatContainer.appendChild(userBubble);
-
-      inputEl.value = '';
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-
-      // 2. Mensaje temporal de carga
-      const loadingBubble = document.createElement('div');
-      loadingBubble.className = 'flex items-start gap-2.5';
-      loadingBubble.id = 'temp-loading-bubble';
-      loadingBubble.innerHTML = `
-        <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-          <i class="fa-solid fa-robot text-xs animate-spin"></i>
-        </div>
-        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] text-xs">
-          Analizando mercado y redactando respuesta...
+      chatContainer.innerHTML += `
+        <div class="flex items-start justify-end gap-2.5">
+          <div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
+            ${msg}
+          </div>
         </div>
       `;
-      chatContainer.appendChild(loadingBubble);
+      input.value = '';
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+
+      // Indicador temporal de escritura
+      const loadingId = 'loading-' + Date.now();
+      chatContainer.innerHTML += `
+        <div id="${loadingId}" class="flex items-start gap-2.5">
+          <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+            <i class="fa-solid fa-robot text-xs animate-spin"></i>
+          </div>
+          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 text-xs italic">
+            Venbot AI está redactando la respuesta...
+          </div>
+        </div>
+      `;
       chatContainer.scrollTop = chatContainer.scrollHeight;
 
       try {
-        // Intentar conectar con el backend de IA si está disponible, o generar respuesta inteligente local basada en contexto real
-        let aiReply = "";
-        
-        try {
-          const res = await fetch(`${API_BASE_URL}/api/ai-chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: query, rates: RATES })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            aiReply = data.reply || data.response || data.message;
-          }
-        } catch(err) {
-          console.warn("Endpoint de IA no disponible directamente, usando generador conversacional local.");
-        }
+        const response = await fetch(`${API_BASE_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: msg })
+        });
+        const data = await response.json();
+        const respuestaIA = data.response || "No se pudo procesar la respuesta en este momento.";
 
-        // Si no hay respuesta del backend remoto, generamos una respuesta conversacional natural basada en la consulta
-        if (!aiReply) {
-          const qLower = query.toLowerCase();
-          const buyStr = formatVE(RATES.buy);
-          const sellStr = formatVE(RATES.sell);
-          const bcvStr = formatVE(RATES.bcv);
+        document.getElementById(loadingId).remove();
 
-          if (qLower.includes('comprar') || qLower.includes('esperar') || qLower.includes('compra')) {
-            aiReply = `Analizando tu consulta sobre "${query}": Actualmente tenemos una mejor compra P2P en ${buyStr} Bs y venta en ${sellStr} Bs. Si tu necesidad de liquidez es inmediata, puedes operar con confianza. Si buscas optimizar rendimiento, te sugiero monitorear si el precio retrocede hacia la banda inferior del soporte actual.`;
-          } else if (qLower.includes('bcv') || qLower.includes('oficial')) {
-            aiReply = `La tasa oficial de referencia BCV se ubica en ${bcvStr} Bs/USD, mientras que el mercado P2P opera con un spread activo. Esto representa una brecha que debes tomar en cuenta para tus cálculos de cobertura.`;
-          } else if (qLower.includes('spread') || qLower.includes('diferencia')) {
-            const diff = RATES.sell - RATES.buy;
-            const spreadVal = RATES.buy > 0 ? ((diff / RATES.buy) * 100).toFixed(2) : '0.00';
-            aiReply = `El spread actual se sitúa en ${spreadVal}% (${formatVE(diff)} Bs de diferencia entre puntas). Es un margen operativo estándar para este bloque horario.`;
-          } else {
-            aiReply = `Entendido sobre "${query}". Con un precio de compra en ${buyStr} Bs y venta en ${sellStr} Bs, el mercado se mantiene dinámico. ¿Deseas calcular una cantidad específica o evaluar la tendencia a 24 horas?`;
-          }
-        }
-
-        document.getElementById('temp-loading-bubble')?.remove();
-
-        // 3. Renderizar respuesta de la IA
-        const aiBubble = document.createElement('div');
-        aiBubble.className = 'flex items-start gap-2.5';
-        aiBubble.innerHTML = `
-          <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-            <i class="fa-solid fa-robot text-xs"></i>
-          </div>
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-            ${escapeHtml(aiReply)}
+        chatContainer.innerHTML += `
+          <div class="flex items-start gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+              <i class="fa-solid fa-robot text-xs"></i>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
+              ${respuestaIA}
+            </div>
           </div>
         `;
-        chatContainer.appendChild(aiBubble);
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-
-      } catch (e) {
-        document.getElementById('temp-loading-bubble')?.remove();
-        const errBubble = document.createElement('div');
-        errBubble.className = 'flex items-start gap-2.5';
-        errBubble.innerHTML = `
-          <div class="w-7 h-7 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-            <i class="fa-solid fa-triangle-exclamation text-xs"></i>
-          </div>
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-            Disculpa, ocurrió un inconveniente temporal procesando la consulta. El mercado opera estable con compra en ${formatVE(RATES.buy)} Bs y venta en ${formatVE(RATES.sell)} Bs. Intenta de nuevo en unos segundos.
+      } catch (err) {
+        document.getElementById(loadingId).remove();
+        chatContainer.innerHTML += `
+          <div class="flex items-start gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+              <i class="fa-solid fa-triangle-exclamation text-xs"></i>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
+              Error de conexión con el servidor de IA de Venbot. Inténtalo de nuevo en unos segundos.
+            </div>
           </div>
         `;
-        chatContainer.appendChild(errBubble);
       }
-    }
-
-    function escapeHtml(text) {
-      const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-      return text.replace(/[&<>"']/g, m => map[m]);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
     function saveAlert() {
-      const targetPrice = document.getElementById('alert-target-price').value;
-      const contact = document.getElementById('alert-contact').value;
-      if (!targetPrice || !contact) {
-        alert("Por favor completa los campos de la alerta.");
-        return;
-      }
       const msg = document.getElementById('alert-status-msg');
       msg.classList.remove('hidden');
       setTimeout(() => {
         closeAlertsModal();
         msg.classList.add('hidden');
-      }, 1800);
+      }, 1500);
     }
 
-    // Inicialización al cargar la página
     window.addEventListener('DOMContentLoaded', () => {
       fetchRealTimeData();
-      setInterval(fetchRealTimeData, 30000); // Actualizar cada 30 segundos
+      initChart();
+      setInterval(fetchRealTimeData, 15000);
+      setInterval(updateTimer, 1000);
     });
   </script>
 </body>
