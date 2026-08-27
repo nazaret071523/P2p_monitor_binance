@@ -13,6 +13,10 @@ from fastapi import FastAPI, Body
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+# Importaciones de Machine Learning (XGBoost Quant)
+from sklearn.linear_model import Ridge
+import xgboost as xgb
+
 # Importaciones de Telegram
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
@@ -321,13 +325,13 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         return fallback_response
 
 # ==========================================
-# MOTOR QUANT
+# MOTOR QUANT (XGBOOST QUANT MACHINE LEARNING)
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta):
     filas = obtener_estadisticas_db()
     total_muestras = len(filas)
 
-    if total_muestras < 10:
+    if total_muestras < 15:
         pred_c = round(actual_compra * 0.999, 2)
         pred_v = round(actual_venta * 1.001, 2)
         tendencia = "➖ ESTABLE / LATERAL"
@@ -340,18 +344,44 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         piso = np.min(compras)
         techo = np.max(ventas)
 
-        ventana_reciente = min(total_muestras, 30)
-        x = np.arange(ventana_reciente)
-        y_c = compras[-ventana_reciente:]
-        slope_c, _ = np.polyfit(x, y_c, 1)
+        # Preparar características (features) para XGBoost basadas en rezagos temporales (lags)
+        window_size = min(total_muestras - 1, 5)
+        X, y = [], []
+        for i in range(window_size, len(compras)):
+            X.append(compras[i - window_size:i])
+            y.append(compras[i])
+        
+        X = np.array(X)
+        y = np.array(y)
 
-        pasos_7h = 84
-        factor_amortiguacion = 0.35 
-        delta_proyectado = slope_c * pasos_7h * factor_amortiguacion
+        if len(X) > 0:
+            model = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
+            model.fit(X, y)
+            
+            # Tomar la última ventana para predecir el siguiente paso y proyectar
+            last_window = compras[-window_size:].reshape(1, -1)
+            pred_c_next = model.predict(last_window)[0]
+            
+            # Calcular delta de tendencia usando un modelo lineal auxiliar sobre los últimos puntos para la dirección
+            recent_x = np.arange(min(total_muestras, 30))
+            recent_y = compras[-len(recent_x):]
+            slope_c, _ = np.polyfit(recent_x, recent_y, 1)
+            
+            delta_estimado = (pred_c_next - actual_compra) + (slope_c * 10)
+            pred_c = round(actual_compra + delta_estimado, 2)
+        else:
+            pred_c = round(actual_compra, 2)
+            slope_c = 0.0
 
-        pred_c = round(actual_compra + delta_proyectado, 2)
         spread_historico_promedio = np.mean(ventas - compras)
         pred_v = round(pred_c + spread_historico_promedio, 2)
+
+        if total_muestras >= 10:
+            recent_x = np.arange(min(total_muestras, 30))
+            recent_y = compras[-len(recent_x):]
+            slope_c, _ = np.polyfit(recent_x, recent_y, 1)
+        else:
+            slope_c = 0.0
 
         if slope_c > 0.015:
             tendencia = "🚀 ALCISTA"
@@ -410,7 +440,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🟢 COMPRA (10k): {compra:.2f} Bs\n"
             f"🔴 VENTA (300k): {venta:.2f} Bs\n"
             f"⚡ MARGEN: {spread:.2f} Bs ({pct:.2f}%)\n\n"
-            f"🔮 **PROYECCIÓN +7H (IA QUANT)**\n"
+            f"🔮 **PROYECCIÓN +7H (IA QUANT - XGBOOST)**\n"
             f"🟢 Recompra Esperada: {pred['pred_compra_str']}\n"
             f"🔴 Venta Esperada: {pred['pred_venta_str']}\n"
             f"🎯 Dirección: {pred['tendencia']}\n\n"
@@ -458,7 +488,7 @@ app.add_middleware(
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
-    return {"status": "ok", "message": "Venbot P2P Activo"}
+    return {"status": "ok", "message": "Venbot P2P Activo con XGBoost Quant"}
 
 @app.get("/api/stream")
 async def event_stream():
