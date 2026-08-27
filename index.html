@@ -487,11 +487,11 @@
       marketChart = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: [],
+          labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Actual'],
           datasets: [
             {
               label: 'Comprar',
-              data: [],
+              data: [36.5, 36.6, 36.4, 36.7, 36.9, 36.8, RATES.buy || 37.0],
               borderColor: '#34d399',
               backgroundColor: 'rgba(52, 211, 153, 0.05)',
               borderWidth: 2,
@@ -501,7 +501,7 @@
             },
             {
               label: 'Vender',
-              data: [],
+              data: [37.0, 37.2, 37.1, 37.4, 37.6, 37.5, RATES.sell || 37.8],
               borderColor: '#f43f5e',
               backgroundColor: 'transparent',
               borderWidth: 2,
@@ -533,85 +533,65 @@
 
     function renderChart(period) {
       if (!marketChart) return;
-      let labels = [];
-      let buyData = [];
-      let sellData = [];
-      const baseBuy = RATES.buy || 945.25;
-      const baseSell = RATES.sell || 956.00;
+      
+      let baseVal = RATES.sell || 37.0;
+      if (baseVal === 0) baseVal = 37.0;
 
-      // Generación de datos históricos con cierre en el precio actual del día
       if (period === '1d') {
-        labels = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Ahora'];
-        for (let i = 0; i < 7; i++) {
-          if (i === 6) {
-            buyData.push(baseBuy);
-            sellData.push(baseSell);
-          } else {
-            const factor = 1 + ((Math.sin(i * 0.8) - 0.2) * 0.008);
-            buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
-            sellData.push(parseFloat((baseSell * factor).toFixed(2)));
-          }
-        }
+        marketChart.data.labels = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Actual'];
+        marketChart.data.datasets[0].data = [baseVal*0.98, baseVal*0.985, baseVal*0.982, baseVal*0.99, baseVal*0.995, baseVal*0.991, RATES.buy || baseVal*0.99];
+        marketChart.data.datasets[1].data = [baseVal*0.99, baseVal*0.995, baseVal*0.992, baseVal*1.0, baseVal*1.005, baseVal*1.002, RATES.sell || baseVal];
       } else if (period === '7d') {
-        labels = ['Hace 6d', 'Hace 5d', 'Hace 4d', 'Hace 3d', 'Hace 2d', 'Ayer', 'Hoy'];
-        for (let i = 0; i < 7; i++) {
-          if (i === 6) {
-            buyData.push(baseBuy);
-            sellData.push(baseSell);
-          } else {
-            const factor = 1 + ((Math.cos(i * 0.6) - 0.3) * 0.012);
-            buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
-            sellData.push(parseFloat((baseSell * factor).toFixed(2)));
-          }
-        }
-      } else { // 30d
-        labels = ['Sem 1', 'Sem 2', 'Sem 3', 'Actual'];
-        for (let i = 0; i < 4; i++) {
-          if (i === 3) {
-            buyData.push(baseBuy);
-            sellData.push(baseSell);
-          } else {
-            const factor = 1 + ((i * 0.004) - 0.01);
-            buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
-            sellData.push(parseFloat((baseSell * factor).toFixed(2)));
-          }
-        }
+        marketChart.data.labels = ['Hace 6d', 'Hace 5d', 'Hace 4d', 'Hace 3d', 'Hace 2d', 'Ayer', 'Hoy'];
+        marketChart.data.datasets[0].data = [baseVal*0.96, baseVal*0.97, baseVal*0.965, baseVal*0.975, baseVal*0.98, baseVal*0.985, RATES.buy || baseVal*0.99];
+        marketChart.data.datasets[1].data = [baseVal*0.97, baseVal*0.98, baseVal*0.975, baseVal*0.985, baseVal*0.99, baseVal*0.995, RATES.sell || baseVal];
+      } else {
+        marketChart.data.labels = ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'];
+        marketChart.data.datasets[0].data = [baseVal*0.93, baseVal*0.95, baseVal*0.97, RATES.buy || baseVal*0.99];
+        marketChart.data.datasets[1].data = [baseVal*0.94, baseVal*0.96, baseVal*0.98, RATES.sell || baseVal];
       }
 
-      marketChart.data.labels = labels;
-      marketChart.data.datasets[0].data = buyData;
-      marketChart.data.datasets[1].data = sellData;
       marketChart.update();
 
-      const minVal = Math.min(...buyData);
-      const maxVal = Math.max(...sellData);
-      document.getElementById('chart-low').innerText = `${formatVE(minVal)} Bs`;
-      document.getElementById('chart-current').innerText = `${formatVE(baseSell)} Bs`;
-      document.getElementById('chart-high').innerText = `${formatVE(maxVal)} Bs`;
+      const allData = [...marketChart.data.datasets[0].data, ...marketChart.data.datasets[1].data];
+      const low = Math.min(...allData);
+      const high = Math.max(...allData);
+
+      document.getElementById('chart-low').innerText = `${formatVE(low)} Bs`;
+      document.getElementById('chart-high').innerText = `${formatVE(high)} Bs`;
+      document.getElementById('chart-current').innerText = `${formatVE(RATES.sell || baseVal)} Bs`;
     }
 
-    function startTimers() {
-      setInterval(() => {
-        secondsAgo++;
-        const el = document.getElementById('updated-ago');
-        if(el) el.innerText = `hace ${secondsAgo} s`;
-      }, 1000);
+    function setActiveNav(navId, sectionId) {
+      document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active', 'text-emerald-400'));
+      document.querySelectorAll('.nav-item').forEach(item => item.classList.add('text-slate-400'));
+      
+      const activeBtn = document.getElementById(`nav-${navId}`);
+      if (activeBtn) {
+        activeBtn.classList.add('active');
+        activeBtn.classList.remove('text-slate-400');
+      }
 
-      setInterval(fetchRealTimeData, 10000);
+      const targetSection = document.getElementById(sectionId);
+      if (targetSection) {
+        targetSection.scrollIntoView({ behavior: 'smooth' });
+      }
     }
 
-    function setActiveNav(name, sectionId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-      const activeNavEl = document.getElementById(`nav-${name}`);
-      if (activeNavEl) activeNavEl.classList.add('active');
-      const el = document.getElementById(sectionId);
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
-    }
-
+    // Inicialización al cargar la página
     window.addEventListener('DOMContentLoaded', () => {
       initChart();
       fetchRealTimeData();
-      startTimers();
+      
+      // Actualizar datos cada 30 segundos
+      setInterval(fetchRealTimeData, 30000);
+
+      // Incrementar contador de segundos transcurridos
+      setInterval(() => {
+        secondsAgo++;
+        const agoEl = document.getElementById('updated-ago');
+        if (agoEl) agoEl.innerText = `hace ${secondsAgo} s`;
+      }, 1000);
     });
   </script>
 </body>
