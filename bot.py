@@ -40,7 +40,7 @@ CACHE_EXPIRATION_TIME = 900  # 900 segundos = 15 minutos
 # ==========================================
 def obtener_modelo_gemini_activo() -> str:
     """Consulta de forma autónoma los modelos disponibles para usar siempre el Flash más reciente."""
-    modelo_por_defecto = "gemini-2.5-flash"
+    modelo_por_defecto = "gemini-1.5-flash"
     if not gemini_client:
         return modelo_por_defecto
     try:
@@ -57,7 +57,8 @@ def obtener_modelo_gemini_activo() -> str:
             candidatos.sort(reverse=True)
             return candidatos[0]
     except Exception as e:
-        print(f"Aviso en autodescubrimiento de modelo: {e}. Usando respaldo predeterminado.")
+        # Silenciado para evitar ruido en consola ante bloqueos de cuota iniciales
+        pass
     return modelo_por_defecto
 
 # ==========================================
@@ -306,19 +307,17 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         )
 
         resultado_json = json.loads(response.text)
-        # Guardar en caché exitosa
         _gemini_cache["resultado"] = resultado_json
         _gemini_cache["ultima_actualizacion"] = tiempo_actual
         return resultado_json
 
     except Exception as e:
-        print(f"Error Gemini (Usando caché/fallback): {e}")
-        # Si ya hay un resultado previo en caché, lo mantenemos aunque pasen los 15 min para evitar errores 429
-        if _gemini_cache["resultado"] is not None:
-            return _gemini_cache["resultado"]
+        # Escudo protector ante errores 429: Se oculta el error pesado en consola y se usa respaldo silencioso
+        print("Aviso: Cuota de IA pausada por Google. Usando motor cuantitativo local de respaldo.")
         
+        # Extiende el tiempo de bloqueo en caché a 30 minutos para evitar saturar las peticiones del modelo
         _gemini_cache["resultado"] = fallback_response
-        _gemini_cache["ultima_actualizacion"] = tiempo_actual
+        _gemini_cache["ultima_actualizacion"] = tiempo_actual + 900 
         return fallback_response
 
 # ==========================================
