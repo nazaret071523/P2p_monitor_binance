@@ -594,7 +594,12 @@
 
     function initTradingViewChart(period = '1d') {
       const container = document.getElementById('tradingview-chart-container');
+      if (!container) return;
       container.innerHTML = '';
+
+      // Asegurar ancho y alto mínimo si el contenedor reporta 0 en la carga inicial
+      const width = container.clientWidth > 0 ? container.clientWidth : 350;
+      const height = container.clientHeight > 0 ? container.clientHeight : 288;
 
       const res = generateTradingViewData(period);
 
@@ -604,8 +609,8 @@
 
       // Crear instancia del gráfico estilo TradingView / Binance
       tvChart = LightweightCharts.createChart(container, {
-        width: container.clientWidth,
-        height: container.clientHeight,
+        width: width,
+        height: height,
         layout: {
           background: { type: 'solid', color: '#090d16' },
           textColor: '#64748b',
@@ -642,7 +647,7 @@
 
       // Responsivo al cambiar tamaño de pantalla
       window.addEventListener('resize', () => {
-        if (tvChart && container) {
+        if (tvChart && container && container.clientWidth > 0) {
           tvChart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
         }
       });
@@ -696,7 +701,12 @@
 
     window.addEventListener('DOMContentLoaded', async () => {
       await fetchRealTimeData();
-      initTradingViewChart('1d');
+      
+      // Retrasar levemente la inicialización para garantizar que el DOM esté completamente pintado
+      setTimeout(() => {
+        initTradingViewChart('1d');
+      }, 150);
+
       switchAIMode(1);
 
       setInterval(() => {
