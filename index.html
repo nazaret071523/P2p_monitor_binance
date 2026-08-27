@@ -48,7 +48,6 @@
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
 
-    <!-- Header -->
     <header class="border-b border-slate-800/80 bg-[#0b0f17]/95 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
       <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
         <div class="min-w-0 shrink-0">
@@ -56,7 +55,7 @@
             <h1 class="font-extrabold text-lg tracking-wider text-emerald-400 leading-none">VENBOT</h1>
             <span class="bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Consulta</span>
           </div>
-          <p class="text-[10px] text-slate-500 mt-1">Mercado P2P · USD / VES</p>
+          <p class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
         </div>
         <div class="hidden md:block flex-1 max-w-xl mx-3">
           <div class="ad-slot rounded-xl px-4 py-2 text-center">
@@ -70,7 +69,6 @@
       </div>
     </header>
 
-    <!-- Bar Status -->
     <div class="w-full bg-slate-900/60 border-b border-slate-800 px-4 py-2">
       <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
         <div class="flex items-center gap-2">
@@ -86,12 +84,11 @@
 
     <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-32">
       
-      <!-- Mercado Principal -->
       <section id="sec-mercado" class="space-y-3 scroll-mt-24">
         <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
             <p class="text-[10px] text-emerald-400 font-black uppercase tracking-[0.18em]">Mercado principal</p>
-            <h2 class="text-xl md:text-2xl font-black text-white mt-1">USD / VES</h2>
+            <h2 class="text-xl md:text-2xl font-black text-white mt-1">USDT / VES</h2>
           </div>
           <div class="flex items-center gap-2 text-[10px] text-slate-500">
             <span>Valores informativos</span>
@@ -137,7 +134,6 @@
         </div>
       </section>
 
-      <!-- Calculadora -->
       <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
         <div class="flex items-start justify-between gap-3">
           <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
@@ -166,12 +162,11 @@
         </div>
       </section>
 
-      <!-- Gráfico de Velas -->
       <section class="glass-card p-4 rounded-2xl space-y-3">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <div class="flex items-center gap-2">
-              <h3 class="font-bold text-slate-100 text-sm">USD / VES · Evolución P2P (Velas)</h3>
+              <h3 class="font-bold text-slate-100 text-sm">USDT / VES · Evolución P2P (Velas)</h3>
               <span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">1 día</span>
             </div>
             <p class="text-[10px] text-slate-500 mt-1">Gráfico de velas estilo trading del mercado P2P.</p>
@@ -195,7 +190,6 @@
         </div>
       </section>
 
-      <!-- Tarjeta Venbot AI -->
       <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
           <div class="flex items-center gap-3">
@@ -267,7 +261,6 @@
         </div>
       </section>
 
-      <!-- Tarjeta Alertas de Precio -->
       <section id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-3">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-lg">
@@ -283,7 +276,6 @@
         </button>
       </section>
 
-      <!-- Pie de página -->
       <section id="sec-comunidad" class="space-y-4 pt-4">
         <article class="glass-card p-4 rounded-2xl border border-sky-500/20 flex items-center justify-between gap-3">
           <div class="flex items-center gap-3">
@@ -322,14 +314,12 @@
 
     </main>
 
-    <!-- Botón Flotante de IA -->
     <div class="fixed bottom-20 right-4 z-50">
       <button type="button" onclick="openAIChatModal()" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
         <i class="fa-solid fa-robot"></i>
       </button>
     </div>
 
-    <!-- Navegación Inferior Móvil -->
     <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
       <div class="max-w-md mx-auto grid grid-cols-4 gap-1 text-center">
         <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
@@ -353,7 +343,6 @@
 
   </div>
 
-  <!-- MODAL: CHAT DE VENBOT AI -->
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
@@ -376,7 +365,7 @@
             <i class="fa-solid fa-robot text-xs"></i>
           </div>
           <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-            ¡Hola! Soy Venbot AI. Pregúntame sobre el spread actual, proyecciones o indicadores del mercado USD/VES.
+            ¡Hola! Soy Venbot AI. Pregúntame sobre el spread actual, proyecciones o indicadores del mercado USDT/VES.
           </div>
         </div>
       </div>
@@ -389,7 +378,6 @@
     </div>
   </div>
 
-  <!-- MODAL: CONFIGURACIÓN DE ALERTAS DE PRECIO -->
   <div id="alertsModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-md rounded-2xl border border-amber-500/30 p-5 shadow-2xl space-y-4 fade-up">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -399,7 +387,7 @@
           </div>
           <div>
             <h3 class="font-extrabold text-sm text-white">Configurar Alertas</h3>
-            <p class="text-[10px] text-slate-400">Notificaciones de precio USD/VES</p>
+            <p class="text-[10px] text-slate-400">Notificaciones de precio USDT/VES</p>
           </div>
         </div>
         <button type="button" onclick="closeAlertsModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition">
@@ -464,21 +452,4 @@
           const data = await response.json();
           
           const buyVal = data.buy || data.compra || data.buy_price || data.precio_compra || data.p2p_buy;
-          const sellVal = data.sell || data.venta || data.sell_price || data.precio_venta || data.p2p_sell;
-          const bcvVal = data.bcv || data.bcv_rate || data.tasa_bcv || data.bcv_price;
-          const euroVal = data.euro || data.euro_rate || data.tasa_euro || data.euro_price;
-
-          if (buyVal || sellVal) {
-            RATES.buy = parseFloat(buyVal) || RATES.buy;
-            RATES.sell = parseFloat(sellVal) || RATES.sell;
-            RATES.bcv = parseFloat(bcvVal) || RATES.bcv;
-            RATES.euro = parseFloat(euroVal) || RATES.euro;
-            success = true;
-            break;
-          }
-        } catch (e) {}
-      }
-    }
-  </script>
-</body>
-</html>
+          const sellVal = data.sell || data.venta || data.sell_price || data.precio_venta || data.p2p_sel
