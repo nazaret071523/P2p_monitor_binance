@@ -246,7 +246,55 @@
         </div>
       </section>
 
+      <!-- Elementos restaurados al pie de página -->
+      <section id="sec-comunidad" class="space-y-4 pt-4">
+        <!-- Comunidad Venbot Telegram -->
+        <article class="glass-card p-4 rounded-2xl border border-sky-500/20 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-lg">
+              <i class="fa-brands fa-telegram"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-slate-100 text-sm">Comunidad Venbot</h3>
+              <p class="text-[11px] text-slate-400">Novedades, alertas y soporte de la aplicación.</p>
+            </div>
+          </div>
+          <a href="https://t.me/" target="_blank" class="focus-ring bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
+            Abrir comunidad <i class="fa-solid fa-arrow-right"></i>
+          </a>
+        </article>
+
+        <!-- Sobre los datos mostrados -->
+        <article class="glass-card p-4 rounded-2xl border border-slate-800 text-[11px] text-slate-400 space-y-2">
+          <div class="flex items-center gap-2 text-slate-200 font-bold">
+            <i class="fa-solid fa-circle-info text-emerald-400"></i> Sobre los datos mostrados
+          </div>
+          <p>Los precios P2P pueden variar entre anuncios, métodos de pago, liquidez y momento de consulta. Las cotizaciones deben interpretarse como referencias informativas.</p>
+          <p>Venbot no custodia fondos, no ejecuta operaciones ni procesa pagos. El análisis de mercado es informativo y no constituye asesoramiento financiero personalizado.</p>
+        </article>
+
+        <!-- Redes sociales -->
+        <div class="flex items-center justify-center gap-6 py-2 text-slate-400 text-sm font-bold">
+          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-x-twitter"></i> X</a>
+          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-instagram"></i> Instagram</a>
+          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
+        </div>
+
+        <!-- Banner Publicitario Final -->
+        <div class="ad-slot rounded-xl p-4 text-center">
+          <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
+          <div class="text-[10px] text-slate-600 mt-1">Banner publicitario de prueba · debajo de las redes</div>
+        </div>
+      </section>
+
     </main>
+
+    <!-- Botón Flotante de IA -->
+    <div class="fixed bottom-20 right-4 z-50">
+      <button type="button" onclick="setActiveNav('gemini', 'sec-gemini')" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
+        <i class="fa-solid fa-robot"></i>
+      </button>
+    </div>
 
     <!-- Navegación Inferior Móvil -->
     <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
@@ -263,7 +311,7 @@
           <i class="fa-solid fa-wand-magic-sparkles text-base mb-1"></i>
           <span class="text-[10px] font-bold">Gemini IA</span>
         </button>
-        <button type="button" onclick="setActiveNav('comunidad', 'sec-mercado')" id="nav-comunidad" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
+        <button type="button" onclick="setActiveNav('comunidad', 'sec-comunidad')" id="nav-comunidad" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
           <i class="fa-brands fa-telegram text-base mb-1"></i>
           <span class="text-[10px] font-bold">Comunidad</span>
         </button>
@@ -279,6 +327,7 @@
     let secondsAgo = 0;
     let marketChart = null;
     let currentAIMode = 1;
+    let currentPeriod = '1d';
 
     function formatVE(val) {
       if (!val || isNaN(val)) return '0,00';
@@ -304,7 +353,6 @@
 
           const data = await response.json();
           
-          // Compatibilidad total con los nombres de llaves del backend
           const buyVal = data.buy || data.compra || data.buy_price || data.precio_compra || data.p2p_buy;
           const sellVal = data.sell || data.venta || data.sell_price || data.precio_venta || data.p2p_sell;
           const bcvVal = data.bcv || data.bcv_rate || data.tasa_bcv || data.bcv_price;
@@ -326,7 +374,7 @@
             break;
           }
         } catch (err) {
-          // Continúa con el siguiente endpoint de respaldo
+          // Continúa con respaldo
         }
       }
 
@@ -359,7 +407,7 @@
 
       calculateRate();
       updateAIMetrics(spreadPct, bcvGap);
-      if (marketChart) renderChart('1d');
+      if (marketChart) renderChart(currentPeriod);
     }
 
     function calculateRate() {
@@ -442,7 +490,7 @@
           labels: [],
           datasets: [
             {
-              label: 'Compra',
+              label: 'Comprar',
               data: [],
               borderColor: '#34d399',
               backgroundColor: 'rgba(52, 211, 153, 0.05)',
@@ -452,7 +500,7 @@
               pointRadius: 2
             },
             {
-              label: 'Venta',
+              label: 'Vender',
               data: [],
               borderColor: '#f43f5e',
               backgroundColor: 'transparent',
@@ -478,34 +526,56 @@
     function setChartPeriod(period, btn) {
       document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
       btn.setAttribute('aria-selected', 'true');
-      document.getElementById('chart-period-label').innerText = period;
+      currentPeriod = period;
+      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
       renderChart(period);
     }
 
     function renderChart(period) {
       if (!marketChart) return;
-      let points = 7;
       let labels = [];
       let buyData = [];
       let sellData = [];
       const baseBuy = RATES.buy || 945.25;
       const baseSell = RATES.sell || 956.00;
 
+      // Generación de datos históricos con cierre en el precio actual del día
       if (period === '1d') {
         labels = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Ahora'];
-        points = 7;
+        for (let i = 0; i < 7; i++) {
+          if (i === 6) {
+            buyData.push(baseBuy);
+            sellData.push(baseSell);
+          } else {
+            const factor = 1 + ((Math.sin(i * 0.8) - 0.2) * 0.008);
+            buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
+            sellData.push(parseFloat((baseSell * factor).toFixed(2)));
+          }
+        }
       } else if (period === '7d') {
         labels = ['Hace 6d', 'Hace 5d', 'Hace 4d', 'Hace 3d', 'Hace 2d', 'Ayer', 'Hoy'];
-        points = 7;
-      } else {
-        labels = ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'];
-        points = 4;
-      }
-
-      for (let i = 0; i < points; i++) {
-        const factor = 1 + (Math.sin(i) * 0.005);
-        buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
-        sellData.push(parseFloat((baseSell * factor).toFixed(2)));
+        for (let i = 0; i < 7; i++) {
+          if (i === 6) {
+            buyData.push(baseBuy);
+            sellData.push(baseSell);
+          } else {
+            const factor = 1 + ((Math.cos(i * 0.6) - 0.3) * 0.012);
+            buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
+            sellData.push(parseFloat((baseSell * factor).toFixed(2)));
+          }
+        }
+      } else { // 30d
+        labels = ['Sem 1', 'Sem 2', 'Sem 3', 'Actual'];
+        for (let i = 0; i < 4; i++) {
+          if (i === 3) {
+            buyData.push(baseBuy);
+            sellData.push(baseSell);
+          } else {
+            const factor = 1 + ((i * 0.004) - 0.01);
+            buyData.push(parseFloat((baseBuy * factor).toFixed(2)));
+            sellData.push(parseFloat((baseSell * factor).toFixed(2)));
+          }
+        }
       }
 
       marketChart.data.labels = labels;
@@ -532,7 +602,8 @@
 
     function setActiveNav(name, sectionId) {
       document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-      document.getElementById(`nav-${name}`).classList.add('active');
+      const activeNavEl = document.getElementById(`nav-${name}`);
+      if (activeNavEl) activeNavEl.classList.add('active');
       const el = document.getElementById(sectionId);
       if (el) el.scrollIntoView({ behavior: 'smooth' });
     }
