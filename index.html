@@ -412,7 +412,7 @@
           <label class="block font-semibold text-slate-300 mb-1">Tipo de Operación</label>
           <select id="alert-type" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200">
             <option value="sell">Cuando el precio de Venta supere...</option>
-            <option value="buy">Cuando el precio de Compra baje de...</option>
+            <option value="buy">Когда el precio de Compra baje de...</option>
           </select>
         </div>
         <div>
@@ -486,7 +486,6 @@
       }
 
       if (!success) {
-        // Valores de respaldo si la API no responde
         RATES = { buy: 36.50, sell: 36.80, bcv: 36.20, euro: 39.40 };
         updateUI();
       }
@@ -508,6 +507,7 @@
       document.getElementById('bcv-gap').innerText = 'Brecha P2P: ' + bcvGap.toFixed(2) + '%';
 
       calculateRate();
+      updateTargetRange4H();
     }
 
     function calculateRate() {
@@ -527,19 +527,29 @@
       document.getElementById('calc-diff').innerText = formatVE(diff) + ' Bs vs. Tasa BCV';
     }
 
-    // Generador de datos simulados estilo velas (OHLC) para 1D, 7D y 30D
+    function updateTargetRange4H() {
+      const current = RATES.sell > 0 ? RATES.sell : 958.80;
+      const lower = current * 0.998;
+      const upper = current * 1.003;
+      document.getElementById('m4-val').innerText = `${formatVE(lower)} – ${formatVE(upper)} Bs`;
+    }
+
+    // Generador de datos simulados estilo velas (OHLC) con memoria de hasta 30 días
     function generateCandleData(period) {
-      let count = 24; // 1D: cada hora
+      let count = 24; // 1D: cada hora (24 puntos)
       let intervalMs = 3600 * 1000; 
+      
       if (period === '7d') {
-        count = 28; // cada 6 horas
-        intervalMs = 6 * 3600 * 1000;
+        count = 42; // 7D: cada 4 horas (42 puntos)
+        intervalMs = 4 * 3600 * 1000;
       } else if (period === '30d') {
-        count = 30; // diario
+        count = 30; // 30D: diario (30 puntos)
         intervalMs = 24 * 3600 * 1000;
       }
 
-      let basePrice = RATES.sell > 0 ? RATES.sell : 36.80;
+      let currentPrice = RATES.sell > 0 ? RATES.sell : 958.80;
+      // Retroceder el precio base hacia el pasado para simular historial real
+      let basePrice = currentPrice * (1 - (count * 0.0015));
       let data = [];
       let now = Date.now();
       let startTime = now - (count * intervalMs);
@@ -549,11 +559,21 @@
 
       for (let i = 0; i < count; i++) {
         let t = startTime + (i * intervalMs);
-        let variation = (Math.random() - 0.48) * 0.35;
+        // Hacia el final converger al precio actual de mercado
+        let convergenceFactor = i / count;
+        let targetDrift = (currentPrice - basePrice) * (convergenceFactor * 0.1);
+        
+        let variation = (Math.random() - 0.49) * 0.4 + targetDrift;
         let open = basePrice;
         let close = open + variation;
-        let high = Math.max(open, close) + Math.random() * 0.2;
-        let low = Math.min(open, close) - Math.random() * 0.2;
+        
+        // El último punto debe reflejar cercanamente el precio actual
+        if (i === count - 1) {
+          close = currentPrice;
+        }
+
+        let high = Math.max(open, close) + Math.random() * 0.25;
+        let low = Math.min(open, close) - Math.random() * 0.25;
         
         basePrice = close;
 
@@ -569,7 +589,7 @@
         });
       }
 
-      return { data, low: lowVal, high: highVal, current: basePrice };
+      return { data, low: lowVal, high: highVal, current: currentPrice };
     }
 
     function initChart(period = '1d') {
@@ -649,7 +669,6 @@
       initChart(period);
     }
 
-    // Funciones de navegación e interfaces secundarias
     function setActiveNav(name, sectionId) {
       document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
       document.getElementById('nav-' + name).classList.add('active');
@@ -685,7 +704,6 @@
       document.getElementById('gemini-insight-text').innerText = texts[mode];
     }
 
-    // Inicialización al cargar la página
     window.addEventListener('DOMContentLoaded', async () => {
       await fetchRealTimeData();
       initChart('1d');
