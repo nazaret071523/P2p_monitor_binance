@@ -276,30 +276,30 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
 
         Genera este formato JSON estricto enfocando el análisis exclusivamente en Binance P2P:
         {{
-          "estado_actual": "Análisis exclusivo de las puntas P2P y spread actual en Binance (1 frase corta).",
-          "proyeccion_7_12h": "Proyección de rotación P2P y recompra esperada en Binance (1 frase corta).",
-          "recomendacion_tactica": "Recomendación de colocación de anuncios P2P (1 frase corta).",
-          "tactica": {{
-            "texto": "Lectura operativa P2P. Evalúa la dinámica entre anuncios de compra y venta en Binance.",
-            "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
-            "velocidad": "ALTA (< 5 min) | MEDIA",
-            "sombra": "ESCASEZ DE USDT | NORMAL",
-            "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
-          }},
-          "flujo": {{
-            "texto": "Análisis del flujo de liquidez P2P y velocidad de ejecución de órdenes.",
-            "dominio": "COMPRADORES AGRESIVOS | LATERAL | VENDEDORES ACTIVOS",
-            "spread_status": "{spread:.2f} Bs",
-            "riesgo": "BAJO | MEDIO | ALTO",
-            "proyeccion_12h": "{pred_venta:.2f} Bs"
-          }},
-          "niveles": {{
-            "texto": "Evaluación del soporte de compra y resistencia de venta en el libro P2P.",
-            "momentum": "ALTO (80%) | MEDIO (65%) | BAJO",
-            "liquidez": "ABUNDANTE | ESTABLE | ESCASA",
-            "quiebre": "{pred_compra:.2f} Bs",
-            "techo": "{pred_venta:.2f} Bs"
-          }}
+         "estado_actual": "Análisis exclusivo de las puntas P2P y spread actual en Binance (1 frase corta).",
+         "proyeccion_7_12h": "Proyección de rotación P2P y recompra esperada en Binance (1 frase corta).",
+         "recomendacion_tactica": "Recomendación de colocación de anuncios P2P (1 frase corta).",
+         "tactica": {{
+           "texto": "Lectura operativa P2P. Evalúa la dinámica entre anuncios de compra y venta en Binance.",
+           "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
+           "velocidad": "ALTA (< 5 min) | MEDIA",
+           "sombra": "ESCASEZ DE USDT | NORMAL",
+           "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
+         }},
+         "flujo": {{
+           "texto": "Análisis del flujo de liquidez P2P y velocidad de ejecución de órdenes.",
+           "dominio": "COMPRADORES AGRESIVOS | LATERAL | VENDEDORES ACTIVOS",
+           "spread_status": "{spread:.2f} Bs",
+           "riesgo": "BAJO | MEDIO | ALTO",
+           "proyeccion_12h": "{pred_venta:.2f} Bs"
+         }},
+         "niveles": {{
+           "texto": "Evaluación del soporte de compra y resistencia de venta en el libro P2P.",
+           "momentum": "ALTO (80%) | MEDIO (65%) | BAJO",
+           "liquidez": "ABUNDANTE | ESTABLE | ESCASA",
+           "quiebre": "{pred_compra:.2f} Bs",
+           "techo": "{pred_venta:.2f} Bs"
+         }}
         }}
         """
 
@@ -461,7 +461,12 @@ async def iniciar_telegram_bot():
         telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
         
         await telegram_application.initialize()
-        print("🤖 Bot de Telegram inicializado correctamente para Webhooks.")
+        
+        # ---> AUTO-CONFIGURACIÓN DEL WEBHOOK <---
+        webhook_url = "https://p2p-monitor-binance.onrender.com/api/telegram/webhook"
+        await telegram_application.bot.set_webhook(url=webhook_url)
+        
+        print(f"🤖 Bot de Telegram inicializado y Webhook configurado en: {webhook_url}")
     except Exception as e:
         print(f"Error al iniciar el bot de Telegram: {e}")
 
