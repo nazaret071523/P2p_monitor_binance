@@ -9,7 +9,7 @@ import time
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, Request
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -34,6 +34,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+telegram_application = None
 
 # ==========================================
 # SISTEMA DE CACHÉ DE IA (15 MINUTOS)
@@ -421,7 +422,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# BOT DE TELEGRAM (COMANDO /prediccion)
+# BOT DE TELEGRAM (COMANDO /prediccion + WEBHOOK)
 # ==========================================
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -451,17 +452,16 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Ocurrió un error al procesar la predicción.")
 
 async def iniciar_telegram_bot():
+    global telegram_application
     if not TELEGRAM_BOT_TOKEN:
         print("⚠️ TELEGRAM_BOT_TOKEN no configurado. El bot de Telegram no se iniciará.")
         return
     try:
-        application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        application.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
         
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        print("🤖 Bot de Telegram inicializado y escuchando comandos con éxito.")
+        await telegram_application.initialize()
+        print("🤖 Bot de Telegram inicializado correctamente para Webhooks.")
     except Exception as e:
         print(f"Error al iniciar el bot de Telegram: {e}")
 
@@ -487,6 +487,21 @@ app.add_middleware(
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
     return {"status": "ok", "message": "Venbot P2P Activo con XGBoost Quant"}
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Endpoint para recibir los mensajes y comandos del bot mediante Webhook."""
+    global telegram_application
+    if not telegram_application:
+        return {"status": "error", "message": "Bot no inicializado"}
+    try:
+        data = await request.json()
+        update = Update.de_json(data, telegram_application.bot)
+        await telegram_application.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"Error procesando webhook de Telegram: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/stream")
 async def event_stream():
