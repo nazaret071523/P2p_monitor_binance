@@ -412,7 +412,7 @@
           <label class="block font-semibold text-slate-300 mb-1">Tipo de Operación</label>
           <select id="alert-type" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200">
             <option value="sell">Cuando el precio de Venta supere...</option>
-            <option value="buy">Когда el precio de Compra baje de...</option>
+            <option value="buy">Cuando el precio de Compra baje de...</option>
           </select>
         </div>
         <div>
@@ -470,146 +470,178 @@
           const euroVal = data.euro || data.euro_rate || data.tasa_euro || data.euro_price;
 
           if (buyVal || sellVal) {
-            RATES.buy = parseFloat(buyVal || sellVal);
-            RATES.sell = parseFloat(sellVal || buyVal);
-            RATES.bcv = parseFloat(bcvVal || RATES.buy * 0.95);
-            RATES.euro = parseFloat(euroVal || RATES.bcv * 1.08);
-
-            updateUI();
+            RATES.buy = parseFloat(buyVal || 0);
+            RATES.sell = parseFloat(sellVal || 0);
+            RATES.bcv = parseFloat(bcvVal || 0);
+            RATES.euro = parseFloat(euroVal || 0);
             success = true;
-            secondsAgo = 0;
             break;
           }
-        } catch (e) {
-          continue;
-        }
+        } catch (e) {}
       }
-
-      if (!success) {
-        RATES = { buy: 36.50, sell: 36.80, bcv: 36.20, euro: 39.40 };
+      
+      if (success) {
         updateUI();
+        secondsAgo = 0;
       }
     }
 
     function updateUI() {
-      document.getElementById('buy-price').innerHTML = formatVE(RATES.buy) + ' <span class="text-xs font-medium text-slate-400">Bs</span>';
-      document.getElementById('sell-price').innerHTML = formatVE(RATES.sell) + ' <span class="text-xs font-medium text-slate-400">Bs</span>';
+      document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       
-      const spread = RATES.buy > 0 ? ((RATES.sell - RATES.buy) / RATES.buy) * 100 : 0;
-      const absSpread = RATES.sell - RATES.buy;
-      document.getElementById('spread-value').innerText = spread.toFixed(2) + '%';
-      document.getElementById('spread-absolute').innerText = formatVE(absSpread) + ' Bs / USDT';
+      if (RATES.buy > 0 && RATES.sell > 0) {
+        const diff = RATES.sell - RATES.buy;
+        const spread = (diff / RATES.buy) * 100;
+        document.getElementById('spread-value').innerText = `${spread.toFixed(2)}%`;
+        document.getElementById('spread-absolute').innerText = `${formatVE(diff)} Bs / USDT`;
+      }
 
-      document.getElementById('bcv-rate').innerText = formatVE(RATES.bcv) + ' Bs/USD';
-      document.getElementById('euro-rate').innerText = formatVE(RATES.euro) + ' Bs/EUR';
+      if (RATES.bcv > 0) {
+        document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
+        if (RATES.sell > 0) {
+          const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
+          document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2)}%`;
+        }
+      }
 
-      const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
-      document.getElementById('bcv-gap').innerText = 'Brecha P2P: ' + bcvGap.toFixed(2) + '%';
+      if (RATES.euro > 0) {
+        document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
+      }
 
       calculateRate();
-      updateTargetRange4H();
     }
 
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
       const rateType = document.getElementById('calc-rate').value;
       
-      let unitRate = RATES.sell;
-      if (rateType === 'buy') unitRate = RATES.buy;
-      if (rateType === 'bcv') unitRate = RATES.bcv;
-      if (rateType === 'euro') unitRate = RATES.euro;
+      let activeRate = RATES.sell;
+      if (rateType === 'buy') activeRate = RATES.buy;
+      if (rateType === 'bcv') activeRate = RATES.bcv;
+      if (rateType === 'euro') activeRate = RATES.euro;
 
-      const total = amount * unitRate;
-      document.getElementById('calc-result').innerText = formatVE(total) + ' Bs';
+      const total = amount * activeRate;
+      document.getElementById('calc-result').innerText = `${formatVE(total)} Bs`;
 
-      const bcvTotal = amount * RATES.bcv;
-      const diff = total - bcvTotal;
-      document.getElementById('calc-diff').innerText = formatVE(diff) + ' Bs vs. Tasa BCV';
+      if (RATES.bcv > 0 && activeRate > 0) {
+        const diffBcv = total - (amount * RATES.bcv);
+        document.getElementById('calc-diff').innerText = `${diffBcv >= 0 ? '+' : ''}${formatVE(diffBcv)} Bs vs. Tasa BCV`;
+      }
     }
 
-    function updateTargetRange4H() {
-      const current = RATES.sell > 0 ? RATES.sell : 958.80;
-      const lower = current * 0.998;
-      const upper = current * 1.003;
-      document.getElementById('m4-val').innerText = `${formatVE(lower)} – ${formatVE(upper)} Bs`;
-    }
-
-    // Generador de datos simulados estilo velas (OHLC) con memoria de hasta 30 días
-    function generateCandleData(period) {
-      let count = 24; // 1D: cada hora (24 puntos)
-      let intervalMs = 3600 * 1000; 
+    function setActiveNav(navName, sectionId) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-slate-300'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.add('text-slate-400'));
       
-      if (period === '7d') {
-        count = 42; // 7D: cada 4 horas (42 puntos)
-        intervalMs = 4 * 3600 * 1000;
-      } else if (period === '30d') {
-        count = 30; // 30D: diario (30 puntos)
-        intervalMs = 24 * 3600 * 1000;
+      const targetNav = document.getElementById(`nav-${navName}`);
+      if (targetNav) {
+        targetNav.classList.add('active');
+        targetNav.classList.remove('text-slate-400');
       }
 
-      let currentPrice = RATES.sell > 0 ? RATES.sell : 958.80;
-      // Retroceder el precio base hacia el pasado para simular historial real
-      let basePrice = currentPrice * (1 - (count * 0.0015));
-      let data = [];
-      let now = Date.now();
-      let startTime = now - (count * intervalMs);
-
-      let lowVal = Infinity;
-      let highVal = -Infinity;
-
-      for (let i = 0; i < count; i++) {
-        let t = startTime + (i * intervalMs);
-        // Hacia el final converger al precio actual de mercado
-        let convergenceFactor = i / count;
-        let targetDrift = (currentPrice - basePrice) * (convergenceFactor * 0.1);
-        
-        let variation = (Math.random() - 0.49) * 0.4 + targetDrift;
-        let open = basePrice;
-        let close = open + variation;
-        
-        // El último punto debe reflejar cercanamente el precio actual
-        if (i === count - 1) {
-          close = currentPrice;
-        }
-
-        let high = Math.max(open, close) + Math.random() * 0.25;
-        let low = Math.min(open, close) - Math.random() * 0.25;
-        
-        basePrice = close;
-
-        if (low < lowVal) lowVal = low;
-        if (high > highVal) highVal = high;
-
-        data.push({
-          x: t,
-          o: parseFloat(open.toFixed(2)),
-          h: parseFloat(high.toFixed(2)),
-          l: parseFloat(low.toFixed(2)),
-          c: parseFloat(close.toFixed(2))
-        });
+      const element = document.getElementById(sectionId);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth' });
       }
-
-      return { data, low: lowVal, high: highVal, current: currentPrice };
     }
 
-    function initChart(period = '1d') {
+    function openAIChatModal() {
+      document.getElementById('aiChatModal').classList.remove('hidden');
+    }
+
+    function closeAIChatModal() {
+      document.getElementById('aiChatModal').classList.add('hidden');
+    }
+
+    function openAlertsModal() {
+      document.getElementById('alertsModal').classList.remove('hidden');
+    }
+
+    function closeAlertsModal() {
+      document.getElementById('alertsModal').classList.add('hidden');
+      document.getElementById('alert-status-msg').classList.add('hidden');
+    }
+
+    function saveAlert() {
+      const msg = document.getElementById('alert-status-msg');
+      msg.classList.remove('hidden');
+      setTimeout(() => {
+        closeAlertsModal();
+      }, 1500);
+    }
+
+    function switchAIMode(mode) {
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
+      
+      const insights = {
+        1: { title: "Proyección Operativa P2P", text: "El mercado mantiene alta rotación en métodos de pago rápidos. Se sugiere operar con cautela en las bandas superiores." },
+      2: { title: "Flujo de Liquidez", text: "Volumen de USDT estable con tendencia leve a la escasez de oferta en anunciantes principales." },
+    3: { title: "Niveles Clave 24H", text: "Soporte detectado en la zona baja de compra y resistencia sólida en las ofertas de venta más ágiles." }
+    };
+
+      document.getElementById('ai-title-display').innerText = insights[mode].title;
+      document.getElementById('gemini-insight-text').innerText = insights[mode].text;
+    }
+
+    function sendAIMessage() {
+      const input = document.getElementById('ai-user-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const container = document.getElementById('ai-chat-messages');
+      container.innerHTML += `
+        <div class="flex items-start justify-end gap-2.5">
+          <div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
+            ${text}
+          </div>
+        </div>
+      `;
+      input.value = '';
+      container.scrollTop = container.scrollHeight;
+
+      setTimeout(() => {
+        container.innerHTML += `
+          <div class="flex items-start gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+              <i class="fa-solid fa-robot text-xs"></i>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
+              Analizando tu consulta en relación con el estado actual del mercado P2P... Las tasas se mantienen estables según los últimos registros.
+            </div>
+          </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+      }, 800);
+    }
+
+    function setChartPeriod(period, btn) {
+      currentPeriod = period;
+      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
+      btn.setAttribute('aria-selected', 'true');
+      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+      initChart();
+    }
+
+    function initChart() {
       const ctx = document.getElementById('marketChart').getContext('2d');
-      const res = generateCandleData(period);
+      if (marketChart) marketChart.destroy();
 
-      document.getElementById('chart-low').innerText = formatVE(res.low) + ' Bs';
-      document.getElementById('chart-high').innerText = formatVE(res.high) + ' Bs';
-      document.getElementById('chart-current').innerText = formatVE(res.current) + ' Bs';
-
-      if (marketChart) {
-        marketChart.destroy();
-      }
+      const dummyData = [
+        { x: luxon.DateTime.now().minus({hours: 5}).valueOf(), o: 38.2, h: 38.5, l: 38.1, c: 38.4 },
+        { x: luxon.DateTime.now().minus({hours: 4}).valueOf(), o: 38.4, h: 38.7, l: 38.3, c: 38.6 },
+        { x: luxon.DateTime.now().minus({hours: 3}).valueOf(), o: 38.6, h: 38.8, l: 38.5, c: 38.5 },
+        { x: luxon.DateTime.now().minus({hours: 2}).valueOf(), o: 38.5, h: 38.9, l: 38.4, c: 38.8 },
+        { x: luxon.DateTime.now().minus({hours: 1}).valueOf(), o: 38.8, h: 39.0, l: 38.7, c: RATES.sell || 38.9 }
+      ];
 
       marketChart = new Chart(ctx, {
         type: 'candlestick',
         data: {
           datasets: [{
-            label: 'USDT/VES P2P',
-            data: res.data,
+            label: 'USDT/VES',
+            data: dummyData,
             color: {
               up: '#34d399',
               down: '#fb7185',
@@ -620,101 +652,36 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  const d = context.raw;
-                  return [
-                    ` Apertura: ${formatVE(d.o)} Bs`,
-                    ` Máximo: ${formatVE(d.h)} Bs`,
-                    ` Mínimo: ${formatVE(d.l)} Bs`,
-                    ` Cierre: ${formatVE(d.c)} Bs`
-                  ];
-                }
-              }
-            }
-          },
+          plugins: { legend: { display: false } },
           scales: {
             x: {
               type: 'time',
-              time: {
-                unit: period === '1d' ? 'hour' : (period === '7d' ? 'day' : 'day')
-              },
-              grid: { color: 'rgba(255, 255, 255, 0.04)' },
-              ticks: { color: '#64748b', font: { size: 10 } }
+              time: { unit: 'hour' },
+              grid: { color: 'rgba(255,255,255,0.03)' },
+              ticks: { color: '#64748b', font: { size: 9 } }
             },
             y: {
-              grid: { color: 'rgba(255, 255, 255, 0.04)' },
-              ticks: { 
-                color: '#64748b', 
-                font: { size: 10 },
-                callback: function(value) { return value.toFixed(2) + ' Bs'; }
-              }
+              grid: { color: 'rgba(255,255,255,0.03)' },
+              ticks: { color: '#64748b', font: { size: 9 } }
             }
           }
         }
       });
+
+      document.getElementById('chart-low').innerText = `${formatVE(38.1)} Bs`;
+      document.getElementById('chart-current').innerText = `${formatVE(RATES.sell || 38.9)} Bs`;
+      document.getElementById('chart-high').innerText = `${formatVE(39.0)} Bs`;
     }
 
-    function setChartPeriod(period, btn) {
-      currentPeriod = period;
-      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
-      btn.setAttribute('aria-selected', 'true');
+    setInterval(() => {
+      secondsAgo++;
+      document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
+    }, 1000);
 
-      const labels = { '1d': '1 día', '7d': '7 días', '30d': '30 días' };
-      document.getElementById('chart-period-label').innerText = labels[period];
-
-      initChart(period);
-    }
-
-    function setActiveNav(name, sectionId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-      document.getElementById('nav-' + name).classList.add('active');
-      const el = document.getElementById(sectionId);
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    function openAIChatModal() {
-      document.getElementById('aiChatModal').classList.remove('hidden');
-    }
-    function closeAIChatModal() {
-      document.getElementById('aiChatModal').classList.add('hidden');
-    }
-    function openAlertsModal() {
-      document.getElementById('alertsModal').classList.remove('hidden');
-    }
-    function closeAlertsModal() {
-      document.getElementById('alertsModal').classList.add('hidden');
-    }
-    function saveAlert() {
-      const msg = document.getElementById('alert-status-msg');
-      msg.classList.remove('hidden');
-      setTimeout(() => { closeAlertsModal(); msg.classList.add('hidden'); }, 2000);
-    }
-    function switchAIMode(mode) {
-      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById('btn-ai-mode-' + mode).classList.add('active');
-      const texts = {
-        1: "Análisis táctico: Presión compradora estable en el canal P2P con alta rotación en pagos móviles.",
-        2: "Flujo de liquidez: Se detecta entrada moderada de capital en oferta con liquidación rápida.",
-        3: "Niveles clave: Soporte operativo firme en la zona inferior y resistencia técnica superior activa."
-      };
-      document.getElementById('gemini-insight-text').innerText = texts[mode];
-    }
-
-    window.addEventListener('DOMContentLoaded', async () => {
-      await fetchRealTimeData();
-      initChart('1d');
-      switchAIMode(1);
-
-      setInterval(() => {
-        secondsAgo += 5;
-        document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
-      }, 5000);
-
-      setInterval(fetchRealTimeData, 30000);
+    fetchRealTimeData();
+    setInterval(fetchRealTimeData, 30000);
+    window.addEventListener('DOMContentLoaded', () => {
+      initChart();
     });
   </script>
 </body>
