@@ -469,49 +469,41 @@
           const euroVal = data.euro || data.euro_rate || data.tasa_euro || data.euro_price;
 
           if (buyVal || sellVal) {
-            RATES.buy = parseFloat(buyVal || 0);
-            RATES.sell = parseFloat(sellVal || 0);
-            RATES.bcv = parseFloat(bcvVal || 0);
-            RATES.euro = parseFloat(euroVal || 0);
+            RATES.buy = parseFloat(buyVal) || RATES.buy;
+            RATES.sell = parseFloat(sellVal) || RATES.sell;
+            RATES.bcv = parseFloat(bcvVal) || RATES.bcv;
+            RATES.euro = parseFloat(euroVal) || RATES.euro;
             success = true;
             break;
           }
-        } catch (e) {
-          console.warn("Fallo de red al consultar endpoint, probando siguiente...", e);
+        } catch (err) {
+          console.warn(`Error al consultar ${endpoint}:`, err);
         }
       }
 
-      // Respaldo de seguridad para evitar datos en 0 o --,-- si la API externa está fría
-      if (!success && RATES.buy === 0) {
-        RATES = { buy: 36.50, sell: 37.20, bcv: 36.25, euro: 39.10 };
+      if (success) {
+        updateUI();
+        secondsAgo = 0;
       }
-
-      updateUIWithRates();
-      secondsAgo = 0;
     }
 
-    function updateUIWithRates() {
+    function updateUI() {
       document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      
-      const spreadAbs = RATES.sell - RATES.buy;
-      const spreadPct = RATES.buy > 0 ? (spreadAbs / RATES.buy) * 100 : 0;
-      
-      document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2)}%`;
-      document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
-
-      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
       document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
+      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
 
-      const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
-      document.getElementById('bcv-gap').innerText = `Brecha P2P: +${bcvGap.toFixed(2)}%`;
+      if (RATES.buy > 0 && RATES.sell > 0) {
+        const spreadAbs = RATES.sell - RATES.buy;
+        const spreadPct = ((spreadAbs / RATES.buy) * 100);
+        document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2)}%`;
+        document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
+      }
 
-      // Solución definitiva al estado frisado de "Obteniendo análisis actualizado"
-      document.getElementById('gemini-insight-text').innerText = 
-        `Mercado operando con un spread de ${spreadPct.toFixed(2)}%. Tendencia estable observada en los principales bloques de liquidez de referencia mercantil y provincial.`;
-      
-      // Poblar el rango objetivo 4H para evitar celdas vacías
-      document.getElementById('m4-val').innerText = `${formatVE(RATES.buy)} – ${formatVE(RATES.sell)} Bs`;
+      if (RATES.bcv > 0 && RATES.sell > 0) {
+        const bcvGap = (((RATES.sell - RATES.bcv) / RATES.bcv) * 100);
+        document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2)}%`;
+      }
 
       calculateRate();
     }
@@ -528,8 +520,67 @@
       const total = amount * activeRate;
       document.getElementById('calc-result').innerText = `${formatVE(total)} Bs`;
 
-      const diffBcv = total - (amount * RATES.bcv);
-      document.getElementById('calc-diff').innerText = `${diffBcv >= 0 ? '+' : ''}${formatVE(diffBcv)} Bs vs. Tasa BCV`;
+      if (RATES.bcv > 0) {
+        const bcvTotal = amount * RATES.bcv;
+        const diff = total - bcvTotal;
+        document.getElementById('calc-diff').innerText = `${formatVE(diff)} Bs vs. Tasa BCV`;
+      }
+    }
+
+    function initChart() {
+      const ctx = document.getElementById('marketChart').getContext('2d');
+      
+      // Datos simulados iniciales para el gráfico de velas / líneas
+      marketChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Ahora'],
+          datasets: [{
+            label: 'USDT/VES',
+            data: [36.5, 36.8, 36.7, 37.1, 37.0, 37.4, RATES.sell || 37.5],
+            borderColor: '#34d399',
+            backgroundColor: 'rgba(52, 211, 153, 0.1)',
+            fill: true,
+            tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { size: 10 } } }
+          }
+        }
+      });
+
+      document.getElementById('chart-low').innerText = `${formatVE(36.5)} Bs`;
+      document.getElementById('chart-current').innerText = `${formatVE(RATES.sell || 37.5)} Bs`;
+      document.getElementById('chart-high').innerText = `${formatVE(37.6)} Bs`;
+    }
+
+    function setChartPeriod(period, btn) {
+      currentPeriod = period;
+      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
+      btn.setAttribute('aria-selected', 'true');
+      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+    }
+
+    function setActiveNav(navId, sectionId) {
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active', 'text-emerald-400');
+        item.classList.add('text-slate-400');
+      });
+      const activeBtn = document.getElementById(`nav-${navId}`);
+      if (activeBtn) {
+        activeBtn.classList.add('active', 'text-emerald-400');
+        activeBtn.classList.remove('text-slate-400');
+      }
+      const section = document.getElementById(sectionId);
+      if (section) {
+        section.scrollIntoView({ behavior: 'smooth' });
+      }
     }
 
     function openAIChatModal() {
@@ -538,93 +589,88 @@
     function closeAIChatModal() {
       document.getElementById('aiChatModal').classList.add('hidden');
     }
+
     function openAlertsModal() {
       document.getElementById('alertsModal').classList.remove('hidden');
     }
     function closeAlertsModal() {
       document.getElementById('alertsModal').classList.add('hidden');
+      document.getElementById('alert-status-msg').classList.add('hidden');
     }
+
     function saveAlert() {
       const msg = document.getElementById('alert-status-msg');
       msg.classList.remove('hidden');
-      setTimeout(() => { closeAlertsModal(); msg.classList.add('hidden'); }, 1800);
+      setTimeout(() => {
+        closeAlertsModal();
+      }, 1500);
     }
 
     function switchAIMode(mode) {
-      document.querySelectorAll('.ai-mode-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
       document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
       
-      const insights = {
-        1: "Táctica activa: Los niveles de compra muestran alta rotación en métodos de pago nacionales sin revelar identidades institucionales.",
-        2: "Flujo de caja: Se registra un incremento moderado en la demanda de USDT por parte de los maker principales.",
-        3: "Niveles críticos: Soporte fuerte en la zona baja del corredor cambiario y resistencia en el techo de la banda actual."
-      };
-      document.getElementById('gemini-insight-text').innerText = insights[mode] || insights[1];
-    }
+      const badge = document.getElementById('ai-badge-mode');
+      const title = document.getElementById('ai-title-display');
+      const text = document.getElementById('gemini-insight-text');
 
-    function setActiveNav(navId, secId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.add('text-slate-400'));
-      
-      const activeBtn = document.getElementById(`nav-${navId}`);
-      if(activeBtn) {
-        activeBtn.classList.add('active', 'text-emerald-400');
-        activeBtn.classList.remove('text-slate-400');
+      if (mode === 1) {
+        badge.innerText = 'P2P TRADER';
+        title.innerText = 'Proyección Operativa P2P';
+        text.innerText = 'El mercado mantiene alta demanda de liquidez en bolívares. Se sugiere operar con métodos rápidos de pago móvil para evitar demoras.';
+      } else if (mode === 2) {
+        badge.innerText = 'FLUJO DE MERCADO';
+        title.innerText = 'Análisis de Flujo y Volumen';
+        text.innerText = 'Los volúmenes de comercio muestran estabilidad con tendencia alcista moderada en las últimas horas de la tarde.';
+      } else {
+        badge.innerText = 'NIVELES CLAVE';
+        title.innerText = 'Soportes y Resistencias';
+        text.innerText = 'Soporte firme detectado en la zona inferior y resistencia cercana al techo actual del precio de venta.';
       }
-      const target = document.getElementById(secId);
-      if(target) target.scrollIntoView({ behavior: 'smooth' });
     }
 
-    // Chat conversacional fluido y natural
     function sendAIMessage() {
       const input = document.getElementById('ai-user-input');
-      const container = document.getElementById('ai-chat-messages');
-      const text = input.value.trim();
-      if(!text) return;
+      const val = input.value.trim();
+      if (!val) return;
 
+      const container = document.getElementById('ai-chat-messages');
       container.innerHTML += `
-        <div class="flex items-start justify-end gap-2.5">
-          <div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
-            ${text}
+        <div class="flex items-start gap-2.5 justify-end">
+          <div class="bg-emerald-600 text-white rounded-2xl p-3 max-w-[85%] leading-relaxed">
+            ${val}
           </div>
-        </div>`;
+        </div>
+      `;
       input.value = '';
       container.scrollTop = container.scrollHeight;
 
       setTimeout(() => {
-        let reply = "Analizando el comportamiento actual del mercado P2P... Las tasas se mantienen operativas dentro del rango estimado.";
-        const lower = text.toLowerCase();
-        
-        if(lower.includes('spread') || lower.includes('diferencia')) {
-          reply = `El spread actual se ubica en un diferencial aproximado de ${document.getElementById('spread-value').innerText}, mostrando una variación acorde a la liquidez reciente.`;
-        } else if(lower.includes('bcv') || lower.includes('oficial')) {
-          reply = `La tasa oficial de referencia BCV se sitúa en ${formatVE(RATES.bcv)} Bs/USD, registrando una brecha competitiva frente al mercado libre P2P.`;
-        } else if(lower.includes('comprar') || lower.includes('venta')) {
-          reply = `Para operaciones de compra tomamos referencias cercanas a ${formatVE(RATES.buy)} Bs y para venta sobre ${formatVE(RATES.sell)} Bs.`;
-        }
-
         container.innerHTML += `
-          <div class="flex items-start gap-2.5 fade-up">
+          <div class="flex items-start gap-2.5">
             <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
               <i class="fa-solid fa-robot text-xs"></i>
             </div>
             <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-              ${reply}
+              Analizando tu consulta en base al mercado P2P actual... El spread se mantiene operativo dentro de los parámetros normales.
             </div>
-          </div>`;
+          </div>
+        `;
         container.scrollTop = container.scrollHeight;
-      }, 600);
+      }, 800);
     }
 
-    // Inicialización de intervalos y datos
-    setInterval(() => {
-      secondsAgo++;
-      const agoEl = document.getElementById('updated-ago');
-      if (agoEl) agoEl.innerText = `hace ${secondsAgo} s`;
-    }, 1000);
-
-    fetchRealTimeData();
-    setInterval(fetchRealTimeData, 45000);
+    // Inicialización al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchRealTimeData();
+      initChart();
+      setInterval(fetchRealTimeData, 15000);
+      setInterval(() => {
+        secondsAgo++;
+        const el = document.getElementById('updated-ago');
+        if (el) el.innerText = `hace ${secondsAgo} s`;
+      }, 1000);
+    });
   </script>
 </body>
 </html>
