@@ -481,7 +481,282 @@
           continue;
         }
       }
+
+      if (success) {
+        document.getElementById('buy-price').innerHTML = formatVE(RATES.buy) + ' <span class="text-xs font-medium text-slate-400">Bs</span>';
+        document.getElementById('sell-price').innerHTML = formatVE(RATES.sell) + ' <span class="text-xs font-medium text-slate-400">Bs</span>';
+        document.getElementById('bcv-rate').innerText = formatVE(RATES.bcv) + ' Bs/USD';
+        document.getElementById('euro-rate').innerText = formatVE(RATES.euro) + ' Bs/EUR';
+
+        if (RATES.buy > 0 && RATES.sell > 0) {
+          const diff = RATES.sell - RATES.buy;
+          const spreadPct = (diff / RATES.buy) * 100;
+          document.getElementById('spread-value').innerText = spreadPct.toFixed(2) + '%';
+          document.getElementById('spread-absolute').innerText = formatVE(diff) + ' Bs / USDT';
+        }
+
+        if (RATES.bcv > 0 && RATES.sell > 0) {
+          const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
+          document.getElementById('bcv-gap').innerText = 'Brecha P2P: ' + bcvGap.toFixed(2) + '%';
+        }
+
+        calculateRate();
+        secondsAgo = 0;
+        document.getElementById('updated-ago').innerText = 'hace 0 s';
+        syncStatus.className = 'inline-flex items-center gap-1.5 text-emerald-400 font-semibold';
+      } else {
+        syncStatus.className = 'inline-flex items-center gap-1.5 text-amber-400 font-semibold';
+      }
     }
+
+    function calculateRate() {
+      const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
+      const rateType = document.getElementById('calc-rate').value;
+      let activeRate = RATES.sell;
+
+      if (rateType === 'buy') activeRate = RATES.buy;
+      else if (rateType === 'bcv') activeRate = RATES.bcv;
+      else if (rateType === 'euro') activeRate = RATES.euro;
+
+      const total = amount * activeRate;
+      document.getElementById('calc-result').innerText = formatVE(total) + ' Bs';
+
+      if (RATES.bcv > 0) {
+        const bcvTotal = amount * RATES.bcv;
+        const diffBs = total - bcvTotal;
+        document.getElementById('calc-diff').innerText = formatVE(diffBs) + ' Bs vs. Tasa BCV';
+      } else {
+        document.getElementById('calc-diff').innerText = '--,-- Bs vs. Tasa BCV';
+      }
+    }
+
+    // --- GRÁFICO DE VELAS CORREGIDO (Chart.js + Financial Plugin) ---
+    function initChart() {
+      const ctx = document.getElementById('marketChart').getContext('2d');
+      
+      // Generar datos simulados iniciales basados en las tasas actuales o valores base
+      const basePrice = RATES.sell > 0 ? RATES.sell : 36.50;
+      const dataCandles = generateMockCandles(basePrice, currentPeriod);
+
+      marketChart = new Chart(ctx, {
+        type: 'candlestick',
+        data: {
+          datasets: [{
+            label: 'USDT/VES P2P',
+            data: dataCandles,
+            color: {
+              up: '#34d399',  // Verde alcista
+              down: '#fb7185', // Rojo bajista
+              unchanged: '#94a3b8',
+            }
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const p = context.raw;
+                  return [
+                    ` Máx: ${formatVE(p.h)} Bs`,
+                    ` Apertura: ${formatVE(p.o)} Bs`,
+                    ` Cierre: ${formatVE(p.c)} Bs`,
+                    ` Mín: ${formatVE(p.l)} Bs`
+                  ];
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'time',
+              time: {
+                unit: currentPeriod === '1d' ? 'hour' : 'day'
+              },
+              grid: { color: 'rgba(255, 255, 255, 0.04)' },
+              ticks: { color: '#94a3b8', font: { size: 10 } }
+            },
+            y: {
+              grid: { color: 'rgba(255, 255, 255, 0.04)' },
+              ticks: { 
+                color: '#94a3b8', 
+                font: { size: 10 },
+                callback: function(value) { return value.toFixed(2); }
+              }
+            }
+          }
+        }
+      });
+
+      updateChartStats(dataCandles);
+    }
+
+    function generateMockCandles(currentVal, period) {
+      const candles = [];
+      let count = 24; // 1D por horas
+      let intervalMs = 3600 * 1000;
+
+      if (period === '7d') {
+        count = 7;
+        intervalMs = 24 * 3600 * 1000;
+      } else if (period === '30d') {
+        count = 30;
+        intervalMs = 24 * 3600 * 1000;
+      }
+
+      let now = Date.now();
+      let price = currentVal * 0.98; // Empezar ligeramente abajo
+
+      for (let i = count - 1; i >= 0; i--) {
+        const time = now - (i * intervalMs);
+        const variation = (Math.random() - 0.48) * (currentVal * 0.01);
+        const open = price;
+        const close = open + variation;
+        const high = Math.max(open, close) + (Math.random() * (currentVal * 0.005));
+        const low = Math.min(open, close) - (Math.random() * (currentVal * 0.005));
+        
+        price = close;
+        candles.push({ x: time, o: open, h: high, l: low, c: close });
+      }
+
+      // Asegurar que la última vela cierre exactamente en el valor actual si existe
+      if (candles.length > 0 && currentVal > 0) {
+        candles[candles.length - 1].c = currentVal;
+        candles[candles.length - 1].h = Math.max(candles[candles.length - 1].h, currentVal);
+        candles[candles.length - 1].l = Math.min(candles[candles.length - 1].l, currentVal);
+      }
+
+      return candles;
+    }
+
+    function setChartPeriod(period, btn) {
+      currentPeriod = period;
+      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
+      btn.setAttribute('aria-selected', 'true');
+
+      const labels = { '1d': '1 día', '7d': '7 días', '30d': '30 días' };
+      document.getElementById('chart-period-label').innerText = labels[period];
+
+      if (marketChart) {
+        const basePrice = RATES.sell > 0 ? RATES.sell : 36.50;
+        const newCandles = generateMockCandles(basePrice, period);
+        marketChart.data.datasets[0].data = newCandles;
+        marketChart.options.scales.x.time.unit = period === '1d' ? 'hour' : 'day';
+        marketChart.update();
+        updateChartStats(newCandles);
+      }
+    }
+
+    function updateChartStats(candles) {
+      if (!candles || candles.length === 0) return;
+      let min = candles[0].l;
+      let max = candles[0].h;
+      let current = candles[candles.length - 1].c;
+
+      candles.forEach(c => {
+        if (c.l < min) min = c.l;
+        if (c.h > max) max = c.h;
+      });
+
+      document.getElementById('chart-low').innerText = formatVE(min) + ' Bs';
+      document.getElementById('chart-current').innerText = formatVE(current) + ' Bs';
+      document.getElementById('chart-high').innerText = formatVE(max) + ' Bs';
+    }
+
+    // --- MODALES Y NAVEGACIÓN ---
+    function setActiveNav(navId, secId) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      document.getElementById('nav-' + navId).classList.add('active');
+      const target = document.getElementById(secId);
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function openAIChatModal() {
+      document.getElementById('aiChatModal').classList.remove('hidden');
+    }
+    function closeAIChatModal() {
+      document.getElementById('aiChatModal').classList.add('hidden');
+    }
+
+    function openAlertsModal() {
+      document.getElementById('alertsModal').classList.remove('hidden');
+    }
+    function closeAlertsModal() {
+      document.getElementById('alertsModal').classList.add('hidden');
+      document.getElementById('alert-status-msg').classList.add('hidden');
+    }
+    function saveAlert() {
+      document.getElementById('alert-status-msg').classList.remove('hidden');
+      setTimeout(() => { closeAlertsModal(); }, 2000);
+    }
+
+    function switchAIMode(mode) {
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById('btn-ai-mode-' + mode).classList.add('active');
+      
+      const titles = {
+        1: "Proyección Operativa P2P",
+        2: "Flujo de Liquidez y Anunciantes",
+        3: "Niveles de Resistencia y Soporte"
+      };
+      document.getElementById('ai-title-display').innerText = titles[mode];
+      
+      if (mode === 1) {
+        document.getElementById('gemini-insight-text').innerText = "El spread actual muestra oportunidades óptimas para arbitraje rápido con liquidación en cuentas nacionales.";
+      } else if (mode === 2) {
+        document.getElementById('gemini-insight-text5' || 'gemini-insight-text').innerText = "Alta concentración de anunciantes operando con métodos de pago digitales en el bloque de las mañanas.";
+      } else {
+        document.getElementById('gemini-insight-text').innerText = "Se identifican soportes sólidos en la zona inferior y resistencia clave en los máximos observados recientes.";
+      }
+    }
+
+    function sendAIMessage() {
+      const input = document.getElementById('ai-user-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const container = document.getElementById('ai-chat-messages');
+      container.innerHTML += `
+        <div class="flex items-start justify-end gap-2.5">
+          <div class="bg-emerald-500/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
+            ${text}
+          </div>
+        </div>
+      `;
+      input.value = '';
+      container.scrollTop = container.scrollHeight;
+
+      setTimeout(() => {
+        container.innerHTML += `
+          <div class="flex items-start gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+              <i class="fa-solid fa-robot text-xs"></i>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
+              Analizando tu consulta en combinación con el libro de órdenes actual... El mercado mantiene estabilidad en las cotizaciones de referencia.
+            </div>
+          </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+      }, 1000);
+    }
+
+    // Inicialización al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchRealTimeData();
+      initChart();
+
+      setInterval(() => {
+        secondsAgo++;
+        document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
+        if (secondsAgo >= 30) {
+          fetchRealTimeData();
+        }
+      }, 1000);
+    });
   </script>
 </body>
 </html>
