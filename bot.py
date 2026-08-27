@@ -5,6 +5,7 @@ import requests
 import json
 import numpy as np
 import urllib3
+import time
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -24,6 +25,15 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+# ==========================================
+# SISTEMA DE CACHÉ DE IA (15 MINUTOS)
+# ==========================================
+_gemini_cache = {
+    "resultado": None,
+    "ultima_actualizacion": 0
+}
+CACHE_EXPIRATION_TIME = 900  # 900 segundos = 15 minutos
 
 # ==========================================
 # AUTODESCUBRIMIENTO AUTÓNOMO DE MODELOS IA
@@ -209,27 +219,38 @@ def fetch_binance_p2p():
         return None, None, None, None
 
 # ==========================================
-# GEMINI IA (EXCLUSIVO P2P BINANCE)
+# GEMINI IA (EXCLUSIVO P2P BINANCE) CON CACHÉ
 # ==========================================
 def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
-    if not gemini_client:
-        return {
-            "estado_actual": f"El spread P2P actual se ubica en {spread:.2f} Bs con ordenes activas en compra ({actual_compra:.2f} Bs) y venta ({actual_venta:.2f} Bs).",
-            "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Nivel óptimo de recompra estimado en {pred_compra:.2f} Bs.",
-            "recomendacion_tactica": "Mantener margen dinámico en los anuncios de compra para acelerar la rotación de capital.",
-            "tactica": {
-                "texto": f"El spread P2P de {spread:.2f} Bs permite colocación rápida de órdenes en la punta competitiva.",
-                "senal": "COMPRA MODERADA", "velocidad": "ALTA (< 5 min)", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
-            },
-            "flujo": {
-                "texto": "Absorción constante de volumen P2P orientada a comerciantes no verificados.",
-                "dominio": "COMPRADORES ACTIVOS", "spread_status": f"{spread:.2f} Bs", "riesgo": "BAJO", "proyeccion_12h": f"{pred_venta:.2f} Bs"
-            },
-            "niveles": {
-                "texto": "Comportamiento del libro de órdenes ajustado al canal actual de USDT/VES.",
-                "momentum": "MEDIO (65%)", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{pred_venta:.2f} Bs"
-            }
+    global _gemini_cache
+    tiempo_actual = time.time()
+
+    # Si la caché está activa y no han pasado 15 minutos, la devolvemos directamente sin gastar cuota
+    if _gemini_cache["resultado"] is not None and (tiempo_actual - _gemini_cache["ultima_actualizacion"] < CACHE_EXPIRATION_TIME):
+        return _gemini_cache["resultado"]
+
+    fallback_response = {
+        "estado_actual": f"El spread P2P actual se ubica en {spread:.2f} Bs con ordenes activas en compra ({actual_compra:.2f} Bs) y venta ({actual_venta:.2f} Bs).",
+        "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Nivel óptimo de recompra estimado en {pred_compra:.2f} Bs.",
+        "recomendacion_tactica": "Mantener margen dinámico en los anuncios de compra para acelerar la rotación de capital.",
+        "tactica": {
+            "texto": f"El spread P2P de {spread:.2f} Bs permite colocación rápida de órdenes en la punta competitiva.",
+            "senal": "COMPRA MODERADA", "velocidad": "ALTA (< 5 min)", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
+        },
+        "flujo": {
+            "texto": "Absorción constante de volumen P2P orientada a comerciantes no verificados.",
+            "dominio": "COMPRADORES ACTIVOS", "spread_status": f"{spread:.2f} Bs", "riesgo": "BAJO", "proyeccion_12h": f"{pred_venta:.2f} Bs"
+        },
+        "niveles": {
+            "texto": "Comportamiento del libro de órdenes ajustado al canal actual de USDT/VES.",
+            "momentum": "MEDIO (65%)", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{pred_venta:.2f} Bs"
         }
+    }
+
+    if not gemini_client:
+        _gemini_cache["resultado"] = fallback_response
+        _gemini_cache["ultima_actualizacion"] = tiempo_actual
+        return fallback_response
 
     try:
         system_instruction = (
@@ -284,17 +305,21 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
             ),
         )
 
-        return json.loads(response.text)
+        resultado_json = json.loads(response.text)
+        # Guardar en caché exitosa
+        _gemini_cache["resultado"] = resultado_json
+        _gemini_cache["ultima_actualizacion"] = tiempo_actual
+        return resultado_json
+
     except Exception as e:
-        print(f"Error Gemini: {e}")
-        return {
-            "estado_actual": f"Mercado P2P cotizando en {actual_compra:.2f} Bs compra y {actual_venta:.2f} Bs venta.",
-            "proyeccion_7_12h": f"Tendencia general P2P: {tendencia_quant}.",
-            "recomendacion_tactica": "Ajustar anuncios P2P en el primer bloque competitivo.",
-            "tactica": {"texto": f"Spread de {spread:.2f} Bs. Rotación regular de USDT.", "senal": "COMPRA MODERADA", "velocidad": "MEDIA", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} Bs"},
-            "flujo": {"texto": "Volumen P2P operando dentro del canal proyectado.", "dominio": "LATERAL", "spread_status": f"{spread:.2f} Bs", "riesgo": "MEDIO", "proyeccion_12h": f"{actual_venta:.2f} Bs"},
-            "niveles": {"texto": "Límites operativos del mercado P2P delimitados.", "momentum": "MEDIO", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{actual_venta:.2f} Bs"}
-        }
+        print(f"Error Gemini (Usando caché/fallback): {e}")
+        # Si ya hay un resultado previo en caché, lo mantenemos aunque pasen los 15 min para evitar errores 429
+        if _gemini_cache["resultado"] is not None:
+            return _gemini_cache["resultado"]
+        
+        _gemini_cache["resultado"] = fallback_response
+        _gemini_cache["ultima_actualizacion"] = tiempo_actual
+        return fallback_response
 
 # ==========================================
 # MOTOR QUANT
