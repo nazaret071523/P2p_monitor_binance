@@ -637,16 +637,13 @@ async def callback_aprobar_pago_admin(update: Update, context: ContextTypes.DEFA
             telegram_id, plan = res
             nueva_expiracion = datetime.now(VET) + timedelta(days=30)
 
-            # Actualizar estado del pago
             cursor.execute("UPDATE pagos SET estado = 'aprobado' WHERE id = %s;", (pago_id,))
-            # Actualizar rol y vigencia del usuario en la tabla usuarios
             cursor.execute(
                 "UPDATE usuarios SET rol = %s, suscripcion_hasta = %s WHERE telegram_id = %s;",
                 (plan, nueva_expiracion, telegram_id)
             )
             conn.commit()
 
-            # Notificar automáticamente al usuario que su pago fue aprobado
             if telegram_application:
                 try:
                     mensaje_usuario = (
@@ -780,83 +777,4 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("👤 Mi Plan & Membresía", callback_data="menu_miplan")],
             [InlineKeyboardButton("💎 Reportar Pago / Suscribirse", callback_data="iniciar_pago")]
         ]
-        await query.message.edit_text("🦜 Menú Principal Venbot:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def iniciar_telegram_bot():
-    global telegram_application
-    if not TELEGRAM_BOT_TOKEN:
-        print("⚠️ TELEGRAM_BOT_TOKEN no configurado.")
-        return
-    try:
-        telegram_application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        
-        conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(iniciar_pago_flow, pattern="^iniciar_pago$")],
-            states={
-                SELECCIONANDO_PLAN: [CallbackQueryHandler(recibir_seleccion_plan, pattern="^plan_")],
-                ESPERANDO_REFERENCIA: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_referencia_pago)]
-            },
-            fallbacks=[CallbackQueryHandler(cancelar_conversacion, pattern="^menu_inicio$")]
-        )
-
-        telegram_application.add_handler(conv_handler)
-        telegram_application.add_handler(CommandHandler("start", cmd_start))
-        telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
-        telegram_application.add_handler(CommandHandler("calcular", cmd_calcular_monto))
-        telegram_application.add_handler(CommandHandler("miplan", cmd_miplan))
-        telegram_application.add_handler(CommandHandler("ayuda", cmd_ayuda_menu))
-        telegram_application.add_handler(CommandHandler("adminpagos", cmd_admin_pagos))
-        telegram_application.add_handler(CallbackQueryHandler(callback_aprobar_pago_admin, pattern="^aprove_"))
-        telegram_application.add_handler(CallbackQueryHandler(callback_handler))
-        
-        await telegram_application.initialize()
-        await telegram_application.start()
-        
-        commands = [
-            BotCommand("start", "Panel principal del bot"),
-            BotCommand("prediccion", "Ver predicciones y mercado P2P"),
-            BotCommand("calcular", "Calculadora rápida de ganancias (ej: /calcular 100)"),
-            BotCommand("miplan", "Consultar tu estado de suscripción"),
-            BotCommand("ayuda", "Listado completo de comandos")
-        ]
-        await telegram_application.bot.set_my_commands(commands)
-
-        webhook_url = "https://p2p-monitor-binance.onrender.com/api/telegram/webhook"
-        await telegram_application.bot.set_webhook(url=webhook_url)
-        print(f"🤖 Bot de Telegram inicializado con sistema de pagos seguro en: {webhook_url}")
-    except Exception as e:
-        print(f"Error al iniciar Telegram: {e}")
-
-# ==========================================
-# SERVIDOR FASTAPI
-# ==========================================
-@asynccontextmanager
-async def lifespan(app_fastapi: FastAPI):
-    asyncio.create_task(tarea_recoleccion_automatica())
-    asyncio.create_task(iniciar_telegram_bot())
-    yield
-    if telegram_application:
-        try:
-            await telegram_application.stop()
-        except Exception:
-            pass
-
-app = FastAPI(lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
-@app.api_route("/", methods=["GET", "HEAD"])
-async def home():
-    return {"status": "ok", "message": "Venbot P2P Activo con Fase 3 y Menú de Comandos Integrado"}
-
-@app.post("/api/telegram/webhook")
-async def telegram_webhook(request: Request):
-    global telegram_application
-    if not telegram_application:
-        return {"status": "error", "message": "Bot no inicializado"}
-    try:
-        data = await request.json()
-        update = Update.de_json(data, telegram_application.bot)
-        asyncio.create_task(telegram_application.process_update(update))
-        return {"status": "ok"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        await query.message.edit_text("🦜 **VENBOT - Panel Principal**\n\nElige una opción:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
