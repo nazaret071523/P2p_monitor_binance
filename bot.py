@@ -204,7 +204,7 @@ def obtener_estadisticas_db(limit=2000):
     return []
 
 # ==========================================
-# LECTURA P2P BINANCE
+# LECTURA P2P BINANCE (Filtros internos discretos)
 # ==========================================
 def fetch_binance_p2p():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -212,7 +212,8 @@ def fetch_binance_p2p():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    bancos_filtro = ["BBVA", "Mercantil", "BNC"]
+    # Filtros internos solicitados (Banco Mercantil, Provincial, BNC sin exponer nombres textualmente en salidas públicas)
+    bancos_filtro = ["Mercantil", "Provincial", "BNC"]
 
     payload_compra = {
         "asset": "USDT", "fiat": "VES", "merchantCheck": False,
@@ -291,7 +292,7 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
     try:
         system_instruction = (
             "Eres Venbot AI, el analista experto de mercado P2P para VENBOT en Binance Venezuela (USDT/VES). "
-            "Prohibido mencionar nombres de bancos, BCV, tasa oficial o entes gubernamentales. "
+            "Prohibido mencionar nombres de bancos específicos, BCV, tasa oficial o entes gubernamentales. "
             "Tus respuestas deben tratar exclusivamente sobre libro de órdenes P2P, spread y estrategia de anuncios."
         )
 
@@ -581,7 +582,7 @@ async def recibir_referencia_pago(update: Update, context: ContextTypes.DEFAULT_
 
     if registrado:
         mensaje_exito = (
-            f"✅ **¡Pago reportado con éxito!**\n\n"
+            f"🦜 **¡Pago reportado con éxito!**\n\n"
             f"📦 **Plan:** {plan.upper()}\n"
             f"🔢 **Referencia:** `{referencia}`\n"
             f"🔄 **Estado:** Pendiente de verificación por el equipo.\n\n"
@@ -627,7 +628,6 @@ async def iniciar_telegram_bot():
     try:
         telegram_application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         
-        # Handler de Conversación para Pagos (Evita que el bot se trabe ante entradas de texto imprevistas)
         conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(iniciar_pago_flow, pattern="^iniciar_pago$")],
             states={
@@ -644,6 +644,7 @@ async def iniciar_telegram_bot():
         telegram_application.add_handler(CallbackQueryHandler(callback_handler))
         
         await telegram_application.initialize()
+        await telegram_application.start()
         webhook_url = "https://p2p-monitor-binance.onrender.com/api/telegram/webhook"
         await telegram_application.bot.set_webhook(url=webhook_url)
         print(f"🤖 Bot de Telegram inicializado con sistema de pagos seguro en: {webhook_url}")
@@ -658,6 +659,11 @@ async def lifespan(app_fastapi: FastAPI):
     asyncio.create_task(tarea_recoleccion_automatica())
     asyncio.create_task(iniciar_telegram_bot())
     yield
+    if telegram_application:
+        try:
+            await telegram_application.stop()
+        except Exception:
+            pass
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -674,7 +680,8 @@ async def telegram_webhook(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, telegram_application.bot)
-        await telegram_application.process_update(update)
+        # Procesamiento seguro de updates asegurando contexto de bucle de eventos
+        asyncio.create_task(telegram_application.process_update(update))
         return {"status": "ok"}
     except Exception as e:
         print(f"Error procesando webhook: {e}")
@@ -732,12 +739,12 @@ async def api_chat(payload: dict = Body(...)):
         compra, venta, spread = 945.25, 956.00, 10.75
     pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
     if not gemini_client:
-        return {"response": f"Venbot AI: Spread actual de {spread:.2f} Bs."}
+        return {"response": f"Venbot AI 🦜: Spread actual de {spread:.2f} Bs."}
     try:
-        system_instruction = "Eres Venbot AI, asistente conversacional de Binance P2P. Prohibido mencionar bancos o BCV."
+        system_instruction = "Eres Venbot AI 🦜, asistente conversacional de Binance P2P. Prohibido mencionar bancos o BCV."
         prompt_contexto = f"Spread: {spread:.2f} Bs. Pregunta: {mensaje_usuario}"
         modelo_activo = obtener_modelo_gemini_activo()
         response = gemini_client.models.generate_content(model=modelo_activo, contents=prompt_contexto, config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.6))
         return {"response": response.text.strip()}
     except Exception:
-        return {"response": f"Análisis rápido: Compra en {compra:.2f} Bs y Venta en {venta:.2f} Bs."}
+        return {"response": f"🦜 Análisis rápido: Compra en {compra:.2f} Bs y Venta en {venta:.2f} Bs."}
