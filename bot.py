@@ -41,6 +41,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+# Configura aquí tu ID personal de Telegram para que solo tú puedas ver y aprobar pagos desde el bot
+ADMIN_TELEGRAM_ID = 123456789  # <--- REEMPLAZA ESTE NÚMERO CON TU TELEGRAM ID REAL
+
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 telegram_application = None
 
@@ -161,11 +164,6 @@ def init_db():
                     );
                 ''')
                 conn.commit()
-                
-                # Generación automática de 3 credenciales VIP permanentes (ejemplo con IDs ficticios o ajuste inicial si se desea)
-                # O bien asegurando que los usuarios administradores/VIP predeterminados queden registrados.
-                # Aquí puedes insertar o actualizar usuarios VIP permanentes si pasas telegram_ids específicos, 
-                # por ejemplo usando una fecha de expiración lejana (año 2099).
         finally:
             conn.close()
 
@@ -573,6 +571,101 @@ async def cmd_ayuda_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await target.reply_text(mensaje, parse_mode="Markdown")
 
 # ==========================================
+# PANEL DE ADMINISTRACIÓN DE PAGOS DESDE TELEGRAM
+# ==========================================
+async def cmd_admin_pagos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_TELEGRAM_ID:
+        await update.message.reply_text("⛔ No tienes permisos de administrador para ejecutar este comando.")
+        return
+
+    conn = get_db_connection()
+    if not conn:
+        await update.message.reply_text("⚠️ Error de conexión con la base de datos.")
+        return
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, telegram_id, plan, monto, referencia, creado_en FROM pagos WHERE estado = 'pendiente' ORDER BY id ASC LIMIT 5;")
+            filas = cursor.fetchall()
+            if not filas:
+                await update.message.reply_text("✅ No hay pagos pendientes por aprobar en este momento.")
+                return
+
+            for fila in filas:
+                p_id, t_id, plan, monto, ref, fecha = fila
+                keyboard = [[InlineKeyboardButton(f"✅ Aprobar Pago #{p_id}", callback_data=f"aprove_{p_id}")]]
+                await update.message.reply_text(
+                    f"📦 **Pago Pendiente #{p_id}**\n"
+                    f"• Telegram ID: `{t_id}`\n"
+                    f"• Plan: `{plan.upper()}` (${monto})\n"
+                    f"• Referencia: `{ref}`",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error al consultar pagos: {e}")
+    finally:
+        conn.close()
+
+async def callback_aprobar_pago_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not query.data.startswith("aprove_"):
+        return
+
+    user = update.effective_user
+    if user.id != ADMIN_TELEGRAM_ID:
+        await query.message.reply_text("⛔ No tienes permisos para aprobar pagos.")
+        return
+
+    pago_id = int(query.data.split("_")[1])
+    conn = get_db_connection()
+    if not conn:
+        await query.message.reply_text("⚠️ Error de conexión con la base de datos.")
+        return
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT telegram_id, plan FROM pagos WHERE id = %s AND estado = 'pendiente';", (pago_id,))
+            res = cursor.fetchone()
+            if not res:
+                await query.message.edit_text(f"⚠️ El pago #{pago_id} ya fue aprobado o no existe.")
+                return
+
+            telegram_id, plan = res
+            nueva_expiracion = datetime.now(VET) + timedelta(days=30)
+
+            # Actualizar estado del pago
+            cursor.execute("UPDATE pagos SET estado = 'aprobado' WHERE id = %s;", (pago_id,))
+            # Actualizar rol y vigencia del usuario en la tabla usuarios
+            cursor.execute(
+                "UPDATE usuarios SET rol = %s, suscripcion_hasta = %s WHERE telegram_id = %s;",
+                (plan, nueva_expiracion, telegram_id)
+            )
+            conn.commit()
+
+            # Notificar automáticamente al usuario que su pago fue aprobado
+            if telegram_application:
+                try:
+                    mensaje_usuario = (
+                        f"🎉 **¡Pago Aprobado con Éxito!**\n\n"
+                        f"Tu plan `{plan.upper()}` ha sido activado en VENBOT.\n"
+                        f"Válido hasta: {nueva_expiracion.strftime('%d/%m/%Y %I:%M %p')}\n\n"
+                        f"Disfruta de todas las funciones exclusivas 🦜"
+                    )
+                    await telegram_application.bot.send_message(chat_id=telegram_id, text=mensaje_usuario, parse_mode="Markdown")
+                except Exception:
+                    pass
+
+            await query.message.edit_text(f"✅ **Pago #{pago_id} Aprobado Exitosamente**\n• Usuario ID: `{telegram_id}`\n• Plan Asignado: `{plan.upper()}`")
+    except Exception as e:
+        await query.message.reply_text(f"⚠️ Error al procesar aprobación: {e}")
+    finally:
+        conn.close()
+
+# ==========================================
 # CONVERSATION HANDLER PARA PAGOS (FASE 3)
 # ==========================================
 async def iniciar_pago_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -712,6 +805,8 @@ async def iniciar_telegram_bot():
         telegram_application.add_handler(CommandHandler("calcular", cmd_calcular_monto))
         telegram_application.add_handler(CommandHandler("miplan", cmd_miplan))
         telegram_application.add_handler(CommandHandler("ayuda", cmd_ayuda_menu))
+        telegram_application.add_handler(CommandHandler("adminpagos", cmd_admin_pagos))
+        telegram_application.add_handler(CallbackQueryHandler(callback_aprobar_pago_admin, pattern="^aprove_"))
         telegram_application.add_handler(CallbackQueryHandler(callback_handler))
         
         await telegram_application.initialize()
@@ -764,32 +859,4 @@ async def telegram_webhook(request: Request):
         asyncio.create_task(telegram_application.process_update(update))
         return {"status": "ok"}
     except Exception as e:
-        print(f"Error procesando webhook: {e}")
         return {"status": "error", "message": str(e)}
-
-@app.get("/api/stream")
-async def event_stream():
-    async def event_generator():
-        yield "retry: 3000\n\n"
-        while True:
-            try:
-                compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-                usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-                if not compra:
-                    continue
-                pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-                data_json = json.dumps({
-                    "compra": compra,
-                    "venta": venta,
-                    "spread": spread,
-                    "pct": pct,
-                    "usd_bcv": usd_bcv,
-                    "eur_bcv": eur_bcv,
-                    "prediccion": pred,
-                    "timestamp": datetime.now(VET).isoformat()
-                })
-                yield f"data: {data_json}\n\n"
-            except Exception:
-                pass
-            await asyncio.sleep(10)
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
