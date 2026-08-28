@@ -521,25 +521,34 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
-        "💎 *SUSCRIPCIÓN VIP - VENBOT P2P*\n\n"
-        "Obtén acceso ilimitado a las señales y proyecciones XGBoost.\n\n"
-        "💳 *Datos de Pago (Pago Móvil / Binance Pay):*\n"
-        "• Banco: Banesco\n"
-        "• Teléfono: 0412-XXXXXXX\n"
-        "• C.I: V-XXXXXXXX\n"
-        "• Monto: 10 USDT o equivalente en Bs (Tasa BCV)\n\n"
-        "Una vez pagado, repórtalo con:\n"
-        "`/registrar [Número_de_Referencia]`"
+        "💎 **SUSCRIPCIÓN VIP - VENBOT P2P**\n\n"
+        "Obtén acceso ilimitado a las señales de predicción y al motor XGBoost.\n\n"
+        "💳 **Métodos de Pago Disponibles:**\n\n"
+        "🇻🇪 **Pago Móvil (Bs. a Tasa BCV):**\n"
+        "• Banco: Banesco (0134)\n"
+        "• Teléfono: 0412-1234567\n"
+        "• C.I: V-12.345.678\n"
+        "• Monto: Equivalente a 10 USDT\n\n"
+        "🌍 **Binance Pay:**\n"
+        "• Pay ID / Email: `tucorreo@binance.com`\n\n"
+        "📝 **¿Cómo activar tu cuenta?**\n"
+        "Una vez realizado el pago, repórtalo enviando al bot los últimos 4 dígitos o número de referencia de tu pago de esta forma:\n"
+        "`/registrar 1234`"
     )
     await update.message.reply_text(texto, parse_mode="Markdown")
 
 async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    username = update.effective_user.username or "Sin_usuario"
+    username = update.effective_user.username or f"user_{user_id}"
     
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ Escribe el número de referencia. Ejemplo: `/registrar 123456`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "⚠️ **Formato incorrecto.**\n"
+            "Debes incluir el número de referencia de tu pago. Ejemplo:\n"
+            "`/registrar 8492`", 
+            parse_mode="Markdown"
+        )
         return
     
     referencia = args[0]
@@ -547,13 +556,13 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if exito:
         await update.message.reply_text(
-            "✅ *¡Comprobante enviado con éxito!*\n\n"
+            "✅ **¡Comprobante enviado con éxito!**\n\n"
             f"Referencia registrada: `{referencia}`\n"
-            "Tu pago está en revisión. El administrador lo aprobará en breve.",
+            "Tu pago se encuentra en estado **pendiente** de revisión. El administrador verificará la transacción y activará tu acceso VIP en breve.",
             parse_mode="Markdown"
         )
     else:
-        await update.message.reply_text("❌ Ocurrió un error al guardar el pago. Inténtalo de nuevo.")
+        await update.message.reply_text("❌ Ocurrió un error al registrar el pago en el sistema. Inténtalo de nuevo más tarde.")
 
 async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
