@@ -780,83 +780,110 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("👤 Mi Plan & Membresía", callback_data="menu_miplan")],
             [InlineKeyboardButton("💎 Reportar Pago / Suscribirse", callback_data="iniciar_pago")]
         ]
-        await query.message.edit_text("🦜 Menú Principal Venbot:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.edit_text("🦜 **VENBOT - Panel Principal**\n\nElige una opción:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def iniciar_telegram_bot():
+# ==========================================
+# APLICACIÓN FASTAPI Y WEBHOOK TELEGRAM
+# ==========================================
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("startup")
+async def startup_event():
     global telegram_application
-    if not TELEGRAM_BOT_TOKEN:
-        print("⚠️ TELEGRAM_BOT_TOKEN no configurado.")
-        return
-    try:
-        telegram_application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        
-        conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(iniciar_pago_flow, pattern="^iniciar_pago$")],
-            states={
-                SELECCIONANDO_PLAN: [CallbackQueryHandler(recibir_seleccion_plan, pattern="^plan_")],
-                ESPERANDO_REFERENCIA: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_referencia_pago)]
-            },
-            fallbacks=[CallbackQueryHandler(cancelar_conversacion, pattern="^menu_inicio$")]
-        )
-
-        telegram_application.add_handler(conv_handler)
-        telegram_application.add_handler(CommandHandler("start", cmd_start))
-        telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
-        telegram_application.add_handler(CommandHandler("calcular", cmd_calcular_monto))
-        telegram_application.add_handler(CommandHandler("miplan", cmd_miplan))
-        telegram_application.add_handler(CommandHandler("ayuda", cmd_ayuda_menu))
-        telegram_application.add_handler(CommandHandler("adminpagos", cmd_admin_pagos))
-        telegram_application.add_handler(CallbackQueryHandler(callback_aprobar_pago_admin, pattern="^aprove_"))
-        telegram_application.add_handler(CallbackQueryHandler(callback_handler))
-        
-        await telegram_application.initialize()
-        await telegram_application.start()
-        
-        commands = [
-            BotCommand("start", "Panel principal del bot"),
-            BotCommand("prediccion", "Ver predicciones y mercado P2P"),
-            BotCommand("calcular", "Calculadora rápida de ganancias (ej: /calcular 100)"),
-            BotCommand("miplan", "Consultar tu estado de suscripción"),
-            BotCommand("ayuda", "Listado completo de comandos")
-        ]
-        await telegram_application.bot.set_my_commands(commands)
-
-        webhook_url = "https://p2p-monitor-binance.onrender.com/api/telegram/webhook"
-        await telegram_application.bot.set_webhook(url=webhook_url)
-        print(f"🤖 Bot de Telegram inicializado con sistema de pagos seguro en: {webhook_url}")
-    except Exception as e:
-        print(f"Error al iniciar Telegram: {e}")
-
-# ==========================================
-# SERVIDOR FASTAPI
-# ==========================================
-@asynccontextmanager
-async def lifespan(app_fastapi: FastAPI):
-    asyncio.create_task(tarea_recoleccion_automatica())
-    asyncio.create_task(iniciar_telegram_bot())
-    yield
-    if telegram_application:
+    if TELEGRAM_BOT_TOKEN:
         try:
-            await telegram_application.stop()
-        except Exception:
-            pass
+            telegram_application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+            
+            # Comandos del bot
+            telegram_application.add_handler(CommandHandler("start", cmd_start))
+            telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
+            telegram_application.add_handler(CommandHandler("calcular", cmd_calcular_monto))
+            telegram_application.add_handler(CommandHandler("miplan", cmd_miplan))
+            telegram_application.add_handler(CommandHandler("ayuda", cmd_ayuda_menu))
+            telegram_application.add_handler(CommandHandler("adminpagos", cmd_admin_pagos))
+            
+            # Handler para aprobación de pagos admin
+            telegram_application.add_handler(CallbackQueryHandler(callback_aprobar_pago_admin, pattern="^aprove_"))
+            
+            # Conversation Handler para pagos
+            conv_handler = ConversationHandler(
+                entry_points=[CallbackQueryHandler(iniciar_pago_flow, pattern="^iniciar_pago$")],
+                states={
+                    SELECCIONANDO_PLAN: [
+                        CallbackQueryHandler(recibir_seleccion_plan, pattern="^plan_(premium|vip)$"),
+                        CallbackQueryHandler(cancelar_conversacion, pattern="^menu_inicio$")
+                    ],
+                    ESPERANDO_REFERENCIA: [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_referencia_pago),
+                        CallbackQueryHandler(cancelar_conversacion, pattern="^menu_inicio$")
+                    ]
+                },
+                fallbacks=[CallbackQueryHandler(cancelar_conversacion, pattern="^menu_inicio$")]
+            )
+            telegram_application.add_handler(conv_handler)
+            
+            # Callback general del menú
+            telegram_application.add_handler(CallbackQueryHandler(callback_handler))
+            
+            await telegram_application.initialize()
+            await telegram_application.bot.set_my_commands([
+                BotCommand("start", "Panel principal del bot"),
+                BotCommand("prediccion", "Ver estado del mercado P2P y proyecciones IA"),
+                BotCommand("calcular", "Simular ganancia en USDT (ej: /calcular 100)"),
+                BotCommand("miplan", "Consultar tu membresía activa"),
+                BotCommand("ayuda", "Lista de comandos disponibles")
+            ])
+            print("Telegram Bot inicializado correctamente.")
+        except Exception as e:
+            print(f"Error al inicializar Telegram Bot: {e}")
 
-app = FastAPI(lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    asyncio.create_task(tarea_recoleccion_automatica())
 
-@app.api_route("/", methods=["GET", "HEAD"])
-async def home():
-    return {"status": "ok", "message": "Venbot P2P Activo con Fase 3 y Menú de Comandos Integrado"}
-
-@app.post("/api/telegram/webhook")
+@app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    global telegram_application
     if not telegram_application:
-        return {"status": "error", "message": "Bot no inicializado"}
+        return Response(status_code=503)
     try:
         data = await request.json()
         update = Update.de_json(data, telegram_application.bot)
-        asyncio.create_task(telegram_application.process_update(update))
-        return {"status": "ok"}
+        await telegram_application.process_update(update)
+        return Response(status_code=200)
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        print(f"Error procesando update de Telegram: {e}")
+        return Response(status_code=500)
+
+@app.get("/api/mercado/actual")
+async def api_mercado_actual():
+    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+    if not compra or not venta:
+        return JSONResponse(status_code=503, content={"error": "No se pudo conectar con Binance P2P"})
+    
+    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
+    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
+    
+    return {
+        "timestamp": datetime.now(VET).isoformat(),
+        "binance_p2p": {
+            "compra": compra,
+            "venta": venta,
+            "spread": spread,
+            "porcentaje_bruto": pct
+        },
+        "bcv": {
+            "usd": usd_bcv,
+            "eur": eur_bcv
+        },
+        "ia_quant": pred
+    }
+
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "Venbot API & Telegram Bot Operational"}
