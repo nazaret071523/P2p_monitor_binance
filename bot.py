@@ -138,8 +138,14 @@ def init_db():
                         username TEXT,
                         estado_suscripcion TEXT DEFAULT 'pendiente',
                         referencia_pago TEXT,
-                        fecha_expiracion TIMESTAMP
+                        fecha_expiracion TIMESTAMP,
+                        tipo_plan TEXT DEFAULT 'vip'
                     );
+                ''')
+                # Compatibilidad por si la tabla ya existía sin la columna tipo_plan
+                cursor.execute('''
+                    ALTER TABLE usuarios_p2p 
+                    ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';
                 ''')
                 conn.commit()
         finally:
@@ -147,8 +153,8 @@ def init_db():
 
 init_db()
 
-def registrar_pago_db(telegram_id: int, username: str, referencia: str) -> bool:
-    """Registra o actualiza el pago de un usuario en estado pendiente."""
+def registrar_pago_db(telegram_id: int, username: str, referencia: str, plan_elegido: str = 'vip') -> bool:
+    """Registra o actualiza el pago de un usuario en estado pendiente incluyendo el tipo de plan."""
     conn = get_db_connection()
     if not conn:
         return False
@@ -156,11 +162,11 @@ def registrar_pago_db(telegram_id: int, username: str, referencia: str) -> bool:
         with conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO usuarios_p2p (telegram_id, username, estado_suscripcion, referencia_pago)
-                    VALUES (%s, %s, 'pendiente', %s)
+                    INSERT INTO usuarios_p2p (telegram_id, username, estado_suscripcion, referencia_pago, tipo_plan)
+                    VALUES (%s, %s, 'pendiente', %s, %s)
                     ON CONFLICT (telegram_id) 
-                    DO UPDATE SET referencia_pago = %s, estado_suscripcion = 'pendiente';
-                """, (telegram_id, username, referencia, referencia))
+                    DO UPDATE SET referencia_pago = %s, estado_suscripcion = 'pendiente', tipo_plan = %s;
+                """, (telegram_id, username, referencia, plan_elegido, referencia, plan_elegido))
         return True
     except Exception as e:
         print(f"Error en registrar_pago_db: {e}")
@@ -169,7 +175,7 @@ def registrar_pago_db(telegram_id: int, username: str, referencia: str) -> bool:
         conn.close()
 
 def verificar_estado_usuario(telegram_id: int) -> dict:
-    """Verifica el estado actual de la suscripción del usuario."""
+    """Verifica el estado actual de la suscripción del usuario y su plan."""
     conn = get_db_connection()
     if not conn:
         return {"estado": "error"}
@@ -177,7 +183,7 @@ def verificar_estado_usuario(telegram_id: int) -> dict:
         with conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT estado_suscripcion, fecha_expiracion, referencia_pago 
+                    SELECT estado_suscripcion, fecha_expiracion, referencia_pago, tipo_plan 
                     FROM usuarios_p2p WHERE telegram_id = %s;
                 """, (telegram_id,))
                 row = cur.fetchone()
@@ -185,7 +191,8 @@ def verificar_estado_usuario(telegram_id: int) -> dict:
                     return {
                         "estado": row[0],
                         "expiracion": row[1],
-                        "referencia": row[2]
+                        "referencia": row[2],
+                        "plan": row[3] or "vip"
                     }
         return {"estado": "no_registrado"}
     except Exception as e:
@@ -488,7 +495,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if datos_usuario.get("estado") != "activo":
             await update.message.reply_text(
-                "🔒 *Contenido Exclusivo para Miembros VIP*\n\n"
+                "🔒 *Contenido Exclusivo para Miembros Suscritos*\n\n"
                 "No tienes una suscripción activa. Usa `/suscribir` para ver los pasos y desbloquear las señales de predicción.",
                 parse_mode="Markdown"
             )
@@ -521,19 +528,26 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
-        "💎 **SUSCRIPCIÓN VIP - VENBOT P2P**\n\n"
-        "Obtén acceso ilimitado a las señales de predicción y al motor XGBoost.\n\n"
+        "💎 **PLANES DE SUSCRIPCIÓN - VENBOT P2P**\n\n"
+        "Elige el plan que mejor se adapte a tus operaciones:\n\n"
+        "⭐ **PLAN VIP (10 USDT)**\n"
+        "• Acceso completo a señales de predicción\n"
+        "• Motor XGBoost Quant en tiempo real\n\n"
+        "🚀 **PLAN PREMIUM (25 USDT)**\n"
+        "• Todo lo del plan VIP\n"
+        "• Alertas anticipadas de alta velocidad\n"
+        "• Soporte prioritario y rangos extendidos\n\n"
         "💳 **Métodos de Pago Disponibles:**\n\n"
         "🇻🇪 **Pago Móvil (Bs. a Tasa BCV):**\n"
         "• Banco: Banesco (0134)\n"
         "• Teléfono: 0412-1234567\n"
-        "• C.I: V-12.345.678\n"
-        "• Monto: Equivalente a 10 USDT\n\n"
+        "• C.I: V-12.345.678\n\n"
         "🌍 **Binance Pay:**\n"
         "• Pay ID / Email: `tucorreo@binance.com`\n\n"
-        "📝 **¿Cómo activar tu cuenta?**\n"
-        "Una vez realizado el pago, repórtalo enviando al bot los últimos 4 dígitos o número de referencia de tu pago de esta forma:\n"
-        "`/registrar 1234`"
+        "📝 **¿Cómo registrar tu pago?**\n"
+        "Indica el plan que pagaste junto a tu referencia:\n"
+        "• Para VIP: `/registrar vip 1234`\n"
+        "• Para Premium: `/registrar premium 1234`"
     )
     await update.message.reply_text(texto, parse_mode="Markdown")
 
@@ -542,23 +556,29 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or f"user_{user_id}"
     
     args = context.args
-    if not args:
+    if len(args) < 2:
         await update.message.reply_text(
             "⚠️ **Formato incorrecto.**\n"
-            "Debes incluir el número de referencia de tu pago. Ejemplo:\n"
-            "`/registrar 8492`", 
+            "Debes especificar el plan y la referencia. Ejemplo:\n"
+            "`/registrar vip 8492` o `/registrar premium 8492`", 
             parse_mode="Markdown"
         )
         return
     
-    referencia = args[0]
-    exito = registrar_pago_db(user_id, username, referencia)
+    plan_elegido = args[0].lower()
+    if plan_elegido not in ["vip", "premium"]:
+        await update.message.reply_text("⚠️ El plan debe ser exactamente `vip` o `premium`.")
+        return
+        
+    referencia = args[1]
+    exito = registrar_pago_db(user_id, username, referencia, plan_elegido)
     
     if exito:
         await update.message.reply_text(
             "✅ **¡Comprobante enviado con éxito!**\n\n"
-            f"Referencia registrada: `{referencia}`\n"
-            "Tu pago se encuentra en estado **pendiente** de revisión. El administrador verificará la transacción y activará tu acceso VIP en breve.",
+            f"• Plan solicitado: **{plan_elegido.upper()}**\n"
+            f"• Referencia registrada: `{referencia}`\n"
+            "Tu pago se encuentra en estado **pendiente** de revisión. El administrador verificará la transacción y activará tu acceso en breve.",
             parse_mode="Markdown"
         )
     else:
@@ -569,14 +589,28 @@ async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     datos = verificar_estado_usuario(user_id)
     
     estado = datos.get("estado")
+    plan_actual = datos.get("plan", "vip").upper()
+    
     if estado == "activo":
         exp = datos.get("expiracion")
-        await update.message.reply_text(f"✨ *Tu suscripción está ACTIVA*\nVence el: `{exp}`", parse_mode="Markdown")
+        exp_texto = exp if exp else "Ilimitado / Vitalicio"
+        await update.message.reply_text(
+            f"✨ *Tu suscripción está ACTIVA*\n"
+            f"📦 Plan: **{plan_actual}**\n"
+            f"⏳ Vence el: `{exp_texto}`", 
+            parse_mode="Markdown"
+        )
     elif estado == "pendiente":
         ref = datos.get("referencia")
-        await update.message.reply_text(f"⏳ *Suscripción en revisión*\nReferencia enviada: `{ref}`\nEspera la aprobación del administrador.", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"⏳ *Suscripción en revisión*\n"
+            f"📦 Plan solicitado: **{plan_actual}**\n"
+            f"🔢 Referencia enviada: `{ref}`\n"
+            "Espera la aprobación del administrador.", 
+            parse_mode="Markdown"
+        )
     else:
-        await update.message.reply_text("❌ No tienes una suscripción activa. Usa `/suscribir` para ver los pasos de pago.", parse_mode="Markdown")
+        await update.message.reply_text("❌ No tienes una suscripción activa. Usa `/suscribir` para ver los planes disponibles.", parse_mode="Markdown")
 
 async def iniciar_telegram_bot():
     global telegram_app
