@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body, Request
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
 # Importaciones de Machine Learning (XGBoost Quant)
 from sklearn.linear_model import Ridge
@@ -32,7 +33,7 @@ from telegram.ext import (
 from google import genai
 from google.genai import types
 
-# Deshabilitar advertencias SSL en caso de fluctuaciones en el certificado del BCV
+# Deshabilitar advertencias SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configuración de zona horaria Venezuela
@@ -41,7 +42,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Configura aquí tu ID personal de Telegram para que solo tú puedas ver y aprobar pagos desde el bot
+# Configura aquí tu ID personal de Telegram
 ADMIN_TELEGRAM_ID = 123456789  # <--- REEMPLAZA ESTE NÚMERO CON TU TELEGRAM ID REAL
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
@@ -207,7 +208,7 @@ def obtener_estadisticas_db(limit=2000):
     return []
 
 # ==========================================
-# LECTURA P2P BINANCE (Filtros internos discretos)
+# LECTURA P2P BINANCE
 # ==========================================
 def fetch_binance_p2p():
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -406,7 +407,7 @@ def motor_quant_inteligente(actual_compra, actual_venta):
     }
 
 # ==========================================
-# TAREA EN SEGUNDO PLANO
+# TAREA EN SEGUNDO PLANO (RECOLECCIÓN)
 # ==========================================
 async def tarea_recoleccion_automatica():
     while True:
@@ -419,7 +420,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# BOT DE TELEGRAM (COMANDOS Y FLUJOS FASE 3)
+# HANDLERS DE TELEGRAM
 # ==========================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -570,9 +571,6 @@ async def cmd_ayuda_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await target.reply_text(mensaje, parse_mode="Markdown")
 
-# ==========================================
-# PANEL DE ADMINISTRACIÓN DE PAGOS DESDE TELEGRAM
-# ==========================================
 async def cmd_admin_pagos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_TELEGRAM_ID:
@@ -662,9 +660,6 @@ async def callback_aprobar_pago_admin(update: Update, context: ContextTypes.DEFA
     finally:
         conn.close()
 
-# ==========================================
-# CONVERSATION HANDLER PARA PAGOS (FASE 3)
-# ==========================================
 async def iniciar_pago_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -764,17 +759,73 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "menu_prediccion":
+    if query.data.startswith("aprove_"):
+        await callback_aprobar_pago_admin(update, context)
+    elif query.data == "menu_prediccion":
         await cmd_prediccion(update, context)
     elif query.data == "menu_miplan":
         await cmd_miplan(update, context)
     elif query.data == "menu_calcular":
         await cmd_calcular(update, context)
     elif query.data == "menu_inicio":
-        keyboard = [
-            [InlineKeyboardButton("📊 Ver Predicción P2P", callback_data="menu_prediccion")],
-            [InlineKeyboardButton("🧮 Calculadora Rápida", callback_data="menu_calcular")],
-            [InlineKeyboardButton("👤 Mi Plan & Membresía", callback_data="menu_miplan")],
-            [InlineKeyboardButton("💎 Reportar Pago / Suscribirse", callback_data="iniciar_pago")]
-        ]
-        await query.message.edit_text("Panel Principal VENBOT:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await cmd_start(update, context)
+
+# ==========================================
+# CONFIGURACIÓN FASTAPI Y ARRANQUE UNIFICADO
+# ==========================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global telegram_application
+    # Iniciar bot de Telegram
+    if TELEGRAM_BOT_TOKEN:
+        telegram_application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        
+        # Registrar handlers
+        telegram_application.add_handler(CommandHandler("start", cmd_start))
+        telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_application.add_handler(CommandHandler("calcular", cmd_calcular_monto))
+        telegram_application.add_handler(CommandHandler("miplan", cmd_miplan))
+        telegram_application.add_handler(CommandHandler("ayuda", cmd_ayuda_menu))
+        telegram_application.add_handler(CommandHandler("pagospendientes", cmd_admin_pagos))
+
+        conv_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(iniciar_pago_flow, pattern="^iniciar_pago$")],
+            states={
+                SELECCIONANDO_PLAN: [CallbackQueryHandler(recibir_seleccion_plan, pattern="^plan_")],
+                ESPERANDO_REFERENCIA: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_referencia_pago)]
+            },
+            fallbacks=[CallbackQueryHandler(cancelar_conversacion, pattern="^menu_inicio$")]
+        )
+        telegram_application.add_handler(conv_handler)
+        telegram_application.add_handler(CallbackQueryHandler(callback_handler))
+
+        await telegram_application.initialize()
+        await telegram_application.start()
+        await telegram_application.updater.start_polling()
+
+    # Iniciar tarea automática en segundo plano
+    asyncio.create_task(tarea_recoleccion_automatica())
+    
+    yield
+    
+    if telegram_application:
+        await telegram_application.updater.stop()
+        await telegram_application.stop()
+        await telegram_application.shutdown()
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "VENBOT activo correctamente en Render"}
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("bot:app", host="0.0.0.0", port=port)
