@@ -161,6 +161,11 @@ def init_db():
                     );
                 ''')
                 conn.commit()
+                
+                # Generación automática de 3 credenciales VIP permanentes (ejemplo con IDs ficticios o ajuste inicial si se desea)
+                # O bien asegurando que los usuarios administradores/VIP predeterminados queden registrados.
+                # Aquí puedes insertar o actualizar usuarios VIP permanentes si pasas telegram_ids específicos, 
+                # por ejemplo usando una fecha de expiración lejana (año 2099).
         finally:
             conn.close()
 
@@ -575,8 +580,8 @@ async def iniciar_pago_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     keyboard = [
-        [InlineKeyboardButton("⭐ Plan Premium ($15/mes)", callback_data="plan_premium")],
-        [InlineKeyboardButton("🔥 Plan VIP ($35/mes)", callback_data="plan_vip")],
+        [InlineKeyboardButton("⭐ Plan Premium ($7/mes)", callback_data="plan_premium")],
+        [InlineKeyboardButton("🔥 Plan VIP ($15/mes)", callback_data="plan_vip")],
         [InlineKeyboardButton("❌ Cancelar", callback_data="menu_inicio")]
     ]
     await query.message.edit_text(
@@ -594,17 +599,25 @@ async def recibir_seleccion_plan(update: Update, context: ContextTypes.DEFAULT_T
     datos_plan = query.data
     if datos_plan == "plan_premium":
         context.user_data["plan_elegido"] = "premium"
-        context.user_data["monto_plan"] = 15.0
+        context.user_data["monto_plan"] = 7.0
     elif datos_plan == "plan_vip":
         context.user_data["plan_elegido"] = "vip"
-        context.user_data["monto_plan"] = 35.0
+        context.user_data["monto_plan"] = 15.0
     else:
         await query.message.edit_text("Operación cancelada.")
         return ConversationHandler.END
 
     instrucciones = (
         f"💳 **DATOS PARA EL PAGO ({context.user_data['plan_elegido'].upper()})**\n\n"
-        "Realiza el pago correspondiente y **escribe aquí los últimos 4 dígitos o número de referencia** de tu transferencia (Pago Móvil / Binance Pay / Zelle):\n\n"
+        "Realiza tu pago por los siguientes medios:\n\n"
+        "📱 **Pago Móvil:**\n"
+        "• Banco: `Banco Mercantil`\n"
+        "• Teléfono: `0424-5734635`\n"
+        "• Cédula: `20414065`\n\n"
+        "🟡 **Binance Pay:**\n"
+        "• Email: `nazaretgarcia69@gmail.com`\n\n"
+        "--- \n"
+        "Una vez realizado el pago, **escribe aquí abajo los últimos 4 dígitos o número de referencia** de tu transferencia:\n"
         "*(Ejemplo: 4829)*"
     )
     keyboard = [[InlineKeyboardButton("❌ Cancelar", callback_data="menu_inicio")]]
@@ -615,7 +628,7 @@ async def recibir_referencia_pago(update: Update, context: ContextTypes.DEFAULT_
     user = update.effective_user
     referencia = update.message.text.strip()
     plan = context.user_data.get("plan_elegido", "premium")
-    monto = context.user_data.get("monto_plan", 15.0)
+    monto = context.user_data.get("monto_plan", 7.0)
 
     conn = get_db_connection()
     registrado = False
@@ -704,7 +717,6 @@ async def iniciar_telegram_bot():
         await telegram_application.initialize()
         await telegram_application.start()
         
-        # Registrar menú de comandos nativo en Telegram
         commands = [
             BotCommand("start", "Panel principal del bot"),
             BotCommand("prediccion", "Ver predicciones y mercado P2P"),
@@ -764,55 +776,20 @@ async def event_stream():
                 compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
                 usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
                 if not compra:
-                    compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
+                    continue
                 pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-                payload = {
-                    "compra": compra, "venta": venta, "spread": spread, "pct_bruto": pct,
-                    "bcv": usd_bcv, "euro": eur_bcv, "prediccion": pred,
-                    "timestamp": datetime.now(VET).isoformat(), "status": "connected"
-                }
-                yield f"data: {json.dumps(payload)}\n\n"
+                data_json = json.dumps({
+                    "compra": compra,
+                    "venta": venta,
+                    "spread": spread,
+                    "pct": pct,
+                    "usd_bcv": usd_bcv,
+                    "eur_bcv": eur_bcv,
+                    "prediccion": pred,
+                    "timestamp": datetime.now(VET).isoformat()
+                })
+                yield f"data: {data_json}\n\n"
             except Exception:
                 pass
-            await asyncio.sleep(5)
-    return StreamingResponse(event_generator(), headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive"})
-
-@app.get("/api/v1/p2p-rates")
-async def get_p2p_rates_v1():
-    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-    if not compra:
-        compra, venta = 945.25, 956.00
-    return JSONResponse(content={"buy_price": compra, "sell_price": venta, "bcv_price": usd_bcv, "euro_price": eur_bcv}, headers={"Cache-Control": "no-store"})
-
-@app.get("/styles.css")
-async def get_custom_css():
-    css_content = "body { background-color: #0B1120 !important; color: #FFFFFF !important; font-family: sans-serif; }"
-    return Response(content=css_content, media_type="text/css")
-
-@app.get("/api/actual")
-async def get_actual():
-    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-    if not compra:
-        return JSONResponse(content={"error": "Sin datos"}, headers={"Cache-Control": "no-store"})
-    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-    return JSONResponse(content={"compra": compra, "venta": venta, "spread": spread, "pct_bruto": pct, "bcv": usd_bcv, "euro": eur_bcv, "prediccion": pred}, headers={"Cache-Control": "no-store"})
-
-@app.post("/api/chat")
-async def api_chat(payload: dict = Body(...)):
-    mensaje_usuario = payload.get("prompt", "") or payload.get("message", "")
-    compra, venta, spread, _ = await asyncio.to_thread(fetch_binance_p2p)
-    if not compra:
-        compra, venta, spread = 945.25, 956.00, 10.75
-    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-    if not gemini_client:
-        return {"response": f"Venbot AI 🦜: Spread actual de {spread:.2f} Bs."}
-    try:
-        system_instruction = "Eres Venbot AI 🦜, asistente conversacional de Binance P2P. Prohibido mencionar bancos o BCV."
-        prompt_contexto = f"Spread: {spread:.2f} Bs. Pregunta: {mensaje_usuario}"
-        modelo_activo = obtener_modelo_gemini_activo()
-        response = gemini_client.models.generate_content(model=modelo_activo, contents=prompt_contexto, config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.6))
-        return {"response": response.text.strip()}
-    except Exception:
-        return {"response": f"🦜 Análisis rápido: Compra en {compra:.2f} Bs y Venta en {venta:.2f} Bs."}
+            await asyncio.sleep(10)
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
