@@ -18,7 +18,7 @@ from sklearn.linear_model import Ridge
 import xgboost as xgb
 
 # Importaciones de Telegram
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder, 
     ContextTypes, 
@@ -212,7 +212,6 @@ def fetch_binance_p2p():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    # Filtros internos solicitados (Banco Mercantil, Provincial, BNC sin exponer nombres textualmente en salidas públicas)
     bancos_filtro = ["Mercantil", "Provincial", "BNC"]
 
     payload_compra = {
@@ -437,6 +436,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("📊 Ver Predicción P2P", callback_data="menu_prediccion")],
+        [InlineKeyboardButton("🧮 Calculadora Rápida", callback_data="menu_calcular")],
         [InlineKeyboardButton("👤 Mi Plan & Membresía", callback_data="menu_miplan")],
         [InlineKeyboardButton("💎 Reportar Pago / Suscribirse", callback_data="iniciar_pago")]
     ]
@@ -477,6 +477,44 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error en predicción telegram: {e}")
 
+async def cmd_calcular(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    target = update.message or update.callback_query.message
+    texto_ayuda = (
+        "🧮 **Calculadora Rápida P2P**\n\n"
+        "Usa el comando indicando la cantidad de USDT que deseas calcular.\n"
+        "Ejemplo: `/calcular 100`"
+    )
+    if update.callback_query:
+        await target.edit_text(texto_ayuda, parse_mode="Markdown")
+    else:
+        await target.reply_text(texto_ayuda, parse_mode="Markdown")
+
+async def cmd_calcular_monto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("⚠️ Por favor indica la cantidad. Ejemplo: `/calcular 100`", parse_mode="Markdown")
+        return
+    try:
+        cantidad = float(context.args[0])
+    except ValueError:
+        await update.message.reply_text("⚠️ Cantidad inválida. Usa solo números, ej: `/calcular 50.5`", parse_mode="Markdown")
+        return
+
+    compra, venta, spread, _ = await asyncio.to_thread(fetch_binance_p2p)
+    if not compra or not venta:
+        compra, venta = 945.25, 956.00
+
+    total_costo_compra = cantidad * compra
+    total_venta_estimada = cantidad * venta
+    ganancia_neta = total_venta_estimada - total_costo_compra
+
+    mensaje = (
+        f"🧮 **SIMULACIÓN DE OPERACIÓN ({cantidad} USDT)**\n\n"
+        f"🟢 Inversión estimada (Compra a {compra:.2f}): `{total_costo_compra:,.2f} Bs`\n"
+        f"🔴 Retorno estimado (Venta a {venta:.2f}): `{total_venta_estimada:,.2f} Bs`\n"
+        f"⚡ **Ganancia Neta Estimada:** `{ganancia_neta:,.2f} Bs`"
+    )
+    await update.message.reply_text(mensaje, parse_mode="Markdown")
+
 async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     conn = get_db_connection()
@@ -513,6 +551,21 @@ async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await target.edit_text(mensaje, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await target.reply_text(mensaje, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def cmd_ayuda_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mensaje = (
+        "📋 **MENÚ DE COMANDOS DISPONIBLES**\n\n"
+        "/start - Inicia el bot y muestra el panel principal.\n"
+        "/prediccion - Muestra el estado actual del mercado P2P y proyecciones de IA.\n"
+        "/calcular [cantidad] - Calcula la ganancia estimada para X cantidad de USDT.\n"
+        "/miplan - Consulta el estado actual de tu suscripción y plan activo.\n"
+        "/ayuda - Muestra este listado de comandos."
+    )
+    target = update.message or update.callback_query.message
+    if update.callback_query:
+        await target.edit_text(mensaje, parse_mode="Markdown")
+    else:
+        await target.reply_text(mensaje, parse_mode="Markdown")
 
 # ==========================================
 # CONVERSATION HANDLER PARA PAGOS (FASE 3)
@@ -612,9 +665,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd_prediccion(update, context)
     elif query.data == "menu_miplan":
         await cmd_miplan(update, context)
+    elif query.data == "menu_calcular":
+        await cmd_calcular(update, context)
     elif query.data == "menu_inicio":
         keyboard = [
             [InlineKeyboardButton("📊 Ver Predicción P2P", callback_data="menu_prediccion")],
+            [InlineKeyboardButton("🧮 Calculadora Rápida", callback_data="menu_calcular")],
             [InlineKeyboardButton("👤 Mi Plan & Membresía", callback_data="menu_miplan")],
             [InlineKeyboardButton("💎 Reportar Pago / Suscribirse", callback_data="iniciar_pago")]
         ]
@@ -640,11 +696,24 @@ async def iniciar_telegram_bot():
         telegram_application.add_handler(conv_handler)
         telegram_application.add_handler(CommandHandler("start", cmd_start))
         telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_application.add_handler(CommandHandler("calcular", cmd_calcular_monto))
         telegram_application.add_handler(CommandHandler("miplan", cmd_miplan))
+        telegram_application.add_handler(CommandHandler("ayuda", cmd_ayuda_menu))
         telegram_application.add_handler(CallbackQueryHandler(callback_handler))
         
         await telegram_application.initialize()
         await telegram_application.start()
+        
+        # Registrar menú de comandos nativo en Telegram
+        commands = [
+            BotCommand("start", "Panel principal del bot"),
+            BotCommand("prediccion", "Ver predicciones y mercado P2P"),
+            BotCommand("calcular", "Calculadora rápida de ganancias (ej: /calcular 100)"),
+            BotCommand("miplan", "Consultar tu estado de suscripción"),
+            BotCommand("ayuda", "Listado completo de comandos")
+        ]
+        await telegram_application.bot.set_my_commands(commands)
+
         webhook_url = "https://p2p-monitor-binance.onrender.com/api/telegram/webhook"
         await telegram_application.bot.set_webhook(url=webhook_url)
         print(f"🤖 Bot de Telegram inicializado con sistema de pagos seguro en: {webhook_url}")
@@ -670,7 +739,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
-    return {"status": "ok", "message": "Venbot P2P Activo con Fase 3 (Pagos y Automatización)"}
+    return {"status": "ok", "message": "Venbot P2P Activo con Fase 3 y Menú de Comandos Integrado"}
 
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(request: Request):
@@ -680,7 +749,6 @@ async def telegram_webhook(request: Request):
     try:
         data = await request.json()
         update = Update.de_json(data, telegram_application.bot)
-        # Procesamiento seguro de updates asegurando contexto de bucle de eventos
         asyncio.create_task(telegram_application.process_update(update))
         return {"status": "ok"}
     except Exception as e:
