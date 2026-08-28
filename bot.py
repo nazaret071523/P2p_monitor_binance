@@ -776,44 +776,63 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global telegram_application
-    # Iniciar bot de Telegram
     if TELEGRAM_BOT_TOKEN:
         telegram_application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         
-        # Registrar handlers
+        # Handlers generales y comandos
         telegram_application.add_handler(CommandHandler("start", cmd_start))
         telegram_application.add_handler(CommandHandler("prediccion", cmd_prediccion))
         telegram_application.add_handler(CommandHandler("calcular", cmd_calcular_monto))
         telegram_application.add_handler(CommandHandler("miplan", cmd_miplan))
         telegram_application.add_handler(CommandHandler("ayuda", cmd_ayuda_menu))
-        telegram_application.add_handler(CommandHandler("pagospendientes", cmd_admin_pagos))
-
+        telegram_application.add_handler(CommandHandler("adminpagos", cmd_admin_pagos))
+        
+        # ConversationHandler para pagos
         conv_handler = ConversationHandler(
             entry_points=[CallbackQueryHandler(iniciar_pago_flow, pattern="^iniciar_pago$")],
             states={
-                SELECCIONANDO_PLAN: [CallbackQueryHandler(recibir_seleccion_plan, pattern="^plan_")],
+                SELECCIONANDO_PLAN: [CallbackQueryHandler(recibir_seleccion_plan, pattern="^plan_(premium|vip)$")],
                 ESPERANDO_REFERENCIA: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_referencia_pago)]
             },
             fallbacks=[CallbackQueryHandler(cancelar_conversacion, pattern="^menu_inicio$")]
         )
         telegram_application.add_handler(conv_handler)
+        
+        # Callback query handler general
         telegram_application.add_handler(CallbackQueryHandler(callback_handler))
 
         await telegram_application.initialize()
         await telegram_application.start()
-        await telegram_application.updater.start_polling()
+        
+        # Configurar comandos del bot en Telegram
+        try:
+            await telegram_application.bot.set_my_commands([
+                BotCommand("start", "Panel principal del bot"),
+                BotCommand("prediccion", "Ver estado P2P y proyecciones de IA"),
+                BotCommand("calcular", "Simular operación USDT (ej: /calcular 100)"),
+                BotCommand("miplan", "Verificar tu suscripción activa"),
+                BotCommand("ayuda", "Lista de comandos disponibles")
+            ])
+        except Exception as e:
+            print(f"Error configurando comandos: {e}")
 
-    # Iniciar tarea automática en segundo plano
-    asyncio.create_task(tarea_recoleccion_automatica())
-    
+        # Iniciar polling en segundo plano (ideal para Render o entornos sin Webhook dedicado)
+        asyncio.create_task(telegram_application.updater.start_polling(drop_pending_updates=True))
+        
+        # Iniciar tarea en segundo plano de recolección de datos P2P
+        asyncio.create_task(tarea_recoleccion_automatica())
+
     yield
-    
+
     if telegram_application:
-        await telegram_application.updater.stop()
-        await telegram_application.stop()
-        await telegram_application.shutdown()
+        try:
+            await telegram_application.stop()
+            await telegram_application.shutdown()
+        except Exception:
+            pass
 
 app = FastAPI(lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -823,9 +842,9 @@ app.add_middleware(
 )
 
 @app.get("/")
-def home():
-    return {"status": "ok", "message": "VENBOT activo correctamente en Render"}
+def health_check():
+    return {"status": "online", "bot": "VENBOT activo", "timestamp": datetime.now(VET).isoformat()}
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run("bot:app", host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
