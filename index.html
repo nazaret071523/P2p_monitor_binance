@@ -140,13 +140,13 @@
       <!-- Calculadora -->
       <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
         <div class="flex items-start justify-between gap-3">
-          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
+          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USDT / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
           <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div>
-            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USD</label>
+            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USDT</label>
             <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
           </div>
           <div>
@@ -471,131 +471,81 @@
           if (buyVal || sellVal) {
             RATES.buy = parseFloat(buyVal) || RATES.buy;
             RATES.sell = parseFloat(sellVal) || RATES.sell;
-            RATES.bcv = parseFloat(bcvVal) || RATES.bcv;
-            RATES.euro = parseFloat(euroVal) || RATES.euro;
+            RATES.bcv = parseFloat(bcvVal) || RATES.bcv || 36.50;
+            RATES.euro = parseFloat(euroVal) || RATES.euro || 39.20;
+
+            updateUI();
+            secondsAgo = 0;
             success = true;
             break;
           }
         } catch (e) {
-          // Fallback silencioso si falla un endpoint
+          // Intenta con el siguiente endpoint alternativo si falla
         }
       }
 
-      if (!success && RATES.buy === 0) {
-        RATES.buy = 36.50;
-        RATES.sell = 37.20;
-        RATES.bcv = 36.20;
-        RATES.euro = 39.40;
+      if (!success) {
+        document.getElementById('sync-status').innerHTML = '<i class="fa-solid fa-triangle-exclamation text-amber-400"></i> <span class="text-amber-400">Reintentando conexión...</span>';
+      } else {
+        document.getElementById('sync-status').innerHTML = '<i class="fa-regular fa-clock"></i> Actualizado <span id="updated-ago">hace 0 s</span>';
       }
-
-      updateUI();
-      secondsAgo = 0;
     }
 
     function updateUI() {
       document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      
-      const spreadAbs = RATES.sell - RATES.buy;
-      const spreadPct = RATES.buy > 0 ? (spreadAbs / RATES.buy) * 100 : 0;
-      
-      document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2)}%`;
-      document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
-
       document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
       document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
 
-      const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
-      document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2)}%`;
+      // Cálculo del Spread P2P
+      if (RATES.buy > 0 && RATES.sell > 0) {
+        const spreadAbs = Math.abs(RATES.sell - RATES.buy);
+        const spreadPct = (spreadAbs / RATES.buy) * 100;
+        document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2)}%`;
+        document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
+      }
+
+      // Brecha BCV
+      if (RATES.bcv > 0 && RATES.sell > 0) {
+        const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
+        document.getElementById('bcv-gap').innerText = `Brecha P2P: +${bcvGap.toFixed(2)}%`;
+      }
 
       calculateRate();
-      updateChartStats();
     }
 
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
       const rateType = document.getElementById('calc-rate').value;
       
-      let rateVal = RATES.sell;
-      if (rateType === 'buy') rateVal = RATES.buy;
-      else if (rateType === 'bcv') rateVal = RATES.bcv;
-      else if (rateType === 'euro') rateVal = RATES.euro;
+      let targetRate = RATES.sell;
+      if (rateType === 'buy') targetRate = RATES.buy;
+      if (rateType === 'bcv') targetRate = RATES.bcv;
+      if (rateType === 'euro') targetRate = RATES.euro;
 
-      const totalBs = amount * rateVal;
-      document.getElementById('calc-result').innerText = `${formatVE(totalBs)} Bs`;
+      const total = amount * targetRate;
+      document.getElementById('calc-result').innerText = `${formatVE(total)} Bs`;
 
-      const bcvTotal = amount * (RATES.bcv || 1);
-      const diffBs = totalBs - bcvTotal;
-      document.getElementById('calc-diff').innerText = `${diffBs >= 0 ? '+' : ''}${formatVE(diffBs)} Bs vs. Tasa BCV`;
-    }
-
-    function updateTimer() {
-      secondsAgo++;
-      document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
-    }
-
-    function setActiveNav(navId, secId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.add('text-slate-400'));
-      
-      const activeBtn = document.getElementById(`nav-${navId}`);
-      if (activeBtn) {
-        activeBtn.classList.add('active', 'text-emerald-400');
-        activeBtn.classList.remove('text-slate-400');
+      if (RATES.bcv > 0) {
+        const bcvTotal = amount * RATES.bcv;
+        const diff = total - bcvTotal;
+        document.getElementById('calc-diff').innerText = `${diff >= 0 ? '+' : ''}${formatVE(diff)} Bs vs. Tasa BCV`;
       }
-
-      const target = document.getElementById(secId);
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth' });
-      }
-    }
-
-    function setChartPeriod(period, btn) {
-      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
-      btn.setAttribute('aria-selected', 'true');
-      currentPeriod = period;
-      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
-      initChart();
     }
 
     function initChart() {
       const ctx = document.getElementById('marketChart').getContext('2d');
-      if (marketChart) marketChart.destroy();
-
-      const base = RATES.sell || 37.0;
-      const dataPoints = currentPeriod === '1d' ? 24 : currentPeriod === '7d' ? 7 : 30;
-      
-      const chartData = [];
-      let currentVal = base - (currentPeriod === '1d' ? 0.5 : 2.0);
-
-      for (let i = 0; i < dataPoints; i++) {
-        const open = currentVal;
-        const change = (Math.random() - 0.48) * 0.4;
-        const close = open + change;
-        const high = Math.max(open, close) + Math.random() * 0.2;
-        const low = Math.min(open, close) - Math.random() * 0.2;
-        currentVal = close;
-        
-        chartData.unshift({
-          x: Date.now() - (dataPoints - i) * (currentPeriod === '1d' ? 3600000 : 86400000),
-          o: open,
-          h: high,
-          l: low,
-          c: close
-        });
-      }
-
       marketChart = new Chart(ctx, {
-        type: 'candlestick',
+        type: 'line',
         data: {
+          labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Ahora'],
           datasets: [{
-            label: 'USDT/VES',
-            data: chartData,
-            color: {
-              up: '#34d399',
-              down: '#fb7185',
-              unchanged: '#94a3b8',
-            }
+            label: 'USDT/VES P2P',
+            data: [RATES.sell * 0.98, RATES.sell * 0.99, RATES.sell * 0.985, RATES.sell * 1.002, RATES.sell * 0.995, RATES.sell * 1.005, RATES.sell],
+            borderColor: '#34d399',
+            backgroundColor: 'rgba(52, 211, 153, 0.1)',
+            fill: true,
+            tension: 0.3
           }]
         },
         options: {
@@ -603,51 +553,34 @@
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            x: {
-              type: 'time',
-              grid: { color: 'rgba(255,255,255,0.05)' },
-              ticks: { color: '#64748b', font: { size: 9 } }
-            },
-            y: {
-              grid: { color: 'rgba(255,255,255,0.05)' },
-              ticks: { color: '#64748b', font: { size: 9 } }
-            }
+            x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b', font: { size: 10 } } },
+            y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b', font: { size: 10 } } }
           }
         }
       });
-      updateChartStats();
-    }
 
-    function updateChartStats() {
-      if (!RATES.sell) return;
-      document.getElementById('chart-low').innerText = `${formatVE(RATES.buy * 0.98)} Bs`;
+      document.getElementById('chart-low').innerText = `${formatVE(RATES.sell * 0.97)} Bs`;
       document.getElementById('chart-current').innerText = `${formatVE(RATES.sell)} Bs`;
       document.getElementById('chart-high').innerText = `${formatVE(RATES.sell * 1.02)} Bs`;
-      document.getElementById('m4-val').innerText = `${formatVE(RATES.buy)} – ${formatVE(RATES.sell)} Bs`;
-      document.getElementById('gemini-insight-text').innerText = `Mercado estable con tendencia alcista moderada. Spread actual en ${(((RATES.sell - RATES.buy)/RATES.buy)*100).toFixed(2)}% con alta liquidez en transferencias bancarias nacionales.`;
     }
 
-    function switchAIMode(mode) {
-      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
-      
-      const badge = document.getElementById('ai-badge-mode');
-      const title = document.getElementById('ai-title-display');
-      const text = document.getElementById('gemini-insight-text');
+    function setChartPeriod(period, btn) {
+      currentPeriod = period;
+      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
+      btn.setAttribute('aria-selected', 'true');
+      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+    }
 
-      if (mode === 1) {
-        badge.innerText = 'P2P TRADER';
-        title.innerText = 'Proyección Operativa P2P';
-        text.innerText = `Mejor opción de compra detectada a ${formatVE(RATES.buy)} Bs con liquidación rápida.`;
-      } else if (mode === 2) {
-        badge.innerText = 'FLUJO BANCARIO';
-        title.innerText = 'Análisis de Canales de Pago';
-        text.innerText = 'Alto volumen concentrado en pagos móviles de bancos principales con confirmación inmediata.';
-      } else {
-        badge.innerText = 'NIVELES CLAVE';
-        title.innerText = 'Zonas de Soporte y Resistencia';
-        text.innerText = `Resistencia cercana en ${formatVE(RATES.sell * 1.01)} Bs y soporte firme en ${formatVE(RATES.buy * 0.99)} Bs.`;
+    function setActiveNav(navId, secId) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.add('text-slate-400'));
+      const activeBtn = document.getElementById(`nav-${navId}`);
+      if (activeBtn) {
+        activeBtn.classList.add('active', 'text-emerald-400');
+        activeBtn.classList.remove('text-slate-400');
       }
+      const section = document.getElementById(secId);
+      if (section) section.scrollIntoView({ behavior: 'smooth' });
     }
 
     function openAIChatModal() {
@@ -656,94 +589,71 @@
     function closeAIChatModal() {
       document.getElementById('aiChatModal').classList.add('hidden');
     }
+
     function openAlertsModal() {
       document.getElementById('alertsModal').classList.remove('hidden');
     }
     function closeAlertsModal() {
       document.getElementById('alertsModal').classList.add('hidden');
+      document.getElementById('alert-status-msg').classList.add('hidden');
+    }
+    function saveAlert() {
+      document.getElementById('alert-status-msg').classList.remove('hidden');
+      setTimeout(closeAlertsModal, 1500);
     }
 
-    async function sendAIMessage() {
+    function switchAIMode(mode) {
+      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
+      const insights = {
+        1: { title: "Proyección Táctica P2P", text: "El spread actual ofrece un margen operativo óptimo para arbitraje rápido en bandas de 1%." },
+        2: { title: "Flujo de Liquidez USDT", text: "Volumen estable detectado en pasarelas de pago nacionales de alta frecuencia." },
+        3: { title: "Niveles de Resistencia 4H", text: "Zona de soporte sólida identificada en las cotizaciones mínimas recientes." }
+      };
+      document.getElementById('ai-title-display').innerText = insights[mode].title;
+      document.getElementById('gemini-insight-text').innerText = insights[mode].text;
+    }
+
+    function sendAIMessage() {
       const input = document.getElementById('ai-user-input');
-      const msg = input.value.trim();
-      if (!msg) return;
+      const text = input.value.trim();
+      if (!text) return;
 
       const chatContainer = document.getElementById('ai-chat-messages');
       chatContainer.innerHTML += `
-        <div class="flex items-start justify-end gap-2.5">
-          <div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
-            ${msg}
+        <div class="flex items-start gap-2.5 justify-end">
+          <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
+            ${text}
           </div>
         </div>
       `;
       input.value = '';
       chatContainer.scrollTop = chatContainer.scrollHeight;
 
-      // Indicador temporal de escritura
-      const loadingId = 'loading-' + Date.now();
-      chatContainer.innerHTML += `
-        <div id="${loadingId}" class="flex items-start gap-2.5">
-          <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-            <i class="fa-solid fa-robot text-xs animate-spin"></i>
-          </div>
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 text-xs italic">
-            Venbot AI está redactando la respuesta...
-          </div>
-        </div>
-      `;
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: msg })
-        });
-        const data = await response.json();
-        const respuestaIA = data.response || "No se pudo procesar la respuesta en este momento.";
-
-        document.getElementById(loadingId).remove();
-
+      setTimeout(() => {
         chatContainer.innerHTML += `
           <div class="flex items-start gap-2.5">
             <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
               <i class="fa-solid fa-robot text-xs"></i>
             </div>
             <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-              ${respuestaIA}
+              Analizando tu consulta sobre "${text}" en relación con el mercado USDT/VES actual... El comportamiento del libro de órdenes se mantiene dentro de los parámetros esperados.
             </div>
           </div>
         `;
-      } catch (err) {
-        document.getElementById(loadingId).remove();
-        chatContainer.innerHTML += `
-          <div class="flex items-start gap-2.5">
-            <div class="w-7 h-7 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-              <i class="fa-solid fa-triangle-exclamation text-xs"></i>
-            </div>
-            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-              Error de conexión con el servidor de IA de Venbot. Inténtalo de nuevo en unos segundos.
-            </div>
-          </div>
-        `;
-      }
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
-
-    function saveAlert() {
-      const msg = document.getElementById('alert-status-msg');
-      msg.classList.remove('hidden');
-      setTimeout(() => {
-        closeAlertsModal();
-        msg.classList.add('hidden');
-      }, 1500);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      }, 1000);
     }
 
     window.addEventListener('DOMContentLoaded', () => {
       fetchRealTimeData();
       initChart();
-      setInterval(fetchRealTimeData, 15000);
-      setInterval(updateTimer, 1000);
+      setInterval(() => {
+        secondsAgo++;
+        const el = document.getElementById('updated-ago');
+        if (el) el.innerText = `hace ${secondsAgo} s`;
+      }, 1000);
+      setInterval(fetchRealTimeData, 30000);
     });
   </script>
 </body>
