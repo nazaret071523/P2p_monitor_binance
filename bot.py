@@ -517,8 +517,8 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
-        [InlineKeyboardButton("⭐ Plan VIP (10 USDT)", callback_data="plan_vip")],
-        [InlineKeyboardButton("🚀 Plan Premium (25 USDT)", callback_data="plan_premium")],
+        [InlineKeyboardButton("⭐ Plan PREMIUN (5 USD)", callback_data="plan_vip")],
+        [InlineKeyboardButton("🚀 Plan VIP (15 USD)", callback_data="plan_premium")],
         [InlineKeyboardButton("❌ Cancelar", callback_data="plan_cancelar")]
     ]
     reply_markup = InlineKeyboardMarkup(teclado)
@@ -545,11 +545,11 @@ async def callback_botones_suscripcion(update: Update, context: ContextTypes.DEF
     texto_metodos = (
         f"💳 **MÉTODOS DE PAGO - PLAN {plan_seleccionado}**\n\n"
         "🇻🇪 **Pago Móvil (Bs. a Tasa BCV):**\n"
-        "• Banco: Banesco (0134)\n"
-        "• Teléfono: 0412-1234567\n"
-        "• C.I: V-12.345.678\n\n"
+        "• Banco: Mercantil (0105)\n"
+        "• Teléfono: 0424-5734635\n"
+        "• C.I: V-20.414.065\n\n"
         "🌍 **Binance Pay:**\n"
-        "• Pay ID / Email: `tucorreo@binance.com`\n\n"
+        "• Pay ID / Email: `nazaretgarcia69@gmail.com`\n\n"
         "📝 **¿Cómo registrar tu pago?**\n"
         f"Envía el comando con tu número de referencia:\n`{comando_ejemplo}`"
     )
