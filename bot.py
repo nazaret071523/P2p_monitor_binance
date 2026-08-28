@@ -18,8 +18,8 @@ from sklearn.linear_model import Ridge
 import xgboost as xgb
 
 # Importaciones de Telegram
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
 
 from google import genai
 from google.genai import types
@@ -142,7 +142,6 @@ def init_db():
                         tipo_plan TEXT DEFAULT 'vip'
                     );
                 ''')
-                # Compatibilidad por si la tabla ya existía sin la columna tipo_plan
                 cursor.execute('''
                     ALTER TABLE usuarios_p2p 
                     ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';
@@ -154,7 +153,6 @@ def init_db():
 init_db()
 
 def registrar_pago_db(telegram_id: int, username: str, referencia: str, plan_elegido: str = 'vip') -> bool:
-    """Registra o actualiza el pago de un usuario en estado pendiente incluyendo el tipo de plan."""
     conn = get_db_connection()
     if not conn:
         return False
@@ -175,7 +173,6 @@ def registrar_pago_db(telegram_id: int, username: str, referencia: str, plan_ele
         conn.close()
 
 def verificar_estado_usuario(telegram_id: int) -> dict:
-    """Verifica el estado actual de la suscripción del usuario y su plan."""
     conn = get_db_connection()
     if not conn:
         return {"estado": "error"}
@@ -292,7 +289,7 @@ def fetch_binance_p2p():
         return None, None, None, None
 
 # ==========================================
-# GEMINI IA (EXCLUSIVO P2P BINANCE) CON CACHÉ
+# GEMINI IA CON CACHÉ
 # ==========================================
 def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
     global _gemini_cache
@@ -327,8 +324,7 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
     try:
         system_instruction = (
             "Eres el analista de mercado P2P para VENBOT en Binance Venezuela (USDT/VES). "
-            "PROHIBIDO ABSOLUTAMENTE: Mencionar BCV, tasa oficial, Euro, brechas cambiarías institucionales o entes gubernamentales. "
-            "Tus respuestas deben tratar exclusivamente sobre: libro de órdenes P2P, spread, punta de compra/venta y estrategia de anuncios."
+            "PROHIBIDO ABSOLUTAMENTE: Mencionar BCV, tasa oficial, Euro, brechas cambiarías institucionales o entes gubernamentales."
         )
 
         prompt = f"""
@@ -342,21 +338,21 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
           "proyeccion_7_12h": "Proyección de rotación P2P y recompra esperada en Binance (1 frase corta).",
           "recomendacion_tactica": "Recomendación de colocación de anuncios P2P (1 frase corta).",
           "tactica": {{
-            "texto": "Lectura operativa P2P. Evalúa la dinámica entre anuncios de compra y venta en Binance.",
+            "texto": "Lectura operativa P2P.",
             "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
             "velocidad": "ALTA (< 5 min) | MEDIA",
             "sombra": "ESCASEZ DE USDT | NORMAL",
             "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
           }},
           "flujo": {{
-            "texto": "Análisis del flujo de liquidez P2P y velocidad de ejecución de órdenes.",
+            "texto": "Análisis del flujo de liquidez P2P.",
             "dominio": "COMPRADORES AGRESIVOS | LATERAL | VENDEDORES ACTIVOS",
             "spread_status": "{spread:.2f} Bs",
             "riesgo": "BAJO | MEDIO | ALTO",
             "proyeccion_12h": "{pred_venta:.2f} Bs"
           }},
           "niveles": {{
-            "texto": "Evaluación del soporte de compra y resistencia de venta en el libro P2P.",
+            "texto": "Evaluación del soporte y resistencia en el libro P2P.",
             "momentum": "ALTO (80%) | MEDIO (65%) | BAJO",
             "liquidez": "ABUNDANTE | ESTABLE | ESCASA",
             "quiebre": "{pred_compra:.2f} Bs",
@@ -366,7 +362,6 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         """
 
         modelo_activo = obtener_modelo_gemini_activo()
-
         response = gemini_client.models.generate_content(
             model=modelo_activo,
             contents=prompt,
@@ -383,7 +378,6 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         return resultado_json
 
     except Exception as e:
-        print("Aviso: Cuota de IA pausada por Google. Usando motor cuantitativo local de respaldo.")
         _gemini_cache["resultado"] = fallback_response
         _gemini_cache["ultima_actualizacion"] = tiempo_actual + 900 
         return fallback_response
@@ -399,7 +393,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         pred_c = round(actual_compra * 0.999, 2)
         pred_v = round(actual_venta * 1.001, 2)
         tendencia = "➖ ESTABLE / LATERAL"
-        direccion = "LATERAL"
         piso = actual_compra
         techo = actual_venta
     else:
@@ -446,13 +439,10 @@ def motor_quant_inteligente(actual_compra, actual_venta):
 
         if slope_c > 0.015:
             tendencia = "🚀 ALCISTA"
-            direccion = "ALCISTA"
         elif slope_c < -0.015:
             tendencia = "🔻 BAJISTA"
-            direccion = "BAJISTA"
         else:
             tendencia = "➖ ESTABLE / LATERAL"
-            direccion = "LATERAL"
 
     spread = round(actual_venta - actual_compra, 2)
     analisis_ia = obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia, pred_c, pred_v)
@@ -461,7 +451,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         "pred_compra_str": f"{pred_c:.2f} Bs",
         "pred_venta_str": f"{pred_v:.2f} Bs",
         "tendencia": tendencia,
-        "direccion": direccion,
         "recompra": pred_c,
         "venta_esperada": pred_v,
         "piso_str": f"{piso:.2f} Bs",
@@ -484,7 +473,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# BOT DE TELEGRAM (COMANDOS Y WEBHOOK)
+# BOT DE TELEGRAM (COMANDOS Y BOTONES)
 # ==========================================
 telegram_app = None
 
@@ -496,7 +485,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if datos_usuario.get("estado") != "activo":
             await update.message.reply_text(
                 "🔒 *Contenido Exclusivo para Miembros Suscritos*\n\n"
-                "No tienes una suscripción activa. Usa `/suscribir` para ver los pasos y desbloquear las señales de predicción.",
+                "No tienes una suscripción activa. Usa `/suscribir` para ver los planes y desbloquear las señales de predicción.",
                 parse_mode="Markdown"
             )
             return
@@ -527,17 +516,34 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Ocurrió un error al procesar la predicción.")
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    teclado = [
+        [InlineKeyboardButton("⭐ Plan VIP (10 USDT)", callback_data="plan_vip")],
+        [InlineKeyboardButton("🚀 Plan Premium (25 USDT)", callback_data="plan_premium")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="plan_cancelar")]
+    ]
+    reply_markup = InlineKeyboardMarkup(teclado)
+    
     texto = (
-        "💎 **PLANES DE SUSCRIPCIÓN - VENBOT P2P**\n\n"
-        "Elige el plan que mejor se adapte a tus operaciones:\n\n"
-        "⭐ **PLAN VIP (10 USDT)**\n"
-        "• Acceso completo a señales de predicción\n"
-        "• Motor XGBoost Quant en tiempo real\n\n"
-        "🚀 **PLAN PREMIUM (25 USDT)**\n"
-        "• Todo lo del plan VIP\n"
-        "• Alertas anticipadas de alta velocidad\n"
-        "• Soporte prioritario y rangos extendidos\n\n"
-        "💳 **Métodos de Pago Disponibles:**\n\n"
+        "💎 **SELECCIONA TU PLAN DE SUSCRIPCIÓN**\n\n"
+        "Elige el plan que deseas adquirir para procesar tu reporte de pago:"
+    )
+    await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+
+async def callback_botones_suscripcion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "plan_cancelar":
+        await query.message.edit_text("❌ Operación cancelada.")
+        return
+
+    plan_seleccionado = "VIP" if data == "plan_vip" else "PREMIUM"
+    comando_ejemplo = f"/registrar vip [referencia]" if plan_seleccionado == "VIP" else f"/registrar premium [referencia]"
+
+    texto_metodos = (
+        f"💳 **MÉTODOS DE PAGO - PLAN {plan_seleccionado}**\n\n"
         "🇻🇪 **Pago Móvil (Bs. a Tasa BCV):**\n"
         "• Banco: Banesco (0134)\n"
         "• Teléfono: 0412-1234567\n"
@@ -545,11 +551,10 @@ async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌍 **Binance Pay:**\n"
         "• Pay ID / Email: `tucorreo@binance.com`\n\n"
         "📝 **¿Cómo registrar tu pago?**\n"
-        "Indica el plan que pagaste junto a tu referencia:\n"
-        "• Para VIP: `/registrar vip 1234`\n"
-        "• Para Premium: `/registrar premium 1234`"
+        f"Envía el comando con tu número de referencia:\n`{comando_ejemplo}`"
     )
-    await update.message.reply_text(texto, parse_mode="Markdown")
+    
+    await query.message.edit_text(texto_metodos, parse_mode="Markdown")
 
 async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -623,6 +628,7 @@ async def iniciar_telegram_bot():
         telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
         telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
         telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
+        telegram_app.add_handler(CallbackQueryHandler(callback_botones_suscripcion))
         
         await telegram_app.initialize()
         await telegram_app.start()
