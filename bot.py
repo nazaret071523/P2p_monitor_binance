@@ -777,4 +777,4 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("👤 Mi Plan & Membresía", callback_data="menu_miplan")],
             [InlineKeyboardButton("💎 Reportar Pago / Suscribirse", callback_data="iniciar_pago")]
         ]
-        await query.message.edit_text("🦜 **VENBOT - Panel Principal**\n\nElige una opción:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.edit_text("Panel Principal VENBOT:", reply_markup=InlineKeyboardMarkup(keyboard))
