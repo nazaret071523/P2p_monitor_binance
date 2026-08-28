@@ -131,11 +131,68 @@ def init_db():
                         venta REAL
                     );
                 ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS usuarios_p2p (
+                        id SERIAL PRIMARY KEY,
+                        telegram_id BIGINT UNIQUE,
+                        username TEXT,
+                        estado_suscripcion TEXT DEFAULT 'pendiente',
+                        referencia_pago TEXT,
+                        fecha_expiracion TIMESTAMP
+                    );
+                ''')
                 conn.commit()
         finally:
             conn.close()
 
 init_db()
+
+def registrar_pago_db(telegram_id: int, username: str, referencia: str) -> bool:
+    """Registra o actualiza el pago de un usuario en estado pendiente."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO usuarios_p2p (telegram_id, username, estado_suscripcion, referencia_pago)
+                    VALUES (%s, %s, 'pendiente', %s)
+                    ON CONFLICT (telegram_id) 
+                    DO UPDATE SET referencia_pago = %s, estado_suscripcion = 'pendiente';
+                """, (telegram_id, username, referencia, referencia))
+        return True
+    except Exception as e:
+        print(f"Error en registrar_pago_db: {e}")
+        return False
+    finally:
+        conn.close()
+
+def verificar_estado_usuario(telegram_id: int) -> dict:
+    """Verifica el estado actual de la suscripción del usuario."""
+    conn = get_db_connection()
+    if not conn:
+        return {"estado": "error"}
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT estado_suscripcion, fecha_expiracion, referencia_pago 
+                    FROM usuarios_p2p WHERE telegram_id = %s;
+                """, (telegram_id,))
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "estado": row[0],
+                        "expiracion": row[1],
+                        "referencia": row[2]
+                    }
+        return {"estado": "no_registrado"}
+    except Exception as e:
+        print(f"Error en verificar_estado_usuario: {e}")
+        return {"estado": "error"}
+    finally:
+        conn.close()
 
 def guardar_muestra_db(compra, venta):
     conn = get_db_connection()
@@ -344,7 +401,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         piso = np.min(compras)
         techo = np.max(ventas)
 
-        # Preparar características (features) para XGBoost basadas en rezagos temporales (lags)
         window_size = min(total_muestras - 1, 5)
         X, y = [], []
         for i in range(window_size, len(compras)):
@@ -358,11 +414,9 @@ def motor_quant_inteligente(actual_compra, actual_venta):
             model = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
             model.fit(X, y)
             
-            # Tomar la última ventana para predecir el siguiente paso y proyectar
             last_window = compras[-window_size:].reshape(1, -1)
             pred_c_next = model.predict(last_window)[0]
             
-            # Calcular delta de tendencia usando un modelo lineal auxiliar sobre los últimos puntos para la dirección
             recent_x = np.arange(min(total_muestras, 30))
             recent_y = compras[-len(recent_x):]
             slope_c, _ = np.polyfit(recent_x, recent_y, 1)
@@ -423,12 +477,23 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# BOT DE TELEGRAM (COMANDO /prediccion Y WEBHOOK)
+# BOT DE TELEGRAM (COMANDOS Y WEBHOOK)
 # ==========================================
 telegram_app = None
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        user_id = update.effective_user.id
+        datos_usuario = verificar_estado_usuario(user_id)
+        
+        if datos_usuario.get("estado") != "activo":
+            await update.message.reply_text(
+                "🔒 *Contenido Exclusivo para Miembros VIP*\n\n"
+                "No tienes una suscripción activa. Usa `/suscribir` para ver los pasos y desbloquear las señales de predicción.",
+                parse_mode="Markdown"
+            )
+            return
+
         compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
         if not compra or not venta:
             compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
@@ -454,6 +519,56 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error en comando telegram: {e}")
         await update.message.reply_text("⚠️ Ocurrió un error al procesar la predicción.")
 
+async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = (
+        "💎 *SUSCRIPCIÓN VIP - VENBOT P2P*\n\n"
+        "Obtén acceso ilimitado a las señales y proyecciones XGBoost.\n\n"
+        "💳 *Datos de Pago (Pago Móvil / Binance Pay):*\n"
+        "• Banco: Banesco\n"
+        "• Teléfono: 0412-XXXXXXX\n"
+        "• C.I: V-XXXXXXXX\n"
+        "• Monto: 10 USDT o equivalente en Bs (Tasa BCV)\n\n"
+        "Una vez pagado, repórtalo con:\n"
+        "`/registrar [Número_de_Referencia]`"
+    )
+    await update.message.reply_text(texto, parse_mode="Markdown")
+
+async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Sin_usuario"
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ Escribe el número de referencia. Ejemplo: `/registrar 123456`", parse_mode="Markdown")
+        return
+    
+    referencia = args[0]
+    exito = registrar_pago_db(user_id, username, referencia)
+    
+    if exito:
+        await update.message.reply_text(
+            "✅ *¡Comprobante enviado con éxito!*\n\n"
+            f"Referencia registrada: `{referencia}`\n"
+            "Tu pago está en revisión. El administrador lo aprobará en breve.",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("❌ Ocurrió un error al guardar el pago. Inténtalo de nuevo.")
+
+async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    datos = verificar_estado_usuario(user_id)
+    
+    estado = datos.get("estado")
+    if estado == "activo":
+        exp = datos.get("expiracion")
+        await update.message.reply_text(f"✨ *Tu suscripción está ACTIVA*\nVence el: `{exp}`", parse_mode="Markdown")
+    elif estado == "pendiente":
+        ref = datos.get("referencia")
+        await update.message.reply_text(f"⏳ *Suscripción en revisión*\nReferencia enviada: `{ref}`\nEspera la aprobación del administrador.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("❌ No tienes una suscripción activa. Usa `/suscribir` para ver los pasos de pago.", parse_mode="Markdown")
+
 async def iniciar_telegram_bot():
     global telegram_app
     if not TELEGRAM_BOT_TOKEN:
@@ -462,6 +577,9 @@ async def iniciar_telegram_bot():
     try:
         telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
+        telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
+        telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
         
         await telegram_app.initialize()
         await telegram_app.start()
