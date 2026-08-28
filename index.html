@@ -1,660 +1,647 @@
-<!DOCTYPE html>
-<html lang="es" class="dark">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#070a11">
-  <meta name="description" content="Venbot: consulta y análisis del mercado P2P USDT/VES, tasas de referencia y herramientas de mercado.">
-  <title>Venbot · USDT/VES</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-  <style>
-    :root{--bg:#070a11;--panel:#0f172a;--panel2:#0b0f17}
-    html{scroll-behavior:smooth}
-    body{background:var(--bg);-webkit-tap-highlight-color:transparent}
-    .glass-card{background:rgba(15,23,42,.86);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.08)}
-    .focus-ring:focus-visible{outline:2px solid rgb(52 211 153);outline-offset:2px}
-    .tabular{font-variant-numeric:tabular-nums}
-    .fade-up{animation:fadeUp .22s ease-out}
-    @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-    @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.fade-up{animation:none}}
-    .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
-    .ad-label{letter-spacing:.12em}
-    .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
+import os
+import asyncio
+import psycopg2
+import requests
+import json
+import numpy as np
+import urllib3
+import time
+from bs4 import BeautifulSoup
+from datetime import datetime, timedelta, timezone
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Body
+from fastapi.responses import Response, JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+# Importaciones de Machine Learning (XGBoost Quant)
+from sklearn.linear_model import Ridge
+import xgboost as xgb
+
+# Importaciones de Telegram
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+
+from google import genai
+from google.genai import types
+
+# Deshabilitar advertencias SSL en caso de fluctuaciones en el certificado del BCV
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Configuración de zona horaria Venezuela
+VET = timezone(timedelta(hours=-4))
+DATABASE_URL = os.getenv("DATABASE_URL")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+# ==========================================
+# SISTEMA DE CACHÉ DE IA (15 MINUTOS)
+# ==========================================
+_gemini_cache = {
+    "resultado": None,
+    "ultima_actualizacion": 0
+}
+CACHE_EXPIRATION_TIME = 900  # 900 segundos = 15 minutos
+
+# ==========================================
+# AUTODESCUBRIMIENTO AUTÓNOMO DE MODELOS IA
+# ==========================================
+def obtener_modelo_gemini_activo() -> str:
+    """Consulta de forma autónoma los modelos disponibles para usar siempre el Flash más reciente."""
+    modelo_por_defecto = "gemini-1.5-flash"
+    if not gemini_client:
+        return modelo_por_defecto
+    try:
+        models_pager = gemini_client.models.list()
+        candidatos = []
+        for m in models_pager:
+            nombre = getattr(m, "name", "")
+            if nombre.startswith("models/"):
+                nombre = nombre.replace("models/", "", 1)
+            if "flash" in nombre.lower():
+                candidatos.append(nombre)
+        
+        if candidatos:
+            candidatos.sort(reverse=True)
+            return candidatos[0]
+    except Exception as e:
+        pass
+    return modelo_por_defecto
+
+# ==========================================
+# SCRAPING / OBTENCIÓN TASAS BCV Y EURO EN VIVO
+# ==========================================
+def obtener_tasas_oficiales_bcv():
+    usd_bcv = 898.50
+    eur_bcv = 1050.00
     
-    .bottom-nav {
-      background: rgba(11, 15, 23, 0.95);
-      backdrop-filter: blur(16px);
-      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    try:
+        url = "https://www.bcv.org.ve/"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, headers=headers, verify=False, timeout=4)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            usd_elem = soup.find('div', {'id': 'dolar'})
+            if usd_elem:
+                val = usd_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
+                usd_bcv = float(val)
+
+            eur_elem = soup.find('div', {'id': 'euro'})
+            if eur_elem:
+                val = eur_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
+                eur_bcv = float(val)
+                
+            return usd_bcv, eur_bcv
+    except Exception as e:
+        print(f"Error consultando sitio oficial BCV: {e}")
+
+    try:
+        res_backup = requests.get("https://rates.dolarvzla.com/bcv/current.json", timeout=3).json()
+        usd_bcv = float(res_backup.get("current", {}).get("usd", usd_bcv))
+        eur_bcv = float(res_backup.get("current", {}).get("eur", eur_bcv))
+    except Exception as e:
+        print(f"Error consultando API respaldo BCV: {e}")
+
+    return usd_bcv, eur_bcv
+
+# ==========================================
+# BASE DE DATOS POSTGRESQL (SUPABASE)
+# ==========================================
+def get_db_connection():
+    if not DATABASE_URL:
+        return None
+    try:
+        return psycopg2.connect(DATABASE_URL)
+    except Exception as e:
+        print(f"Error conectando a DB: {e}")
+        return None
+
+def init_db():
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS historial (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TEXT,
+                        compra REAL,
+                        venta REAL
+                    );
+                ''')
+                conn.commit()
+        finally:
+            conn.close()
+
+init_db()
+
+def guardar_muestra_db(compra, venta):
+    conn = get_db_connection()
+    if conn:
+        try:
+            hora_str = datetime.now(VET).isoformat()
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO historial (timestamp, compra, venta) VALUES (%s, %s, %s);",
+                    (hora_str, compra, venta)
+                )
+                cursor.execute('''
+                    DELETE FROM historial 
+                    WHERE id NOT IN (
+                        SELECT id FROM historial ORDER BY id DESC LIMIT 2000
+                    );
+                ''')
+                conn.commit()
+        except Exception as e:
+            print(f"Error guardando en DB: {e}")
+        finally:
+            conn.close()
+
+def obtener_estadisticas_db(limit=2000):
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT compra, venta, timestamp FROM historial ORDER BY id ASC LIMIT %s;", (limit,))
+                filas = cursor.fetchall()
+            return filas
+        except Exception as e:
+            print(f"Error leyendo DB: {e}")
+            return []
+        finally:
+            conn.close()
+    return []
+
+# ==========================================
+# LECTURA P2P BINANCE
+# ==========================================
+def fetch_binance_p2p():
+    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    .nav-item.active {
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.25);
-      color: #34d399;
+    bancos_filtro = ["BBVA", "Mercantil", "BNC"]
+
+    payload_compra = {
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000",
+        "payTypes": bancos_filtro
     }
-
-    .ai-mode-btn { transition: all 0.2s ease; }
-    .ai-mode-btn.active {
-      background: rgba(52, 211, 153, 0.15);
-      border-color: rgba(52, 211, 153, 0.4);
-      color: #6ee7b7;
-    }
-  </style>
-</head>
-<body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
-  <div class="min-h-screen flex flex-col">
-
-    <!-- Header -->
-    <header class="border-b border-slate-800/80 bg-[#0b0f17]/95 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
-      <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
-        <div class="min-w-0 shrink-0">
-          <div class="flex items-center gap-2">
-            <h1 class="font-extrabold text-lg tracking-wider text-emerald-400 leading-none">VENBOT</h1>
-            <span class="bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Consulta</span>
-          </div>
-          <p class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
-        </div>
-        <div class="hidden md:block flex-1 max-w-xl mx-3">
-          <div class="ad-slot rounded-xl px-4 py-2 text-center">
-            <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-            <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
-          </div>
-        </div>
-        <button type="button" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
-          <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- Bar Status -->
-    <div class="w-full bg-slate-900/60 border-b border-slate-800 px-4 py-2">
-      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
-        <div class="flex items-center gap-2">
-          <span id="sync-status" class="inline-flex items-center gap-1.5 text-emerald-400 font-semibold">
-            <i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>
-          </span>
-          <span class="text-slate-700">•</span>
-          <span>Fuente: <strong class="text-slate-300">Binance Mercado P2P</strong></span>
-        </div>
-        <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
-      </div>
-    </div>
-
-    <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-32">
-      
-      <!-- Mercado Principal -->
-      <section id="sec-mercado" class="space-y-3 scroll-mt-24">
-        <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-          <div>
-            <p class="text-[10px] text-emerald-400 font-black uppercase tracking-[0.18em]">Mercado principal</p>
-            <h2 class="text-xl md:text-2xl font-black text-white mt-1">USDT / VES</h2>
-          </div>
-          <div class="flex items-center gap-2 text-[10px] text-slate-500">
-            <span>Valores informativos</span>
-            <i class="fa-regular fa-circle-question text-slate-400"></i>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <article class="glass-card p-4 rounded-2xl border-l-4 border-l-emerald-500">
-            <div class="flex items-start justify-between gap-3">
-              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Comprar USDT</p><p id="buy-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">--,-- <span class="text-xs font-medium text-slate-400">Bs</span></p></div>
-              <span class="inline-flex items-center gap-1.5 text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-down"></i> Mejor compra</span>
-            </div>
-            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Precio observado</span><span class="text-slate-300 font-semibold">Binance P2P</span></div>
-          </article>
-
-          <article class="glass-card p-4 rounded-2xl border-l-4 border-l-rose-500">
-            <div class="flex items-start justify-between gap-3">
-              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Vender USDT</p><p id="sell-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">--,-- <span class="text-xs font-medium text-slate-400">Bs</span></p></div>
-              <span class="inline-flex items-center gap-1.5 text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-up"></i> Mejor venta</span>
-            </div>
-            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Precio observado</span><span class="text-slate-300 font-semibold">Binance P2P</span></div>
-          </article>
-
-          <article class="glass-card p-4 rounded-2xl border-l-4 border-l-amber-400">
-            <div class="flex items-start justify-between gap-3">
-              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Spread P2P</p><p id="spread-value" class="tabular text-2xl md:text-3xl font-black text-amber-300 mt-1">--.--%</p></div>
-              <span class="inline-flex items-center gap-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-chart-line"></i> Diferencial</span>
-            </div>
-            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Diferencia</span><span id="spread-absolute" class="text-slate-300 font-semibold">--,-- Bs / USDT</span></div>
-          </article>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-amber-500/15">
-            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-slate-500 mt-0.5">Oficial BCV</p></div></div>
-            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">--,-- Bs/EUR</p><p class="text-[10px] text-slate-500 font-bold">Oficial Banco Central</p></div>
-          </article>
-          <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-blue-500/15">
-            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400"><i class="fa-solid fa-building-columns"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-slate-500 mt-0.5">Dólar de referencia</p></div></div>
-            <div class="text-right"><p id="bcv-rate" class="tabular text-lg font-black text-blue-300">--,-- Bs/USD</p><p id="bcv-gap" class="text-[10px] text-amber-300 font-bold">Brecha P2P: --.--%</p></div>
-          </article>
-        </div>
-      </section>
-
-      <!-- Calculadora -->
-      <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
-        <div class="flex items-start justify-between gap-3">
-          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USDT / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
-          <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div>
-            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USDT</label>
-            <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
-          </div>
-          <div>
-            <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
-            <select id="calc-rate" onchange="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
-              <option value="sell">Venta P2P · En Vivo</option>
-              <option value="buy">Compra P2P · En Vivo</option>
-              <option value="bcv">Tasa BCV · Oficial</option>
-              <option value="euro">Tasa Euro · Oficial</option>
-            </select>
-          </div>
-          <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Resultado estimado</span>
-            <strong id="calc-result" class="tabular text-lg font-black text-emerald-400 mt-0.5 block">--,-- Bs</strong>
-            <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">--,-- Bs vs. Tasa BCV</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Gráfico de Velas -->
-      <section class="glass-card p-4 rounded-2xl space-y-3">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <div class="flex items-center gap-2">
-              <h3 class="font-bold text-slate-100 text-sm">USDT / VES · Evolución P2P (Velas)</h3>
-              <span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">1 día</span>
-            </div>
-            <p class="text-[10px] text-slate-500 mt-1">Gráfico de velas estilo trading del mercado P2P.</p>
-          </div>
-          <div role="tablist" class="flex items-center gap-1 bg-slate-950/70 border border-slate-800 rounded-xl p-1">
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="true" onclick="setChartPeriod('1d',this)">1D</button>
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('7d',this)">7D</button>
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('30d',this)">30D</button>
-          </div>
-        </div>
-
-        <div class="flex items-center gap-3 text-[10px] text-slate-400">
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Alcista (Verde)</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Bajista (Roja)</span>
-        </div>
-        <div class="relative h-64 w-full"><canvas id="marketChart"></canvas></div>
-        <div class="grid grid-cols-3 gap-2 text-[10px]">
-          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Mínimo</span><strong id="chart-low" class="tabular text-white">--,-- Bs</strong></div>
-          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Actual</span><strong id="chart-current" class="tabular text-emerald-300">--,-- Bs</strong></div>
-          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Máximo</span><strong id="chart-high" class="tabular text-white">--,-- Bs</strong></div>
-        </div>
-      </section>
-
-      <!-- Tarjeta Venbot AI -->
-      <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-lg">
-              <i class="fa-solid fa-brain text-emerald-400"></i>
-            </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI</h3>
-                <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Asistente</span>
-              </div>
-              <p class="text-[11px] text-slate-400 mt-0.5">Pregunta por el mercado P2P, tendencias, spreads e indicadores.</p>
-            </div>
-          </div>
-          <button type="button" onclick="openAIChatModal()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
-            Abrir IA <i class="fa-solid fa-wand-magic-sparkles"></i>
-          </button>
-        </div>
-
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
-              <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1">
-                <i class="fa-solid fa-bolt text-amber-400"></i> Táctica
-              </button>
-              <button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1">
-                <i class="fa-solid fa-chart-pie text-sky-400"></i> Flujo
-              </button>
-              <button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1">
-                <i class="fa-solid fa-bullseye text-purple-400"></i> Niveles
-              </button>
-            </div>
-            <span id="ai-badge-mode" class="text-[9px] font-bold text-slate-400 uppercase">P2P TRADER</span>
-          </div>
-
-          <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
-            <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5">
-              <i class="fa-solid fa-robot text-sm"></i>
-            </div>
-            <div class="flex-1">
-              <div class="flex items-center justify-between">
-                <h4 id="ai-title-display" class="text-xs font-bold text-slate-100">Proyección Operativa P2P</h4>
-                <span class="text-[10px] text-slate-500 font-semibold">En vivo</span>
-              </div>
-              <p id="gemini-insight-text" class="text-xs text-slate-300 mt-1 leading-relaxed font-normal">
-                Obteniendo análisis actualizado del mercado...
-              </p>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-            <div class="bg-slate-900/60 border border-emerald-500/20 rounded-xl p-3">
-              <span id="m1-title" class="text-[11px] font-bold text-emerald-400 uppercase tracking-wide block">SEÑAL OPERATIVA</span>
-              <strong id="m1-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">🟢 COMPRA FUERTE</strong>
-            </div>
-            <div class="bg-slate-900/60 border border-sky-500/20 rounded-xl p-3">
-              <span id="m2-title" class="text-[11px] font-bold text-sky-400 uppercase tracking-wide block">VELOCIDAD DE SALIDA</span>
-              <strong id="m2-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">⚡ ALTA (&lt; 5 min)</strong>
-            </div>
-            <div class="bg-slate-900/60 border border-amber-500/20 rounded-xl p-3">
-              <span id="m3-title" class="text-[11px] font-bold text-amber-400 uppercase tracking-wide block">SOMBRA DE LIQUIDEZ</span>
-              <strong id="m3-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">⚠️ ESCASEZ DE USDT</strong>
-            </div>
-            <div class="bg-slate-900/60 border border-purple-500/20 rounded-xl p-3">
-              <span id="m4-title" class="text-[11px] font-bold text-purple-400 uppercase tracking-wide block">RANGO OBJETIVO 4H</span>
-              <strong id="m4-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Tarjeta Alertas de Precio -->
-      <section id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-3">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-lg">
-            <i class="fa-solid fa-bell"></i>
-          </div>
-          <div>
-            <h3 class="font-bold text-slate-100 text-sm">Alertas de precio</h3>
-            <p class="text-[11px] text-slate-400">Configura un nivel de USDT para recibir una alerta cuando se alcance.</p>
-          </div>
-        </div>
-        <button type="button" onclick="openAlertsModal()" class="focus-ring bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
-          Configurar alertas <i class="fa-solid fa-arrow-right"></i>
-        </button>
-      </section>
-
-      <!-- Pie de página -->
-      <section id="sec-comunidad" class="space-y-4 pt-4">
-        <article class="glass-card p-4 rounded-2xl border border-sky-500/20 flex items-center justify-between gap-3">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-lg">
-              <i class="fa-brands fa-telegram"></i>
-            </div>
-            <div>
-              <h3 class="font-bold text-slate-100 text-sm">Comunidad Venbot</h3>
-              <p class="text-[11px] text-slate-400">Novedades, alertas y soporte de la aplicación.</p>
-            </div>
-          </div>
-          <a href="https://t.me/" target="_blank" class="focus-ring bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
-            Abrir comunidad <i class="fa-solid fa-arrow-right"></i>
-          </a>
-        </article>
-
-        <article class="glass-card p-4 rounded-2xl border border-slate-800 text-[11px] text-slate-400 space-y-2">
-          <div class="flex items-center gap-2 text-slate-200 font-bold">
-            <i class="fa-solid fa-circle-info text-emerald-400"></i> Sobre los datos mostrados
-          </div>
-          <p>Los precios P2P pueden variar entre anuncios, métodos de pago, liquidez y momento de consulta. Las cotizaciones deben interpretarse como referencias informativas.</p>
-          <p>Venbot no custodia fondos, no ejecuta operaciones ni procesa pagos. El análisis de mercado es informativo y no constituye asesoramiento financiero personalizado.</p>
-        </article>
-
-        <div class="flex items-center justify-center gap-6 py-2 text-slate-400 text-sm font-bold">
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-x-twitter"></i> X</a>
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-instagram"></i> Instagram</a>
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
-        </div>
-
-        <div class="ad-slot rounded-xl p-4 text-center">
-          <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-          <div class="text-[10px] text-slate-600 mt-1">Banner publicitario de prueba · debajo de las redes</div>
-        </div>
-      </section>
-
-    </main>
-
-    <!-- Botón Flotante de IA -->
-    <div class="fixed bottom-20 right-4 z-50">
-      <button type="button" onclick="openAIChatModal()" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
-        <i class="fa-solid fa-robot"></i>
-      </button>
-    </div>
-
-    <!-- Navegación Inferior Móvil -->
-    <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
-      <div class="max-w-md mx-auto grid grid-cols-4 gap-1 text-center">
-        <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
-          <i class="fa-solid fa-chart-simple text-base mb-1"></i>
-          <span class="text-[10px] font-bold">Mercado</span>
-        </button>
-        <button type="button" onclick="setActiveNav('calculadora', 'sec-calculadora')" id="nav-calculadora" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
-          <i class="fa-solid fa-calculator text-base mb-1"></i>
-          <span class="text-[10px] font-bold">Calculadora</span>
-        </button>
-        <button type="button" onclick="openAIChatModal()" id="nav-gemini" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
-          <i class="fa-solid fa-wand-magic-sparkles text-base mb-1"></i>
-          <span class="text-[10px] font-bold">Venbot AI</span>
-        </button>
-        <button type="button" onclick="openAlertsModal()" id="nav-alertas" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
-          <i class="fa-solid fa-bell text-base mb-1"></i>
-          <span class="text-[10px] font-bold">Alertas</span>
-        </button>
-      </div>
-    </nav>
-
-  </div>
-
-  <!-- MODAL: CHAT DE VENBOT AI -->
-  <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
-    <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
-      <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-            <i class="fa-solid fa-robot text-sm"></i>
-          </div>
-          <div>
-            <h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI</h3>
-            <p class="text-[10px] text-emerald-400 font-semibold">Conectado al mercado P2P</p>
-          </div>
-        </div>
-        <button type="button" onclick="closeAIChatModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition">
-          <i class="fa-solid fa-xmark text-sm"></i>
-        </button>
-      </div>
-      <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="flex items-start gap-2.5">
-          <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-            <i class="fa-solid fa-robot text-xs"></i>
-          </div>
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-            ¡Hola! Soy Venbot AI. Pregúntame sobre el spread actual, proyecciones o indicadores del mercado USDT/VES.
-          </div>
-        </div>
-      </div>
-      <div class="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center gap-2">
-        <input id="ai-user-input" type="text" placeholder="Escribe tu consulta al bot..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
-        <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1">
-          <i class="fa-solid fa-paper-plane"></i>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL: CONFIGURACIÓN DE ALERTAS DE PRECIO -->
-  <div id="alertsModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
-    <div class="glass-card w-full max-w-md rounded-2xl border border-amber-500/30 p-5 shadow-2xl space-y-4 fade-up">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-        <div class="flex items-center gap-2.5">
-          <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-            <i class="fa-solid fa-bell text-base"></i>
-          </div>
-          <div>
-            <h3 class="font-extrabold text-sm text-white">Configurar Alertas</h3>
-            <p class="text-[10px] text-slate-400">Notificaciones de precio USDT/VES</p>
-          </div>
-        </div>
-        <button type="button" onclick="closeAlertsModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition">
-          <i class="fa-solid fa-xmark text-sm"></i>
-        </button>
-      </div>
-
-      <div class="space-y-3 text-xs">
-        <div>
-          <label class="block font-semibold text-slate-300 mb-1">Tipo de Operación</label>
-          <select id="alert-type" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200">
-            <option value="sell">Cuando el precio de Venta supere...</option>
-            <option value="buy">Cuando el precio de Compra baje de...</option>
-          </select>
-        </div>
-        <div>
-          <label class="block font-semibold text-slate-300 mb-1">Precio Objetivo (Bs)</label>
-          <input id="alert-target-price" type="number" step="0.01" placeholder="Ej. 38.50" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-bold text-white">
-        </div>
-        <div>
-          <label class="block font-semibold text-slate-300 mb-1">Enviar notificación a:</label>
-          <input id="alert-contact" type="text" placeholder="@TuUsuarioTelegram o correo" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white">
-        </div>
-        <div id="alert-status-msg" class="text-[10px] text-emerald-400 font-semibold hidden">
-          ✓ Alerta configurada correctamente para este navegador.
-        </div>
-      </div>
-
-      <div class="flex items-center justify-end gap-2 pt-2">
-        <button type="button" onclick="closeAlertsModal()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold px-4 py-2 rounded-xl transition">Cancelar</button>
-        <button type="button" onclick="saveAlert()" class="focus-ring bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition">Guardar alerta</button>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    const API_BASE_URL = "https://p2p-monitor-binance.onrender.com";
-
-    let RATES = { buy: 0, sell: 0, bcv: 0, euro: 0 };
-    let secondsAgo = 0;
-    let marketChart = null;
-    let currentPeriod = '1d';
-
-    function formatVE(val) {
-      if (!val || isNaN(val)) return '0,00';
-      return Number(val).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    payload_venta = {
+        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
+        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000",
+        "payTypes": bancos_filtro
     }
 
-    async function fetchRealTimeData() {
-      const endpoints = [
-        `${API_BASE_URL}/api/actual`,
-        `${API_BASE_URL}/api/v1/p2p-rates`,
-        `${API_BASE_URL}/rates`,
-        `${API_BASE_URL}/`
-      ];
+    try:
+        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=5).json()
+        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=5).json()
 
-      let success = false;
-      for (const endpoint of endpoints) {
-        try {
-          const response = await fetch(endpoint, { cache: 'no-store' });
-          if (!response.ok) continue;
-          const data = await response.json();
-          
-          const buyVal = data.buy || data.compra || data.buy_price || data.precio_compra || data.p2p_buy;
-          const sellVal = data.sell || data.venta || data.sell_price || data.precio_venta || data.p2p_sell;
-          const bcvVal = data.bcv || data.bcv_rate || data.tasa_bcv || data.bcv_price;
-          const euroVal = data.euro || data.euro_rate || data.tasa_euro || data.euro_price;
+        data_c = res_c.get("data", [])
+        data_v = res_v.get("data", [])
 
-          if (buyVal || sellVal) {
-            RATES.buy = parseFloat(buyVal) || RATES.buy;
-            RATES.sell = parseFloat(sellVal) || RATES.sell;
-            RATES.bcv = parseFloat(bcvVal) || RATES.bcv || 36.50;
-            RATES.euro = parseFloat(euroVal) || RATES.euro || 39.20;
+        if not data_c or not data_v:
+            return None, None, None, None
 
-            updateUI();
-            secondsAgo = 0;
-            success = true;
-            break;
-          }
-        } catch (e) {
-          // Intenta con el siguiente endpoint alternativo si falla
-        }
-      }
+        precios_compra = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
+        precios_venta = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
 
-      if (!success) {
-        document.getElementById('sync-status').innerHTML = '<i class="fa-solid fa-triangle-exclamation text-amber-400"></i> <span class="text-amber-400">Reintentando conexión...</span>';
-      } else {
-        document.getElementById('sync-status').innerHTML = '<i class="fa-regular fa-clock"></i> Actualizado <span id="updated-ago">hace 0 s</span>';
-      }
-    }
+        if not precios_compra or not precios_venta:
+            return None, None, None, None
 
-    function updateUI() {
-      document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
-      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
+        tasa_compra = min(precios_compra)
+        tasa_venta = max(precios_venta)
 
-      // Cálculo del Spread P2P
-      if (RATES.buy > 0 && RATES.sell > 0) {
-        const spreadAbs = Math.abs(RATES.sell - RATES.buy);
-        const spreadPct = (spreadAbs / RATES.buy) * 100;
-        document.getElementById('spread-value').innerText = `${spreadPct.toFixed(2)}%`;
-        document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
-      }
+        if tasa_compra >= tasa_venta:
+            tasa_compra = precios_compra[0]
+            tasa_venta = precios_venta[0]
 
-      // Brecha BCV
-      if (RATES.bcv > 0 && RATES.sell > 0) {
-        const bcvGap = ((RATES.sell - RATES.bcv) / RATES.bcv) * 100;
-        document.getElementById('bcv-gap').innerText = `Brecha P2P: +${bcvGap.toFixed(2)}%`;
-      }
+        spread = round(tasa_venta - tasa_compra, 2)
+        pct_bruto = round((spread / tasa_compra) * 100, 2) if tasa_compra > 0 else 0.0
 
-      calculateRate();
-    }
+        return tasa_compra, tasa_venta, spread, pct_bruto
+    except Exception as e:
+        print(f"Error consultando Binance: {e}")
+        return None, None, None, None
 
-    function calculateRate() {
-      const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
-      const rateType = document.getElementById('calc-rate').value;
-      
-      let targetRate = RATES.sell;
-      if (rateType === 'buy') targetRate = RATES.buy;
-      if (rateType === 'bcv') targetRate = RATES.bcv;
-      if (rateType === 'euro') targetRate = RATES.euro;
+# ==========================================
+# GEMINI IA (EXCLUSIVO P2P BINANCE) CON CACHÉ
+# ==========================================
+def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
+    global _gemini_cache
+    tiempo_actual = time.time()
 
-      const total = amount * targetRate;
-      document.getElementById('calc-result').innerText = `${formatVE(total)} Bs`;
+    if _gemini_cache["resultado"] is not None and (tiempo_actual - _gemini_cache["ultima_actualizacion"] < CACHE_EXPIRATION_TIME):
+        return _gemini_cache["resultado"]
 
-      if (RATES.bcv > 0) {
-        const bcvTotal = amount * RATES.bcv;
-        const diff = total - bcvTotal;
-        document.getElementById('calc-diff').innerText = `${diff >= 0 ? '+' : ''}${formatVE(diff)} Bs vs. Tasa BCV`;
-      }
-    }
-
-    function initChart() {
-      const ctx = document.getElementById('marketChart').getContext('2d');
-      marketChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Ahora'],
-          datasets: [{
-            label: 'USDT/VES P2P',
-            data: [RATES.sell * 0.98, RATES.sell * 0.99, RATES.sell * 0.985, RATES.sell * 1.002, RATES.sell * 0.995, RATES.sell * 1.005, RATES.sell],
-            borderColor: '#34d399',
-            backgroundColor: 'rgba(52, 211, 153, 0.1)',
-            fill: true,
-            tension: 0.3
-          }]
+    fallback_response = {
+        "estado_actual": f"El spread P2P actual se ubica en {spread:.2f} Bs con ordenes activas en compra ({actual_compra:.2f} Bs) y venta ({actual_venta:.2f} Bs).",
+        "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Nivel óptimo de recompra estimado en {pred_compra:.2f} Bs.",
+        "recomendacion_tactica": "Mantener margen dinámico en los anuncios de compra para acelerar la rotación de capital.",
+        "tactica": {
+            "texto": f"El spread P2P de {spread:.2f} Bs permite colocación rápida de órdenes en la punta competitiva.",
+            "senal": "COMPRA MODERADA", "velocidad": "ALTA (< 5 min)", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
         },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b', font: { size: 10 } } },
-            y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#64748b', font: { size: 10 } } }
-          }
+        "flujo": {
+            "texto": "Absorción constante de volumen P2P orientada a comerciantes no verificados.",
+            "dominio": "COMPRADORES ACTIVOS", "spread_status": f"{spread:.2f} Bs", "riesgo": "BAJO", "proyeccion_12h": f"{pred_venta:.2f} Bs"
+        },
+        "niveles": {
+            "texto": "Comportamiento del libro de órdenes ajustado al canal actual de USDT/VES.",
+            "momentum": "MEDIO (65%)", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{pred_venta:.2f} Bs"
         }
-      });
-
-      document.getElementById('chart-low').innerText = `${formatVE(RATES.sell * 0.97)} Bs`;
-      document.getElementById('chart-current').innerText = `${formatVE(RATES.sell)} Bs`;
-      document.getElementById('chart-high').innerText = `${formatVE(RATES.sell * 1.02)} Bs`;
     }
 
-    function setChartPeriod(period, btn) {
-      currentPeriod = period;
-      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
-      btn.setAttribute('aria-selected', 'true');
-      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+    if not gemini_client:
+        _gemini_cache["resultado"] = fallback_response
+        _gemini_cache["ultima_actualizacion"] = tiempo_actual
+        return fallback_response
+
+    try:
+        system_instruction = (
+            "Eres el analista de mercado P2P para VENBOT en Binance Venezuela (USDT/VES). "
+            "PROHIBIDO ABSOLUTAMENTE: Mencionar BCV, tasa oficial, Euro, brechas cambiarías institucionales o entes gubernamentales. "
+            "Tus respuestas deben tratar exclusivamente sobre: libro de órdenes P2P, spread, punta de compra/venta y estrategia de anuncios."
+        )
+
+        prompt = f"""
+        Datos Binance P2P Tiempo Real:
+        - Compra: {actual_compra:.2f} Bs | Venta: {actual_venta:.2f} Bs | Spread: {spread:.2f} Bs
+        - Tendencia: {tendencia_quant} | Recompra Proyectada: {pred_compra:.2f} Bs | Venta Proyectada: {pred_venta:.2f} Bs
+
+        Genera este formato JSON estricto enfocando el análisis exclusivamente en Binance P2P:
+        {{
+          "estado_actual": "Análisis exclusivo de las puntas P2P y spread actual en Binance (1 frase corta).",
+          "proyeccion_7_12h": "Proyección de rotación P2P y recompra esperada en Binance (1 frase corta).",
+          "recomendacion_tactica": "Recomendación de colocación de anuncios P2P (1 frase corta).",
+          "tactica": {{
+            "texto": "Lectura operativa P2P. Evalúa la dinámica entre anuncios de compra y venta en Binance.",
+            "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
+            "velocidad": "ALTA (< 5 min) | MEDIA",
+            "sombra": "ESCASEZ DE USDT | NORMAL",
+            "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
+          }},
+          "flujo": {{
+            "texto": "Análisis del flujo de liquidez P2P y velocidad de ejecución de órdenes.",
+            "dominio": "COMPRADORES AGRESIVOS | LATERAL | VENDEDORES ACTIVOS",
+            "spread_status": "{spread:.2f} Bs",
+            "riesgo": "BAJO | MEDIO | ALTO",
+            "proyeccion_12h": "{pred_venta:.2f} Bs"
+          }},
+          "niveles": {{
+            "texto": "Evaluación del soporte de compra y resistencia de venta en el libro P2P.",
+            "momentum": "ALTO (80%) | MEDIO (65%) | BAJO",
+            "liquidez": "ABUNDANTE | ESTABLE | ESCASA",
+            "quiebre": "{pred_compra:.2f} Bs",
+            "techo": "{pred_venta:.2f} Bs"
+          }}
+        }}
+        """
+
+        modelo_activo = obtener_modelo_gemini_activo()
+
+        response = gemini_client.models.generate_content(
+            model=modelo_activo,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                temperature=0.3
+            ),
+        )
+
+        resultado_json = json.loads(response.text)
+        _gemini_cache["resultado"] = resultado_json
+        _gemini_cache["ultima_actualizacion"] = tiempo_actual
+        return resultado_json
+
+    except Exception as e:
+        print("Aviso: Cuota de IA pausada por Google. Usando motor cuantitativo local de respaldo.")
+        _gemini_cache["resultado"] = fallback_response
+        _gemini_cache["ultima_actualizacion"] = tiempo_actual + 900 
+        return fallback_response
+
+# ==========================================
+# MOTOR QUANT (XGBOOST QUANT MACHINE LEARNING)
+# ==========================================
+def motor_quant_inteligente(actual_compra, actual_venta):
+    filas = obtener_estadisticas_db()
+    total_muestras = len(filas)
+
+    if total_muestras < 15:
+        pred_c = round(actual_compra * 0.999, 2)
+        pred_v = round(actual_venta * 1.001, 2)
+        tendencia = "➖ ESTABLE / LATERAL"
+        direccion = "LATERAL"
+        piso = actual_compra
+        techo = actual_venta
+    else:
+        compras = np.array([f[0] for f in filas])
+        ventas = np.array([f[1] for f in filas])
+        piso = np.min(compras)
+        techo = np.max(ventas)
+
+        # Preparar características (features) para XGBoost basadas en rezagos temporales (lags)
+        window_size = min(total_muestras - 1, 5)
+        X, y = [], []
+        for i in range(window_size, len(compras)):
+            X.append(compras[i - window_size:i])
+            y.append(compras[i])
+        
+        X = np.array(X)
+        y = np.array(y)
+
+        if len(X) > 0:
+            model = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
+            model.fit(X, y)
+            
+            # Tomar la última ventana para predecir el siguiente paso y proyectar
+            last_window = compras[-window_size:].reshape(1, -1)
+            pred_c_next = model.predict(last_window)[0]
+            
+            # Calcular delta de tendencia usando un modelo lineal auxiliar sobre los últimos puntos para la dirección
+            recent_x = np.arange(min(total_muestras, 30))
+            recent_y = compras[-len(recent_x):]
+            slope_c, _ = np.polyfit(recent_x, recent_y, 1)
+            
+            delta_estimado = (pred_c_next - actual_compra) + (slope_c * 10)
+            pred_c = round(actual_compra + delta_estimado, 2)
+        else:
+            pred_c = round(actual_compra, 2)
+            slope_c = 0.0
+
+        spread_historico_promedio = np.mean(ventas - compras)
+        pred_v = round(pred_c + spread_historico_promedio, 2)
+
+        if total_muestras >= 10:
+            recent_x = np.arange(min(total_muestras, 30))
+            recent_y = compras[-len(recent_x):]
+            slope_c, _ = np.polyfit(recent_x, recent_y, 1)
+        else:
+            slope_c = 0.0
+
+        if slope_c > 0.015:
+            tendencia = "🚀 ALCISTA"
+            direccion = "ALCISTA"
+        elif slope_c < -0.015:
+            tendencia = "🔻 BAJISTA"
+            direccion = "BAJISTA"
+        else:
+            tendencia = "➖ ESTABLE / LATERAL"
+            direccion = "LATERAL"
+
+    spread = round(actual_venta - actual_compra, 2)
+    analisis_ia = obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia, pred_c, pred_v)
+
+    return {
+        "pred_compra_str": f"{pred_c:.2f} Bs",
+        "pred_venta_str": f"{pred_v:.2f} Bs",
+        "tendencia": tendencia,
+        "direccion": direccion,
+        "recompra": pred_c,
+        "venta_esperada": pred_v,
+        "piso_str": f"{piso:.2f} Bs",
+        "techo_str": f"{techo:.2f} Bs",
+        "muestras": total_muestras,
+        "analisis_ia": analisis_ia
     }
 
-    function setActiveNav(navId, secId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.add('text-slate-400'));
-      const activeBtn = document.getElementById(`nav-${navId}`);
-      if (activeBtn) {
-        activeBtn.classList.add('active', 'text-emerald-400');
-        activeBtn.classList.remove('text-slate-400');
-      }
-      const section = document.getElementById(secId);
-      if (section) section.scrollIntoView({ behavior: 'smooth' });
-    }
+# ==========================================
+# RECOLECCIÓN AUTOMÁTICA
+# ==========================================
+async def tarea_recoleccion_automatica():
+    while True:
+        try:
+            compra, venta, _, _ = await asyncio.to_thread(fetch_binance_p2p)
+            if compra and venta:
+                await asyncio.to_thread(guardar_muestra_db, compra, venta)
+        except Exception as e:
+            print(f"Error en recolección: {e}")
+        await asyncio.sleep(300)
 
-    function openAIChatModal() {
-      document.getElementById('aiChatModal').classList.remove('hidden');
-    }
-    function closeAIChatModal() {
-      document.getElementById('aiChatModal').classList.add('hidden');
-    }
+# ==========================================
+# BOT DE TELEGRAM (COMANDO /prediccion)
+# ==========================================
+async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+        if not compra or not venta:
+            compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
+        
+        pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
+        hora_actual = datetime.now(VET).strftime("%I:%M %p")
+        
+        mensaje = (
+            f"🦜 **VENBOT PREDICCIONES**\n"
+            f"⏱ ({hora_actual}) | BLOQUE P2P\n"
+            f"🟢 COMPRA (10k): {compra:.2f} Bs\n"
+            f"🔴 VENTA (300k): {venta:.2f} Bs\n"
+            f"⚡ MARGEN: {spread:.2f} Bs ({pct:.2f}%)\n\n"
+            f"🔮 **PROYECCIÓN +7H (IA QUANT - XGBOOST)**\n"
+            f"🟢 Recompra Esperada: {pred['pred_compra_str']}\n"
+            f"🔴 Venta Esperada: {pred['pred_venta_str']}\n"
+            f"🎯 Dirección: {pred['tendencia']}\n\n"
+            f"📊 Piso: {pred['piso_str']} | Techo: {pred['techo_str']}\n"
+            f"💾 Base de Datos: {pred['muestras']} Muestras"
+        )
+        await update.message.reply_text(mensaje, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Error en comando telegram: {e}")
+        await update.message.reply_text("⚠️ Ocurrió un error al procesar la predicción.")
 
-    function openAlertsModal() {
-      document.getElementById('alertsModal').classList.remove('hidden');
-    }
-    function closeAlertsModal() {
-      document.getElementById('alertsModal').classList.add('hidden');
-      document.getElementById('alert-status-msg').classList.add('hidden');
-    }
-    function saveAlert() {
-      document.getElementById('alert-status-msg').classList.remove('hidden');
-      setTimeout(closeAlertsModal, 1500);
-    }
+async def iniciar_telegram_bot():
+    if not TELEGRAM_BOT_TOKEN:
+        print("⚠️ TELEGRAM_BOT_TOKEN no configurado. El bot de Telegram no se iniciará.")
+        return
+    try:
+        application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        application.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        print("🤖 Bot de Telegram inicializado y escuchando comandos con éxito.")
+    except Exception as e:
+        print(f"Error al iniciar el bot de Telegram: {e}")
 
-    function switchAIMode(mode) {
-      document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
-      const insights = {
-        1: { title: "Proyección Táctica P2P", text: "El spread actual ofrece un margen operativo óptimo para arbitraje rápido en bandas de 1%." },
-        2: { title: "Flujo de Liquidez USDT", text: "Volumen estable detectado en pasarelas de pago nacionales de alta frecuencia." },
-        3: { title: "Niveles de Resistencia 4H", text: "Zona de soporte sólida identificada en las cotizaciones mínimas recientes." }
-      };
-      document.getElementById('ai-title-display').innerText = insights[mode].title;
-      document.getElementById('gemini-insight-text').innerText = insights[mode].text;
+# ==========================================
+# SERVIDOR FASTAPI Y ENDPOINTS ASÍNCRONOS
+# ==========================================
+@asynccontextmanager
+async def lifespan(app_fastapi: FastAPI):
+    asyncio.create_task(tarea_recoleccion_automatica())
+    asyncio.create_task(iniciar_telegram_bot())
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware, 
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"]
+)
+
+@app.api_route("/", methods=["GET", "HEAD"])
+async def home():
+    return {"status": "ok", "message": "Venbot P2P Activo con XGBoost Quant"}
+
+@app.get("/api/stream")
+async def event_stream():
+    async def event_generator():
+        yield "retry: 3000\n\n"
+        while True:
+            try:
+                compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+                usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
+                
+                if not compra:
+                    compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
+
+                pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
+
+                payload = {
+                    "compra": compra,
+                    "venta": venta,
+                    "spread": spread,
+                    "pct_bruto": pct,
+                    "diferencia": spread,
+                    "buy_price": compra,
+                    "sell_price": venta,
+                    "bcv": usd_bcv,
+                    "euro": eur_bcv,
+                    "prediccion": pred,
+                    "timestamp": datetime.now(VET).isoformat(),
+                    "status": "connected"
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+            except Exception as e:
+                print(f"Error en stream generator: {e}")
+            await asyncio.sleep(5)
+
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"
     }
+    return StreamingResponse(event_generator(), headers=headers)
 
-    function sendAIMessage() {
-      const input = document.getElementById('ai-user-input');
-      const text = input.value.trim();
-      if (!text) return;
-
-      const chatContainer = document.getElementById('ai-chat-messages');
-      chatContainer.innerHTML += `
-        <div class="flex items-start gap-2.5 justify-end">
-          <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
-            ${text}
-          </div>
-        </div>
-      `;
-      input.value = '';
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-
-      setTimeout(() => {
-        chatContainer.innerHTML += `
-          <div class="flex items-start gap-2.5">
-            <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-              <i class="fa-solid fa-robot text-xs"></i>
-            </div>
-            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-              Analizando tu consulta sobre "${text}" en relación con el mercado USDT/VES actual... El comportamiento del libro de órdenes se mantiene dentro de los parámetros esperados.
-            </div>
-          </div>
-        `;
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-      }, 1000);
+@app.get("/api/v1/p2p-rates")
+async def get_p2p_rates_v1():
+    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
+    
+    if not compra:
+        compra, venta = 945.25, 956.00
+    
+    data = {
+        "buy_price": compra,
+        "sell_price": venta,
+        "bcv_price": usd_bcv,
+        "euro_price": eur_bcv
     }
+    return JSONResponse(
+        content=data,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
 
-    window.addEventListener('DOMContentLoaded', () => {
-      fetchRealTimeData();
-      initChart();
-      setInterval(() => {
-        secondsAgo++;
-        const el = document.getElementById('updated-ago');
-        if (el) el.innerText = `hace ${secondsAgo} s`;
-      }, 1000);
-      setInterval(fetchRealTimeData, 30000);
-    });
-  </script>
-</body>
-</html>
+@app.get("/styles.css")
+async def get_custom_css():
+    css_content = """
+    body {
+      background-color: #0B1120 !important;
+      color: #FFFFFF !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    }
+    p, span, label, div, .description, .ia-report-text {
+      color: #E2E8F0 !important;
+      font-size: 0.95rem !important;
+      line-height: 1.5 !important;
+    }
+    .text-secondary, .text-muted, small, footer p, .ia-disclaimer-text {
+      color: #94A3B8 !important;
+    }
+    h1, h2, h3, h4, h5, .card-title, .metric-label {
+      color: #38BDF8 !important;
+      font-weight: 600 !important;
+    }
+    .metric-value, .highlight-text {
+      color: #FFFFFF !important;
+      font-weight: 700 !important;
+    }
+    """
+    return Response(content=css_content, media_type="text/css")
+
+@app.get("/api/actual")
+async def get_actual():
+    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
+    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
+    
+    if not compra:
+        return JSONResponse(
+            content={"error": "Sin datos"},
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+        )
+    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
+    data = {
+        "compra": compra, 
+        "venta": venta, 
+        "spread": spread, 
+        "pct_bruto": pct, 
+        "diferencia": spread,
+        "bcv": usd_bcv,
+        "euro": eur_bcv,
+        "prediccion": pred
+    }
+    return JSONResponse(
+        content=data,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
+
+@app.get("/api/historico")
+async def get_historico(periodo: str = "1d"):
+    filas = await asyncio.to_thread(obtener_estadisticas_db)
+    resultado = []
+    for f in filas:
+        try:
+            hora_f = datetime.fromisoformat(f[2]).strftime("%I:%M %p")
+        except:
+            hora_f = "12:00"
+        resultado.append({"hora": hora_f, "compra": f[0], "venta": f[1]})
+    return JSONResponse(
+        content=resultado,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
+
+@app.post("/api/chat")
+async def api_chat(payload: dict = Body(...)):
+    prompt = payload.get("prompt", "").lower()
+    compra, venta, spread, _ = await asyncio.to_thread(fetch_binance_p2p)
+    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
+    ia = pred["analisis_ia"]
+    
+    if "precio" in prompt or "cuanto" in prompt:
+        respuesta = f"La compra P2P está en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
+    elif "comprar" in prompt:
+        respuesta = f"Tasa recomendada para comprar P2P: {compra:.2f} Bs."
+    elif "vender" in prompt:
+        respuesta = f"Tasa recomendada para vender P2P: {venta:.2f} Bs."
+    else:
+        respuesta = f"Diagnóstico P2P: {ia.get('estado_actual', '')} Recomendación: {ia.get('recomendacion_tactica', '')}"
+
+    return {"response": respuesta}
+
+@app.get("/api/historial")
+async def get_historial():
+    filas = await asyncio.to_thread(obtener_estadisticas_db)
+    compras = [f[0] for f in filas]
+    ventas = [f[1] for f in filas]
+    return JSONResponse(
+        content={"compras": compras, "ventas": ventas, "total": len(filas)},
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
