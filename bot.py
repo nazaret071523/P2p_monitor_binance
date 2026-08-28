@@ -9,7 +9,7 @@ import time
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, Request
 from fastapi.responses import Response, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -423,8 +423,10 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# BOT DE TELEGRAM (COMANDO /prediccion)
+# BOT DE TELEGRAM (COMANDO /prediccion Y WEBHOOK)
 # ==========================================
+telegram_app = None
+
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
@@ -453,17 +455,17 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Ocurrió un error al procesar la predicción.")
 
 async def iniciar_telegram_bot():
+    global telegram_app
     if not TELEGRAM_BOT_TOKEN:
         print("⚠️ TELEGRAM_BOT_TOKEN no configurado. El bot de Telegram no se iniciará.")
         return
     try:
-        application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        application.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
         
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        print("🤖 Bot de Telegram inicializado y escuchando comandos con éxito.")
+        await telegram_app.initialize()
+        await telegram_app.start()
+        print("🤖 Bot de Telegram inicializado con éxito.")
     except Exception as e:
         print(f"Error al iniciar el bot de Telegram: {e}")
 
@@ -473,7 +475,7 @@ async def iniciar_telegram_bot():
 @asynccontextmanager
 async def lifespan(app_fastapi: FastAPI):
     asyncio.create_task(tarea_recoleccion_automatica())
-    asyncio.create_task(iniciar_telegram_bot())
+    await iniciar_telegram_bot()
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -489,6 +491,19 @@ app.add_middleware(
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
     return {"status": "ok", "message": "Venbot P2P Activo con XGBoost Quant"}
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    if not telegram_app:
+        return {"status": "error", "message": "Telegram app not initialized"}
+    try:
+        json_data = await request.json()
+        update = Update.de_json(json_data, telegram_app.bot)
+        await telegram_app.process_update(update)
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"Error procesando webhook de Telegram: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/stream")
 async def event_stream():
