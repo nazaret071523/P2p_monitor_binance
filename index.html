@@ -34,7 +34,6 @@
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
 
-    <!-- Header -->
     <header class="border-b border-slate-800/80 bg-[#0b0f17]/95 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
       <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
         <div class="min-w-0 shrink-0">
@@ -56,7 +55,6 @@
       </div>
     </header>
 
-    <!-- Barra de Estado -->
     <div class="w-full bg-slate-900/60 border-b border-slate-800 px-4 py-2">
       <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
         <div class="flex items-center gap-2">
@@ -66,13 +64,14 @@
           <span class="text-slate-700">•</span>
           <span>Fuente: <strong class="text-slate-300">Binance P2P API</strong></span>
         </div>
-        <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad Telegram <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
+        <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition flex items-center gap-1">
+          <i class="fa-brands fa-telegram"></i> Comunidad Telegram <i class="fa-solid fa-arrow-up-right-from-square ml-0.5 text-[9px]"></i>
+        </a>
       </div>
     </div>
 
     <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-32">
       
-      <!-- Mercado Principal -->
       <section id="sec-mercado" class="space-y-3 scroll-mt-24">
         <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
@@ -138,7 +137,6 @@
         </div>
       </section>
 
-      <!-- Calculadora -->
       <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
         <div class="flex items-start justify-between gap-3">
           <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora Rápida USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte montos utilizando cotizaciones P2P o tasas oficiales.</p></div>
@@ -167,7 +165,6 @@
         </div>
       </section>
 
-      <!-- Gráfico de Velas / Histórico -->
       <section class="glass-card p-4 rounded-2xl space-y-3">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
@@ -196,7 +193,6 @@
         </div>
       </section>
 
-      <!-- Panel Venbot AI -->
       <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
           <div class="flex items-center gap-3">
@@ -268,7 +264,6 @@
         </div>
       </section>
 
-      <!-- Tarjeta Alertas -->
       <section id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-3">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-lg">
@@ -284,7 +279,6 @@
         </button>
       </section>
 
-      <!-- Redes y Avisos -->
       <section class="space-y-4 pt-2">
         <div class="ad-slot rounded-xl p-4 text-center">
           <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD PATROCINADA</div>
@@ -294,14 +288,12 @@
 
     </main>
 
-    <!-- Botón Flotante IA -->
     <div class="fixed bottom-20 right-4 z-50">
       <button type="button" onclick="triggerAd('ai_button'); openAIChatModal();" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
         <i class="fa-solid fa-robot"></i>
       </button>
     </div>
 
-    <!-- Navegación Móvil Inferior -->
     <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
       <div class="max-w-md mx-auto grid grid-cols-4 gap-1 text-center">
         <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
@@ -325,7 +317,6 @@
 
   </div>
 
-  <!-- MODAL DE ANUNCIOS -->
   <div id="adModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-sm rounded-2xl border border-emerald-500/30 p-6 text-center space-y-4 shadow-2xl fade-up">
       <div class="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto text-xl">
@@ -345,7 +336,6 @@
     </div>
   </div>
 
-  <!-- MODAL CHAT DE IA -->
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
@@ -381,7 +371,6 @@
     </div>
   </div>
 
-  <!-- MODAL ALERTAS -->
   <div id="alertsModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-md rounded-2xl border border-amber-500/30 p-5 shadow-2xl space-y-4 fade-up">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -478,24 +467,36 @@
     }
 
     function updateMarketData() {
-      document.getElementById('buy-price').innerHTML = `${currentBuy.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      document.getElementById('sell-price').innerHTML = `${currentSell.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      const buyEl = document.getElementById('buy-price');
+      const sellEl = document.getElementById('sell-price');
+      if (buyEl) buyEl.innerHTML = `${currentBuy.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      if (sellEl) sellEl.innerHTML = `${currentSell.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       
       const spread = ((currentSell - currentBuy) / currentBuy) * 100;
       const absSpread = currentSell - currentBuy;
-      document.getElementById('spread-value').innerText = `${spread.toFixed(2).replace('.', ',')}%`;
-      document.getElementById('spread-absolute').innerText = `${absSpread.toFixed(2).replace('.', ',')} Bs / USDT`;
+      
+      const spreadVal = document.getElementById('spread-value');
+      const spreadAbs = document.getElementById('spread-absolute');
+      if (spreadVal) spreadVal.innerText = `${spread.toFixed(2).replace('.', ',')}%`;
+      if (spreadAbs) spreadAbs.innerText = `${absSpread.toFixed(2).replace('.', ',')} Bs / USDT`;
 
-      document.getElementById('bcv-rate').innerText = `${bcvRate.toFixed(2).replace('.', ',')} Bs`;
-      document.getElementById('euro-rate').innerText = `${euroRate.toFixed(2).replace('.', ',')} Bs`;
+      const bcvEl = document.getElementById('bcv-rate');
+      const euroEl = document.getElementById('euro-rate');
+      if (bcvEl) bcvEl.innerText = `${bcvRate.toFixed(2).replace('.', ',')} Bs`;
+      if (euroEl) euroEl.innerText = `${euroRate.toFixed(2).replace('.', ',')} Bs`;
       
       const bcvGap = ((currentSell - bcvRate) / bcvRate) * 100;
-      document.getElementById('bcv-gap').innerText = `Brecha P2P: +${bcvGap.toFixed(2).replace('.', ',')}%`;
+      const bcvGapEl = document.getElementById('bcv-gap');
+      if (bcvGapEl) bcvGapEl.innerText = `Brecha P2P: +${bcvGap.toFixed(2).replace('.', ',')}%`;
     }
 
     function calculateRate() {
-      const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
-      const rateType = document.getElementById('calc-rate').value;
+      const amountInput = document.getElementById('calc-amount');
+      const rateSelect = document.getElementById('calc-rate');
+      if (!amountInput || !rateSelect) return;
+
+      const amount = parseFloat(amountInput.value) || 0;
+      const rateType = rateSelect.value;
       let rate = currentSell;
 
       if (rateType === 'buy') rate = currentBuy;
@@ -506,21 +507,35 @@
       const bcvResult = amount * bcvRate;
       const diff = result - bcvResult;
 
-      document.getElementById('calc-result').innerText = `${result.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})} Bs`;
-      document.getElementById('calc-diff').innerText = `${diff >= 0 ? '+' : ''}${diff.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})} Bs vs. BCV`;
+      const calcRes = document.getElementById('calc-result');
+      const calcDiff = document.getElementById('calc-diff');
+      if (calcRes) calcRes.innerText = `${result.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})} Bs`;
+      if (calcDiff) calcDiff.innerText = `${diff >= 0 ? '+' : ''}${diff.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})} Bs vs. BCV`;
     }
 
     function setChartPeriod(period, btn) {
       document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
-      btn.setAttribute('aria-selected', 'true');
-      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+      if (btn) btn.setAttribute('aria-selected', 'true');
+      const periodLabel = document.getElementById('chart-period-label');
+      if (periodLabel) periodLabel.innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
     }
 
     function switchAIMode(mode) {
       document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
+      const activeBtn = document.getElementById(`btn-ai-mode-${mode}`);
+      if (activeBtn) activeBtn.classList.add('active');
+      
       const badges = ['MODO TRADING', 'FLUJO DE CAJA', 'NIVELES CLAVE'];
-      document.getElementById('ai-badge-mode').innerText = badges[mode - 1];
+      const badgeEl = document.getElementById('ai-badge-mode');
+      if (badgeEl) badgeEl.innerText = badges[mode - 1];
+
+      const insights = [
+        "Volumen comercial constante en Binance P2P. La estabilidad cambiaria mantiene un spread controlado con alta disponibilidad en bancos principales.",
+        "Optimización del flujo de caja corporativo mediante liquidaciones directas a Pago Móvil y cuentas empresariales nacionales.",
+        "Identificación de soportes técnicos sólidos en 36.80 Bs y resistencias dinámicas limitadas cerca de 37.50 Bs."
+      ];
+      const insightEl = document.getElementById('gemini-insight-text');
+      if (insightEl) insightEl.innerText = insights[mode - 1];
     }
 
     function setActiveNav(name, sectionId) {
@@ -528,44 +543,62 @@
         n.classList.remove('active');
         n.classList.add('text-slate-400');
       });
-      document.getElementById(`nav-${name}`).classList.add('active');
-      document.getElementById(`nav-${name}`).classList.remove('text-slate-400');
-      document.getElementById(sectionId).scrollIntoView({ behavior: 'smooth' });
+      const navTarget = document.getElementById(`nav-${name}`);
+      if (navTarget) {
+        navTarget.classList.add('active');
+        navTarget.classList.remove('text-slate-400');
+      }
+      const sectionTarget = document.getElementById(sectionId);
+      if (sectionTarget) {
+        sectionTarget.scrollIntoView({ behavior: 'smooth' });
+      }
     }
 
     function triggerAd(context) {
-      document.getElementById('adModal').classList.remove('hidden');
-      document.getElementById('ad-description-text').innerText = `Mostrando anuncio patrocinado para: ${context}`;
+      const adModal = document.getElementById('adModal');
+      const adDesc = document.getElementById('ad-description-text');
+      if (adModal) adModal.classList.remove('hidden');
+      if (adDesc) adDesc.innerText = `Mostrando anuncio patrocinado para: ${context}`;
     }
     function closeAdModal() {
-      document.getElementById('adModal').classList.add('hidden');
+      const adModal = document.getElementById('adModal');
+      if (adModal) adModal.classList.add('hidden');
     }
     function openAIChatModal() {
-      document.getElementById('aiChatModal').classList.remove('hidden');
+      const aiModal = document.getElementById('aiChatModal');
+      if (aiModal) aiModal.classList.remove('hidden');
     }
     function closeAIChatModal() {
-      document.getElementById('aiChatModal').classList.add('hidden');
+      const aiModal = document.getElementById('aiChatModal');
+      if (aiModal) aiModal.classList.add('hidden');
     }
     function openAlertsModal() {
-      document.getElementById('alertsModal').classList.remove('hidden');
+      const alertsModal = document.getElementById('alertsModal');
+      if (alertsModal) alertsModal.classList.remove('hidden');
     }
     function closeAlertsModal() {
-      document.getElementById('alertsModal').classList.add('hidden');
+      const alertsModal = document.getElementById('alertsModal');
+      if (alertsModal) alertsModal.classList.add('hidden');
     }
     function saveAlert() {
       const msg = document.getElementById('alert-status-msg');
-      msg.classList.remove('hidden');
-      setTimeout(() => {
-        msg.classList.add('hidden');
-        closeAlertsModal();
-      }, 1500);
+      if (msg) {
+        msg.classList.remove('hidden');
+        setTimeout(() => {
+          msg.classList.add('hidden');
+          closeAlertsModal();
+        }, 1500);
+      }
     }
     function sendAIMessage() {
       const input = document.getElementById('ai-user-input');
+      if (!input) return;
       const text = input.value.trim();
       if (!text) return;
 
       const container = document.getElementById('ai-chat-messages');
+      if (!container) return;
+
       container.innerHTML += `
         <div class="flex items-start justify-end gap-2.5">
           <div class="bg-emerald-500/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">
