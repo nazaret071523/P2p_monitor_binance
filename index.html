@@ -48,6 +48,7 @@
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
 
+    <!-- Header -->
     <header class="border-b border-slate-800/80 bg-[#0b0f17]/95 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
       <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
         <div class="min-w-0 shrink-0">
@@ -69,6 +70,7 @@
       </div>
     </header>
 
+    <!-- Bar Status -->
     <div class="w-full bg-slate-900/60 border-b border-slate-800 px-4 py-2">
       <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
         <div class="flex items-center gap-2">
@@ -84,6 +86,7 @@
 
     <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-32">
       
+      <!-- Mercado Principal -->
       <section id="sec-mercado" class="space-y-3 scroll-mt-24">
         <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
@@ -140,6 +143,7 @@
         </div>
       </section>
 
+      <!-- Calculadora -->
       <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
         <div class="flex items-start justify-between gap-3">
           <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
@@ -168,6 +172,7 @@
         </div>
       </section>
 
+      <!-- Gráfico de Velas -->
       <section class="glass-card p-4 rounded-2xl space-y-3">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
@@ -196,6 +201,7 @@
         </div>
       </section>
 
+      <!-- Tarjeta Venbot AI - EXCLUSIVA BINANCE P2P -->
       <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
           <div class="flex items-center gap-3">
@@ -267,6 +273,7 @@
         </div>
       </section>
 
+      <!-- Tarjeta Alertas de Precio -->
       <section id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-3">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-lg">
@@ -282,6 +289,7 @@
         </button>
       </section>
 
+      <!-- Pie de página -->
       <section id="sec-comunidad" class="space-y-4 pt-4">
         <article class="glass-card p-4 rounded-2xl border border-sky-500/20 flex items-center justify-between gap-3">
           <div class="flex items-center gap-3">
@@ -320,12 +328,14 @@
 
     </main>
 
+    <!-- Botón Flotante de IA -->
     <div class="fixed bottom-20 right-4 z-50">
       <button type="button" onclick="handleAIClick()" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
         <i class="fa-solid fa-robot"></i>
       </button>
     </div>
 
+    <!-- Navegación Inferior Móvil -->
     <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
       <div class="max-w-md mx-auto grid grid-cols-4 gap-1 text-center">
         <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
@@ -349,6 +359,7 @@
 
   </div>
 
+  <!-- MODAL: ANUNCIOS -->
   <div id="adModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-sm rounded-2xl border border-emerald-500/30 p-6 text-center space-y-4 shadow-2xl fade-up">
       <div class="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto text-xl">
@@ -368,6 +379,7 @@
     </div>
   </div>
 
+  <!-- MODAL: CHAT DE VENBOT AI -->
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
@@ -403,6 +415,7 @@
     </div>
   </div>
 
+  <!-- MODAL: CONFIGURACIÓN DE ALERTAS DE PRECIO -->
   <div id="alertsModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-md rounded-2xl border border-amber-500/30 p-5 shadow-2xl space-y-4 fade-up">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -477,7 +490,7 @@
     }
 
     async function fetchRealTimeData() {
-      // 1. Obtener tasas oficiales en vivo del Banco Central de Venezuela (BCV y Euro)
+      // 1. Obtener tasas oficiales exactas del Banco Central de Venezuela (BCV y Euro)
       try {
         const resBcv = await fetch("https://ve.dolarapi.com/v1/dolares/bcv", { cache: 'no-store' });
         if (resBcv.ok) {
@@ -506,9 +519,9 @@
         }
       } catch (e) {}
 
-      // Respaldos robustos en caso de fallo de red
-      if (RATES.bcv <= 0) RATES.bcv = 912.33;
-      if (RATES.euro <= 0) RATES.euro = 994.44;
+      // Respaldos robustos basados en la referencia real del BCV si falla la red
+      if (RATES.bcv <= 0) RATES.bcv = 794.99;
+      if (RATES.euro <= 0) RATES.euro = 922.69;
       if (RATES.sell <= 0) RATES.sell = 939.70;
       if (RATES.buy <= 0) RATES.buy = 929.80;
 
@@ -549,7 +562,7 @@
       else if (rateType === 'euro') rate = RATES.euro;
 
       const result = amount * rate;
-      const bcvResult = amount * (RATES.bcv || 912.33);
+      const bcvResult = amount * (RATES.bcv || 794.99);
       const diff = result - bcvResult;
 
       document.getElementById('calc-result').innerText = `${formatVE(result)} Bs`;
