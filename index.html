@@ -64,7 +64,6 @@
             <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
           </div>
         </div>
-        <!-- 3. Anuncio en el botón de iniciar sesión -->
         <button type="button" onclick="triggerAd('login')" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
           <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
         </button>
@@ -87,7 +86,7 @@
 
     <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-32">
       
-      <!-- Mercado Principal (INTACTO) -->
+      <!-- Mercado Principal -->
       <section id="sec-mercado" class="space-y-3 scroll-mt-24">
         <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
@@ -152,7 +151,6 @@
           </div>
           <div>
             <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
-            <!-- 4. Anuncio en la calculadora cuando vayan a cambiar la tasa -->
             <select id="calc-rate" onchange="triggerAd('calc_rate'); calculateRate();" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
               <option value="sell">Venta P2P · En Vivo</option>
               <option value="buy">Compra P2P · En Vivo</option>
@@ -168,7 +166,7 @@
         </div>
       </section>
 
-      <!-- Gráfico de Velas (INTACTO) -->
+      <!-- Gráfico de Velas -->
       <section class="glass-card p-4 rounded-2xl space-y-3">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
@@ -197,7 +195,7 @@
         </div>
       </section>
 
-      <!-- Tarjeta Venbot AI (ANÁLISIS INTACTO) -->
+      <!-- Tarjeta Venbot AI -->
       <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
           <div class="flex items-center gap-3">
@@ -212,7 +210,6 @@
               <p class="text-[11px] text-slate-400 mt-0.5">Pregunta por el mercado P2P, tendencias, spreads e indicadores.</p>
             </div>
           </div>
-          <!-- 5. Anuncio en el botón de la IA -->
           <button type="button" onclick="triggerAd('ai_button'); openAIChatModal();" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
             Abrir IA <i class="fa-solid fa-wand-magic-sparkles"></i>
           </button>
@@ -327,7 +324,6 @@
 
     <!-- Botón Flotante de IA -->
     <div class="fixed bottom-20 right-4 z-50">
-      <!-- 5. Anuncio en el botón flotante de la IA -->
       <button type="button" onclick="triggerAd('ai_button'); openAIChatModal();" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
         <i class="fa-solid fa-robot"></i>
       </button>
@@ -344,7 +340,6 @@
           <i class="fa-solid fa-calculator text-base mb-1"></i>
           <span class="text-[10px] font-bold">Calculadora</span>
         </button>
-        <!-- 5. Anuncio en la pestaña de IA de la barra inferior -->
         <button type="button" onclick="triggerAd('ai_button'); openAIChatModal();" id="nav-gemini" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
           <i class="fa-solid fa-wand-magic-sparkles text-base mb-1"></i>
           <span class="text-[10px] font-bold">Venbot AI</span>
@@ -358,7 +353,7 @@
 
   </div>
 
-  <!-- MODAL GENERAL DE ANUNCIOS (PUBLICIDAD) -->
+  <!-- MODAL GENERAL DE ANUNCIOS -->
   <div id="adModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-sm rounded-2xl border border-emerald-500/30 p-6 text-center space-y-4 shadow-2xl fade-up">
       <div class="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto text-xl">
@@ -468,7 +463,6 @@
     let marketChart = null;
     let currentPeriod = '1d';
 
-    // Funciones de control de anuncios solicitadas
     function triggerAd(type) {
       const modal = document.getElementById('adModal');
       const desc = document.getElementById('ad-description-text');
@@ -491,14 +485,11 @@
       if (modal) modal.classList.add('hidden');
     }
 
-    // Inicializar los temporizadores de anuncios (1 al iniciar y 1 cada 30 segundos)
     window.addEventListener('DOMContentLoaded', () => {
-      // 1. Anuncio de entrada al iniciar la app
       setTimeout(() => {
         triggerAd('startup');
       }, 800);
 
-      // 2. Anuncio cada 30 segundos que la app esté abierta
       setInterval(() => {
         triggerAd('interval');
       }, 30000);
@@ -521,18 +512,19 @@
         try {
           const res = await fetch(endpoint, { mode: 'cors' });
           if (res.ok) {
-            const data = await res.json();
-            // Respetando precios de mercado y tasas oficiales sin alteraciones
-            if (data.buy || data.sell) {
-              RATES.buy = parseFloat(data.buy) || RATES.buy;
-              RATES.sell = parseFloat(data.sell) || RATES.sell;
+            const raw = await res.json();
+            const data = raw.data || raw; // Soporte para respuestas envueltas o planas
+            
+            if (data.buy || data.sell || data.compra || data.venta) {
+              RATES.buy = parseFloat(data.buy || data.compra) || RATES.buy;
+              RATES.sell = parseFloat(data.sell || data.venta) || RATES.sell;
             }
             if (data.bcv) RATES.bcv = parseFloat(data.bcv) || RATES.bcv;
             if (data.euro) RATES.euro = parseFloat(data.euro) || RATES.euro;
             break;
           }
         } catch (e) {
-          // Fallback silencioso
+          // Continuar con el siguiente endpoint en caso de fallo de red
         }
       }
       updateUIValues();
@@ -550,6 +542,7 @@
         document.getElementById('spread-value').textContent = `${spread.toFixed(2)}%`;
         document.getElementById('spread-absolute').textContent = `${formatVE(abs)} Bs / USDT`;
       }
+      calculateRate();
     }
 
     function calculateRate() {
@@ -562,6 +555,11 @@
 
       const total = amount * activeRate;
       document.getElementById('calc-result').textContent = `${formatVE(total)} Bs`;
+      
+      if (RATES.bcv > 0 && activeRate > 0) {
+        const diffVsBcv = (activeRate - RATES.bcv) * amount;
+        document.getElementById('calc-diff').textContent = `${formatVE(diffVsBcv)} Bs vs. Tasa BCV`;
+      }
     }
 
     function openAIChatModal() {
@@ -625,6 +623,7 @@
         });
       }
       fetchRealTimeData();
+      setInterval(fetchRealTimeData, 10000); // Actualización en tiempo real cada 10s
     });
   </script>
 </body>
