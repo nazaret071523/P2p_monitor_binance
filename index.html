@@ -46,6 +46,54 @@
   </style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
+
+  <!-- AUDIO ESCONDIDO -->
+  <audio id="hidden-audio" preload="auto">
+    <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" type="audio/mpeg">
+  </audio>
+
+  <!-- MODAL: ANUNCIO AL INICIAR LA APP -->
+  <div id="startupAdModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="glass-card w-full max-w-md rounded-2xl border border-emerald-500/40 p-6 shadow-2xl text-center space-y-4 fade-up">
+      <div class="inline-flex w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 items-center justify-center text-emerald-400 text-xl">
+        <i class="fa-solid fa-rectangle-ad"></i>
+      </div>
+      <div>
+        <span class="text-[9px] font-black tracking-widest text-emerald-400 uppercase bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">Anuncio Patrocinado</span>
+        <h3 class="font-extrabold text-lg text-white mt-2">¡Bienvenido a Venbot P2P!</h3>
+        <p class="text-xs text-slate-400 mt-1">Optimiza tus operaciones y arbitrajes con nuestras herramientas en tiempo real.</p>
+      </div>
+      <div class="ad-slot rounded-xl p-4 my-2">
+        <div class="text-xs font-bold text-slate-300">🚀 Banner Comercial de Inicio</div>
+        <p class="text-[10px] text-slate-500 mt-1">Espacio publicitario exclusivo al cargar la aplicación.</p>
+      </div>
+      <button type="button" onclick="closeStartupAd()" class="focus-ring w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs py-3 rounded-xl transition shadow-lg">
+        Continuar a la aplicación
+      </button>
+    </div>
+  </div>
+
+  <!-- MODAL: ANUNCIO A LOS 30 SEGUNDOS -->
+  <div id="timerAdModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="glass-card w-full max-w-md rounded-2xl border border-sky-500/40 p-6 shadow-2xl text-center space-y-4 fade-up">
+      <div class="inline-flex w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/30 items-center justify-center text-sky-400 text-xl">
+        <i class="fa-solid fa-bullhorn"></i>
+      </div>
+      <div>
+        <span class="text-[9px] font-black tracking-widest text-sky-400 uppercase bg-sky-500/10 px-2.5 py-1 rounded-full border border-sky-500/20">Publicidad Intersticial</span>
+        <h3 class="font-extrabold text-lg text-white mt-2">Patrocinador Oficial</h3>
+        <p class="text-xs text-slate-400 mt-1">Has estado conectado durante 30 segundos. Conoce las mejores tasas del mercado.</p>
+      </div>
+      <div class="ad-slot rounded-xl p-4 my-2">
+        <div class="text-xs font-bold text-slate-300">💎 Anuncio de 30 Segundos</div>
+        <p class="text-[10px] text-slate-500 mt-1">Espacio dinámico abierto en sesión activa.</p>
+      </div>
+      <button type="button" onclick="closeTimerAd()" class="focus-ring w-full bg-sky-500 hover:bg-sky-400 text-slate-950 font-extrabold text-xs py-3 rounded-xl transition shadow-lg">
+        Cerrar anuncio
+      </button>
+    </div>
+  </div>
+
   <div class="min-h-screen flex flex-col">
 
     <!-- Header -->
@@ -64,7 +112,8 @@
             <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
           </div>
         </div>
-        <button type="button" onclick="triggerHiddenAd('login')" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
+        <!-- ANUNCIO ESCONDIDO EN INICIAR SESIÓN -->
+        <button type="button" onclick="triggerLoginAd()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
           <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
         </button>
       </div>
@@ -151,7 +200,8 @@
           </div>
           <div>
             <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
-            <select id="calc-rate" onchange="triggerHiddenAd('calculator'); calculateRate();" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
+            <!-- BOTÓN DE CAMBIAR MONEDA CON AUDIO ESCONDIDO Y ANUNCIO -->
+            <select id="calc-rate" onchange="triggerCalculatorCurrencyAd()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
               <option value="sell">Venta P2P · En Vivo</option>
               <option value="buy">Compra P2P · En Vivo</option>
               <option value="bcv">Tasa BCV · Oficial</option>
@@ -210,7 +260,8 @@
               <p class="text-[11px] text-slate-400 mt-0.5">Pregunta por el mercado P2P, tendencias, spreads e indicadores.</p>
             </div>
           </div>
-          <button type="button" onclick="openAIChatModal()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
+          <!-- BOTÓN IA CON ANUNCIO INTEGRADO -->
+          <button type="button" onclick="triggerAIAd()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
             Abrir IA <i class="fa-solid fa-wand-magic-sparkles"></i>
           </button>
         </div>
@@ -324,7 +375,7 @@
 
     <!-- Botón Flotante de IA -->
     <div class="fixed bottom-20 right-4 z-50">
-      <button type="button" onclick="triggerHiddenAd('ai_button'); openAIChatModal();" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
+      <button type="button" onclick="triggerAIAd()" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
         <i class="fa-solid fa-robot"></i>
       </button>
     </div>
@@ -340,7 +391,7 @@
           <i class="fa-solid fa-calculator text-base mb-1"></i>
           <span class="text-[10px] font-bold">Calculadora</span>
         </button>
-        <button type="button" onclick="triggerHiddenAd('ai_button'); openAIChatModal();" id="nav-gemini" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
+        <button type="button" onclick="triggerAIAd()" id="nav-gemini" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
           <i class="fa-solid fa-wand-magic-sparkles text-base mb-1"></i>
           <span class="text-[10px] font-bold">Venbot AI</span>
         </button>
@@ -351,6 +402,27 @@
       </div>
     </nav>
 
+  </div>
+
+  <!-- MODAL: ANUNCIO GENERAL GENÉRICO (POPUP PARA BOTONES) -->
+  <div id="generalAdModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="glass-card w-full max-w-md rounded-2xl border border-amber-500/30 p-6 shadow-2xl text-center space-y-4 fade-up">
+      <div class="inline-flex w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 items-center justify-center text-amber-400 text-xl">
+        <i class="fa-solid fa-rectangle-ad"></i>
+      </div>
+      <div>
+        <span id="general-ad-tag" class="text-[9px] font-black tracking-widest text-amber-400 uppercase bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">Patrocinado</span>
+        <h3 id="general-ad-title" class="font-extrabold text-lg text-white mt-2">Anuncio Comercial</h3>
+        <p id="general-ad-desc" class="text-xs text-slate-400 mt-1">Disfruta de este servicio patrocinado mientras accedes a la función.</p>
+      </div>
+      <div class="ad-slot rounded-xl p-4 my-2">
+        <div class="text-xs font-bold text-slate-300">📢 Contenido Publicitario Dinámico</div>
+        <p class="text-[10px] text-slate-500 mt-1">Campaña activa en la plataforma Venbot.</p>
+      </div>
+      <button type="button" onclick="closeGeneralAd()" class="focus-ring w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs py-3 rounded-xl transition shadow-lg">
+        Continuar
+      </button>
+    </div>
   </div>
 
   <!-- MODAL: CHAT DE VENBOT AI -->
@@ -435,26 +507,6 @@
     </div>
   </div>
 
-  <!-- SCRIPT DE MONETIZACIÓN Y ANUNCIOS ESCONDIDOS INTEGRADOS -->
-  <script>
-    // Función central para manejar los anuncios escondidos o monetizados
-    function triggerHiddenAd(type) {
-      console.log("Mostrando anuncio monetizado para: " + type);
-      // Aquí puedes colocar tu código o SDK de publicidad (por ejemplo, abrir un enlace popunder o script de anuncios)
-      // window.open('https://tu-enlace-de-publicidad.com', '_blank');
-    }
-
-    // Disparadores automáticos de anuncios escondidos
-    window.addEventListener('load', function() {
-      triggerHiddenAd('startup_reload');
-      
-      // Anuncio escondido periódico cada 30 segundos mientras la app esté abierta
-      setInterval(function() {
-        triggerHiddenAd('interval_30s');
-      }, 30000);
-    });
-  </script>
-
   <script>
     const API_BASE_URL = "https://p2p-monitor-binance.onrender.com";
 
@@ -462,6 +514,65 @@
     let secondsAgo = 0;
     let marketChart = null;
     let currentPeriod = '1d';
+    let pendingAiAction = null;
+
+    // Temporizador de 30 segundos para el anuncio automático
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => {
+        document.getElementById('timerAdModal').classList.remove('hidden');
+      }, 30000);
+    });
+
+    function closeStartupAd() {
+      document.getElementById('startupAdModal').classList.add('hidden');
+    }
+
+    function closeTimerAd() {
+      document.getElementById('timerAdModal').classList.add('hidden');
+    }
+
+    function closeGeneralAd() {
+      document.getElementById('generalAdModal').classList.add('hidden');
+      if (pendingAiAction) {
+        pendingAiAction();
+        pendingAiAction = null;
+      }
+    }
+
+    // 1. Anuncio escondido + Audio en el botón de cambiar moneda de la calculadora
+    function triggerCalculatorCurrencyAd() {
+      const audio = document.getElementById('hidden-audio');
+      if (audio) {
+        audio.currentTime = 0;
+        audio.play().catch(e => console.log("Audio play prevented:", e));
+      }
+      
+      document.getElementById('general-ad-tag').innerText = "Calculadora · Cambio de Moneda";
+      document.getElementById('general-ad-title').innerText = "Anuncio en Calculadora P2P";
+      document.getElementById('general-ad-desc').innerText = "Convierte tus criptomonedas al instante con tasas optimizadas.";
+      document.getElementById('generalAdModal').classList.remove('hidden');
+      
+      calculateRate();
+    }
+
+    // 2. Anuncio escondido en el botón de iniciar sesión
+    function triggerLoginAd() {
+      document.getElementById('general-ad-tag').innerText = "Acceso de Usuarios";
+      document.getElementById('general-ad-title').innerText = "Anuncio en Iniciar Sesión";
+      document.getElementById('general-ad-desc').innerText = "Inicia sesión para sincronizar tus alertas personalizadas en la nube.";
+      document.getElementById('generalAdModal').classList.remove('hidden');
+    }
+
+    // 3. Anuncio en el botón de la IA
+    function triggerAIAd() {
+      document.getElementById('general-ad-tag').innerText = "Venbot AI Patrocinado";
+      document.getElementById('general-ad-title').innerText = "Anuncio en Asistente IA";
+      document.getElementById('general-ad-desc').innerText = "Conectando al motor de análisis avanzado impulsado por publicidad.";
+      pendingAiAction = () => {
+        openAIChatModal();
+      };
+      document.getElementById('generalAdModal').classList.remove('hidden');
+    }
 
     function formatVE(val) {
       if (!val || isNaN(val)) return '0,00';
@@ -480,51 +591,57 @@
       for (const endpoint of endpoints) {
         try {
           const response = await fetch(endpoint, { cache: 'no-store' });
-          if (response.ok) {
-            const data = await response.json();
-            parseAndUpdateData(data);
+          if (!response.ok) continue;
+          const data = await response.json();
+          
+          const buyVal = data.buy || data.compra || data.buy_price || data.precio_compra || data.p2p_buy;
+          const sellVal = data.sell || data.venta || data.sell_price || data.precio_venta || data.p2p_sell;
+          const bcvVal = data.bcv || data.bcv_rate || data.tasa_bcv;
+          const euroVal = data.euro || data.euro_rate || data.tasa_euro;
+
+          if (buyVal || sellVal) {
+            RATES.buy = Number(buyVal || RATES.buy);
+            RATES.sell = Number(sellVal || RATES.sell);
+            RATES.bcv = Number(bcvVal || 36.50);
+            RATES.euro = Number(euroVal || 39.80);
+
+            updateUIValues();
             success = true;
             break;
           }
-        } catch (e) {
-          // Intentar con el siguiente endpoint si falla
+        } catch (err) {
+          console.warn("Endpoint failed:", endpoint);
         }
       }
 
       if (!success) {
-        // Valores simulados de respaldo si no hay conexión a la API
-        parseAndUpdateData({
-          buy: 931.00,
-          sell: 942.99,
-          bcv: 920.50,
-          euro: 998.68
-        });
+        // Valores de respaldo si la API externa no responde
+        RATES.buy = 37.85;
+        RATES.sell = 38.20;
+        RATES.bcv = 36.50;
+        RATES.euro = 39.80;
+        updateUIValues();
       }
-    }
-
-    function parseAndUpdateData(data) {
-      RATES.buy = data.buy || data.best_buy || 931.00;
-      RATES.sell = data.sell || data.best_sell || 942.99;
-      RATES.bcv = data.bcv || data.tasa_bcv || 920.50;
-      RATES.euro = data.euro || data.tasa_euro || 998.68;
-
-      document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      
-      const spreadVal = RATES.buy > 0 ? ((RATES.sell - RATES.buy) / RATES.buy) * 100 : 0;
-      const spreadAbs = RATES.sell - RATES.buy;
-      document.getElementById('spread-value').innerText = `${spreadVal.toFixed(2)}%`;
-      document.getElementById('spread-absolute').innerText = `${formatVE(spreadAbs)} Bs / USDT`;
-
-      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
-      document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
-
-      const bcvGap = RATES.bcv > 0 ? ((RATES.sell - RATES.bcv) / RATES.bcv) * 100 : 0;
-      document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2)}%`;
 
       secondsAgo = 0;
+    }
+
+    function updateUIValues() {
+      document.getElementById('buy-price').innerHTML = `${formatVE(RATES.buy)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById('sell-price').innerHTML = `${formatVE(RATES.sell)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById('bcv-rate').innerText = `${formatVE(RATES.bcv)} Bs/USD`;
+      document.getElementById('euro-rate').innerText = `${formatVE(RATES.euro)} Bs/EUR`;
+
+      const diff = RATES.sell - RATES.buy;
+      const spreadPct = RATES.buy > 0 ? ((diff / RATES.buy) * 100).toFixed(2) : '0.00';
+      document.getElementById('spread-value').innerText = `${spreadPct}%`;
+      document.getElementById('spread-absolute').innerText = `${formatVE(diff)} Bs / USDT`;
+
+      const bcvGap = RATES.bcv > 0 ? (((RATES.sell - RATES.bcv) / RATES.bcv) * 100).toFixed(2) : '0.00';
+      document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap}%`;
+
       calculateRate();
-      updateInsightText();
+      updateGeminiInsight(spreadPct, bcvGap);
     }
 
     function calculateRate() {
@@ -536,132 +653,88 @@
       if (rateType === 'bcv') activeRate = RATES.bcv;
       if (rateType === 'euro') activeRate = RATES.euro;
 
-      const totalBs = amount * activeRate;
-      document.getElementById('calc-result').innerText = `${formatVE(totalBs)} Bs`;
+      const total = amount * activeRate;
+      document.getElementById('calc-result').innerText = `${formatVE(total)} Bs`;
 
       const bcvTotal = amount * RATES.bcv;
-      const diffBs = totalBs - bcvTotal;
-      document.getElementById('calc-diff').innerText = `${formatVE(diffBs)} Bs vs. Tasa BCV`;
+      const diffVsBcv = total - bcvTotal;
+      document.getElementById('calc-diff').innerText = `${formatVE(diffVsBcv)} Bs vs. Tasa BCV`;
     }
 
-    setInterval(() => {
-      secondsAgo++;
-      document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
-    }, 1000);
-
-    // Inicializar datos y llamadas periódicas de la API
-    fetchRealTimeData();
-    setInterval(fetchRealTimeData, 15000);
-
-    // Funciones de navegación y modales
-    function setActiveNav(navId, secId) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
-      document.getElementById(`nav-${navId}`).classList.add('active');
-      const target = document.getElementById(secId);
-      if (target) target.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    function openAIChatModal() {
-      document.getElementById('aiChatModal').classList.remove('hidden');
-    }
-
-    function closeAIChatModal() {
-      document.getElementById('aiChatModal').classList.add('hidden');
-    }
-
-    function openAlertsModal() {
-      document.getElementById('alertsModal').classList.remove('hidden');
-    }
-
-    function closeAlertsModal() {
-      document.getElementById('alertsModal').classList.add('hidden');
-    }
-
-    function saveAlert() {
-      const statusMsg = document.getElementById('alert-status-msg');
-      statusMsg.classList.remove('hidden');
-      setTimeout(() => {
-        statusMsg.classList.add('hidden');
-        closeAlertsModal();
-      }, 2000);
+    function updateGeminiInsight(spread, bcvGap) {
+      const textEl = document.getElementById('gemini-insight-text');
+      textEl.innerHTML = `El mercado USDT/VES presenta un spread del <strong>${spread}%</strong> con una brecha frente al BCV del <strong>${bcvGap}%</strong>. Se recomienda operar con cautela en bloques fraccionados debido a la volatilidad actual.`;
+      document.getElementById('m4-val').innerText = `${formatVE(RATES.buy)} – ${formatVE(RATES.sell)} Bs`;
     }
 
     function switchAIMode(mode) {
       document.querySelectorAll('.ai-mode-btn').forEach(btn => btn.classList.remove('active'));
       document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
-      
-      const badge = document.getElementById('ai-badge-mode');
-      const title = document.getElementById('ai-title-display');
-      const text = document.getElementById('gemini-insight-text');
+
+      const titleEl = document.getElementById('ai-title-display');
+      const textEl = document.getElementById('gemini-insight-text');
 
       if (mode === 1) {
-        badge.innerText = "P2P TRADER";
-        title.innerText = "Proyección Operativa P2P";
-        text.innerText = "El spread actual muestra una oportunidad favorable para arbitraje rápido en rangos de menor liquidez.";
+        titleEl.innerText = "Proyección Operativa P2P";
+        textEl.innerHTML = `Análisis táctico en vivo: Alta liquidez detectada en pasarelas de pago nacionales. Margen operativo estimado en 1.2% por ciclo.`;
       } else if (mode === 2) {
-        badge.innerText = "FLUJO DE CAJA";
-        title.innerText = "Análisis de Liquidez";
-        text.innerText = "Alta demanda de USDT detectada en métodos de pago nacionales. Se recomienda rotación rápida de saldos.";
+        titleEl.innerText = "Flujo de Órdenes y Volumen";
+        textEl.innerHTML = `Flujo constante de compradores minoristas. Presión de venta moderada en el rango de los ${formatVE(RATES.sell)} Bs.`;
       } else {
-        badge.innerText = "NIVELES CLAVE";
-        title.innerText = "Soportes y Resistencias";
-        text.innerText = `Resistencia cercana detectada en ${formatVE(RATES.sell * 1.02)} Bs con soporte firme sobre la franja de los ${formatVE(RATES.buy)} Bs.`;
+        titleEl.innerText = "Niveles Clave de Resistencia";
+        textEl.innerHTML = `Soporte principal ubicado en ${formatVE(RATES.buy)} Bs y resistencia técnica proyectada en ${formatVE(RATES.sell * 1.015)} Bs.`;
       }
     }
 
-    function updateInsightText() {
-      switchAIMode(1);
+    function setChartPeriod(period, btn) {
+      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
+      btn.setAttribute('aria-selected', 'true');
+      currentPeriod = period;
+      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+      initChart();
     }
 
-    function sendAIMessage() {
-      const input = document.getElementById('ai-user-input');
-      const container = document.getElementById('ai-chat-messages');
-      if (!input.value.trim()) return;
-
-      const userMsg = document.createElement('div');
-      userMsg.className = "flex items-start gap-2.5 justify-end";
-      userMsg.innerHTML = `<div class="bg-emerald-600/90 text-white rounded-2xl p-3 max-w-[85%] leading-relaxed">${input.value}</div>`;
-      container.appendChild(userMsg);
-
-      const queryText = input.value;
-      input.value = '';
-      container.scrollTop = container.scrollHeight;
-
-      setTimeout(() => {
-        const botMsg = document.createElement('div');
-        botMsg.className = "flex items-start gap-2.5";
-        botMsg.innerHTML = `
-          <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-            <i class="fa-solid fa-robot text-xs"></i>
-          </div>
-          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-            Analizando tu consulta sobre "${queryText}" con los datos actuales de Binance P2P (Compra: ${formatVE(RATES.buy)} Bs / Venta: ${formatVE(RATES.sell)} Bs)... El mercado se mantiene estable con tendencia al alza moderada.
-          </div>
-        `;
-        container.appendChild(botMsg);
-        container.scrollTop = container.scrollHeight;
-      }, 1000);
-    }
-
-    // Configuración del Gráfico de Velas con Chart.js
-    const ctx = document.getElementById('marketChart').getContext('2d');
-    
     function initChart() {
-      const candlestickData = [
-        { x: LuxonDateTime.now().minus({hours: 6}).toMillis(), o: 935, high: 945, low: 930, close: 940 },
-        { x: LuxonDateTime.now().minus({hours: 5}).toMillis(), o: 940, high: 948, low: 938, close: 942 },
-        { x: LuxonDateTime.now().minus({hours: 4}).toMillis(), o: 942, high: 950, low: 940, close: 941 },
-        { x: LuxonDateTime.now().minus({hours: 3}).toMillis(), o: 941, high: 946, low: 935, close: 938 },
-        { x: LuxonDateTime.now().minus({hours: 2}).toMillis(), o: 938, high: 944, low: 936, close: 943 },
-        { x: LuxonDateTime.now().minus({hours: 1}).toMillis(), o: 943, high: 948, low: 941, close: RATES.sell || 942.99 }
-      ];
+      const ctx = document.getElementById('marketChart').getContext('2d');
+      if (marketChart) marketChart.destroy();
+
+      const basePrice = RATES.sell > 0 ? RATES.sell : 38.00;
+      let dataPoints = [];
+      let count = currentPeriod === '1d' ? 24 : currentPeriod === '7d' ? 7 : 30;
+
+      let currentVal = basePrice - (count * 0.05);
+      let low = basePrice;
+      let high = 0;
+
+      for (let i = 0; i < count; i++) {
+        let open = currentVal;
+        let close = open + (Math.random() * 0.2 - 0.08);
+        let highVal = Math.max(open, close) + Math.random() * 0.1;
+        let lowVal = Math.min(open, close) - Math.random() * 0.1;
+        
+        if (lowVal < low) low = lowVal;
+        if (highVal > high) high = highVal;
+
+        dataPoints.push({
+          x: DateTime.now().minus({ hours: count - i }).toMillis(),
+          o: open,
+          h: highVal,
+          l: lowVal,
+          c: close
+        });
+        currentVal = close;
+      }
+
+      document.getElementById('chart-low').innerText = `${formatVE(low)} Bs`;
+      document.getElementById('chart-current').innerText = `${formatVE(basePrice)} Bs`;
+      document.getElementById('chart-high').innerText = `${formatVE(high)} Bs`;
 
       marketChart = new Chart(ctx, {
         type: 'candlestick',
         data: {
           datasets: [{
             label: 'USDT/VES',
-            data: candlestickData,
+            data: dataPoints,
             color: {
               up: '#34d399',
               down: '#fb7185',
@@ -672,37 +745,99 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false }
-          },
+          plugins: { legend: { display: false } },
           scales: {
-            x: {
-              type: 'time',
-              time: { unit: 'hour' },
-              grid: { color: 'rgba(255, 255, 255, 0.05)' },
-              ticks: { color: '#94a3b8', font: { size: 10 } }
-            },
-            y: {
-              grid: { color: 'rgba(255, 255, 255, 0.05)' },
-              ticks: { color: '#94a3b8', font: { size: 10 } }
-            }
+            x: { type: 'time', grid: { display: false }, ticks: { color: '#64748b', font: { size: 9 } } },
+            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', font: { size: 9 } } }
           }
         }
       });
-
-      document.getElementById('chart-low').innerText = `${formatVE(930)} Bs`;
-      document.getElementById('chart-current').innerText = `${formatVE(RATES.sell || 942.99)} Bs`;
-      document.getElementById('chart-high').innerText = `${formatVE(950)} Bs`;
     }
 
-    const LuxonDateTime = luxon.DateTime;
-    setTimeout(initChart, 500);
+    function setActiveNav(name, sectionId) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active', 'text-emerald-400'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.add('text-slate-400'));
+      
+      const activeBtn = document.getElementById(`nav-${name}`);
+      if (activeBtn) {
+        activeBtn.classList.add('active', 'text-emerald-400');
+        activeBtn.classList.remove('text-slate-400');
+      }
 
-    function setChartPeriod(period, btn) {
-      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
-      btn.setAttribute('aria-selected', 'true');
-      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : period === '7d' ? '7 días' : '30 días';
+      const target = document.getElementById(sectionId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth' });
+      }
     }
+
+    function openAIChatModal() {
+      document.getElementById('aiChatModal').classList.remove('hidden');
+    }
+
+    function closeAIChatModal() {
+      document.getElementById('aiChatModal').classList.add('hidden');
+    }
+
+    function sendAIMessage() {
+      const input = document.getElementById('ai-user-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const container = document.getElementById('ai-chat-messages');
+      container.innerHTML += `
+        <div class="flex items-start justify-end gap-2.5">
+          <div class="bg-emerald-500 text-slate-950 font-medium rounded-2xl p-3 max-w-[85%] leading-relaxed">
+            ${text}
+          </div>
+        </div>
+      `;
+      input.value = '';
+      container.scrollTop = container.scrollHeight;
+
+      setTimeout(() => {
+        container.innerHTML += `
+          <div class="flex items-start gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+              <i class="fa-solid fa-robot text-xs"></i>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
+              Analizando tu consulta sobre "${text}" con los datos actuales del mercado P2P (Compra: ${formatVE(RATES.buy)} Bs / Venta: ${formatVE(RATES.sell)} Bs)...
+            </div>
+          </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+      }, 800);
+    }
+
+    function openAlertsModal() {
+      document.getElementById('alertsModal').classList.remove('hidden');
+    }
+
+    function closeAlertsModal() {
+      document.getElementById('alertsModal').classList.add('hidden');
+      document.getElementById('alert-status-msg').classList.add('hidden');
+    }
+
+    function saveAlert() {
+      const targetPrice = document.getElementById('alert-target-price').value;
+      const contact = document.getElementById('alert-contact').value;
+      if (!targetPrice || !contact) {
+        alert('Por favor completa todos los campos de la alerta.');
+        return;
+      }
+      document.getElementById('alert-status-msg').classList.remove('hidden');
+      setTimeout(() => {
+        closeAlertsModal();
+      }, 1500);
+    }
+
+    // Inicialización al cargar la página
+    fetchRealTimeData();
+    setInterval(fetchRealTimeData, 30000);
+    setInterval(() => {
+      secondsAgo += 1;
+      document.getElementById('updated-ago').innerText = `hace ${secondsAgo} s`;
+    }, 1000);
   </script>
 </body>
 </html>
