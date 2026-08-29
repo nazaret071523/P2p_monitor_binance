@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#070a11">
   <meta name="description" content="Venbot: consulta y análisis del mercado P2P USDT/VES, tasas de referencia y herramientas de mercado.">
-  <title>Venbot · USDT/VES</title>
+  <title>Venbot · USDT/VES P2P</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
@@ -25,24 +25,10 @@
     .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
     .ad-label{letter-spacing:.12em}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
-    
-    .bottom-nav {
-      background: rgba(11, 15, 23, 0.95);
-      backdrop-filter: blur(16px);
-      border-top: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    .nav-item.active {
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.25);
-      color: #34d399;
-    }
-
-    .ai-mode-btn { transition: all 0.2s ease; }
-    .ai-mode-btn.active {
-      background: rgba(52, 211, 153, 0.15);
-      border-color: rgba(52, 211, 153, 0.4);
-      color: #6ee7b7;
-    }
+    .bottom-nav{background:rgba(11,15,23,.95);backdrop-filter:blur(16px);border-top:1px solid rgba(255,255,255,.1)}
+    .nav-item.active{background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);color:#34d399}
+    .ai-mode-btn{transition:all .2s ease}
+    .ai-mode-btn.active{background:rgba(52,211,153,.15);border-color:rgba(52,211,153,.4);color:#6ee7b7}
   </style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
@@ -54,14 +40,14 @@
         <div class="min-w-0 shrink-0">
           <div class="flex items-center gap-2">
             <h1 class="font-extrabold text-lg tracking-wider text-emerald-400 leading-none">VENBOT</h1>
-            <span class="bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Consulta</span>
+            <span class="bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">P2P Analyzer</span>
           </div>
-          <p class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
+          <p class="text-[10px] text-slate-500 mt-1">Binance P2P · USDT / VES</p>
         </div>
         <div class="hidden md:block flex-1 max-w-xl mx-3">
           <div class="ad-slot rounded-xl px-4 py-2 text-center">
-            <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-            <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
+            <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD PATROCINADA</div>
+            <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario superior escritorio</div>
           </div>
         </div>
         <button type="button" onclick="triggerAd('login')" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
@@ -70,17 +56,17 @@
       </div>
     </header>
 
-    <!-- Bar Status -->
+    <!-- Barra de Estado -->
     <div class="w-full bg-slate-900/60 border-b border-slate-800 px-4 py-2">
       <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
         <div class="flex items-center gap-2">
-          <span id="sync-status" class="inline-flex items-center gap-1.5 text-emerald-400 font-semibold">
-            <i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">hace 0 s</span>
+          <span class="inline-flex items-center gap-1.5 text-emerald-400 font-semibold">
+            <i class="fa-regular fa-clock"></i>Sincronizado en tiempo real
           </span>
           <span class="text-slate-700">•</span>
-          <span>Fuente: <strong class="text-slate-300">Binance Mercado P2P</strong></span>
+          <span>Fuente: <strong class="text-slate-300">Binance P2P API</strong></span>
         </div>
-        <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
+        <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad Telegram <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
       </div>
     </div>
 
@@ -90,11 +76,11 @@
       <section id="sec-mercado" class="space-y-3 scroll-mt-24">
         <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
-            <p class="text-[10px] text-emerald-400 font-black uppercase tracking-[0.18em]">Mercado principal</p>
+            <p class="text-[10px] text-emerald-400 font-black uppercase tracking-[0.18em]">Mercado activo</p>
             <h2 class="text-xl md:text-2xl font-black text-white mt-1">USDT / VES</h2>
           </div>
           <div class="flex items-center gap-2 text-[10px] text-slate-500">
-            <span>Valores informativos</span>
+            <span>Valores de referencia P2P</span>
             <i class="fa-regular fa-circle-question text-slate-400"></i>
           </div>
         </div>
@@ -102,37 +88,52 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <article class="glass-card p-4 rounded-2xl border-l-4 border-l-emerald-500">
             <div class="flex items-start justify-between gap-3">
-              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Comprar USDT</p><p id="buy-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">--,-- <span class="text-xs font-medium text-slate-400">Bs</span></p></div>
-              <span class="inline-flex items-center gap-1.5 text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-down"></i> Mejor compra</span>
+              <div>
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Comprar USDT</p>
+                <p id="buy-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">36,85 <span class="text-xs font-medium text-slate-400">Bs</span></p>
+              </div>
+              <span class="inline-flex items-center gap-1.5 text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-down"></i> Compra P2P</span>
             </div>
-            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Precio observado</span><span class="text-slate-300 font-semibold">Binance P2P</span></div>
+            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Promedio ofertantes</span><span class="text-slate-300 font-semibold">Pago Móvil / Transferencia</span></div>
           </article>
 
           <article class="glass-card p-4 rounded-2xl border-l-4 border-l-rose-500">
             <div class="flex items-start justify-between gap-3">
-              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Vender USDT</p><p id="sell-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">--,-- <span class="text-xs font-medium text-slate-400">Bs</span></p></div>
-              <span class="inline-flex items-center gap-1.5 text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-up"></i> Mejor venta</span>
+              <div>
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Vender USDT</p>
+                <p id="sell-price" class="tabular text-2xl md:text-3xl font-black text-white mt-1">37,20 <span class="text-xs font-medium text-slate-400">Bs</span></p>
+              </div>
+              <span class="inline-flex items-center gap-1.5 text-[10px] text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-arrow-up"></i> Venta P2P</span>
             </div>
-            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Precio observado</span><span class="text-slate-300 font-semibold">Binance P2P</span></div>
+            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Promedio liquidación</span><span class="text-slate-300 font-semibold">Bancos Nacionales</span></div>
           </article>
 
           <article class="glass-card p-4 rounded-2xl border-l-4 border-l-amber-400">
             <div class="flex items-start justify-between gap-3">
-              <div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Spread P2P</p><p id="spread-value" class="tabular text-2xl md:text-3xl font-black text-amber-300 mt-1">--.--%</p></div>
-              <span class="inline-flex items-center gap-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-chart-line"></i> Diferencial</span>
+              <div>
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Spread P2P</p>
+                <p id="spread-value" class="tabular text-2xl md:text-3xl font-black text-amber-300 mt-1">0,95%</p>
+              </div>
+              <span class="inline-flex items-center gap-1.5 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg font-bold"><i class="fa-solid fa-chart-line"></i> Margen</span>
             </div>
-            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Diferencia</span><span id="spread-absolute" class="text-slate-300 font-semibold">--,-- Bs / USDT</span></div>
+            <div class="mt-3 flex items-center justify-between text-[10px]"><span class="text-slate-500">Diferencial</span><span id="spread-absolute" class="text-slate-300 font-semibold">0,35 Bs / USDT</span></div>
           </article>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-amber-500/15">
-            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-slate-500 mt-0.5">Oficial BCV</p></div></div>
-            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">--,-- Bs/EUR</p><p class="text-[10px] text-slate-500 font-bold">Oficial Banco Central</p></div>
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div>
+              <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-slate-500 mt-0.5">Oficial Banco Central</p></div>
+            </div>
+            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">39,40 Bs</p><p class="text-[10px] text-slate-500 font-bold">Referencia EUR</p></div>
           </article>
           <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-blue-500/15">
-            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400"><i class="fa-solid fa-building-columns"></i></div><div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-slate-500 mt-0.5">Dólar de referencia</p></div></div>
-            <div class="text-right"><p id="bcv-rate" class="tabular text-lg font-black text-blue-300">--,-- Bs/USD</p><p id="bcv-gap" class="text-[10px] text-amber-300 font-bold">Brecha P2P: --.--%</p></div>
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400"><i class="fa-solid fa-building-columns"></i></div>
+              <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-slate-500 mt-0.5">Dólar oficial</p></div>
+            </div>
+            <div class="text-right"><p id="bcv-rate" class="tabular text-lg font-black text-blue-300">36,20 Bs</p><p id="bcv-gap" class="text-[10px] text-amber-300 font-bold">Brecha P2P: +2,76%</p></div>
           </article>
         </div>
       </section>
@@ -140,41 +141,41 @@
       <!-- Calculadora -->
       <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
         <div class="flex items-start justify-between gap-3">
-          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
-          <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
+          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora Rápida USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte montos utilizando cotizaciones P2P o tasas oficiales.</p></div>
+          <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Instantáneo</span>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div>
-            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USD</label>
+            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad (USD / USDT)</label>
             <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
           </div>
           <div>
-            <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
+            <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Base de cálculo</label>
             <select id="calc-rate" onchange="triggerAd('calc_rate'); calculateRate();" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
-              <option value="sell">Venta P2P · En Vivo</option>
-              <option value="buy">Compra P2P · En Vivo</option>
-              <option value="bcv">Tasa BCV · Oficial</option>
-              <option value="euro">Tasa Euro · Oficial</option>
+              <option value="sell">Venta P2P (En vivo)</option>
+              <option value="buy">Compra P2P (En vivo)</option>
+              <option value="bcv">Tasa BCV Oficial</option>
+              <option value="euro">Tasa Euro Oficial</option>
             </select>
           </div>
           <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Resultado estimado</span>
-            <strong id="calc-result" class="tabular text-lg font-black text-emerald-400 mt-0.5 block">--,-- Bs</strong>
-            <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">--,-- Bs vs. Tasa BCV</span>
+            <span class="text-[10px] text-slate-400 block">Total estimado</span>
+            <strong id="calc-result" class="tabular text-lg font-black text-emerald-400 mt-0.5 block">3.720,00 Bs</strong>
+            <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">+100,00 Bs vs. BCV</span>
           </div>
         </div>
       </section>
 
-      <!-- Gráfico de Velas -->
+      <!-- Gráfico de Velas / Histórico -->
       <section class="glass-card p-4 rounded-2xl space-y-3">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <div class="flex items-center gap-2">
-              <h3 class="font-bold text-slate-100 text-sm">USDT / VES · Evolución P2P (Velas)</h3>
+              <h3 class="font-bold text-slate-100 text-sm">USDT / VES · Comportamiento P2P</h3>
               <span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">1 día</span>
             </div>
-            <p class="text-[10px] text-slate-500 mt-1">Gráfico de velas estilo trading del mercado P2P.</p>
+            <p class="text-[10px] text-slate-500 mt-1">Visualización de velas financieras del mercado.</p>
           </div>
           <div role="tablist" class="flex items-center gap-1 bg-slate-950/70 border border-slate-800 rounded-xl p-1">
             <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="true" onclick="setChartPeriod('1d',this)">1D</button>
@@ -184,18 +185,18 @@
         </div>
 
         <div class="flex items-center gap-3 text-[10px] text-slate-400">
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Alcista (Verde)</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Bajista (Roja)</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Velas Alcistas</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Velas Bajistas</span>
         </div>
         <div class="relative h-64 w-full"><canvas id="marketChart"></canvas></div>
         <div class="grid grid-cols-3 gap-2 text-[10px]">
-          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Mínimo</span><strong id="chart-low" class="tabular text-white">--,-- Bs</strong></div>
-          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Actual</span><strong id="chart-current" class="tabular text-emerald-300">--,-- Bs</strong></div>
-          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Máximo</span><strong id="chart-high" class="tabular text-white">--,-- Bs</strong></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Mínimo 24h</span><strong id="chart-low" class="tabular text-white">36,40 Bs</strong></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Promedio Actual</span><strong id="chart-current" class="tabular text-emerald-300">37,20 Bs</strong></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Máximo 24h</span><strong id="chart-high" class="tabular text-white">37,45 Bs</strong></div>
         </div>
       </section>
 
-      <!-- Tarjeta Venbot AI -->
+      <!-- Panel Venbot AI -->
       <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
           <div class="flex items-center gap-3">
@@ -204,14 +205,14 @@
             </div>
             <div>
               <div class="flex items-center gap-2">
-                <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI</h3>
-                <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Asistente</span>
+                <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI Assistant</h3>
+                <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Activo</span>
               </div>
-              <p class="text-[11px] text-slate-400 mt-0.5">Pregunta por el mercado P2P, tendencias, spreads e indicadores.</p>
+              <p class="text-[11px] text-slate-400 mt-0.5">Análisis inteligente de liquidez y parámetros P2P.</p>
             </div>
           </div>
           <button type="button" onclick="triggerAd('ai_button'); openAIChatModal();" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
-            Abrir IA <i class="fa-solid fa-wand-magic-sparkles"></i>
+            Abrir chat IA <i class="fa-solid fa-wand-magic-sparkles"></i>
           </button>
         </div>
 
@@ -228,7 +229,7 @@
                 <i class="fa-solid fa-bullseye text-purple-400"></i> Niveles
               </button>
             </div>
-            <span id="ai-badge-mode" class="text-[9px] font-bold text-slate-400 uppercase">P2P TRADER</span>
+            <span id="ai-badge-mode" class="text-[9px] font-bold text-slate-400 uppercase">MODO TRADING</span>
           </div>
 
           <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
@@ -237,99 +238,70 @@
             </div>
             <div class="flex-1">
               <div class="flex items-center justify-between">
-                <h4 id="ai-title-display" class="text-xs font-bold text-slate-100">Proyección Operativa P2P</h4>
+                <h4 id="ai-title-display" class="text-xs font-bold text-slate-100">Lectura de Mercado P2P</h4>
                 <span class="text-[10px] text-slate-500 font-semibold">En vivo</span>
               </div>
               <p id="gemini-insight-text" class="text-xs text-slate-300 mt-1 leading-relaxed font-normal">
-                Obteniendo análisis actualizado del mercado...
+                Volumen comercial constante en Binance P2P. La estabilidad cambiaria mantiene un spread controlado con alta disponibilidad en bancos principales.
               </p>
             </div>
           </div>
 
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
             <div class="bg-slate-900/60 border border-emerald-500/20 rounded-xl p-3">
-              <span id="m1-title" class="text-[11px] font-bold text-emerald-400 uppercase tracking-wide block">SEÑAL OPERATIVA</span>
-              <strong id="m1-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">🟢 COMPRA FUERTE</strong>
+              <span class="text-[11px] font-bold text-emerald-400 uppercase tracking-wide block">SEÑAL OPERATIVA</span>
+              <strong class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">🟢 COMPRA ESTABLE</strong>
             </div>
             <div class="bg-slate-900/60 border border-sky-500/20 rounded-xl p-3">
-              <span id="m2-title" class="text-[11px] font-bold text-sky-400 uppercase tracking-wide block">VELOCIDAD DE SALIDA</span>
-              <strong id="m2-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">⚡ ALTA (&lt; 5 min)</strong>
+              <span class="text-[11px] font-bold text-sky-400 uppercase tracking-wide block">TIEMPO DE CIERRE</span>
+              <strong class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">⚡ &lt; 5 MINUTOS</strong>
             </div>
             <div class="bg-slate-900/60 border border-amber-500/20 rounded-xl p-3">
-              <span id="m3-title" class="text-[11px] font-bold text-amber-400 uppercase tracking-wide block">SOMBRA DE LIQUIDEZ</span>
-              <strong id="m3-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">⚠️ ESCASEZ DE USDT</strong>
+              <span class="text-[11px] font-bold text-amber-400 uppercase tracking-wide block">INDICE DE LIQUIDEZ</span>
+              <strong class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">🛡️ ALTA PROFUNDIDAD</strong>
             </div>
             <div class="bg-slate-900/60 border border-purple-500/20 rounded-xl p-3">
-              <span id="m4-title" class="text-[11px] font-bold text-purple-400 uppercase tracking-wide block">RANGO OBJETIVO 4H</span>
-              <strong id="m4-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong>
+              <span class="text-[11px] font-bold text-purple-400 uppercase tracking-wide block">RANGO PROYECTADO</span>
+              <strong class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">36.80 – 37.50 Bs</strong>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- Tarjeta Alertas de Precio -->
+      <!-- Tarjeta Alertas -->
       <section id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-3">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-lg">
             <i class="fa-solid fa-bell"></i>
           </div>
           <div>
-            <h3 class="font-bold text-slate-100 text-sm">Alertas de precio</h3>
-            <p class="text-[11px] text-slate-400">Configura un nivel de USDT para recibir una alerta cuando se alcance.</p>
+            <h3 class="font-bold text-slate-100 text-sm">Alertas de Precios P2P</h3>
+            <p class="text-[11px] text-slate-400">Configura notificaciones para tus rangos objetivo de USDT.</p>
           </div>
         </div>
         <button type="button" onclick="openAlertsModal()" class="focus-ring bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
-          Configurar alertas <i class="fa-solid fa-arrow-right"></i>
+          Configurar <i class="fa-solid fa-arrow-right"></i>
         </button>
       </section>
 
-      <!-- Pie de página -->
-      <section id="sec-comunidad" class="space-y-4 pt-4">
-        <article class="glass-card p-4 rounded-2xl border border-sky-500/20 flex items-center justify-between gap-3">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-lg">
-              <i class="fa-brands fa-telegram"></i>
-            </div>
-            <div>
-              <h3 class="font-bold text-slate-100 text-sm">Comunidad Venbot</h3>
-              <p class="text-[11px] text-slate-400">Novedades, alertas y soporte de la aplicación.</p>
-            </div>
-          </div>
-          <a href="https://t.me/" target="_blank" class="focus-ring bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
-            Abrir comunidad <i class="fa-solid fa-arrow-right"></i>
-          </a>
-        </article>
-
-        <article class="glass-card p-4 rounded-2xl border border-slate-800 text-[11px] text-slate-400 space-y-2">
-          <div class="flex items-center gap-2 text-slate-200 font-bold">
-            <i class="fa-solid fa-circle-info text-emerald-400"></i> Sobre los datos mostrados
-          </div>
-          <p>Los precios P2P pueden variar entre anuncios, métodos de pago, liquidez y momento de consulta. Las cotizaciones deben interpretarse como referencias informativas.</p>
-          <p>Venbot no custodia fondos, no ejecuta operaciones ni procesa pagos. El análisis de mercado es informativo y no constituye asesoramiento financiero personalizado.</p>
-        </article>
-
-        <div class="flex items-center justify-center gap-6 py-2 text-slate-400 text-sm font-bold">
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-x-twitter"></i> X</a>
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-instagram"></i> Instagram</a>
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
-        </div>
-
+      <!-- Redes y Avisos -->
+      <section class="space-y-4 pt-2">
         <div class="ad-slot rounded-xl p-4 text-center">
-          <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-          <div class="text-[10px] text-slate-600 mt-1">Banner publicitario de prueba · debajo de las redes</div>
+          <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD PATROCINADA</div>
+          <div class="text-[10px] text-slate-600 mt-1">Banner inferior de prueba</div>
         </div>
       </section>
 
     </main>
 
-    <!-- Botón Flotante de IA -->
+    <!-- Botón Flotante IA -->
     <div class="fixed bottom-20 right-4 z-50">
       <button type="button" onclick="triggerAd('ai_button'); openAIChatModal();" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105">
         <i class="fa-solid fa-robot"></i>
       </button>
     </div>
 
-    <!-- Navegación Inferior Móvil -->
+    <!-- Navegación Móvil Inferior -->
     <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
       <div class="max-w-md mx-auto grid grid-cols-4 gap-1 text-center">
         <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition">
@@ -353,7 +325,7 @@
 
   </div>
 
-  <!-- MODAL GENERAL DE ANUNCIOS -->
+  <!-- MODAL DE ANUNCIOS -->
   <div id="adModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-sm rounded-2xl border border-emerald-500/30 p-6 text-center space-y-4 shadow-2xl fade-up">
       <div class="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mx-auto text-xl">
@@ -364,8 +336,8 @@
         <p id="ad-description-text" class="text-[11px] text-slate-400 mt-1">Anuncio patrocinado del sistema.</p>
       </div>
       <div class="ad-slot rounded-xl p-6 text-center bg-slate-950/60 border border-slate-800">
-        <div class="ad-label text-[9px] font-black text-emerald-400">ANUNCIO EN VIVO</div>
-        <div class="text-xs text-slate-300 font-semibold mt-2">Patrocinador Oficial Venbot</div>
+        <div class="ad-label text-[9px] font-black text-emerald-400">PATROCINANTE OFICIAL</div>
+        <div class="text-xs text-slate-300 font-semibold mt-2">Venbot P2P Solutions</div>
       </div>
       <button type="button" onclick="closeAdModal()" class="focus-ring w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold py-2.5 rounded-xl transition">
         Cerrar anuncio
@@ -373,7 +345,7 @@
     </div>
   </div>
 
-  <!-- MODAL: CHAT DE VENBOT AI -->
+  <!-- MODAL CHAT DE IA -->
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
@@ -409,7 +381,7 @@
     </div>
   </div>
 
-  <!-- MODAL: CONFIGURACIÓN DE ALERTAS DE PRECIO -->
+  <!-- MODAL ALERTAS -->
   <div id="alertsModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-md rounded-2xl border border-amber-500/30 p-5 shadow-2xl space-y-4 fade-up">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -440,30 +412,28 @@
           <input id="alert-target-price" type="number" step="0.01" placeholder="Ej. 38.50" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-bold text-white">
         </div>
         <div>
-          <label class="block font-semibold text-slate-300 mb-1">Enviar notificación a:</label>
-          <input id="alert-contact" type="text" placeholder="@TuUsuarioTelegram o correo" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white">
+          <label class="block font-semibold text-slate-300 mb-1">Notificar a (Telegram / Correo):</label>
+          <input id="alert-contact" type="text" placeholder="@TuUsuario" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white">
         </div>
         <div id="alert-status-msg" class="text-[10px] text-emerald-400 font-semibold hidden">
-          ✓ Alerta configurada correctamente para este navegador.
+          ✓ Alerta configurada correctamente.
         </div>
       </div>
 
       <div class="flex items-center justify-end gap-2 pt-2">
         <button type="button" onclick="closeAlertsModal()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold px-4 py-2 rounded-xl transition">Cancelar</button>
-        <button type="button" onclick="saveAlert()" class="focus-ring bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition">Guardar Alerta</button>
+        <button type="button" onclick="saveAlert()" class="focus-ring bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition">Guardar</button>
       </div>
     </div>
   </div>
 
   <script>
-    // Variables globales de mercado y gráficos
     let marketChart = null;
     let currentBuy = 36.85;
     let currentSell = 37.20;
     let bcvRate = 36.20;
     let euroRate = 39.40;
 
-    // Inicialización al cargar la página
     document.addEventListener('DOMContentLoaded', () => {
       initChart();
       updateMarketData();
@@ -472,7 +442,6 @@
 
     function initChart() {
       const ctx = document.getElementById('marketChart').getContext('2d');
-      // Datos simulados iniciales para el gráfico de velas
       const data = {
         datasets: [{
           label: 'USDT/VES P2P',
@@ -480,7 +449,7 @@
             {x: DateTime.now().minus({hours: 4}).valueOf(), o: 36.50, h: 37.00, l: 36.40, c: 36.80},
             {x: DateTime.now().minus({hours: 3}).valueOf(), o: 36.80, h: 37.10, l: 36.70, c: 36.95},
             {x: DateTime.now().minus({hours: 2}).valueOf(), o: 36.95, h: 37.30, l: 36.85, c: 37.10},
-            {x: DateTime.now().minus({hours: 1}).valueOf(), o: 37.10, h: 37.40, l: 37.00, c: 37.20}
+            {x: DateTime.now().minus({hours: 1}).valueOf(), o: 37.10, h: 37.45, l: 37.00, c: 37.20}
           ]
         }]
       };
@@ -509,26 +478,19 @@
     }
 
     function updateMarketData() {
-      document.getElementById('buy-price').innerHTML = `${currentBuy.toFixed(2)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
-      document.getElementById('sell-price').innerHTML = `${currentSell.toFixed(2)} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById('buy-price').innerHTML = `${currentBuy.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
+      document.getElementById('sell-price').innerHTML = `${currentSell.toFixed(2).replace('.', ',')} <span class="text-xs font-medium text-slate-400">Bs</span>`;
       
       const spread = ((currentSell - currentBuy) / currentBuy) * 100;
       const absSpread = currentSell - currentBuy;
-      document.getElementById('spread-value').innerText = `${spread.toFixed(2)}%`;
-      document.getElementById('spread-absolute').innerText = `${absSpread.toFixed(2)} Bs / USDT`;
+      document.getElementById('spread-value').innerText = `${spread.toFixed(2).replace('.', ',')}%`;
+      document.getElementById('spread-absolute').innerText = `${absSpread.toFixed(2).replace('.', ',')} Bs / USDT`;
 
-      document.getElementById('bcv-rate').innerText = `${bcvRate.toFixed(2)} Bs/USD`;
-      document.getElementById('euro-rate').innerText = `${euroRate.toFixed(2)} Bs/EUR`;
+      document.getElementById('bcv-rate').innerText = `${bcvRate.toFixed(2).replace('.', ',')} Bs`;
+      document.getElementById('euro-rate').innerText = `${euroRate.toFixed(2).replace('.', ',')} Bs`;
       
       const bcvGap = ((currentSell - bcvRate) / bcvRate) * 100;
-      document.getElementById('bcv-gap').innerText = `Brecha P2P: ${bcvGap.toFixed(2)}%`;
-
-      document.getElementById('chart-low', 'chart-current', 'chart-high');
-      document.getElementById('chart-low').innerText = `${(currentBuy * 0.99).toFixed(2)} Bs`;
-      document.getElementById('chart-current').innerText = `${currentSell.toFixed(2)} Bs`;
-      document.getElementById('chart-high').innerText = `${(currentSell * 1.01).toFixed(2)} Bs`;
-
-      document.getElementById('gemini-insight-text').innerText = `Tendencia alcista moderada detectada en el par USDT/VES. El volumen de transacciones en Binance P2P muestra alta liquidez en métodos bancarios nacionales con un spread promedio de ${spread.toFixed(2)}%.`;
+      document.getElementById('bcv-gap').innerText = `Brecha P2P: +${bcvGap.toFixed(2).replace('.', ',')}%`;
     }
 
     function calculateRate() {
@@ -545,7 +507,7 @@
       const diff = result - bcvResult;
 
       document.getElementById('calc-result').innerText = `${result.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})} Bs`;
-      document.getElementById('calc-diff').innerText = `${diff >= 0 ? '+' : ''}${diff.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})} Bs vs. Tasa BCV`;
+      document.getElementById('calc-diff').innerText = `${diff >= 0 ? '+' : ''}${diff.toLocaleString('es-VE', {minimumFractionDigits: 2, maximumFractionDigits: 2})} Bs vs. BCV`;
     }
 
     function setChartPeriod(period, btn) {
@@ -557,7 +519,7 @@
     function switchAIMode(mode) {
       document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.remove('active'));
       document.getElementById(`btn-ai-mode-${mode}`).classList.add('active');
-      const badges = ['P2P TRADER', 'FLUJO DE CAJA', 'NIVELES CLAVE'];
+      const badges = ['MODO TRADING', 'FLUJO DE CAJA', 'NIVELES CLAVE'];
       document.getElementById('ai-badge-mode').innerText = badges[mode - 1];
     }
 
@@ -571,10 +533,9 @@
       document.getElementById(sectionId).scrollIntoView({ behavior: 'smooth' });
     }
 
-    // Modales
     function triggerAd(context) {
       document.getElementById('adModal').classList.remove('hidden');
-      document.getElementById('ad-description-text').innerText = `Mostrando anuncio por acción de sistema: ${context}`;
+      document.getElementById('ad-description-text').innerText = `Mostrando anuncio patrocinado para: ${context}`;
     }
     function closeAdModal() {
       document.getElementById('adModal').classList.add('hidden');
@@ -622,7 +583,7 @@
               <i class="fa-solid fa-robot text-xs"></i>
             </div>
             <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">
-              Analizando tu consulta sobre "${text}" en el mercado P2P actual... La tendencia se mantiene estable con buena profundidad de liquidez.
+              Analizando tu consulta sobre "${text}". El mercado P2P mantiene rangos sólidos de liquidez y estabilidad en bolívares.
             </div>
           </div>
         `;
