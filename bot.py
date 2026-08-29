@@ -137,9 +137,9 @@ def init_db():
                         password TEXT
                     );
                 ''')
-                # Asegurar columnas si la tabla ya existía (CORREGIDO CON COMILLAS DOBLES AQUÍ 👇)
-                cursor.execute('ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT "vip";')
-                cursor.execute('ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS password TEXT;')
+                # Corrección aplicada: se usan comillas simples para el valor por defecto en SQL
+                cursor.execute("ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';")
+                cursor.execute("ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS password TEXT;")
                 conn.commit()
         finally:
             conn.close()
