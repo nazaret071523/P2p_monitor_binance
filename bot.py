@@ -48,7 +48,6 @@ CACHE_EXPIRATION_TIME = 900  # 900 segundos = 15 minutos
 # AUTODESCUBRIMIENTO AUTÓNOMO DE MODELOS IA
 # ==========================================
 def obtener_modelo_gemini_activo() -> str:
-    """Consulta de forma autónoma los modelos disponibles para usar siempre el Flash más reciente."""
     modelo_por_defecto = "gemini-1.5-flash"
     if not gemini_client:
         return modelo_por_defecto
@@ -61,11 +60,10 @@ def obtener_modelo_gemini_activo() -> str:
                 nombre = nombre.replace("models/", "", 1)
             if "flash" in nombre.lower():
                 candidatos.append(nombre)
-        
         if candidatos:
             candidatos.sort(reverse=True)
             return candidatos[0]
-    except Exception as e:
+    except Exception:
         pass
     return modelo_por_defecto
 
@@ -75,24 +73,20 @@ def obtener_modelo_gemini_activo() -> str:
 def obtener_tasas_oficiales_bcv():
     usd_bcv = 898.50
     eur_bcv = 1050.00
-    
     try:
         url = "https://www.bcv.org.ve/"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         res = requests.get(url, headers=headers, verify=False, timeout=4)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            
             usd_elem = soup.find('div', {'id': 'dolar'})
             if usd_elem:
                 val = usd_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
                 usd_bcv = float(val)
-
             eur_elem = soup.find('div', {'id': 'euro'})
             if eur_elem:
                 val = eur_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
                 eur_bcv = float(val)
-                
             return usd_bcv, eur_bcv
     except Exception as e:
         print(f"Error consultando sitio oficial BCV: {e}")
@@ -139,13 +133,13 @@ def init_db():
                         estado_suscripcion TEXT DEFAULT 'pendiente',
                         referencia_pago TEXT,
                         fecha_expiracion TIMESTAMP,
-                        tipo_plan TEXT DEFAULT 'vip'
+                        tipo_plan TEXT DEFAULT 'vip',
+                        password TEXT
                     );
                 ''')
-                cursor.execute('''
-                    ALTER TABLE usuarios_p2p 
-                    ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';
-                ''')
+                # Asegurar columnas si la tabla ya existía
+                cursor.execute('ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';')
+                cursor.execute('ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS password TEXT;')
                 conn.commit()
         finally:
             conn.close()
@@ -157,14 +151,17 @@ def registrar_pago_db(telegram_id: int, username: str, referencia: str, plan_ele
     if not conn:
         return False
     try:
+        # Generar una contraseña web automática por defecto basada en el telegram_id y aleatoria si no existe
+        import random
+        pass_temporal = f"vb_{telegram_id}_{random.randint(100, 999)}"
         with conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO usuarios_p2p (telegram_id, username, estado_suscripcion, referencia_pago, tipo_plan)
-                    VALUES (%s, %s, 'pendiente', %s, %s)
+                    INSERT INTO usuarios_p2p (telegram_id, username, estado_suscripcion, referencia_pago, tipo_plan, password)
+                    VALUES (%s, %s, 'pendiente', %s, %s, %s)
                     ON CONFLICT (telegram_id) 
                     DO UPDATE SET referencia_pago = %s, estado_suscripcion = 'pendiente', tipo_plan = %s;
-                """, (telegram_id, username, referencia, plan_elegido, referencia, plan_elegido))
+                """, (telegram_id, username, referencia, plan_elegido, pass_temporal, referencia, plan_elegido))
         return True
     except Exception as e:
         print(f"Error en registrar_pago_db: {e}")
@@ -180,7 +177,7 @@ def verificar_estado_usuario(telegram_id: int) -> dict:
         with conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT estado_suscripcion, fecha_expiracion, referencia_pago, tipo_plan 
+                    SELECT estado_suscripcion, fecha_expiracion, referencia_pago, tipo_plan, password, username 
                     FROM usuarios_p2p WHERE telegram_id = %s;
                 """, (telegram_id,))
                 row = cur.fetchone()
@@ -189,7 +186,9 @@ def verificar_estado_usuario(telegram_id: int) -> dict:
                         "estado": row[0],
                         "expiracion": row[1],
                         "referencia": row[2],
-                        "plan": row[3] or "vip"
+                        "plan": row[3] or "vip",
+                        "password": row[4],
+                        "username": row[5]
                     }
         return {"estado": "no_registrado"}
     except Exception as e:
@@ -377,7 +376,7 @@ def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia
         _gemini_cache["ultima_actualizacion"] = tiempo_actual
         return resultado_json
 
-    except Exception as e:
+    except Exception:
         _gemini_cache["resultado"] = fallback_response
         _gemini_cache["ultima_actualizacion"] = tiempo_actual + 900 
         return fallback_response
@@ -522,17 +521,12 @@ async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ Cancelar", callback_data="plan_cancelar")]
     ]
     reply_markup = InlineKeyboardMarkup(teclado)
-    
-    texto = (
-        "💎 **SELECCIONA TU PLAN DE SUSCRIPCIÓN**\n\n"
-        "Elige el plan que deseas adquirir para procesar tu reporte de pago:"
-    )
+    texto = "💎 **SELECCIONA TU PLAN DE SUSCRIPCIÓN**\n\nElige el plan que deseas adquirir para procesar tu reporte de pago:"
     await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def callback_botones_suscripcion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     data = query.data
     
     if data == "plan_cancelar":
@@ -553,13 +547,11 @@ async def callback_botones_suscripcion(update: Update, context: ContextTypes.DEF
         "📝 **¿Cómo registrar tu pago?**\n"
         f"Envía el comando con tu número de referencia:\n`{comando_ejemplo}`"
     )
-    
     await query.message.edit_text(texto_metodos, parse_mode="Markdown")
 
 async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username or f"user_{user_id}"
-    
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
@@ -579,20 +571,48 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exito = registrar_pago_db(user_id, username, referencia, plan_elegido)
     
     if exito:
+        # Recuperar la contraseña generada
+        datos = verificar_estado_usuario(user_id)
+        password_web = datos.get("password", "N/A")
         await update.message.reply_text(
             "✅ **¡Comprobante enviado con éxito!**\n\n"
             f"• Plan solicitado: **{plan_elegido.upper()}**\n"
-            f"• Referencia registrada: `{referencia}`\n"
-            "Tu pago se encuentra en estado **pendiente** de revisión. El administrador verificará la transacción y activará tu acceso en breve.",
+            f"• Referencia registrada: `{referencia}`\n\n"
+            f"🔐 **Tus credenciales generadas para el Monitor Web:**\n"
+            f"• Usuario / ID: `{user_id}`\n"
+            f"• Contraseña: `{password_web}`\n\n"
+            "Tu pago está en estado **pendiente** de aprobación por el administrador.",
             parse_mode="Markdown"
         )
     else:
-        await update.message.reply_text("❌ Ocurrió un error al registrar el pago en el sistema. Inténtalo de nuevo más tarde.")
+        await update.message.reply_text("❌ Ocurrió un error al registrar el pago en el sistema.")
+
+async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra u otorga la contraseña de acceso al monitor web del usuario."""
+    user_id = update.effective_user.id
+    datos = verificar_estado_usuario(user_id)
+    
+    if datos.get("estado") == "no_registrado":
+        await update.message.reply_text("❌ No estás registrado en el sistema. Usa `/suscribir` para comenzar.", parse_mode="Markdown")
+        return
+        
+    password_web = datos.get("password")
+    plan = datos.get("plan", "vip").upper()
+    estado = datos.get("estado").upper()
+    
+    mensaje = (
+        f"🔐 **Tus Credenciales para el Monitor Web**\n\n"
+        f"📦 Plan: **{plan}**\n"
+        f"🟢 Estado: **{estado}**\n\n"
+        f"• Usuario (Telegram ID): `{user_id}`\n"
+        f"• Contraseña Web: `{password_web}`\n\n"
+        "Usa estos datos en la pantalla de inicio de sesión de la plataforma web."
+    )
+    await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     datos = verificar_estado_usuario(user_id)
-    
     estado = datos.get("estado")
     plan_actual = datos.get("plan", "vip").upper()
     
@@ -602,7 +622,8 @@ async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"✨ *Tu suscripción está ACTIVA*\n"
             f"📦 Plan: **{plan_actual}**\n"
-            f"⏳ Vence el: `{exp_texto}`", 
+            f"⏳ Vence el: `{exp_texto}`\n\n"
+            "💡 Usa `/password` para ver tus credenciales de acceso web.", 
             parse_mode="Markdown"
         )
     elif estado == "pendiente":
@@ -620,19 +641,20 @@ async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def iniciar_telegram_bot():
     global telegram_app
     if not TELEGRAM_BOT_TOKEN:
-        print("⚠️ TELEGRAM_BOT_TOKEN no configurado. El bot de Telegram no se iniciará.")
+        print("⚠️ TELEGRAM_BOT_TOKEN no configurado.")
         return
     try:
         telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
         telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
+        telegram_app.add_handler(CommandHandler("password", cmd_password))
         telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
         telegram_app.add_handler(CallbackQueryHandler(callback_botones_suscripcion))
         
         await telegram_app.initialize()
         await telegram_app.start()
-        print("🤖 Bot de Telegram inicializado con éxito.")
+        print("🤖 Bot de Telegram inicializado con éxito con manejo de contraseñas web.")
     except Exception as e:
         print(f"Error al iniciar el bot de Telegram: {e}")
 
@@ -657,7 +679,7 @@ app.add_middleware(
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def home():
-    return {"status": "ok", "message": "Venbot P2P Activo con XGBoost Quant"}
+    return {"status": "ok", "message": "Venbot P2P Activo con Autenticación Web y XGBoost"}
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -669,8 +691,45 @@ async def telegram_webhook(request: Request):
         await telegram_app.process_update(update)
         return {"status": "ok"}
     except Exception as e:
-        print(f"Error procesando webhook de Telegram: {e}")
+        print(f"Error procesando webhook: {e}")
         return {"status": "error", "message": str(e)}
+
+@app.post("/api/login")
+async def api_login(payload: dict = Body(...)):
+    """Endpoint para que la interfaz web valide el usuario y contraseña generados por el bot."""
+    usuario_ingresado = str(payload.get("username", "")).strip()
+    password_ingresado = str(payload.get("password", "")).strip()
+
+    if not usuario_ingresado or not password_ingresado:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Faltan credenciales"})
+
+    conn = get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"success": False, "message": "Error de base de datos"})
+
+    try:
+        with conn.cursor() as cur:
+            # Permitir login por Telegram ID o por Username de Telegram
+            cur.execute("""
+                SELECT telegram_id, estado_suscripcion, tipo_plan, password 
+                FROM usuarios_p2p 
+                WHERE (CAST(telegram_id AS TEXT) = %s OR username ILIKE %s) AND password = %s;
+            """, (usuario_ingresado, usuario_ingresado, password_ingresado))
+            row = cur.fetchone()
+
+            if row:
+                telegram_id, estado, plan, _ = row
+                if estado == "activo":
+                    return {"success": True, "message": "Login exitoso", "plan": plan, "telegram_id": telegram_id}
+                else:
+                    return JSONResponse(status_code=403, content={"success": False, "message": "Tu cuenta está pendiente de aprobación o inactiva."})
+            else:
+                return JSONResponse(status_code=401, content={"success": False, "message": "Usuario o contraseña inválidos."})
+    except Exception as e:
+        print(f"Error en login: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": "Error interno en el servidor"})
+    finally:
+        conn.close()
 
 @app.get("/api/stream")
 async def event_stream():
@@ -717,10 +776,8 @@ async def event_stream():
 async def get_p2p_rates_v1():
     compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
     usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-    
     if not compra:
         compra, venta = 945.25, 956.00
-    
     data = {
         "buy_price": compra,
         "sell_price": venta,
@@ -735,27 +792,11 @@ async def get_p2p_rates_v1():
 @app.get("/styles.css")
 async def get_custom_css():
     css_content = """
-    body {
-      background-color: #0B1120 !important;
-      color: #FFFFFF !important;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-    }
-    p, span, label, div, .description, .ia-report-text {
-      color: #E2E8F0 !important;
-      font-size: 0.95rem !important;
-      line-height: 1.5 !important;
-    }
-    .text-secondary, .text-muted, small, footer p, .ia-disclaimer-text {
-      color: #94A3B8 !important;
-    }
-    h1, h2, h3, h4, h5, .card-title, .metric-label {
-      color: #38BDF8 !important;
-      font-weight: 600 !important;
-    }
-    .metric-value, .highlight-text {
-      color: #FFFFFF !important;
-      font-weight: 700 !important;
-    }
+    body { background-color: #0B1120 !important; color: #FFFFFF !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; }
+    p, span, label, div, .description, .ia-report-text { color: #E2E8F0 !important; font-size: 0.95rem !important; line-height: 1.5 !important; }
+    .text-secondary, .text-muted, small, footer p, .ia-disclaimer-text { color: #94A3B8 !important; }
+    h1, h2, h3, h4, h5, .card-title, .metric-label { color: #38BDF8 !important; font-weight: 600 !important; }
+    .metric-value, .highlight-text { color: #FFFFFF !important; font-weight: 700 !important; }
     """
     return Response(content=css_content, media_type="text/css")
 
@@ -763,27 +804,14 @@ async def get_custom_css():
 async def get_actual():
     compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
     usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-    
     if not compra:
-        return JSONResponse(
-            content={"error": "Sin datos"},
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-        )
+        return JSONResponse(content={"error": "Sin datos"}, headers={"Cache-Control": "no-store"})
     pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
     data = {
-        "compra": compra, 
-        "venta": venta, 
-        "spread": spread, 
-        "pct_bruto": pct, 
-        "diferencia": spread,
-        "bcv": usd_bcv,
-        "euro": eur_bcv,
-        "prediccion": pred
+        "compra": compra, "venta": venta, "spread": spread, "pct_bruto": pct, "diferencia": spread,
+        "bcv": usd_bcv, "euro": eur_bcv, "prediccion": pred
     }
-    return JSONResponse(
-        content=data,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    )
+    return JSONResponse(content=data, headers={"Cache-Control": "no-store"})
 
 @app.get("/api/historico")
 async def get_historico(periodo: str = "1d"):
@@ -795,10 +823,7 @@ async def get_historico(periodo: str = "1d"):
         except:
             hora_f = "12:00"
         resultado.append({"hora": hora_f, "compra": f[0], "venta": f[1]})
-    return JSONResponse(
-        content=resultado,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    )
+    return JSONResponse(content=resultado, headers={"Cache-Control": "no-store"})
 
 @app.post("/api/chat")
 async def api_chat(payload: dict = Body(...)):
@@ -817,13 +842,3 @@ async def api_chat(payload: dict = Body(...)):
         respuesta = f"Diagnóstico P2P: {ia.get('estado_actual', '')} Recomendación: {ia.get('recomendacion_tactica', '')}"
 
     return {"response": respuesta}
-
-@app.get("/api/historial")
-async def get_historial():
-    filas = await asyncio.to_thread(obtener_estadisticas_db)
-    compras = [f[0] for f in filas]
-    ventas = [f[1] for f in filas]
-    return JSONResponse(
-        content={"compras": compras, "ventas": ventas, "total": len(filas)},
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    )
