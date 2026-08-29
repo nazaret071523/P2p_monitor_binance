@@ -137,8 +137,8 @@ def init_db():
                         password TEXT
                     );
                 ''')
-                # Asegurar columnas si la tabla ya existía
-                cursor.execute('ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';')
+                # Asegurar columnas si la tabla ya existía (CORREGIDO CON COMILLAS DOBLES AQUÍ 👇)
+                cursor.execute('ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT "vip";')
                 cursor.execute('ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS password TEXT;')
                 conn.commit()
         finally:
@@ -151,7 +151,6 @@ def registrar_pago_db(telegram_id: int, username: str, referencia: str, plan_ele
     if not conn:
         return False
     try:
-        # Generar una contraseña web automática por defecto basada en el telegram_id y aleatoria si no existe
         import random
         pass_temporal = f"vb_{telegram_id}_{random.randint(100, 999)}"
         with conn:
@@ -571,7 +570,6 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exito = registrar_pago_db(user_id, username, referencia, plan_elegido)
     
     if exito:
-        # Recuperar la contraseña generada
         datos = verificar_estado_usuario(user_id)
         password_web = datos.get("password", "N/A")
         await update.message.reply_text(
@@ -588,7 +586,6 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Ocurrió un error al registrar el pago en el sistema.")
 
 async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra u otorga la contraseña de acceso al monitor web del usuario."""
     user_id = update.effective_user.id
     datos = verificar_estado_usuario(user_id)
     
@@ -696,7 +693,6 @@ async def telegram_webhook(request: Request):
 
 @app.post("/api/login")
 async def api_login(payload: dict = Body(...)):
-    """Endpoint para que la interfaz web valide el usuario y contraseña generados por el bot."""
     usuario_ingresado = str(payload.get("username", "")).strip()
     password_ingresado = str(payload.get("password", "")).strip()
 
@@ -709,7 +705,6 @@ async def api_login(payload: dict = Body(...)):
 
     try:
         with conn.cursor() as cur:
-            # Permitir login por Telegram ID o por Username de Telegram
             cur.execute("""
                 SELECT telegram_id, estado_suscripcion, tipo_plan, password 
                 FROM usuarios_p2p 
@@ -788,57 +783,3 @@ async def get_p2p_rates_v1():
         content=data,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
-
-@app.get("/styles.css")
-async def get_custom_css():
-    css_content = """
-    body { background-color: #0B1120 !important; color: #FFFFFF !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important; }
-    p, span, label, div, .description, .ia-report-text { color: #E2E8F0 !important; font-size: 0.95rem !important; line-height: 1.5 !important; }
-    .text-secondary, .text-muted, small, footer p, .ia-disclaimer-text { color: #94A3B8 !important; }
-    h1, h2, h3, h4, h5, .card-title, .metric-label { color: #38BDF8 !important; font-weight: 600 !important; }
-    .metric-value, .highlight-text { color: #FFFFFF !important; font-weight: 700 !important; }
-    """
-    return Response(content=css_content, media_type="text/css")
-
-@app.get("/api/actual")
-async def get_actual():
-    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-    if not compra:
-        return JSONResponse(content={"error": "Sin datos"}, headers={"Cache-Control": "no-store"})
-    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-    data = {
-        "compra": compra, "venta": venta, "spread": spread, "pct_bruto": pct, "diferencia": spread,
-        "bcv": usd_bcv, "euro": eur_bcv, "prediccion": pred
-    }
-    return JSONResponse(content=data, headers={"Cache-Control": "no-store"})
-
-@app.get("/api/historico")
-async def get_historico(periodo: str = "1d"):
-    filas = await asyncio.to_thread(obtener_estadisticas_db)
-    resultado = []
-    for f in filas:
-        try:
-            hora_f = datetime.fromisoformat(f[2]).strftime("%I:%M %p")
-        except:
-            hora_f = "12:00"
-        resultado.append({"hora": hora_f, "compra": f[0], "venta": f[1]})
-    return JSONResponse(content=resultado, headers={"Cache-Control": "no-store"})
-
-@app.post("/api/chat")
-async def api_chat(payload: dict = Body(...)):
-    prompt = payload.get("prompt", "").lower()
-    compra, venta, spread, _ = await asyncio.to_thread(fetch_binance_p2p)
-    pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-    ia = pred["analisis_ia"]
-    
-    if "precio" in prompt or "cuanto" in prompt:
-        respuesta = f"La compra P2P está en {compra:.2f} Bs y la venta en {venta:.2f} Bs."
-    elif "comprar" in prompt:
-        respuesta = f"Tasa recomendada para comprar P2P: {compra:.2f} Bs."
-    elif "vender" in prompt:
-        respuesta = f"Tasa recomendada para vender P2P: {venta:.2f} Bs."
-    else:
-        respuesta = f"Diagnóstico P2P: {ia.get('estado_actual', '')} Recomendación: {ia.get('recomendacion_tactica', '')}"
-
-    return {"response": respuesta}
