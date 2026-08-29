@@ -74,7 +74,6 @@
           </div>
         </div>
         <div class="flex flex-col items-end gap-1 shrink-0">
-          <!-- Botón de Entrar modificado para abrir el modal de autenticación Supabase -->
           <button type="button" onclick="openLoginModal()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
             <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
           </button>
@@ -370,7 +369,6 @@
 
   </div>
 
-
   <!-- MODAL: PUBLICIDAD / INTERSTITIAL -->
   <div id="venbotAdModal" class="fixed inset-0 z-[70] bg-black/85 backdrop-blur-sm hidden items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="venbot-ad-title">
     <div class="venbot-ad-surface glass-card w-full max-w-md rounded-2xl border border-slate-700/80 p-5 shadow-2xl fade-up">
@@ -507,7 +505,7 @@
   </div>
 
   <script>
-    // Inicialización del Cliente Supabase (Reemplaza con tus credenciales de tu proyecto Supabase)
+    // Configuración de Supabase
     const SUPABASE_URL = 'TU_SUPABASE_URL_AQUI';
     const SUPABASE_ANON_KEY = 'TU_SUPABASE_ANON_KEY_AQUI';
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -535,9 +533,8 @@
       }
 
       try {
-        // Consulta a la tabla en Supabase (ej. tabla 'users' o 'bot_credentials')
         const { data, error } = await supabaseClient
-          .from('bot_credentials') // Nombre de tu tabla en Supabase
+          .from('bot_credentials')
           .select('plan, username')
           .eq('username', usernameInput)
           .eq('token', tokenInput)
@@ -549,7 +546,6 @@
           return;
         }
 
-        // Si es exitoso, desbloqueamos y guardamos el estado en localStorage
         const userPlan = data.plan ? data.plan.toUpperCase() : 'PREMIUM';
         localStorage.setItem('venbot_user', usernameInput);
         localStorage.setItem('venbot_plan', userPlan);
@@ -573,15 +569,6 @@
       }
     }
 
-    // Verificar si ya hay una sesión activa al cargar la página
-    window.addEventListener('DOMContentLoaded', () => {
-      const savedPlan = localStorage.getItem('venbot_plan');
-      if (savedPlan) {
-        applyUserPlanUI(savedPlan);
-      }
-    });
-
-    // --- Resto de funciones originales intactas ---
     function showTriggeredAd(reason) {
       const modal = document.getElementById('venbotAdModal');
       modal.classList.add('is-visible');
@@ -612,8 +599,9 @@
     }
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
-      document.getElementById('calc-result').textContent = (amount * 938.7).toFixed(2) + ' Bs';
-      document.getElementById('calc-diff').textContent = 'Calculado correctamente';
+      const sellPrice = 938.70;
+      document.getElementById('calc-result').textContent = (amount * sellPrice).toFixed(2) + ' Bs';
+      document.getElementById('calc-diff').textContent = 'Calculado con tasa de venta P2P';
     }
     function setChartPeriod(period, btn) {
       document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
@@ -634,9 +622,9 @@
     function saveAlert() {
       closeAlertsModal();
     }
-    
-    // Simulación de actualización de datos de mercado
-    setInterval(() => {
+
+    // Función para actualizar y proyectar los precios en todos los bloques
+    function updateMarketData() {
       document.getElementById('buy-price').innerHTML = '929,00 <span class="text-xs font-medium text-slate-400">Bs</span>';
       document.getElementById('sell-price').innerHTML = '938,70 <span class="text-xs font-medium text-slate-400">Bs</span>';
       document.getElementById('spread-value').textContent = '1.04%';
@@ -649,7 +637,21 @@
       document.getElementById('chart-current').textContent = '938,70 Bs';
       document.getElementById('chart-high').textContent = '945,00 Bs';
       document.getElementById('m4-val').textContent = '925,00 – 945,00 Bs';
-    }, 1000);
+      calculateRate();
+    }
+
+    // Inicialización al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      const savedPlan = localStorage.getItem('venbot_plan');
+      if (savedPlan) {
+        applyUserPlanUI(savedPlan);
+      }
+      // Restaurar y proyectar los precios de inmediato
+      updateMarketData();
+    });
+
+    // Actualización automática cada segundo
+    setInterval(updateMarketData, 1000);
   </script>
 </body>
 </html>
