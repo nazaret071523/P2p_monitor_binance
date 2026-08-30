@@ -137,7 +137,6 @@ def init_db():
                         password TEXT
                     );
                 ''')
-                # Corrección aplicada: se usan comillas simples para el valor por defecto en SQL
                 cursor.execute("ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';")
                 cursor.execute("ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS password TEXT;")
                 conn.commit()
@@ -149,7 +148,7 @@ init_db()
 def registrar_pago_db(telegram_id: int, username: str, referencia: str, plan_elegido: str = 'vip') -> bool:
     conn = get_db_connection()
     if not conn:
-        return False
+        return None
     try:
         import random
         pass_temporal = f"vb_{telegram_id}_{random.randint(100, 999)}"
