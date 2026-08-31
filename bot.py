@@ -187,7 +187,6 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual):
         ahora_dt = datetime.now(VET)
         ruta_horas = [(ahora_dt + timedelta(hours=h)).strftime("%I:%M %p") for h in range(1, 8)]
         
-        # Trayectoria con desviación y curva de spread dinámica
         ruta_valores = [round(actual_compra + (pred_c - actual_compra) * (i / 7), 2) for i in range(1, 8)]
         ruta_spreads = [round(spread_promedio + (np.sin(i) * 0.4), 2) for i in range(1, 8)]
 
@@ -232,7 +231,7 @@ def obtener_analisis_ia_coherente(compra, venta, spread, tendencia, pred_c, pred
     return "Protección de precios activa. Canal de volatilidad estable."
 
 # ==========================================
-# GRÁFICA INSTITUCIONAL CON BANDAS Y SPREAD
+# GRÁFICA INSTITUCIONAL CON BANDAS Y SPREAD (Corregida)
 # ==========================================
 def generar_grafica_prediccion_buffer():
     filas = obtener_estadisticas_db(limit=30)
@@ -240,7 +239,15 @@ def generar_grafica_prediccion_buffer():
         return None
 
     compras = [f[0] for f in filas]
-    tiempos = [f[3][11:16] for f in filas]
+    
+    # MANEJO SEGURO DE FECHAS (Soporta objeto datetime de Postgres o texto plano)
+    tiempos = []
+    for f in filas:
+        fecha_val = f[3]
+        if isinstance(fecha_val, datetime):
+            tiempos.append(fecha_val.strftime("%H:%M"))
+        else:
+            tiempos.append(str(fecha_val)[11:16])
     
     ultimo_precio = compras[-1]
     pred = motor_quant_inteligente(ultimo_precio, ultimo_precio + 14.0, 10)
