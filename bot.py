@@ -30,7 +30,6 @@ VET = pytz.timezone('America/Caracas')
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/venbot")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_GEMINI_API_KEY")
-# ID del chat o canal de la comunidad para recibir alertas automáticas de ruptura
 CHAT_COMUNIDAD_ID = os.getenv("CHAT_COMUNIDAD_ID", "-100123456789")
 
 ULTIMO_REGISTRO_VALIDO = {"compra": 0.0, "venta": 0.0, "timestamp": None}
@@ -86,13 +85,12 @@ def obtener_estadisticas_db(limit=2000):
     return list(reversed(rows))
 
 # ==========================================
-# FILTRO ANTI-ANUNCIANTES FANTASMAS (MEJORA 1)
+# FILTRO ANTI-ANUNCIANTES FANTASMAS
 # ==========================================
 def filtrar_outliers(precios):
     if len(precios) < 4:
         return precios
     mediana = np.median(precios)
-    # Descarta precios que se alejen más del 8% de la mediana del libro para evitar manipulación
     filtrados = [p for p in precios if abs(p - mediana) / mediana <= 0.08]
     return filtrados if filtrados else precios
 
@@ -121,7 +119,6 @@ def obtener_precios_binance_p2p():
         precios_compra_raw = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
         precios_venta_raw = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
 
-        # Aplicando filtro anti-outliers para limpiar anunciantes fantasmas
         precios_compra = filtrar_outliers(precios_compra_raw)
         precios_venta = filtrar_outliers(precios_venta_raw)
 
@@ -150,7 +147,7 @@ def obtener_precios_binance_p2p():
         return base_c, base_v, 5
 
 # ==========================================
-# MOTOR QUANT CON BANDA DE CONFIANZA Y SPREAD
+# MOTOR QUANT HÍBRIDO (MACRO + MICRO TENDENCIA)
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual):
     filas = obtener_estadisticas_db()
@@ -194,7 +191,12 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual):
         spread_promedio = np.mean(spreads_historicos)
         pred_v = round(pred_c + spread_promedio, 2)
 
-        if slope_c > 0.015:
+        # Análisis híbrido de tendencia con filtro de pulso para correcciones rápidas
+        variacion_reciente = (actual_compra - compras[-3]) / compras[-3] if len(compras) >= 3 else 0
+
+        if variacion_reciente < -0.004:  # Caída rápida detectada en las últimas muestras
+            tendencia = "🔻 CORRECCIÓN TÁCTICA"
+        elif slope_c > 0.015:
             tendencia = "🚀 ALCISTA"
         elif slope_c < -0.015:
             tendencia = "🔻 BAJISTA"
@@ -236,8 +238,8 @@ def obtener_analisis_ia_coherente(compra, venta, spread, tendencia, pred_c, pred
         headers = {"Content-Type": "application/json"}
         prompt = (
             f"Actúa como analista cuantitativo experto en Binance P2P USDT/VES. "
-            f"Datos: Compra={compra}, Venta={venta}, Tendencia={tendencia}, Diana +7H={pred_c}, Liquidez={liquidez}. "
-            f"Redacta un comentario táctico muy breve de riesgo (máx 2 líneas)."
+            f"Datos actuales: Compra={compra}, Venta={venta}, Tendencia={tendencia}, Diana +7H={pred_c}, Liquidez={liquidez}. "
+            f"Redacta un comentario táctico dinámico de riesgo y sugerencia de entrada/salida (máx 2 líneas)."
         )
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         resp = requests.post(url, json=payload, headers=headers, timeout=5)
@@ -245,10 +247,16 @@ def obtener_analisis_ia_coherente(compra, venta, spread, tendencia, pred_c, pred
             return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except Exception:
         pass
+    
+    # Análisis de respaldo dinámico basado en la situación real
+    if "CORRECCIÓN" in tendencia:
+        return "Precio en retroceso táctico. Esperar estabilización en zona de soporte para reentrada."
+    elif "ALCISTA" in tendencia:
+        return "Impulso alcista activo. Ideal buscar entradas en soportes y asegurar parciales cerca del techo."
     return "Protección de precios activa. Canal de volatilidad estable."
 
 # ==========================================
-# GRÁFICA INSTITUCIONAL CON BANDAS Y SPREAD (Corregida)
+# GRÁFICA INSTITUCIONAL CON BANDAS Y SPREAD
 # ==========================================
 def generar_grafica_prediccion_buffer():
     filas = obtener_estadisticas_db(limit=30)
@@ -257,7 +265,6 @@ def generar_grafica_prediccion_buffer():
 
     compras = [f[0] for f in filas]
     
-    # MANEJO SEGURO DE FECHAS (Soporta objeto datetime de Postgres o texto plano)
     tiempos = []
     for f in filas:
         fecha_val = f[3]
@@ -272,14 +279,12 @@ def generar_grafica_prediccion_buffer():
     fig, ax1 = plt.subplots(figsize=(10, 5))
     plt.style.use('dark_background')
 
-    # Eje 1: Precios y Bandas de Confianza (95% confianza con desviación estándar)
     ax1.plot(tiempos, compras, label='Historial P2P Real', color='#00ffcc', marker='o', linewidth=2, markersize=4)
 
     if pred["ruta_horas"] and pred["ruta_valores"]:
         tiempos_futuros = [tiempos[-1]] + pred["ruta_horas"]
         valores_futuros = [ultimo_precio] + pred["ruta_valores"]
         
-        # Bandas superior e inferior (95% confianza ~ 1.96 * desv)
         std_val = pred["desviacion"]
         banda_sup = [v + (1.96 * std_val * (i/7)) for i, v in enumerate(valores_futuros)]
         banda_inf = [v - (1.96 * std_val * (i/7)) for i, v in enumerate(valores_futuros)]
@@ -287,7 +292,6 @@ def generar_grafica_prediccion_buffer():
         ax1.plot(tiempos_futuros, valores_futuros, label='Ruta Proyectada (+7H)', color='#ff0055', linestyle='--', marker='x', linewidth=2)
         ax1.fill_between(tiempos_futuros, banda_inf, banda_sup, color='#ff0055', alpha=0.15, label='Banda de Confianza 95%')
 
-        # Marcador de Pico / Evento Crítico
         pico_idx = len(tiempos_futuros) // 2
         ax1.annotate('Punto de Inflexión / Pico', xy=(tiempos_futuros[pico_idx], valores_futuros[pico_idx]),
                      xytext=(tiempos_futuros[pico_idx], valores_futuros[pico_idx] + 1.5),
@@ -301,7 +305,6 @@ def generar_grafica_prediccion_buffer():
     ax1.tick_params(axis='y', labelcolor='#00ffcc')
     ax1.grid(True, linestyle='--', alpha=0.2)
 
-    # Eje 2: Curva Dinámica del Spread
     if pred["ruta_horas"] and pred["ruta_spreads"]:
         ax2 = ax1.twinx()
         spreads_completos = [compras[-1] * 0.015] + pred["ruta_spreads"]
@@ -320,13 +323,12 @@ def generar_grafica_prediccion_buffer():
     return buf
 
 # ==========================================
-# SISTEMA DE ALERTA AUTOMÁTICA POR RUPTURA (MEJORA 2)
+# SISTEMA DE ALERTA AUTOMÁTICA POR RUPTURA
 # ==========================================
 async def verificar_rupturas_y_alertar(bot, compra_actual, venta_actual):
     try:
         conn = obtener_conexion()
         cur = conn.cursor()
-        # Evaluamos contra el histórico previo (excluyendo la muestra actual recién ingresada)
         cur.execute("SELECT MIN(compra), MAX(venta) FROM muestras_p2p WHERE id < (SELECT MAX(id) FROM muestras_p2p);")
         res = cur.fetchone()
         cur.close()
@@ -420,7 +422,6 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await message.reply_text("⚠️ Recopilando muestras suficientes para generar las bandas estadísticas...")
 
-# NUEVO COMANDO /SPREAD DEDICADO (MEJORA 3)
 async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
@@ -477,7 +478,6 @@ async def tarea_recoleccion_automatica():
             guardar_muestra_db(c, v, l)
             logger.info(f"Muestra guardada: Compra={c}, Venta={v}, Liquidez={l}")
             
-            # Ejecutar verificación de ruptura y alerta automática en segundo plano
             if telegram_app and telegram_app.bot:
                 await verificar_rupturas_y_alertar(telegram_app.bot, c, v)
         except Exception as e:
