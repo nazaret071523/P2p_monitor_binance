@@ -81,23 +81,39 @@ def obtener_estadisticas_db(limit=2000):
     return list(reversed(rows))
 
 # ==========================================
-# SCRAPING DE BINANCE P2P USDT/VES
+# SCRAPING REAL DE BINANCE P2P USDT/VES
 # ==========================================
 def obtener_precios_binance_p2p():
+    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    bancos_filtro = ["BBVA", "Mercantil", "BNC"]
+    payload_compra = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000", "payTypes": bancos_filtro}
+    payload_venta = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000", "payTypes": bancos_filtro}
+
     try:
-        url = "https://p2p.binance.com/trade/all/USDT?fiat=VES"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return 923.0, 937.0 # Valores simulados de respaldo si hay bloqueo regional
-        
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        # Extracción segura simulada basada en estructura P2P estándar
-        return 923.00, 937.00
+        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=5).json()
+        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=5).json()
+
+        data_c, data_v = res_c.get("data", []), res_v.get("data", [])
+        if not data_c or not data_v:
+            return 923.00, 937.00
+
+        precios_compra = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
+        precios_venta = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
+
+        if not precios_compra or not precios_venta:
+            return 923.00, 937.00
+
+        tasa_compra, tasa_venta = min(precios_compra), max(precios_venta)
+        if tasa_compra >= tasa_venta:
+            tasa_compra, tasa_venta = precios_compra[0], precios_venta[0]
+
+        return round(tasa_compra, 2), round(tasa_venta, 2)
     except Exception as e:
-        logger.error(f"Error haciendo scraping de Binance P2P: {e}")
+        logger.error(f"Error consultando Binance P2P: {e}")
         return 923.00, 937.00
 
 # ==========================================
@@ -134,7 +150,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
             recent_y = compras[-len(recent_x):]
             slope_c, _ = np.polyfit(recent_x, recent_y, 1)
             
-            # Proyección fija a +7 horas estructurada en bloques temporales firmes
             delta_proyectado = (pred_c_next - actual_compra) + (slope_c * 42)
             pred_c = round(actual_compra + delta_proyectado, 2)
         else:
@@ -150,7 +165,6 @@ def motor_quant_inteligente(actual_compra, actual_venta):
         else:
             tendencia = "➖ ESTABLE / LATERAL"
 
-        # Ruta horaria estructurada de convergencia hacia la diana de +7 horas
         ahora_dt = datetime.now(VET)
         ruta_horas = [(ahora_dt + timedelta(hours=h)).strftime("%I:%M %p") for h in range(1, 8)]
         ruta_valores = [round(actual_compra + (pred_c - actual_compra) * (i / 7), 2) for i in range(1, 8)]
@@ -208,10 +222,8 @@ def generar_grafica_prediccion_buffer():
     plt.figure(figsize=(10, 5))
     plt.style.use('dark_background')
 
-    # Historial real
     plt.plot(tiempos, compras, label='Historial P2P Real', color='#00ffcc', marker='o', linewidth=2, markersize=4)
 
-    # Ruta proyectada horaria hacia la diana de +7H
     if pred["ruta_horas"] and pred["ruta_valores"]:
         tiempos_futuros = [tiempos[-1]] + pred["ruta_horas"]
         valores_futuros = [ultimo_precio] + pred["ruta_valores"]
@@ -333,7 +345,7 @@ async def tarea_recoleccion_automatica():
             logger.info(f"Muestra guardada exitosamente: Compra={c}, Venta={v}")
         except Exception as e:
             logger.error(f"Error en tarea de recolección: {e}")
-        await asyncio.sleep(300) # Cada 5 minutos
+        await asyncio.sleep(300)
 
 # ==========================================
 # APLICACIÓN FASTAPI
