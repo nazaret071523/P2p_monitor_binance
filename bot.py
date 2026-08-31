@@ -15,9 +15,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+import uvicorn
 
 # ==========================================
 # CONFIGURACIÓN GENERAL Y ZONA HORARIA VET
@@ -42,99 +42,115 @@ def obtener_conexion():
     return psycopg2.connect(DATABASE_URL)
 
 def inicializar_db():
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS muestras_p2p (
-            id SERIAL PRIMARY KEY,
-            compra FLOAT,
-            venta FLOAT,
-            liquidez_score INT DEFAULT 0,
-            banco TEXT DEFAULT 'GENERAL',
-            fecha TIMESTAMP
-        );
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS registro_senales (
-            id SERIAL PRIMARY KEY,
-            precio_entrada FLOAT,
-            precio_objetivo FLOAT,
-            tendencia TEXT,
-            estado TEXT DEFAULT 'PENDIENTE',
-            fecha_creacion TIMESTAMP,
-            fecha_cierre TIMESTAMP
-        );
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS config_usuario (
-            telegram_id BIGINT PRIMARY KEY,
-            banco_preferido TEXT DEFAULT 'BBVA',
-            suscrito BOOLEAN DEFAULT FALSE,
-            plan TEXT DEFAULT 'FREE'
-        );
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS muestras_p2p (
+                id SERIAL PRIMARY KEY,
+                compra FLOAT,
+                venta FLOAT,
+                liquidez_score INT DEFAULT 0,
+                banco TEXT DEFAULT 'GENERAL',
+                fecha TIMESTAMP
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS registro_senales (
+                id SERIAL PRIMARY KEY,
+                precio_entrada FLOAT,
+                precio_objetivo FLOAT,
+                tendencia TEXT,
+                estado TEXT DEFAULT 'PENDIENTE',
+                fecha_creacion TIMESTAMP,
+                fecha_cierre TIMESTAMP
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS config_usuario (
+                telegram_id BIGINT PRIMARY KEY,
+                banco_preferido TEXT DEFAULT 'BBVA',
+                suscrito BOOLEAN DEFAULT FALSE,
+                plan TEXT DEFAULT 'FREE'
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error inicializando DB: {e}")
 
 def guardar_muestra_db(compra, venta, liquidez_score=100, banco="GENERAL"):
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO muestras_p2p (compra, venta, liquidez_score, banco, fecha) VALUES (%s, %s, %s, %s, %s)",
-        (float(compra), float(venta), int(liquidez_score), banco, datetime.now(VET))
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO muestras_p2p (compra, venta, liquidez_score, banco, fecha) VALUES (%s, %s, %s, %s, %s)",
+            (float(compra), float(venta), int(liquidez_score), banco, datetime.now(VET))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error guardando muestra: {e}")
 
 def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    if banco == "GENERAL":
-        cur.execute("SELECT compra, venta, liquidez_score, fecha FROM muestras_p2p ORDER BY id DESC LIMIT %s;", (limit,))
-    else:
-        cur.execute("SELECT compra, venta, liquidez_score, fecha FROM muestras_p2p WHERE banco = %s ORDER BY id DESC LIMIT %s;", (banco, limit))
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return list(reversed(rows))
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        if banco == "GENERAL":
+            cur.execute("SELECT compra, venta, liquidez_score, fecha FROM muestras_p2p ORDER BY id DESC LIMIT %s;", (limit,))
+        else:
+            cur.execute("SELECT compra, venta, liquidez_score, fecha FROM muestras_p2p WHERE banco = %s ORDER BY id DESC LIMIT %s;", (banco, limit))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return list(reversed(rows))
+    except Exception as e:
+        logger.error(f"Error obteniendo estadísticas: {e}")
+        return []
 
 def registrar_senal_simulador(precio_entrada, precio_objetivo, tendencia):
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO registro_senales (precio_entrada, precio_objetivo, tendencia, estado, fecha_creacion) VALUES (%s, %s, %s, 'PENDIENTE', %s)",
-        (float(precio_entrada), float(precio_objetivo), str(tendencia), datetime.now(VET))
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO registro_senales (precio_entrada, precio_objetivo, tendencia, estado, fecha_creacion) VALUES (%s, %s, %s, 'PENDIENTE', %s)",
+            (float(precio_entrada), float(precio_objetivo), str(tendencia), datetime.now(VET))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error registrando señal: {e}")
 
 def evaluar_rendimiento_senales(precio_actual):
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute("SELECT id, precio_entrada, precio_objetivo, tendencia FROM registro_senales WHERE estado = 'PENDIENTE';")
-    pendientes = cur.fetchall()
-    
-    ahora = datetime.now(VET)
-    for row in pendientes:
-        sig_id, p_entrada, p_obj, tendencia = row
-        cur.execute("SELECT fecha_creacion FROM registro_senales WHERE id = %s;", (sig_id,))
-        f_creacion = cur.fetchone()[0]
-        if (ahora - f_creacion.astimezone(VET)) >= timedelta(hours=7):
-            exito = False
-            if "ALCISTA" in tendencia and float(precio_actual) >= float(p_obj):
-                exito = True
-            elif "BAJISTA" in tendencia and float(precio_actual) <= float(p_obj):
-                exito = True
-            
-            nuevo_estado = "EXITOSA 🎯" if exito else "EXPIRADA ⚠️"
-            cur.execute("UPDATE registro_senales SET estado = %s, fecha_cierre = %s WHERE id = %s;", (nuevo_estado, ahora, sig_id))
-    
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("SELECT id, precio_entrada, precio_objetivo, tendencia FROM registro_senales WHERE estado = 'PENDIENTE';")
+        pendientes = cur.fetchall()
+        
+        ahora = datetime.now(VET)
+        for row in pendientes:
+            sig_id, p_entrada, p_obj, tendencia = row
+            cur.execute("SELECT fecha_creacion FROM registro_senales WHERE id = %s;", (sig_id,))
+            f_creacion = cur.fetchone()[0]
+            if (ahora - f_creacion.astimezone(VET)) >= timedelta(hours=7):
+                exito = False
+                if "ALCISTA" in tendencia and float(precio_actual) >= float(p_obj):
+                    exito = True
+                elif "BAJISTA" in tendencia and float(precio_actual) <= float(p_obj):
+                    exito = True
+                
+                nuevo_estado = "EXITOSA 🎯" if exito else "EXPIRADA ⚠️"
+                cur.execute("UPDATE registro_senales SET estado = %s, fecha_cierre = %s WHERE id = %s;", (nuevo_estado, ahora, sig_id))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error evaluando rendimiento: {e}")
 
 # ==========================================
 # FILTRO ANTI-ANUNCIANTES FANTASMAS
@@ -430,48 +446,57 @@ async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido, suscrito, plan) VALUES (%s, 'BBVA', FALSE, 'FREE') ON CONFLICT (telegram_id) DO NOTHING;", (chat_id,))
-    conn.commit()
-    cur.close()
-    conn.close()
-    await update.message.reply_text("✅ ¡Te has registrado exitosamente en el sistema de Venbot Quant!", parse_mode="Markdown")
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido, suscrito, plan) VALUES (%s, 'BBVA', FALSE, 'FREE') ON CONFLICT (telegram_id) DO NOTHING;", (chat_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await update.message.reply_text("✅ ¡Te has registrado exitosamente en el sistema de Venbot Quant!", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error en registrar: {e}")
 
 async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔑 *Gestión de Credenciales*\n\nPara restablecer tu contraseña o clave de API asociada al bot, contacta al administrador.", parse_mode="Markdown")
 
 async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute("SELECT banco_preferido, suscrito, plan FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("SELECT banco_preferido, suscrito, plan FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
 
-    plan = row[1] if row else "FREE"
-    banco = row[0] if row else "BBVA"
-    
-    texto = (
-        f"📊 *ESTADO DE TU PLAN (VENBOT)*\n\n"
-        f"• Plan Activo: `{plan}`\n"
-        f"• Banco Preferido: `{banco}`\n"
-        f"• Estado: `Activo`"
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
+        plan = row[2] if row else "FREE"
+        banco = row[0] if row else "BBVA"
+        
+        texto = (
+            f"📊 *ESTADO DE TU PLAN (VENBOT)*\n\n"
+            f"• Plan Activo: `{plan}`\n"
+            f"• Banco Preferido: `{banco}`\n"
+            f"• Estado: `Activo`"
+        )
+        await update.message.reply_text(texto, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error en miplan: {e}")
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id if query else update.effective_chat.id
     
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute("SELECT banco_preferido FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
-    row = cur.fetchone()
-    banco_usr = row[0] if row else "BBVA"
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("SELECT banco_preferido FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
+        row = cur.fetchone()
+        banco_usr = row[0] if row else "BBVA"
+        cur.close()
+        conn.close()
+    except Exception:
+        banco_usr = "BBVA"
 
     banco_map = {"BBVA": ["BBVA"], "MERCANTIL": ["Mercantil"], "BNC": ["BNC"], "GENERAL": ["BBVA", "Mercantil", "BNC"]}
     c_real, v_real, liquidez = obtener_precios_binance_p2p(banco_map.get(banco_usr, ["BBVA"]))
@@ -510,13 +535,16 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = query.message if query else update.message
     chat_id = message.chat_id
 
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute("SELECT banco_preferido FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
-    row = cur.fetchone()
-    banco_usr = row[0] if row else "BBVA"
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("SELECT banco_preferido FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
+        row = cur.fetchone()
+        banco_usr = row[0] if row else "BBVA"
+        cur.close()
+        conn.close()
+    except Exception:
+        banco_usr = "BBVA"
 
     buf = generar_grafica_prediccion_buffer(banco_usr)
     if buf:
@@ -547,12 +575,15 @@ async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     message = query.message if query else update.message
     
-    conn = obtener_conexion()
-    cur = conn.cursor()
-    cur.execute("SELECT estado, COUNT(*) FROM registro_senales GROUP BY estado;")
-    res = cur.fetchall()
-    cur.close()
-    conn.close()
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("SELECT estado, COUNT(*) FROM registro_senales GROUP BY estado;")
+        res = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception:
+        res = []
 
     texto = "📈 *SIMULADOR DE RENDIMIENTO P&L (+7H)*\n\nEstadísticas de señales históricas:\n"
     for estado, cuenta in res:
@@ -580,12 +611,15 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("banco_"):
         banco_elegido = data.split("_")[1]
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido) VALUES (%s, %s) ON CONFLICT (telegram_id) DO UPDATE SET banco_preferido = EXCLUDED.banco_preferido;", (chat_id, banco_elegido))
-        conn.commit()
-        cur.close()
-        conn.close()
+        try:
+            conn = obtener_conexion()
+            cur = conn.cursor()
+            cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido) VALUES (%s, %s) ON CONFLICT (telegram_id) DO UPDATE SET banco_preferido = EXCLUDED.banco_preferido;", (chat_id, banco_elegido))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error actualizando banco: {e}")
         await query.answer(f"Banco actualizado a: {banco_elegido}")
         await query.message.edit_text(f"✅ Banco configurado correctamente a: *{banco_elegido}*. Ya puedes usar `/prediccion` o `/grafica`.", parse_mode="Markdown")
         return
@@ -612,26 +646,24 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 app = FastAPI()
-telegram_app = None
+telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+# Configurar manejadores de Telegram
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
+telegram_app.add_handler(CommandHandler("spread", cmd_spread))
+telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
+telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
+telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
+telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
+telegram_app.add_handler(CommandHandler("password", cmd_password))
+telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
+telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
 @app.on_event("startup")
 async def startup_event():
-    global telegram_app
     inicializar_db()
-    
-    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
-    telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
-    telegram_app.add_handler(CommandHandler("spread", cmd_spread))
-    telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
-    telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
-    telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
-    telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
-    telegram_app.add_handler(CommandHandler("password", cmd_password))
-    telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
-    telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
-
     await telegram_app.initialize()
     await telegram_app.start()
     asyncio.create_task(tarea_recoleccion_automatica())
@@ -644,11 +676,18 @@ async def shutdown_event():
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    data = await request.json()
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
+    try:
+        data = await request.json()
+        update = Update.de_json(data, telegram_app.bot)
+        await telegram_app.process_update(update)
+    except Exception as e:
+        logger.error(f"Error procesando webhook: {e}")
     return {"status": "ok"}
 
 @app.get("/")
 def read_root():
     return {"status": "Venbot Quant Pro Institucional Activo", "timestamp": str(datetime.now(VET))}
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run("bot:app", host="0.0.0.0", port=port)
