@@ -242,6 +242,7 @@ telegram_app = None
 
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔮 Ver Predicción +7H", callback_data="cmd_prediccion")],
         [InlineKeyboardButton("📊 Gráfica Institucional", callback_data="cmd_grafica")],
         [InlineKeyboardButton("📊 Análisis de Spread", callback_data="cmd_spread")],
         [InlineKeyboardButton("📈 Simulador P&L", callback_data="cmd_simulador")],
@@ -250,16 +251,22 @@ def obtener_teclado_menu():
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = "🦜 *VENBOT PREDICCIONES QUANT - PRO*\n\nSelecciona una opción:"
+    texto = (
+        "🦜 *VENBOT PREDICCIONES QUANT - PRO*\n"
+        "🛡 Terminal con Alertas Push y Filtro de Bancos\n\n"
+        "Selecciona una opción:"
+    )
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+        if update.callback_query.message:
+            await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
     else:
-        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+        if update.message:
+            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    chat_id = query.message.chat_id if query else update.effective_chat.id
+    chat_id = query.message.chat_id if (query and query.message) else update.effective_chat.id
     
     try:
         conn = obtener_conexion()
@@ -294,51 +301,75 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 *Análisis Táctico:* Protección de precios activa. Canal de volatilidad estable."
     )
 
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+
     if query:
         await query.answer()
-        await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+        if query.message:
+            await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
     else:
-        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+        if update.message:
+            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    filas = obtener_estadisticas_db(limit=50)
-    buf = generar_imagen_grafica(filas, "GENERAL")
-    if buf:
+    if query:
+        await query.answer()
+        filas = obtener_estadisticas_db(limit=50)
+        buf = generar_imagen_grafica(filas, "GENERAL")
+        chat_id = query.message.chat_id if query.message else update.effective_chat.id
         teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-        await query.message.reply_photo(photo=buf, caption="📊 *Gráfica Institucional Actualizada*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
-    else:
-        await query.message.reply_text("⚠️ No hay suficientes datos históricos para generar la gráfica.")
+        
+        if buf:
+            await context.bot.send_photo(
+                chat_id=chat_id, 
+                photo=buf, 
+                caption="📊 *Gráfica Institucional Actualizada*", 
+                parse_mode="Markdown", 
+                reply_markup=InlineKeyboardMarkup(teclado)
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                text="⚠️ No hay suficientes datos históricos para generar la gráfica.", 
+                reply_markup=InlineKeyboardMarkup(teclado)
+            )
 
 async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    filas = obtener_estadisticas_db(limit=20)
-    if not filas:
-        await query.message.reply_text("⚠️ Sin datos suficientes de spread.")
-        return
-    spreads = [f[1] - f[0] for f in filas]
-    prom_spread = np.mean(spreads)
-    texto = f"📊 *ANÁLISIS DE SPREAD P2P*\n\n• Spread Promedio Actual: `{prom_spread:.2f} Bs`\n• Último Spread Registrado: `{spreads[-1]:.2f} Bs`"
-    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-    await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    if query:
+        await query.answer()
+        filas = obtener_estadisticas_db(limit=20)
+        chat_id = query.message.chat_id if query.message else update.effective_chat.id
+        teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+        
+        if not filas:
+            await context.bot.send_message(chat_id=chat_id, text="⚠️ Sin datos suficientes de spread.", reply_markup=InlineKeyboardMarkup(teclado))
+            return
+            
+        spreads = [f[1] - f[0] for f in filas]
+        prom_spread = np.mean(spreads)
+        texto = f"📊 *ANÁLISIS DE SPREAD P2P*\n\n• Spread Promedio Actual: `{prom_spread:.2f} Bs`\n• Último Spread Registrado: `{spreads[-1]:.2f} Bs`"
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_simulador(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    c, v, _ = obtener_precios_binance_p2p()
-    spread = v - c
-    ganancia_est = spread * 100
-    texto = (
-        f"📈 *SIMULADOR P&L (100 USDT)*\n\n"
-        f"• Compra a: `{c:.2f} Bs`\n"
-        f"• Venta a: `{v:.2f} Bs`\n"
-        f"• Spread por USDT: `{spread:.2f} Bs`\n"
-        f"💰 *Ganancia Estimada (100 USDT):* `{ganancia_est:.2f} Bs`"
-    )
-    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-    await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    if query:
+        await query.answer()
+        c, v, _ = obtener_precios_binance_p2p()
+        spread = v - c
+        ganancia_est = spread * 100
+        chat_id = query.message.chat_id if query.message else update.effective_chat.id
+        teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+        
+        texto = (
+            f"📈 *SIMULADOR P&L (100 USDT)*\n\n"
+            f"• Compra a: `{c:.2f} Bs`\n"
+            f"• Venta a: `{v:.2f} Bs`\n"
+            f"• Spread por USDT: `{spread:.2f} Bs`\n"
+            f"💰 *Ganancia Estimada (100 USDT):* `{ganancia_est:.2f} Bs`"
+        )
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -349,9 +380,11 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if query:
         await query.answer()
-        await query.message.edit_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+        if query.message:
+            await query.message.edit_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
     else:
-        await update.message.reply_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+        if update.message:
+            await update.message.reply_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -371,28 +404,35 @@ async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     if query:
         await query.answer()
-        await query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+        if query.message:
+            await query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
     else:
-        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+        if update.message:
+            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not query:
+        return
+    
     data = query.data
-    chat_id = query.message.chat_id
+    chat_id = query.message.chat_id if query.message else None
 
     if data.startswith("banco_"):
         banco_elegido = data.split("_")[1]
-        try:
-            conn = obtener_conexion()
-            cur = conn.cursor()
-            cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido) VALUES (%s, %s) ON CONFLICT (telegram_id) DO UPDATE SET banco_preferido = EXCLUDED.banco_preferido;", (chat_id, banco_elegido))
-            conn.commit()
-            cur.close()
-            conn.close()
-        except Exception as e:
-            logger.error(f"Error guardando banco: {e}")
+        if chat_id:
+            try:
+                conn = obtener_conexion()
+                cur = conn.cursor()
+                cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido) VALUES (%s, %s) ON CONFLICT (telegram_id) DO UPDATE SET banco_preferido = EXCLUDED.banco_preferido;", (chat_id, banco_elegido))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as e:
+                logger.error(f"Error guardando banco: {e}")
         await query.answer(f"Banco configurado: {banco_elegido}")
-        await query.message.edit_text(f"✅ Banco configurado a: *{banco_elegido}*", parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+        if query.message:
+            await query.message.edit_text(f"✅ Banco configurado a: *{banco_elegido}*", parse_mode="Markdown", reply_markup=obtener_teclado_menu())
         return
 
     if data == "cmd_prediccion":
@@ -444,7 +484,7 @@ async def startup_event():
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
-    # Registro de todos los comandos y manejadores disponibles
+    # Registro completo de comandos y callbacks
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
