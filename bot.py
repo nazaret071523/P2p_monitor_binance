@@ -196,7 +196,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# GRÁFICA CUÁNTICA INSTITUCIONAL (DUAL TRACK)
+# GRÁFICA CUÁNTICA INSTITUCIONAL (CARRIL PROESIONAL)
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 2:
@@ -210,16 +210,15 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ultima_compra = compras[-1]
     ultima_venta = ventas[-1]
     
-    # Proyección a futuro (+4 pasos temporales)
+    # Proyección estilo carril hacia el futuro (+4 bloques temporales)
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=i) for i in range(1, 5)]
-    compras_futuras = [ultima_compra + (i * 0.8) for i in range(1, 5)]
-    ventas_futuras = [ultima_venta + (i * 0.9) for i in range(1, 5)]
+    compras_futuras = [ultima_compra + (i * 0.7) for i in range(1, 5)]
+    ventas_futuras = [ultima_venta + (i * 0.8) for i in range(1, 5)]
     
     t_completo = tiemps + tiempos_futuros
     c_completo = compras + compras_futuras
     v_completo = ventas + ventas_futuras
 
-    # Configuración de subplots (Precio Arriba, Volumen Abajo)
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [4, 1]})
     fig.patch.set_facecolor("#121212")
     
@@ -228,23 +227,23 @@ def generar_imagen_grafica_cuantica(filas, banco):
         ax.tick_params(colors="#a1a1aa", labelsize=8)
         ax.grid(True, linestyle=':', alpha=0.2, color='#3f3f46')
 
-    # --- PANEL 1: CARRIL DE PRECIOS (VENTA Y RECOMPRA) ---
-    # Historial real
-    ax1.plot(tiemps, ventas, label="Tasa de Venta", color="#f59e0b", marker='o', markersize=3, linewidth=2)
-    ax1.plot(tiemps, compras, label="Tasa de Recompra", color="#10b981", marker='o', markersize=3, linewidth=2)
+    # --- PANEL 1: CARRIL DE PRECIOS Y PROYECCIÓN ---
+    # Líneas históricas sólidas
+    ax1.plot(tiemps, ventas, label="Tasa de Venta", color="#f59e0b", marker='o', markersize=2, linewidth=1.8)
+    ax1.plot(tiemps, compras, label="Tasa de Recompra", color="#10b981", marker='o', markersize=2, linewidth=1.8)
     
-    # Proyecciones punteadas
+    # Líneas de proyección punteadas (futuro)
     ax1.plot(t_completo[len(tiemps)-1:], v_completo[len(tiemps)-1:], color="#f59e0b", linestyle='--', linewidth=2, label="Proyección Venta")
     ax1.plot(t_completo[len(tiemps)-1:], c_completo[len(tiemps)-1:], color="#10b981", linestyle='--', linewidth=2, label="Proyección Recompra")
 
-    # Sombra / Carril de confianza entre curvas
-    ax1.fill_between(t_completo, c_completo, v_completo, color="#6366f1", alpha=0.15, label="Carril de Arbitraje IA")
+    # Sombra / Carril central de arbitraje
+    ax1.fill_between(t_completo, c_completo, v_completo, color="#8b5cf6", alpha=0.2, label="Carril de Proyección IA")
 
     ax1.set_title(f"VENBOT QUANT - TERMINAL INSTITUCIONAL [{banco}]", color="#f43f5e", fontsize=10, fontweight='bold', loc='left')
     ax1.set_ylabel("VES / USDT", color="#a1a1aa", fontsize=9)
     ax1.legend(loc="upper left", facecolor="#18181b", edgecolor="#3f3f46", labelcolor="#e4e4e7", fontsize=8)
 
-    # --- PANEL 2: HISTOGRAMA DE VOLUMEN / IMPULSO ---
+    # --- PANEL 2: HISTOGRAMA DE VOLUMEN ---
     volumenes = [f[2] for f in filas]
     colores_barras = ["#10b981" if v > 10 else "#f59e0b" for v in volumenes]
     ax2.bar(tiemps, volumenes, color=colores_barras, width=0.015, alpha=0.8)
@@ -415,10 +414,10 @@ async def startup_event():
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
-    # Registro formal de comandos (incluyendo variantes con y sin tilde)
+    # Registro de comandos corregidos (sin tildes para evitar errores en Telegram)
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
-    telegram_app.add_handler(CommandHandler("precisión", cmd_prediccion))
+    telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
     telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
