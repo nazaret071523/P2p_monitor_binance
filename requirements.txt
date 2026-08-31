@@ -8,3 +8,4 @@ google-genai
 beautifulsoup4
 xgboost
 scikit-learn
+matplotlib
