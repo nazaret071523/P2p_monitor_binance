@@ -30,6 +30,8 @@ VET = pytz.timezone('America/Caracas')
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/venbot")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_GEMINI_API_KEY")
+# ID del chat o canal de la comunidad para recibir alertas automáticas de ruptura
+CHAT_COMUNIDAD_ID = os.getenv("CHAT_COMUNIDAD_ID", "-100123456789")
 
 ULTIMO_REGISTRO_VALIDO = {"compra": 0.0, "venta": 0.0, "timestamp": None}
 
@@ -84,6 +86,17 @@ def obtener_estadisticas_db(limit=2000):
     return list(reversed(rows))
 
 # ==========================================
+# FILTRO ANTI-ANUNCIANTES FANTASMAS (MEJORA 1)
+# ==========================================
+def filtrar_outliers(precios):
+    if len(precios) < 4:
+        return precios
+    mediana = np.median(precios)
+    # Descarta precios que se alejen más del 8% de la mediana del libro para evitar manipulación
+    filtrados = [p for p in precios if abs(p - mediana) / mediana <= 0.08]
+    return filtrados if filtrados else precios
+
+# ==========================================
 # SCRAPING P2P + PROTECCIÓN DE PRECIOS
 # ==========================================
 def obtener_precios_binance_p2p():
@@ -105,11 +118,15 @@ def obtener_precios_binance_p2p():
         if not data_c or not data_v:
             raise ValueError("Respuesta vacía de Binance P2P.")
 
-        precios_compra = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
-        precios_venta = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
+        precios_compra_raw = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
+        precios_venta_raw = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
+
+        # Aplicando filtro anti-outliers para limpiar anunciantes fantasmas
+        precios_compra = filtrar_outliers(precios_compra_raw)
+        precios_venta = filtrar_outliers(precios_venta_raw)
 
         if not precios_compra or not precios_venta:
-            raise ValueError("Anuncios insuficientes.")
+            raise ValueError("Anuncios insuficientes tras filtrado.")
 
         tasa_compra = min(precios_compra)
         tasa_venta = max(precios_venta)
@@ -303,12 +320,46 @@ def generar_grafica_prediccion_buffer():
     return buf
 
 # ==========================================
+# SISTEMA DE ALERTA AUTOMÁTICA POR RUPTURA (MEJORA 2)
+# ==========================================
+async def verificar_rupturas_y_alertar(bot, compra_actual, venta_actual):
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        # Evaluamos contra el histórico previo (excluyendo la muestra actual recién ingresada)
+        cur.execute("SELECT MIN(compra), MAX(venta) FROM muestras_p2p WHERE id < (SELECT MAX(id) FROM muestras_p2p);")
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if res and res[0] and res[1]:
+            piso_historico, techo_historico = res[0], res[1]
+            
+            if compra_actual < piso_historico:
+                mensaje_alerta = (
+                    f"🚨 *ALERTA DE RUPTURA BAJISTA*\n"
+                    f"El precio de compra P2P ha perforado el piso histórico: `{compra_actual:.2f} Bs` "
+                    f"(Anterior piso: {piso_historico:.2f} Bs)"
+                )
+                await bot.send_message(chat_id=CHAT_COMUNIDAD_ID, text=mensaje_alerta, parse_mode="Markdown")
+            elif venta_actual > techo_historico:
+                mensaje_alerta = (
+                    f"🚀 *ALERTA DE RUPTURA ALCISTA*\n"
+                    f"El precio de venta P2P ha superado el techo histórico: `{venta_actual:.2f} Bs` "
+                    f"(Anterior techo: {techo_historico:.2f} Bs)"
+                )
+                await bot.send_message(chat_id=CHAT_COMUNIDAD_ID, text=mensaje_alerta, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error en alerta de ruptura: {e}")
+
+# ==========================================
 # TELEGRAM BOT HANDLERS
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
         [InlineKeyboardButton("🔮 Ver Predicción +7H", callback_data="cmd_prediccion")],
         [InlineKeyboardButton("📊 Gráfica con Bandas y Spread", callback_data="cmd_grafica")],
+        [InlineKeyboardButton("📊 Análisis de Spread", callback_data="cmd_spread")],
         [InlineKeyboardButton("💳 Suscribirse al Servicio", callback_data="cmd_suscribir")]
     ]
     reply_markup = InlineKeyboardMarkup(teclado)
@@ -369,6 +420,34 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await message.reply_text("⚠️ Recopilando muestras suficientes para generar las bandas estadísticas...")
 
+# NUEVO COMANDO /SPREAD DEDICADO (MEJORA 3)
+async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+        message = query.message
+    else:
+        message = update.message
+
+    filas = obtener_estadisticas_db(limit=50)
+    if not filas or len(filas) < 2:
+        await message.reply_text("⚠️ No hay suficientes datos históricos para calcular el spread.")
+        return
+
+    spreads = [f[1] - f[0] for f in filas]
+    spread_actual = spreads[-1]
+    spread_promedio = np.mean(spreads)
+    spread_max = np.max(spreads)
+
+    texto = (
+        f"📊 *ANÁLISIS DE SPREAD EN VIVO*\n\n"
+        f"• Spread Actual: `{spread_actual:.2f} Bs`\n"
+        f"• Promedio (Últimas 50 muestras): `{spread_promedio:.2f} Bs`\n"
+        f"• Máximo Registrado: `{spread_max:.2f} Bs`\n\n"
+        f"💡 {'Margen amplio ideal para arbitraje' if spread_actual >= spread_promedio else 'Margen comprimido, operar con cautela.'}"
+    )
+    await message.reply_text(texto, parse_mode="Markdown")
+
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
@@ -386,6 +465,8 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd_prediccion(update, context)
     elif data == "cmd_grafica":
         await cmd_grafica(update, context)
+    elif data == "cmd_spread":
+        await cmd_spread(update, context)
     elif data == "cmd_suscribir":
         await cmd_suscribir(update, context)
 
@@ -395,6 +476,10 @@ async def tarea_recoleccion_automatica():
             c, v, l = obtener_precios_binance_p2p()
             guardar_muestra_db(c, v, l)
             logger.info(f"Muestra guardada: Compra={c}, Venta={v}, Liquidez={l}")
+            
+            # Ejecutar verificación de ruptura y alerta automática en segundo plano
+            if telegram_app and telegram_app.bot:
+                await verificar_rupturas_y_alertar(telegram_app.bot, c, v)
         except Exception as e:
             logger.error(f"Error recolección: {e}")
         await asyncio.sleep(300)
@@ -411,6 +496,7 @@ async def startup_event():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
+    telegram_app.add_handler(CommandHandler("spread", cmd_spread))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
