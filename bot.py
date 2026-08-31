@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import uvicorn
@@ -33,7 +33,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_GEMINI_API_KEY")
 CHAT_COMUNIDAD_ID = os.getenv("CHAT_COMUNIDAD_ID", "-100123456789")
 
 ULTIMO_REGISTRO_VALIDO = {"compra": 0.0, "venta": 0.0, "timestamp": None}
-BANCO_ACTIVO_DEFAULT = ["BBVA", "Mercantil", "BNC"]
 
 # ==========================================
 # GESTIÓN DE BASE DE DATOS POSTGRESQL
@@ -217,7 +216,7 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         return base_c, base_v, 5
 
 # ==========================================
-# MOTOR QUANT HÍBRIDO (MACRO + MICRO TENDENCIA)
+# MOTOR QUANT HÍBRIDO
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
     filas = obtener_estadisticas_db(banco=banco_filtro)
@@ -322,7 +321,7 @@ def obtener_analisis_ia_coherente(compra, venta, spread, tendencia, pred_c, pred
     return "Protección de precios activa. Canal de volatilidad estable."
 
 # ==========================================
-# GRÁFICA INSTITUCIONAL CON BANDAS Y SPREAD
+# GRÁFICA INSTITUCIONAL
 # ==========================================
 def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
     filas = obtener_estadisticas_db(limit=30, banco=banco_filtro)
@@ -351,12 +350,6 @@ def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
         ax1.plot(tiempos_futuros, valores_futuros, label='Ruta Proyectada (+7H)', color='#ff0055', linestyle='--', marker='x', linewidth=2)
         ax1.fill_between(tiempos_futuros, banda_inf, banda_sup, color='#ff0055', alpha=0.15, label='Banda de Confianza 95%')
 
-        pico_idx = len(tiempos_futuros) // 2
-        ax1.annotate('Punto de Inflexión', xy=(tiempos_futuros[pico_idx], valores_futuros[pico_idx]),
-                     xytext=(tiempos_futuros[pico_idx], valores_futuros[pico_idx] + 1.5),
-                     arrowprops=dict(facecolor='yellow', shrink=0.05, width=1, headwidth=6),
-                     fontsize=8, color='yellow', ha='center')
-
     ax1.set_title(f'Venbot Quant - Terminal Institucional [{banco_filtro}]', fontsize=12, color='white', pad=12)
     ax1.set_xlabel('Evolución Temporal (VET)', color='#aaaaaa', fontsize=9)
     ax1.set_ylabel('Precio USDT/VES (Bs)', color='#00ffcc', fontsize=9)
@@ -364,16 +357,6 @@ def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
     ax1.tick_params(axis='y', labelcolor='#00ffcc')
     ax1.grid(True, linestyle='--', alpha=0.2)
 
-    if pred["ruta_horas"] and pred["ruta_spreads"]:
-        ax2 = ax1.twinx()
-        spreads_completos = [compras[-1] * 0.015] + pred["ruta_spreads"]
-        ax2.plot(tiempos_futuros, spreads_completos, label='Curva Dinámica Spread', color='#ffcc00', linestyle=':', linewidth=1.5)
-        ax2.set_ylabel('Spread Proyectado (Bs)', color='#ffcc00', fontsize=9)
-        ax2.tick_params(axis='y', labelcolor='#ffcc00')
-
-    handler1, label1 = ax1.get_legend_handles_labels()
-    ax1.legend(handler1, label1, loc='upper left', facecolor='#111111', edgecolor='#333333', fontsize=8)
-    
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
@@ -382,7 +365,7 @@ def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
     return buf
 
 # ==========================================
-# SISTEMA DE ALERTAS PROACTIVAS Y PUSH
+# ALERTAS PROACTIVAS
 # ==========================================
 async def verificar_alertas_proactivas(bot, compra_actual, venta_actual):
     try:
@@ -412,7 +395,7 @@ async def verificar_alertas_proactivas(bot, compra_actual, venta_actual):
         logger.error(f"Error en alertas proactivas: {e}")
 
 # ==========================================
-# TELEGRAM BOT HANDLERS & COMANDOS RECUPERADOS
+# TELEGRAM BOT HANDLERS
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
@@ -423,24 +406,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏦 Seleccionar Banco", callback_data="cmd_bancos")],
         [InlineKeyboardButton("💎 Suscribirse / Planes", callback_data="cmd_suscribir")]
     ]
-    reply_markup = InlineKeyboardMarkup(teclado)
     await update.message.reply_text(
         "🦜 *VENBOT PREDICCIONES QUANT - PRO*\n"
-        "🛡 *Terminal con Alertas Push, Simulador P&L y Filtro de Bancos*\n\n"
+        "🛡 *Terminal con Alertas Push y Filtro de Bancos*\n\n"
         "Selecciona una opción:",
         parse_mode="Markdown",
-        reply_markup=reply_markup
+        reply_markup=InlineKeyboardMarkup(teclado)
     )
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     message = query.message if query else update.message
-    texto = (
-        "💎 *SISTEMA DE SUSCRIPCIÓN VENBOT*\n\n"
-        "Obtén acceso completo al motor cuantitativo avanzado, alertas prioritarias y reportes extendidos.\n\n"
-        "• Usa /miplan para ver tu estado actual.\n"
-        "• Contacta a soporte para activar tu membresía Pro."
-    )
+    texto = "💎 *SISTEMA DE SUSCRIPCIÓN VENBOT*\n\nAcceso completo al motor cuantitativo avanzado.\n• Usa /miplan para ver tu estado actual."
     if query: await query.answer()
     await message.reply_text(texto, parse_mode="Markdown")
 
@@ -453,12 +430,12 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         cur.close()
         conn.close()
-        await update.message.reply_text("✅ ¡Te has registrado exitosamente en el sistema de Venbot Quant!", parse_mode="Markdown")
+        await update.message.reply_text("✅ ¡Te has registrado exitosamente en Venbot Quant!", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error en registrar: {e}")
 
 async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔑 *Gestión de Credenciales*\n\nPara restablecer tu contraseña o clave de API asociada al bot, contacta al administrador.", parse_mode="Markdown")
+    await update.message.reply_text("🔑 *Gestión de Credenciales*\n\nContacta al administrador para restablecer claves.", parse_mode="Markdown")
 
 async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -469,17 +446,9 @@ async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = cur.fetchone()
         cur.close()
         conn.close()
-
         plan = row[2] if row else "FREE"
         banco = row[0] if row else "BBVA"
-        
-        texto = (
-            f"📊 *ESTADO DE TU PLAN (VENBOT)*\n\n"
-            f"• Plan Activo: `{plan}`\n"
-            f"• Banco Preferido: `{banco}`\n"
-            f"• Estado: `Activo`"
-        )
-        await update.message.reply_text(texto, parse_mode="Markdown")
+        await update.message.reply_text(f"📊 *ESTADO DE TU PLAN*\n• Plan: `{plan}`\n• Banco: `{banco}`", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error en miplan: {e}")
 
@@ -514,12 +483,10 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💳 *COMUNIDAD & LIQUIDEZ*\n"
         f"• Estado: `{datos['estado_comunidad']}`\n"
         f"• Anuncios Detectados: `{datos['liquidez_actual']}`\n"
-        f"• Muestras Históricas: `{datos['muestras']}`\n"
         f"• Piso / Techo: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
         f"🔮 *PROYECCIÓN DE CONFIANZA (95%)*\n"
-        f"🟢 Recompra Central (+7H): `{datos['pred_compra_str']}`\n"
+        f"🟢 Recompra (+7H): `{datos['pred_compra_str']}`\n"
         f"🔴 Venta Esperada (+7H): `{datos['pred_venta_str']}`\n"
-        f"📈 Desviación Estándar: `±{datos['desviacion']:.2f} Bs`\n"
         f"🎯 Tendencia: `{datos['tendencia']}`\n\n"
         f"💡 *Análisis Táctico:* _{datos['analisis_ia']}_"
     )
@@ -549,9 +516,9 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buf = generar_grafica_prediccion_buffer(banco_usr)
     if buf:
         if query: await query.answer()
-        await message.reply_photo(photo=buf, caption=f"📊 *Venbot Quant - Bandas y Spread [{banco_usr}]*", parse_mode="Markdown")
+        await message.reply_photo(photo=buf, caption=f"📊 *Venbot Quant - Gráfica [{banco_usr}]*", parse_mode="Markdown")
     else:
-        await message.reply_text("⚠️ Recopilando muestras suficientes para la gráfica...")
+        await message.reply_text("⚠️ Recopilando muestras suficientes...")
 
 async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -560,21 +527,14 @@ async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not filas or len(filas) < 2:
         await message.reply_text("⚠️ No hay suficientes datos históricos.")
         return
-
     spreads = [float(f[1]) - float(f[0]) for f in filas]
-    texto = (
-        f"📊 *ANÁLISIS DE SPREAD EN VIVO*\n\n"
-        f"• Spread Actual: `{spreads[-1]:.2f} Bs`\n"
-        f"• Promedio: `{np.mean(spreads):.2f} Bs`\n"
-        f"• Máximo: `{np.max(spreads):.2f} Bs`"
-    )
+    texto = f"📊 *SPREAD EN VIVO*\n• Actual: `{spreads[-1]:.2f} Bs`\n• Promedio: `{np.mean(spreads):.2f} Bs`"
     if query: await query.answer()
     await message.reply_text(texto, parse_mode="Markdown")
 
 async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     message = query.message if query else update.message
-    
     try:
         conn = obtener_conexion()
         cur = conn.cursor()
@@ -584,11 +544,9 @@ async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
     except Exception:
         res = []
-
-    texto = "📈 *SIMULADOR DE RENDIMIENTO P&L (+7H)*\n\nEstadísticas de señales históricas:\n"
+    texto = "📈 *SIMULADOR P&L (+7H)*\n\n"
     for estado, cuenta in res:
         texto += f"• {estado}: `{cuenta}`\n"
-    
     if query: await query.answer()
     await message.reply_text(texto, parse_mode="Markdown")
 
@@ -600,9 +558,9 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if query:
         await query.answer()
-        await query.message.edit_text("🏦 Selecciona el banco para filtrar el motor Quant:", reply_markup=InlineKeyboardMarkup(teclado))
+        await query.message.edit_text("🏦 Selecciona el banco:", reply_markup=InlineKeyboardMarkup(teclado))
     else:
-        await update.message.reply_text("🏦 Selecciona el banco para filtrar el motor Quant:", reply_markup=InlineKeyboardMarkup(teclado))
+        await update.message.reply_text("🏦 Selecciona el banco:", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -619,9 +577,9 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.close()
             conn.close()
         except Exception as e:
-            logger.error(f"Error actualizando banco: {e}")
-        await query.answer(f"Banco actualizado a: {banco_elegido}")
-        await query.message.edit_text(f"✅ Banco configurado correctamente a: *{banco_elegido}*. Ya puedes usar `/prediccion` o `/grafica`.", parse_mode="Markdown")
+            logger.error(f"Error: {e}")
+        await query.answer(f"Banco: {banco_elegido}")
+        await query.message.edit_text(f"✅ Banco configurado a: *{banco_elegido}*", parse_mode="Markdown")
         return
 
     if data == "cmd_prediccion": await cmd_prediccion(update, context)
@@ -638,55 +596,49 @@ async def tarea_recoleccion_automatica():
             guardar_muestra_db(c, v, l, "GENERAL")
             evaluar_rendimiento_senales(c)
             logger.info(f"Muestra automática guardada: Compra={c}, Venta={v}")
-            
-            if telegram_app and telegram_app.bot:
-                await verificar_alertas_proactivas(telegram_app.bot, c, v)
         except Exception as e:
-            logger.error(f"Error recolección automática: {e}")
+            logger.error(f"Error recolección: {e}")
         await asyncio.sleep(300)
 
+# ==========================================
+# APLICACIÓN FASTAPI (MANTENER SERVIDOR ACTIVO)
+# ==========================================
 app = FastAPI()
-telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-# Configurar manejadores de Telegram
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
-telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
-telegram_app.add_handler(CommandHandler("spread", cmd_spread))
-telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
-telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
-telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
-telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
-telegram_app.add_handler(CommandHandler("password", cmd_password))
-telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
-telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
-
-@app.on_event("startup")
-async def startup_event():
-    inicializar_db()
-    await telegram_app.initialize()
-    await telegram_app.start()
-    asyncio.create_task(tarea_recoleccion_automatica())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    if telegram_app:
-        await telegram_app.stop()
-        await telegram_app.shutdown()
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    try:
-        data = await request.json()
-        update = Update.de_json(data, telegram_app.bot)
-        await telegram_app.process_update(update)
-    except Exception as e:
-        logger.error(f"Error procesando webhook: {e}")
-    return {"status": "ok"}
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Quant Pro Institucional Activo", "timestamp": str(datetime.now(VET))}
+    return {"status": "Venbot Quant Pro Activo", "timestamp": str(datetime.now(VET))}
+
+async def run_bot_polling():
+    inicializar_db()
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Manejadores
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+    telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
+    telegram_app.add_handler(CommandHandler("spread", cmd_spread))
+    telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
+    telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
+    telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
+    telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
+    telegram_app.add_handler(CommandHandler("password", cmd_password))
+    telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
+    telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
+
+    # Iniciar tareas en segundo plano
+    asyncio.create_task(tarea_recoleccion_automatica())
+
+    # Arrancar Polling nativo de Telegram (elimina webhooks colgados automáticamente)
+    await telegram_app.bot.delete_webhook(drop_pending_updates=True)
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.updater.start_polling()
+    logger.info("Bot de Telegram iniciado en modo POLLING exitosamente.")
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(run_bot_polling())
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
