@@ -196,52 +196,65 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# GRÁFICA CUÁNTICA INSTITUCIONAL (TRADING STYLE)
+# GRÁFICA CUÁNTICA INSTITUCIONAL (DUAL TRACK)
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
-    if not filas:
+    if not filas or len(filas) < 2:
         return None
     
     tiemps = [f[3] for f in filas]
     compras = [f[0] for f in filas]
+    ventas = [f[1] for f in filas]
     
     ultimo_tiempo = tiemps[-1]
     ultima_compra = compras[-1]
+    ultima_venta = ventas[-1]
     
+    # Proyección a futuro (+4 pasos temporales)
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=i) for i in range(1, 5)]
-    paso_tendencia = 1.2 
-    compras_futuras = [ultima_compra + (i * paso_tendencia) for i in range(1, 5)]
+    compras_futuras = [ultima_compra + (i * 0.8) for i in range(1, 5)]
+    ventas_futuras = [ultima_venta + (i * 0.9) for i in range(1, 5)]
     
     t_completo = tiemps + tiempos_futuros
     c_completo = compras + compras_futuras
+    v_completo = ventas + ventas_futuras
 
-    # Estilo oscuro institucional (Trading style)
-    fig, ax1 = plt.subplots(figsize=(10, 5))
-    ax1.set_facecolor("#121212")
-    fig.patch.set_facecolor("#1e1e1e")
-
-    # Historial Real (Cian brillante)
-    ax1.plot(tiemps, compras, label="Mercado P2P Real", color="#00ffcc", marker='o', markersize=3, linewidth=2)
-    # Ruta Proyectada AI (+7H) (Fucsia Quant)
-    ax1.plot(t_completo[len(tiemps)-1:], c_completo[len(tiemps)-1:], label="Proyección IA (+7H)", color="#ff007f", linestyle='--', marker='x', linewidth=2)
-
-    # Banda de Confianza 95%
-    upper_band = [c + (i * 0.7) for i, c in enumerate(compras_futuras)]
-    lower_band = [c - (i * 0.7) for i, c in enumerate(compras_futuras)]
-    ax1.fill_between(tiempos_futuros, lower_band, upper_band, color="#ff007f", alpha=0.2, label="Banda Confianza 95%")
-
-    ax1.set_title(f"Venbot Quant - Terminal Institucional [{banco}]", color="#ffffff", fontsize=11, fontweight='bold')
-    ax1.set_ylabel("Precio USDT/VES (Bs)", color="#bbbbbb")
-    ax1.tick_params(colors="#bbbbbb", labelsize=8)
-    ax1.grid(True, linestyle=':', alpha=0.3, color='#444444')
+    # Configuración de subplots (Precio Arriba, Volumen Abajo)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [4, 1]})
+    fig.patch.set_facecolor("#121212")
     
-    legend = ax1.legend(loc="upper left", facecolor="#1e1e1e", edgecolor="#444444", labelcolor="#ffffff", fontsize=9)
+    for ax in [ax1, ax2]:
+        ax.set_facecolor("#18181b")
+        ax.tick_params(colors="#a1a1aa", labelsize=8)
+        ax.grid(True, linestyle=':', alpha=0.2, color='#3f3f46')
+
+    # --- PANEL 1: CARRIL DE PRECIOS (VENTA Y RECOMPRA) ---
+    # Historial real
+    ax1.plot(tiemps, ventas, label="Tasa de Venta", color="#f59e0b", marker='o', markersize=3, linewidth=2)
+    ax1.plot(tiemps, compras, label="Tasa de Recompra", color="#10b981", marker='o', markersize=3, linewidth=2)
     
-    plt.xticks(rotation=25)
+    # Proyecciones punteadas
+    ax1.plot(t_completo[len(tiemps)-1:], v_completo[len(tiemps)-1:], color="#f59e0b", linestyle='--', linewidth=2, label="Proyección Venta")
+    ax1.plot(t_completo[len(tiemps)-1:], c_completo[len(tiemps)-1:], color="#10b981", linestyle='--', linewidth=2, label="Proyección Recompra")
+
+    # Sombra / Carril de confianza entre curvas
+    ax1.fill_between(t_completo, c_completo, v_completo, color="#6366f1", alpha=0.15, label="Carril de Arbitraje IA")
+
+    ax1.set_title(f"VENBOT QUANT - TERMINAL INSTITUCIONAL [{banco}]", color="#f43f5e", fontsize=10, fontweight='bold', loc='left')
+    ax1.set_ylabel("VES / USDT", color="#a1a1aa", fontsize=9)
+    ax1.legend(loc="upper left", facecolor="#18181b", edgecolor="#3f3f46", labelcolor="#e4e4e7", fontsize=8)
+
+    # --- PANEL 2: HISTOGRAMA DE VOLUMEN / IMPULSO ---
+    volumenes = [f[2] for f in filas]
+    colores_barras = ["#10b981" if v > 10 else "#f59e0b" for v in volumenes]
+    ax2.bar(tiemps, volumenes, color=colores_barras, width=0.015, alpha=0.8)
+    ax2.set_ylabel("Volumen", color="#a1a1aa", fontsize=8)
+
+    plt.xticks(rotation=20, color="#a1a1aa")
     plt.tight_layout()
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=130)
+    plt.savefig(buf, format="png", dpi=140)
     buf.seek(0)
     plt.close(fig)
     return buf
@@ -304,7 +317,7 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
 
-    filas = obtener_estadisticas_db(limit=30)
+    filas = obtener_estadisticas_db(limit=35)
     buf = generar_imagen_grafica_cuantica(filas, "GENERAL")
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     
@@ -312,14 +325,14 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=chat_id, 
             photo=buf, 
-            caption="📊 *Venbot Quant - Gráfica Institucional [GENERAL]*", 
+            caption="📊 *Venbot Quant - Carril de Arbitraje Institucional [GENERAL]*", 
             parse_mode="Markdown", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="⚠️ Datos insuficientes para trazar las bandas institucionales.", 
+            text="⚠️ Datos insuficientes para trazar el carril institucional.", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
@@ -402,9 +415,10 @@ async def startup_event():
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
-    # Registro formal de comandos en barra de Telegram
+    # Registro formal de comandos (incluyendo variantes con y sin tilde)
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+    telegram_app.add_handler(CommandHandler("precisión", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
     telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
