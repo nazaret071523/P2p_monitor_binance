@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import uvicorn
 
 # ==========================================
@@ -31,7 +31,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_GEMINI_API_KEY")
 CHAT_COMUNIDAD_ID = os.getenv("CHAT_COMUNIDAD_ID", "-100123456789")
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")  # Render lo llena automático
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 
 ULTIMO_REGISTRO_VALIDO = {"compra": 0.0, "venta": 0.0, "timestamp": None}
 
@@ -71,7 +71,9 @@ def inicializar_db():
                 telegram_id BIGINT PRIMARY KEY,
                 banco_preferido TEXT DEFAULT 'BBVA',
                 suscrito BOOLEAN DEFAULT FALSE,
-                plan TEXT DEFAULT 'FREE'
+                plan TEXT DEFAULT 'FREE',
+                password_app TEXT DEFAULT 'No asignada',
+                vencimiento_vip TIMESTAMP
             );
         """)
         conn.commit()
@@ -390,7 +392,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     message = query.message if query else update.message
-    texto = "💎 *SISTEMA DE SUSCRIPCIÓN VENBOT*\n\nAcceso completo al motor cuantitativo avanzado.\n• Usa /miplan para ver tu estado actual."
+    texto = (
+        "💎 *SISTEMA DE SUSCRIPCIÓN VIP & CREDENCIALES*\n\n"
+        "Obtén acceso total al motor predictivo y la app móvil.\n"
+        "1️⃣ Realiza el pago móvil o transferencia correspondiente.\n"
+        "2️⃣ Envía una foto del **comprobante de pago** o escribe tu **número de referencia** directamente por aquí.\n"
+        "3️⃣ Tu cuenta VIP y contraseña de acceso se activarán automáticamente.\n\n"
+        "Usa /miplan para verificar tu estado actual."
+    )
     if query: await query.answer()
     await message.reply_text(texto, parse_mode="Markdown")
 
@@ -408,22 +417,78 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error en registrar: {e}")
 
 async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔑 *Gestión de Credenciales*\n\nContacta al administrador para restablecer claves.", parse_mode="Markdown")
+    chat_id = update.effective_chat.id
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("SELECT password_app FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        pwd = row[0] if row and row[0] != 'No asignada' else "Aún no tienes contraseña asignada. Activa tu plan VIP enviando tu pago."
+        await update.message.reply_text(f"🔑 *Tus Credenciales de Acceso (App/Web)*\n\n• Contraseña: `{pwd}`", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error en password: {e}")
 
 async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     try:
         conn = obtener_conexion()
         cur = conn.cursor()
-        cur.execute("SELECT banco_preferido, suscrito, plan FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
+        cur.execute("SELECT banco_preferido, suscrito, plan, password_app, vencimiento_vip FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
         row = cur.fetchone()
         cur.close()
         conn.close()
+        
         plan = row[2] if row else "FREE"
         banco = row[0] if row else "BBVA"
-        await update.message.reply_text(f"📊 *ESTADO DE TU PLAN*\n• Plan: `{plan}`\n• Banco: `{banco}`", parse_mode="Markdown")
+        pwd = row[3] if row else "No asignada"
+        venc = row[4].strftime("%d/%m/%Y %I:%M %p") if row and row[4] else "N/A"
+        
+        texto = (
+            f"📊 *ESTADO DE TU PLAN Y CREDENCIALES*\n\n"
+            f"• Plan Actual: `{plan}`\n"
+            f"• Banco Preferido: `{banco}`\n"
+            f"• Contraseña App: `{pwd}`\n"
+            f"• Vencimiento VIP: `{venc}`"
+        )
+        await update.message.reply_text(texto, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error en miplan: {e}")
+
+async def procesar_comprobante_o_referencia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    texto_usuario = update.message.text if update.message.text else ""
+    tiene_foto = bool(update.message.photo)
+
+    if tiene_foto or len(texto_usuario) >= 4:
+        try:
+            nueva_pwd = f"VENVIP-{chat_id}-{int(datetime.now().timestamp()) % 10000}"
+            vencimiento = datetime.now(VET) + timedelta(days=30)
+            
+            conn = obtener_conexion()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO config_usuario (telegram_id, suscrito, plan, password_app, vencimiento_vip)
+                VALUES (%s, TRUE, 'VIP PRO', %s, %s)
+                ON CONFLICT (telegram_id) DO UPDATE 
+                SET suscrito = TRUE, plan = 'VIP PRO', password_app = EXCLUDED.password_app, vencimiento_vip = EXCLUDED.vencimiento_vip;
+            """, (chat_id, nueva_pwd, vencimiento))
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            respuesta = (
+                "✅ *¡PAGO / REFERENCIA RECIBIDO Y VALIDADO CON ÉXITO!*\n\n"
+                "Tu cuenta ha sido ascendida a nivel **VIP PRO**. Aquí tienes tus credenciales de acceso:\n\n"
+                f"🔑 *Contraseña de la App:* `{nueva_pwd}`\n"
+                f"📅 *Válido hasta:* `{vencimiento.strftime('%d/%m/%Y')}`\n\n"
+                "Ya puedes usar /prediccion y disfrutar de todas las señales institucionales."
+            )
+            await update.message.reply_text(respuesta, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Error procesando pago: {e}")
+            await update.message.reply_text("⚠️ Hubo un error procesando tu validación. Intenta de nuevo.")
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -597,7 +662,7 @@ async def startup_event():
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # Manejadores
+    # Manejadores de comandos
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
@@ -608,11 +673,13 @@ async def startup_event():
     telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
     telegram_app.add_handler(CommandHandler("password", cmd_password))
     telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
+    
+    # Manejadores de interacción y pagos (fotos o textos de referencia)
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
+    telegram_app.add_handler(MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, procesar_comprobante_o_referencia))
 
     await telegram_app.initialize()
     
-    # Configurar Webhook nativo hacia la URL de Render
     if RENDER_EXTERNAL_URL:
         webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
         await telegram_app.bot.set_webhook(url=webhook_url)
