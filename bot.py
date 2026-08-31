@@ -145,7 +145,6 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
 
         liquidez_calculada = len(data_c) + len(data_v)
 
-        # Protección de precios estáticos / movimiento natural
         if ULTIMO_REGISTRO_VALIDO["compra"] == tasa_compra and ULTIMO_REGISTRO_VALIDO["venta"] == tasa_venta:
             tasa_compra = round(tasa_compra, 2)
             tasa_venta = round(tasa_venta, 2)
@@ -208,7 +207,36 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# TELEGRAM HANDLERS & MENÚ PRINCIPAL
+# GENERADORES DE GRÁFICAS Y HERRAMIENTAS
+# ==========================================
+def generar_imagen_grafica(filas, banco):
+    if not filas:
+        return None
+    tiemps = [f[3] for f in filas]
+    compras = [f[0] for f in filas]
+    ventas = [f[1] for f in filas]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(tiemps, compras, label="Compra P2P", color="#00ffcc", linewidth=2)
+    ax.plot(tiemps, ventas, label="Venta P2P", color="#ff0055", linewidth=2)
+    ax.set_title(f"Gráfica Institucional P2P [{banco}]", color="white", fontsize=12)
+    ax.set_facecolor("#111318")
+    fig.patch.set_facecolor("#111318")
+    ax.tick_params(colors="white")
+    ax.spines['bottom'].set_color('white')
+    ax.spines['left'].set_color('white')
+    ax.legend(facecolor="#222", edgecolor="none", labelcolor="white")
+    plt.xticks(rotation=30)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=120)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+# ==========================================
+# TELEGRAM HANDLERS & MENÚ COMPLETO
 # ==========================================
 telegram_app = None
 
@@ -272,6 +300,46 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
 
+async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    filas = obtener_estadisticas_db(limit=50)
+    buf = generar_imagen_grafica(filas, "GENERAL")
+    if buf:
+        teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+        await query.message.reply_photo(photo=buf, caption="📊 *Gráfica Institucional Actualizada*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    else:
+        await query.message.reply_text("⚠️ No hay suficientes datos históricos para generar la gráfica.")
+
+async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    filas = obtener_estadisticas_db(limit=20)
+    if not filas:
+        await query.message.reply_text("⚠️ Sin datos suficientes de spread.")
+        return
+    spreads = [f[1] - f[0] for f in filas]
+    prom_spread = np.mean(spreads)
+    texto = f"📊 *ANÁLISIS DE SPREAD P2P*\n\n• Spread Promedio Actual: `{prom_spread:.2f} Bs`\n• Último Spread Registrado: `{spreads[-1]:.2f} Bs`"
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+
+async def cmd_simulador(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    c, v, _ = obtener_precios_binance_p2p()
+    spread = v - c
+    ganancia_est = spread * 100
+    texto = (
+        f"📈 *SIMULADOR P&L (100 USDT)*\n\n"
+        f"• Compra a: `{c:.2f} Bs`\n"
+        f"• Venta a: `{v:.2f} Bs`\n"
+        f"• Spread por USDT: `{spread:.2f} Bs`\n"
+        f"💰 *Ganancia Estimada (100 USDT):* `{ganancia_est:.2f} Bs`"
+    )
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+
 async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     teclado = [
@@ -327,9 +395,14 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(f"✅ Banco configurado a: *{banco_elegido}*", parse_mode="Markdown", reply_markup=obtener_teclado_menu())
         return
 
-    if data == "cmd_grafica" or data == "cmd_spread" or data == "cmd_simulador":
-        await query.answer()
+    if data == "cmd_prediccion":
         await cmd_prediccion(update, context)
+    elif data == "cmd_grafica":
+        await cmd_grafica(update, context)
+    elif data == "cmd_spread":
+        await cmd_spread(update, context)
+    elif data == "cmd_simulador":
+        await cmd_simulador(update, context)
     elif data == "cmd_bancos":
         await cmd_bancos(update, context)
     elif data == "cmd_suscribir":
@@ -369,11 +442,14 @@ async def startup_event():
     global telegram_app
     inicializar_db()
     
-    # Construir aplicación SIN polling ni updater activo en segundo plano para evitar conflictos
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
+    # Registro de todos los comandos y manejadores disponibles
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+    telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
+    telegram_app.add_handler(CommandHandler("spread", cmd_spread))
+    telegram_app.add_handler(CommandHandler("simulador", cmd_simulador))
     telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
@@ -382,7 +458,6 @@ async def startup_event():
     
     if RENDER_EXTERNAL_URL:
         webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
-        # Forzar borrado previo del webhook y reasignación limpia
         await telegram_app.bot.delete_webhook(drop_pending_updates=True)
         await telegram_app.bot.set_webhook(url=webhook_url)
         logger.info(f"Webhook configurado limpiamente en: {webhook_url}")
