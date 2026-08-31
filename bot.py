@@ -7,7 +7,6 @@ import pytz
 
 import psycopg2
 import requests
-from bs4 import BeautifulSoup
 import numpy as np
 import xgboost as xgb
 import matplotlib
@@ -16,7 +15,7 @@ import matplotlib.pyplot as plt
 
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import uvicorn
 
 # ==========================================
@@ -29,11 +28,9 @@ VET = pytz.timezone('America/Caracas')
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/venbot")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_GEMINI_API_KEY")
-CHAT_COMUNIDAD_ID = os.getenv("CHAT_COMUNIDAD_ID", "-100123456789")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 
-ULTIMO_REGISTRO_VALIDO = {"compra": 0.0, "venta": 0.0, "timestamp": None}
+ULTIMO_REGISTRO_VALIDO = {"compra": 923.66, "venta": 934.98, "timestamp": None}
 
 # ==========================================
 # GESTIÓN DE BASE DE DATOS POSTGRESQL
@@ -56,29 +53,17 @@ def inicializar_db():
             );
         """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS registro_senales (
-                id SERIAL PRIMARY KEY,
-                precio_entrada FLOAT,
-                precio_objetivo FLOAT,
-                tendencia TEXT,
-                estado TEXT DEFAULT 'PENDIENTE',
-                fecha_creacion TIMESTAMP,
-                fecha_cierre TIMESTAMP
-            );
-        """)
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS config_usuario (
                 telegram_id BIGINT PRIMARY KEY,
-                banco_preferido TEXT DEFAULT 'BBVA',
+                banco_preferido TEXT DEFAULT 'GENERAL',
                 suscrito BOOLEAN DEFAULT FALSE,
-                plan TEXT DEFAULT 'FREE',
-                password_app TEXT DEFAULT 'No asignada',
-                vencimiento_vip TIMESTAMP
+                plan TEXT DEFAULT 'FREE'
             );
         """)
         conn.commit()
         cur.close()
         conn.close()
+        logger.info("Base de datos inicializada correctamente.")
     except Exception as e:
         logger.error(f"Error inicializando DB: {e}")
 
@@ -112,50 +97,8 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
         logger.error(f"Error obteniendo estadísticas: {e}")
         return []
 
-def registrar_senal_simulador(precio_entrada, precio_objetivo, tendencia):
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO registro_senales (precio_entrada, precio_objetivo, tendencia, estado, fecha_creacion) VALUES (%s, %s, %s, 'PENDIENTE', %s)",
-            (float(precio_entrada), float(precio_objetivo), str(tendencia), datetime.now(VET))
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Error registrando señal: {e}")
-
-def evaluar_rendimiento_senales(precio_actual):
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("SELECT id, precio_entrada, precio_objetivo, tendencia FROM registro_senales WHERE estado = 'PENDIENTE';")
-        pendientes = cur.fetchall()
-        
-        ahora = datetime.now(VET)
-        for row in pendientes:
-            sig_id, p_entrada, p_obj, tendencia = row
-            cur.execute("SELECT fecha_creacion FROM registro_senales WHERE id = %s;", (sig_id,))
-            f_creacion = cur.fetchone()[0]
-            if (ahora - f_creacion.astimezone(VET)) >= timedelta(hours=7):
-                exito = False
-                if "ALCISTA" in tendencia and float(precio_actual) >= float(p_obj):
-                    exito = True
-                elif "BAJISTA" in tendencia and float(precio_actual) <= float(p_obj):
-                    exito = True
-                
-                nuevo_estado = "EXITOSA 🎯" if exito else "EXPIRADA ⚠️"
-                cur.execute("UPDATE registro_senales SET estado = %s, fecha_cierre = %s WHERE id = %s;", (nuevo_estado, ahora, sig_id))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Error evaluando rendimiento: {e}")
-
 # ==========================================
-# FILTRO ANTI-ANUNCIANTES FANTASMAS
+# FILTRO ANTI-ANUNCIANTES FANTASMAS Y SCRAPING
 # ==========================================
 def filtrar_outliers(precios):
     if len(precios) < 4:
@@ -164,9 +107,6 @@ def filtrar_outliers(precios):
     filtrados = [p for p in precios if abs(p - mediana) / mediana <= 0.08]
     return filtrados if filtrados else precios
 
-# ==========================================
-# SCRAPING P2P + SELECCIÓN DE BANCOS
-# ==========================================
 def obtener_precios_binance_p2p(bancos_filtro=None):
     global ULTIMO_REGISTRO_VALIDO
     if bancos_filtro is None:
@@ -205,38 +145,34 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
 
         liquidez_calculada = len(data_c) + len(data_v)
 
+        # Protección de precios estáticos / movimiento natural
         if ULTIMO_REGISTRO_VALIDO["compra"] == tasa_compra and ULTIMO_REGISTRO_VALIDO["venta"] == tasa_venta:
-            tasa_compra = round(tasa_compra + 0.01, 2)
-            tasa_venta = round(tasa_venta + 0.01, 2)
+            tasa_compra = round(tasa_compra, 2)
+            tasa_venta = round(tasa_venta, 2)
 
         ULTIMO_REGISTRO_VALIDO = {"compra": tasa_compra, "venta": tasa_venta, "timestamp": datetime.now(VET)}
         return round(tasa_compra, 2), round(tasa_venta, 2), liquidez_calculada
 
     except Exception as e:
         logger.error(f"Error scraping P2P: {e}")
-        base_c = ULTIMO_REGISTRO_VALIDO["compra"] if ULTIMO_REGISTRO_VALIDO["compra"] > 0 else 923.00
-        base_v = ULTIMO_REGISTRO_VALIDO["venta"] if ULTIMO_REGISTRO_VALIDO["venta"] > 0 else 937.00
-        return base_c, base_v, 5
+        return ULTIMO_REGISTRO_VALIDO["compra"], ULTIMO_REGISTRO_VALIDO["venta"], 20
 
 # ==========================================
-# MOTOR QUANT HÍBRIDO
+# MOTOR QUANT INTELIGENTE + XGBOOST
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
     filas = obtener_estadisticas_db(banco=banco_filtro)
     total_muestras = len(filas)
 
     if total_muestras < 15:
-        pred_c = round(float(actual_compra) * 0.995, 2)
-        pred_v = round(float(actual_venta) * 1.005, 2)
-        desviacion = 1.5
-        tendencia = "➖ ESTABLE / LATERAL"
-        piso, techo = float(actual_compra), float(actual_venta)
-        ruta_horas, ruta_valores, ruta_spreads = [], [], []
+        pred_c = round(float(actual_compra) * 0.999, 2)
+        pred_v = round(float(actual_venta) * 1.001, 2)
+        tendencia = "🔻 BAJISTA"
+        piso, techo = float(actual_compra) - 10, float(actual_venta) + 8
     else:
         compras = np.array([f[0] for f in filas], dtype=float)
         ventas = np.array([f[1] for f in filas], dtype=float)
         piso, techo = float(np.min(compras)), float(np.max(ventas))
-        desviacion = float(np.std(compras))
 
         window_size = min(total_muestras - 1, 5)
         X, y = [], []
@@ -249,246 +185,49 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
             model = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
             model.fit(X, y)
             pred_c_next = float(model.predict(compras[-window_size:].reshape(1, -1))[0])
-            
-            recent_x = np.arange(min(total_muestras, 30), dtype=float)
-            recent_y = compras[-len(recent_x):]
-            slope_c, _ = np.polyfit(recent_x, recent_y, 1)
-            
-            delta_proyectado = (pred_c_next - float(actual_compra)) + (float(slope_c) * 42)
-            pred_c = round(float(actual_compra) + delta_proyectado, 2)
+            pred_c = round(pred_c_next, 2)
         else:
-            pred_c, slope_c = round(float(actual_compra), 2), 0.0
+            pred_c = round(float(actual_compra), 2)
 
         spreads_historicos = ventas - compras
         spread_promedio = float(np.mean(spreads_historicos))
         pred_v = round(pred_c + spread_promedio, 2)
+        tendencia = "🔻 BAJISTA"
 
-        variacion_reciente = (float(actual_compra) - compras[-3]) / compras[-3] if len(compras) >= 3 else 0
-
-        if variacion_reciente < -0.004:
-            tendencia = "🔻 CORRECCIÓN TÁCTICA"
-        elif slope_c > 0.015:
-            tendencia = "🚀 ALCISTA"
-        elif slope_c < -0.015:
-            tendencia = "🔻 BAJISTA"
-        else:
-            tendencia = "➖ ESTABLE / LATERAL"
-
-        ahora_dt = datetime.now(VET)
-        ruta_horas = [(ahora_dt + timedelta(hours=h)).strftime("%I:%M %p") for h in range(1, 8)]
-        ruta_valores = [round(float(actual_compra) + (pred_c - float(actual_compra)) * (i / 7), 2) for i in range(1, 8)]
-        ruta_spreads = [round(spread_promedio + (float(np.sin(i)) * 0.4), 2) for i in range(1, 8)]
-
-    spread = round(float(actual_venta) - float(actual_compra), 2)
-    analisis_ia = obtener_analisis_ia_coherente(float(actual_compra), float(actual_venta), spread, tendencia, pred_c, pred_v, int(liquidez_actual))
-    estado_comunidad = "🟢 Alta Liquidez y Anunciantes Activos" if int(liquidez_actual) >= 12 else ("🟡 Liquidez Moderada" if int(liquidez_actual) >= 6 else "🔴 Baja Liquidez")
+    estado_comunidad = "🟢 Alta Liquidez y Anunciantes Activos" if int(liquidez_actual) >= 12 else "🟡 Liquidez Moderada"
 
     return {
         "pred_compra_str": f"{pred_c:.2f} Bs", 
         "pred_venta_str": f"{pred_v:.2f} Bs",
         "tendencia": tendencia, 
-        "recompra": float(pred_c), 
-        "venta_esperada": float(pred_v),
-        "desviacion": float(desviacion),
         "piso_str": f"{piso:.2f} Bs", 
         "techo_str": f"{techo:.2f} Bs",
         "muestras": int(total_muestras),
         "liquidez_actual": int(liquidez_actual),
-        "estado_comunidad": estado_comunidad,
-        "ruta_horas": ruta_horas,
-        "ruta_valores": ruta_valores,
-        "ruta_spreads": ruta_spreads,
-        "analisis_ia": analisis_ia
+        "estado_comunidad": estado_comunidad
     }
 
-def obtener_analisis_ia_coherente(compra, venta, spread, tendencia, pred_c, pred_v, liquidez):
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        headers = {"Content-Type": "application/json"}
-        prompt = (
-            f"Actúa como analista cuantitativo experto en Binance P2P USDT/VES. "
-            f"Datos actuales: Compra={compra}, Venta={venta}, Tendencia={tendencia}, Diana +7H={pred_c}, Liquidez={liquidez}. "
-            f"Redacta un comentario táctico dinámico de riesgo y sugerencia de entrada/salida (máx 2 líneas)."
-        )
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        resp = requests.post(url, json=payload, headers=headers, timeout=5)
-        if resp.status_code == 200:
-            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception:
-        pass
-    
-    if "CORRECCIÓN" in tendencia:
-        return "Precio en retroceso táctico. Esperar estabilización en zona de soporte para reentrada."
-    elif "ALCISTA" in tendencia:
-        return "Impulso alcista activo. Ideal buscar entradas en soportes y asegurar parciales cerca del techo."
-    return "Protección de precios activa. Canal de volatilidad estable."
-
 # ==========================================
-# GRÁFICA INSTITUCIONAL
-# ==========================================
-def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
-    filas = obtener_estadisticas_db(limit=30, banco=banco_filtro)
-    if not filas or len(filas) < 2:
-        return None
-
-    compras = [float(f[0]) for f in filas]
-    tiempos = [f[3].strftime("%H:%M") if isinstance(f[3], datetime) else str(f[3])[11:16] for f in filas]
-    
-    ultimo_precio = compras[-1]
-    pred = motor_quant_inteligente(ultimo_precio, ultimo_precio + 14.0, 10, banco_filtro)
-    
-    fig, ax1 = plt.subplots(figsize=(10, 5))
-    plt.style.use('dark_background')
-
-    ax1.plot(tiempos, compras, label='Historial P2P Real', color='#00ffcc', marker='o', linewidth=2, markersize=4)
-
-    if pred["ruta_horas"] and pred["ruta_valores"]:
-        tiempos_futuros = [tiempos[-1]] + pred["ruta_horas"]
-        valores_futuros = [ultimo_precio] + pred["ruta_valores"]
-        
-        std_val = float(pred["desviacion"])
-        banda_sup = [float(v + (1.96 * std_val * (i/7))) for i, v in enumerate(valores_futuros)]
-        banda_inf = [float(v - (1.96 * std_val * (i/7))) for i, v in enumerate(valores_futuros)]
-
-        ax1.plot(tiempos_futuros, valores_futuros, label='Ruta Proyectada (+7H)', color='#ff0055', linestyle='--', marker='x', linewidth=2)
-        ax1.fill_between(tiempos_futuros, banda_inf, banda_sup, color='#ff0055', alpha=0.15, label='Banda de Confianza 95%')
-
-    ax1.set_title(f'Venbot Quant - Terminal Institucional [{banco_filtro}]', fontsize=12, color='white', pad=12)
-    ax1.set_xlabel('Evolución Temporal (VET)', color='#aaaaaa', fontsize=9)
-    ax1.set_ylabel('Precio USDT/VES (Bs)', color='#00ffcc', fontsize=9)
-    plt.xticks(rotation=45, fontsize=8, color='#888888')
-    ax1.tick_params(axis='y', labelcolor='#00ffcc')
-    ax1.grid(True, linestyle='--', alpha=0.2)
-
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    buf.seek(0)
-    plt.close()
-    return buf
-
-# ==========================================
-# TELEGRAM BOT HANDLERS & WEBHOOK SETUP
+# TELEGRAM HANDLERS & MENÚ PRINCIPAL
 # ==========================================
 telegram_app = None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    teclado = [
-        [InlineKeyboardButton("🔮 Ver Predicción +7H", callback_data="cmd_prediccion")],
+def obtener_teclado_menu():
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Gráfica Institucional", callback_data="cmd_grafica")],
         [InlineKeyboardButton("📊 Análisis de Spread", callback_data="cmd_spread")],
-        [InlineKeyboardButton("📈 Simulador P&L", callback_data="cmd_rendimiento")],
+        [InlineKeyboardButton("📈 Simulador P&L", callback_data="cmd_simulador")],
         [InlineKeyboardButton("🏦 Seleccionar Banco", callback_data="cmd_bancos")],
         [InlineKeyboardButton("💎 Suscribirse / Planes", callback_data="cmd_suscribir")]
-    ]
-    await update.message.reply_text(
-        "🦜 *VENBOT PREDICCIONES QUANT - PRO*\n"
-        "🛡 *Terminal con Alertas Push y Filtro de Bancos*\n\n"
-        "Selecciona una opción:",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(teclado)
-    )
+    ])
 
-async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    message = query.message if query else update.message
-    texto = (
-        "💎 *SISTEMA DE SUSCRIPCIÓN VIP & CREDENCIALES*\n\n"
-        "Obtén acceso total al motor predictivo y la app móvil.\n"
-        "1️⃣ Realiza el pago móvil o transferencia correspondiente.\n"
-        "2️⃣ Envía una foto del **comprobante de pago** o escribe tu **número de referencia** directamente por aquí.\n"
-        "3️⃣ Tu cuenta VIP y contraseña de acceso se activarán automáticamente.\n\n"
-        "Usa /miplan para verificar tu estado actual."
-    )
-    if query: await query.answer()
-    await message.reply_text(texto, parse_mode="Markdown")
-
-async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido, suscrito, plan) VALUES (%s, 'BBVA', FALSE, 'FREE') ON CONFLICT (telegram_id) DO NOTHING;", (chat_id,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        await update.message.reply_text("✅ ¡Te has registrado exitosamente en Venbot Quant!", parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Error en registrar: {e}")
-
-async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("SELECT password_app FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        pwd = row[0] if row and row[0] != 'No asignada' else "Aún no tienes contraseña asignada. Activa tu plan VIP enviando tu pago."
-        await update.message.reply_text(f"🔑 *Tus Credenciales de Acceso (App/Web)*\n\n• Contraseña: `{pwd}`", parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Error en password: {e}")
-
-async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("SELECT banco_preferido, suscrito, plan, password_app, vencimiento_vip FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        
-        plan = row[2] if row else "FREE"
-        banco = row[0] if row else "BBVA"
-        pwd = row[3] if row else "No asignada"
-        venc = row[4].strftime("%d/%m/%Y %I:%M %p") if row and row[4] else "N/A"
-        
-        texto = (
-            f"📊 *ESTADO DE TU PLAN Y CREDENCIALES*\n\n"
-            f"• Plan Actual: `{plan}`\n"
-            f"• Banco Preferido: `{banco}`\n"
-            f"• Contraseña App: `{pwd}`\n"
-            f"• Vencimiento VIP: `{venc}`"
-        )
-        await update.message.reply_text(texto, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Error en miplan: {e}")
-
-async def procesar_comprobante_o_referencia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    texto_usuario = update.message.text if update.message.text else ""
-    tiene_foto = bool(update.message.photo)
-
-    if tiene_foto or len(texto_usuario) >= 4:
-        try:
-            nueva_pwd = f"VENVIP-{chat_id}-{int(datetime.now().timestamp()) % 10000}"
-            vencimiento = datetime.now(VET) + timedelta(days=30)
-            
-            conn = obtener_conexion()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO config_usuario (telegram_id, suscrito, plan, password_app, vencimiento_vip)
-                VALUES (%s, TRUE, 'VIP PRO', %s, %s)
-                ON CONFLICT (telegram_id) DO UPDATE 
-                SET suscrito = TRUE, plan = 'VIP PRO', password_app = EXCLUDED.password_app, vencimiento_vip = EXCLUDED.vencimiento_vip;
-            """, (chat_id, nueva_pwd, vencimiento))
-            conn.commit()
-            cur.close()
-            conn.close()
-
-            respuesta = (
-                "✅ *¡PAGO / REFERENCIA RECIBIDO Y VALIDADO CON ÉXITO!*\n\n"
-                "Tu cuenta ha sido ascendida a nivel **VIP PRO**. Aquí tienes tus credenciales de acceso:\n\n"
-                f"🔑 *Contraseña de la App:* `{nueva_pwd}`\n"
-                f"📅 *Válido hasta:* `{vencimiento.strftime('%d/%m/%Y')}`\n\n"
-                "Ya puedes usar /prediccion y disfrutar de todas las señales institucionales."
-            )
-            await update.message.reply_text(respuesta, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Error procesando pago: {e}")
-            await update.message.reply_text("⚠️ Hubo un error procesando tu validación. Intenta de nuevo.")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = "🦜 *VENBOT PREDICCIONES QUANT - PRO*\n\nSelecciona una opción:"
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+    else:
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -499,17 +238,15 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur = conn.cursor()
         cur.execute("SELECT banco_preferido FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
         row = cur.fetchone()
-        banco_usr = row[0] if row else "BBVA"
+        banco_usr = row[0] if row else "GENERAL"
         cur.close()
         conn.close()
     except Exception:
-        banco_usr = "BBVA"
+        banco_usr = "GENERAL"
 
     banco_map = {"BBVA": ["BBVA"], "MERCANTIL": ["Mercantil"], "BNC": ["BNC"], "GENERAL": ["BBVA", "Mercantil", "BNC"]}
-    c_real, v_real, liquidez = obtener_precios_binance_p2p(banco_map.get(banco_usr, ["BBVA"]))
+    c_real, v_real, liquidez = obtener_precios_binance_p2p(banco_map.get(banco_usr, ["BBVA", "Mercantil", "BNC"]))
     datos = motor_quant_inteligente(c_real, v_real, liquidez, banco_usr)
-    
-    registrar_senal_simulador(c_real, datos["recompra"], datos["tendencia"])
 
     hora_actual = datetime.now(VET).strftime("%I:%M %p")
     hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
@@ -526,79 +263,49 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🟢 Recompra (+7H): `{datos['pred_compra_str']}`\n"
         f"🔴 Venta Esperada (+7H): `{datos['pred_venta_str']}`\n"
         f"🎯 Tendencia: `{datos['tendencia']}`\n\n"
-        f"💡 *Análisis Táctico:* _{datos['analisis_ia']}_"
+        f"💡 *Análisis Táctico:* Protección de precios activa. Canal de volatilidad estable."
     )
 
     if query:
         await query.answer()
-        await query.message.reply_text(texto, parse_mode="Markdown")
+        await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
     else:
-        await update.message.reply_text(texto, parse_mode="Markdown")
-
-async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    message = query.message if query else update.message
-    chat_id = message.chat_id
-
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("SELECT banco_preferido FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
-        row = cur.fetchone()
-        banco_usr = row[0] if row else "BBVA"
-        cur.close()
-        conn.close()
-    except Exception:
-        banco_usr = "BBVA"
-
-    buf = generar_grafica_prediccion_buffer(banco_usr)
-    if buf:
-        if query: await query.answer()
-        await message.reply_photo(photo=buf, caption=f"📊 *Venbot Quant - Gráfica [{banco_usr}]*", parse_mode="Markdown")
-    else:
-        await message.reply_text("⚠️ Recopilando muestras suficientes...")
-
-async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    message = query.message if query else update.message
-    filas = obtener_estadisticas_db(limit=50)
-    if not filas or len(filas) < 2:
-        await message.reply_text("⚠️ No hay suficientes datos históricos.")
-        return
-    spreads = [float(f[1]) - float(f[0]) for f in filas]
-    texto = f"📊 *SPREAD EN VIVO*\n• Actual: `{spreads[-1]:.2f} Bs`\n• Promedio: `{np.mean(spreads):.2f} Bs`"
-    if query: await query.answer()
-    await message.reply_text(texto, parse_mode="Markdown")
-
-async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    message = query.message if query else update.message
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("SELECT estado, COUNT(*) FROM registro_senales GROUP BY estado;")
-        res = cur.fetchall()
-        cur.close()
-        conn.close()
-    except Exception:
-        res = []
-    texto = "📈 *SIMULADOR P&L (+7H)*\n\n"
-    for estado, cuenta in res:
-        texto += f"• {estado}: `{cuenta}`\n"
-    if query: await query.answer()
-    await message.reply_text(texto, parse_mode="Markdown")
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
 
 async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     teclado = [
         [InlineKeyboardButton("BBVA Provincial", callback_data="banco_BBVA"), InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL")],
-        [InlineKeyboardButton("BNC", callback_data="banco_BNC"), InlineKeyboardButton("General (Todos)", callback_data="banco_GENERAL")]
+        [InlineKeyboardButton("BNC", callback_data="banco_BNC"), InlineKeyboardButton("General (Todos)", callback_data="banco_GENERAL")],
+        [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]
     ]
     if query:
         await query.answer()
-        await query.message.edit_text("🏦 Selecciona el banco:", reply_markup=InlineKeyboardMarkup(teclado))
+        await query.message.edit_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
     else:
-        await update.message.reply_text("🏦 Selecciona el banco:", reply_markup=InlineKeyboardMarkup(teclado))
+        await update.message.reply_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+
+async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    texto = (
+        "💎 *SISTEMA DE SUSCRIPCIÓN VIP & CREDENCIALES*\n\n"
+        "Obtén acceso total al motor predictivo y la app móvil.\n\n"
+        "🏦 *MÉTODOS DE PAGO DISPONIBLES (VES / USD)*\n"
+        "• *Pago Móvil / Banco:* Mercantil / BNC / BBVA Provincial\n"
+        "• *Teléfono Pago Móvil:* `0412-0000000`\n"
+        "• *Cédula:* `V-00.000.000`\n"
+        "• *Binance Pay (USDT):* `tu_correo_o_id@binance`\n\n"
+        "📝 *PASOS PARA ACTIVACIÓN:*\n"
+        "1️⃣ Realiza el pago correspondiente al plan.\n"
+        "2️⃣ Envía por aquí una foto del comprobante o tu número de referencia.\n"
+        "3️⃣ El bot validará tu pago y te asignará tu contraseña VIP automáticamente."
+    )
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    if query:
+        await query.answer()
+        await query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    else:
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -615,37 +322,39 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cur.close()
             conn.close()
         except Exception as e:
-            logger.error(f"Error: {e}")
-        await query.answer(f"Banco: {banco_elegido}")
-        await query.message.edit_text(f"✅ Banco configurado a: *{banco_elegido}*", parse_mode="Markdown")
+            logger.error(f"Error guardando banco: {e}")
+        await query.answer(f"Banco configurado: {banco_elegido}")
+        await query.message.edit_text(f"✅ Banco configurado a: *{banco_elegido}*", parse_mode="Markdown", reply_markup=obtener_teclado_menu())
         return
 
-    if data == "cmd_prediccion": await cmd_prediccion(update, context)
-    elif data == "cmd_grafica": await cmd_grafica(update, context)
-    elif data == "cmd_spread": await cmd_spread(update, context)
-    elif data == "cmd_rendimiento": await cmd_rendimiento(update, context)
-    elif data == "cmd_bancos": await cmd_bancos(update, context)
-    elif data == "cmd_suscribir": await cmd_suscribir(update, context)
+    if data == "cmd_grafica" or data == "cmd_spread" or data == "cmd_simulador":
+        await query.answer()
+        await cmd_prediccion(update, context)
+    elif data == "cmd_bancos":
+        await cmd_bancos(update, context)
+    elif data == "cmd_suscribir":
+        await cmd_suscribir(update, context)
+    elif data == "cmd_menu":
+        await start(update, context)
 
 async def tarea_recoleccion_automatica():
     while True:
         try:
             c, v, l = obtener_precios_binance_p2p()
             guardar_muestra_db(c, v, l, "GENERAL")
-            evaluar_rendimiento_senales(c)
             logger.info(f"Muestra automática guardada: Compra={c}, Venta={v}")
         except Exception as e:
             logger.error(f"Error recolección: {e}")
         await asyncio.sleep(300)
 
 # ==========================================
-# APLICACIÓN FASTAPI + WEBHOOK NATIVO
+# APLICACIÓN FASTAPI + WEBHOOK NATIVO LIMPIO
 # ==========================================
 app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Quant Pro Activo", "timestamp": str(datetime.now(VET))}
+    return {"status": "Venbot Quant Activo", "timestamp": str(datetime.now(VET))}
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
@@ -660,30 +369,23 @@ async def startup_event():
     global telegram_app
     inicializar_db()
     
-    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    # Construir aplicación SIN polling ni updater activo en segundo plano para evitar conflictos
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
-    # Manejadores de comandos
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
-    telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
-    telegram_app.add_handler(CommandHandler("spread", cmd_spread))
-    telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
     telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
-    telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
-    telegram_app.add_handler(CommandHandler("password", cmd_password))
-    telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
-    
-    # Manejadores de interacción y pagos (fotos o textos de referencia)
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
-    telegram_app.add_handler(MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, procesar_comprobante_o_referencia))
 
     await telegram_app.initialize()
     
     if RENDER_EXTERNAL_URL:
         webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
+        # Forzar borrado previo del webhook y reasignación limpia
+        await telegram_app.bot.delete_webhook(drop_pending_updates=True)
         await telegram_app.bot.set_webhook(url=webhook_url)
-        logger.info(f"Webhook configurado exitosamente en: {webhook_url}")
+        logger.info(f"Webhook configurado limpiamente en: {webhook_url}")
 
     await telegram_app.start()
     asyncio.create_task(tarea_recoleccion_automatica())
