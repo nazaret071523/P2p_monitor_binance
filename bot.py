@@ -80,7 +80,7 @@ def guardar_muestra_db(compra, venta, liquidez_score=100, banco="GENERAL"):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO muestras_p2p (compra, venta, liquidez_score, banco, fecha) VALUES (%s, %s, %s, %s, %s)",
-        (compra, venta, liquidez_score, banco, datetime.now(VET))
+        (float(compra), float(venta), int(liquidez_score), banco, datetime.now(VET))
     )
     conn.commit()
     cur.close()
@@ -103,7 +103,7 @@ def registrar_senal_simulador(precio_entrada, precio_objetivo, tendencia):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO registro_senales (precio_entrada, precio_objetivo, tendencia, estado, fecha_creacion) VALUES (%s, %s, %s, 'PENDIENTE', %s)",
-        (precio_entrada, precio_objetivo, tendencia, datetime.now(VET))
+        (float(precio_entrada), float(precio_objetivo), str(tendencia), datetime.now(VET))
     )
     conn.commit()
     cur.close()
@@ -118,14 +118,13 @@ def evaluar_rendimiento_senales(precio_actual):
     ahora = datetime.now(VET)
     for row in pendientes:
         sig_id, p_entrada, p_obj, tendencia = row
-        # Si han pasado más de 7 horas, evaluamos el resultado
         cur.execute("SELECT fecha_creacion FROM registro_senales WHERE id = %s;", (sig_id,))
         f_creacion = cur.fetchone()[0]
         if (ahora - f_creacion.astimezone(VET)) >= timedelta(hours=7):
             exito = False
-            if "ALCISTA" in tendencia and precio_actual >= p_obj:
+            if "ALCISTA" in tendencia and float(precio_actual) >= float(p_obj):
                 exito = True
-            elif "BAJISTA" in tendencia and precio_actual <= p_obj:
+            elif "BAJISTA" in tendencia and float(precio_actual) <= float(p_obj):
                 exito = True
             
             nuevo_estado = "EXITOSA 🎯" if exito else "EXPIRADA ⚠️"
@@ -178,11 +177,11 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         if not precios_compra or not precios_venta:
             raise ValueError("Anuncios insuficientes tras filtrado.")
 
-        tasa_compra = min(precios_compra)
-        tasa_venta = max(precios_venta)
+        tasa_compra = float(min(precios_compra))
+        tasa_venta = float(max(precios_venta))
         
         if tasa_compra >= tasa_venta:
-            tasa_compra, tasa_venta = precios_compra[0], precios_venta[0]
+            tasa_compra, tasa_venta = float(precios_compra[0]), float(precios_venta[0])
 
         liquidez_calculada = len(data_c) + len(data_v)
 
@@ -207,16 +206,16 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     total_muestras = len(filas)
 
     if total_muestras < 15:
-        pred_c = round(actual_compra * 0.995, 2)
-        pred_v = round(actual_venta * 1.005, 2)
+        pred_c = round(float(actual_compra) * 0.995, 2)
+        pred_v = round(float(actual_venta) * 1.005, 2)
         desviacion = 1.5
         tendencia = "➖ ESTABLE / LATERAL"
-        piso, techo = actual_compra, actual_venta
+        piso, techo = float(actual_compra), float(actual_venta)
         ruta_horas, ruta_valores, ruta_spreads = [], [], []
     else:
-        compras = np.array([f[0] for f in filas])
-        ventas = np.array([f[1] for f in filas])
-        piso, techo = np.min(compras), np.max(ventas)
+        compras = np.array([f[0] for f in filas], dtype=float)
+        ventas = np.array([f[1] for f in filas], dtype=float)
+        piso, techo = float(np.min(compras)), float(np.max(ventas))
         desviacion = float(np.std(compras))
 
         window_size = min(total_muestras - 1, 5)
@@ -225,26 +224,26 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
             X.append(compras[i - window_size:i])
             y.append(compras[i])
         
-        X, y = np.array(X), np.array(y)
+        X, y = np.array(X, dtype=float), np.array(y, dtype=float)
         if len(X) > 0:
             model = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
             model.fit(X, y)
-            pred_c_next = model.predict(compras[-window_size:].reshape(1, -1))[0]
+            pred_c_next = float(model.predict(compras[-window_size:].reshape(1, -1))[0])
             
-            recent_x = np.arange(min(total_muestras, 30))
+            recent_x = np.arange(min(total_muestras, 30), dtype=float)
             recent_y = compras[-len(recent_x):]
             slope_c, _ = np.polyfit(recent_x, recent_y, 1)
             
-            delta_proyectado = (pred_c_next - actual_compra) + (slope_c * 42)
-            pred_c = round(actual_compra + delta_proyectado, 2)
+            delta_proyectado = (pred_c_next - float(actual_compra)) + (float(slope_c) * 42)
+            pred_c = round(float(actual_compra) + delta_proyectado, 2)
         else:
-            pred_c, slope_c = round(actual_compra, 2), 0.0
+            pred_c, slope_c = round(float(actual_compra), 2), 0.0
 
         spreads_historicos = ventas - compras
-        spread_promedio = np.mean(spreads_historicos)
+        spread_promedio = float(np.mean(spreads_historicos))
         pred_v = round(pred_c + spread_promedio, 2)
 
-        variacion_reciente = (actual_compra - compras[-3]) / compras[-3] if len(compras) >= 3 else 0
+        variacion_reciente = (float(actual_compra) - compras[-3]) / compras[-3] if len(compras) >= 3 else 0
 
         if variacion_reciente < -0.004:
             tendencia = "🔻 CORRECCIÓN TÁCTICA"
@@ -257,24 +256,24 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
 
         ahora_dt = datetime.now(VET)
         ruta_horas = [(ahora_dt + timedelta(hours=h)).strftime("%I:%M %p") for h in range(1, 8)]
-        ruta_valores = [round(actual_compra + (pred_c - actual_compra) * (i / 7), 2) for i in range(1, 8)]
-        ruta_spreads = [round(spread_promedio + (np.sin(i) * 0.4), 2) for i in range(1, 8)]
+        ruta_valores = [round(float(actual_compra) + (pred_c - float(actual_compra)) * (i / 7), 2) for i in range(1, 8)]
+        ruta_spreads = [round(spread_promedio + (float(np.sin(i)) * 0.4), 2) for i in range(1, 8)]
 
-    spread = round(actual_venta - actual_compra, 2)
-    analisis_ia = obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia, pred_c, pred_v, liquidez_actual)
-    estado_comunidad = "🟢 Alta Liquidez y Anunciantes Activos" if liquidez_actual >= 12 else ("🟡 Liquidez Moderada" if liquidez_actual >= 6 else "🔴 Baja Liquidez")
+    spread = round(float(actual_venta) - float(actual_compra), 2)
+    analisis_ia = obtener_analisis_ia_coherente(float(actual_compra), float(actual_venta), spread, tendencia, pred_c, pred_v, int(liquidez_actual))
+    estado_comunidad = "🟢 Alta Liquidez y Anunciantes Activos" if int(liquidez_actual) >= 12 else ("🟡 Liquidez Moderada" if int(liquidez_actual) >= 6 else "🔴 Baja Liquidez")
 
     return {
         "pred_compra_str": f"{pred_c:.2f} Bs", 
         "pred_venta_str": f"{pred_v:.2f} Bs",
         "tendencia": tendencia, 
-        "recompra": pred_c, 
-        "venta_esperada": pred_v,
-        "desviacion": desviacion,
+        "recompra": float(pred_c), 
+        "venta_esperada": float(pred_v),
+        "desviacion": float(desviacion),
         "piso_str": f"{piso:.2f} Bs", 
         "techo_str": f"{techo:.2f} Bs",
-        "muestras": total_muestras,
-        "liquidez_actual": liquidez_actual,
+        "muestras": int(total_muestras),
+        "liquidez_actual": int(liquidez_actual),
         "estado_comunidad": estado_comunidad,
         "ruta_horas": ruta_horas,
         "ruta_valores": ruta_valores,
@@ -312,7 +311,7 @@ def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
     if not filas or len(filas) < 2:
         return None
 
-    compras = [f[0] for f in filas]
+    compras = [float(f[0]) for f in filas]
     tiempos = [f[3].strftime("%H:%M") if isinstance(f[3], datetime) else str(f[3])[11:16] for f in filas]
     
     ultimo_precio = compras[-1]
@@ -327,9 +326,9 @@ def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
         tiempos_futuros = [tiempos[-1]] + pred["ruta_horas"]
         valores_futuros = [ultimo_precio] + pred["ruta_valores"]
         
-        std_val = pred["desviacion"]
-        banda_sup = [v + (1.96 * std_val * (i/7)) for i, v in enumerate(valores_futuros)]
-        banda_inf = [v - (1.96 * std_val * (i/7)) for i, v in enumerate(valores_futuros)]
+        std_val = float(pred["desviacion"])
+        banda_sup = [float(v + (1.96 * std_val * (i/7))) for i, v in enumerate(valores_futuros)]
+        banda_inf = [float(v - (1.96 * std_val * (i/7))) for i, v in enumerate(valores_futuros)]
 
         ax1.plot(tiempos_futuros, valores_futuros, label='Ruta Proyectada (+7H)', color='#ff0055', linestyle='--', marker='x', linewidth=2)
         ax1.fill_between(tiempos_futuros, banda_inf, banda_sup, color='#ff0055', alpha=0.15, label='Banda de Confianza 95%')
@@ -377,18 +376,18 @@ async def verificar_alertas_proactivas(bot, compra_actual, venta_actual):
         conn.close()
 
         if res and res[0] and res[1]:
-            piso_h, techo_h = res[0], res[1]
+            piso_h, techo_h = float(res[0]), float(res[1])
             
-            if compra_actual < piso_h:
+            if float(compra_actual) < piso_h:
                 await bot.send_message(
                     chat_id=CHAT_COMUNIDAD_ID,
-                    text=f"🚨 *ALERTA CRÍTICA: RUPTURA DE PISO*\nEl precio de compra ha perforado el soporte histórico: `{compra_actual:.2f} Bs`",
+                    text=f"🚨 *ALERTA CRÍTICA: RUPTURA DE PISO*\nEl precio de compra ha perforado el soporte histórico: `{float(compra_actual):.2f} Bs`",
                     parse_mode="Markdown"
                 )
-            elif venta_actual > techo_h:
+            elif float(venta_actual) > techo_h:
                 await bot.send_message(
                     chat_id=CHAT_COMUNIDAD_ID,
-                    text=f"🚀 *ALERTA CRÍTICA: RUPTURA DE TECHO*\nEl precio de venta ha superado la resistencia histórica: `{venta_actual:.2f} Bs`",
+                    text=f"🚀 *ALERTA CRÍTICA: RUPTURA DE TECHO*\nEl precio de venta ha superado la resistencia histórica: `{float(venta_actual):.2f} Bs`",
                     parse_mode="Markdown"
                 )
     except Exception as e:
@@ -418,7 +417,6 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = query.message.chat_id if query else update.effective_chat.id
     
-    # Obtener banco preferido del usuario si existe
     conn = obtener_conexion()
     cur = conn.cursor()
     cur.execute("SELECT banco_preferido FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
@@ -431,7 +429,6 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c_real, v_real, liquidez = obtener_precios_binance_p2p(banco_map.get(banco_usr, ["BBVA"]))
     datos = motor_quant_inteligente(c_real, v_real, liquidez, banco_usr)
     
-    # Registrar señal en el simulador P&L
     registrar_senal_simulador(c_real, datos["recompra"], datos["tendencia"])
 
     hora_actual = datetime.now(VET).strftime("%I:%M %p")
@@ -488,7 +485,7 @@ async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("⚠️ No hay suficientes datos históricos.")
         return
 
-    spreads = [f[1] - f[0] for f in filas]
+    spreads = [float(f[1]) - float(f[0]) for f in filas]
     texto = (
         f"📊 *ANÁLISIS DE SPREAD EN VIVO*\n\n"
         f"• Spread Actual: `{spreads[-1]:.2f} Bs`\n"
