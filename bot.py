@@ -52,14 +52,6 @@ def inicializar_db():
                 fecha TIMESTAMP
             );
         """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS config_usuario (
-                telegram_id BIGINT PRIMARY KEY,
-                banco_preferido TEXT DEFAULT 'GENERAL',
-                suscrito BOOLEAN DEFAULT FALSE,
-                plan TEXT DEFAULT 'FREE'
-            );
-        """)
         conn.commit()
         cur.close()
         conn.close()
@@ -204,7 +196,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# GRÁFICA CUÁNTICA CON PROYECCIÓN Y BANDAS
+# GRÁFICA CUÁNTICA INSTITUCIONAL (TRADING STYLE)
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas:
@@ -217,33 +209,39 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ultima_compra = compras[-1]
     
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=i) for i in range(1, 5)]
-    paso_tendencia = 1.5 
+    paso_tendencia = 1.2 
     compras_futuras = [ultima_compra + (i * paso_tendencia) for i in range(1, 5)]
     
     t_completo = tiemps + tiempos_futuros
     c_completo = compras + compras_futuras
 
+    # Estilo oscuro institucional (Trading style)
     fig, ax1 = plt.subplots(figsize=(10, 5))
-    ax1.set_facecolor("#ffffff")
-    fig.patch.set_facecolor("#ffffff")
+    ax1.set_facecolor("#121212")
+    fig.patch.set_facecolor("#1e1e1e")
 
-    ax1.plot(tiemps, compras, label="Historial P2P Real", color="#00cccc", marker='o', markersize=3, linewidth=2)
-    ax1.plot(t_completo[len(tiemps)-1:], c_completo[len(tiemps)-1:], label="Ruta Proyectada (+7H)", color="#cc0066", linestyle='--', marker='x', linewidth=2)
+    # Historial Real (Cian brillante)
+    ax1.plot(tiemps, compras, label="Mercado P2P Real", color="#00ffcc", marker='o', markersize=3, linewidth=2)
+    # Ruta Proyectada AI (+7H) (Fucsia Quant)
+    ax1.plot(t_completo[len(tiemps)-1:], c_completo[len(tiemps)-1:], label="Proyección IA (+7H)", color="#ff007f", linestyle='--', marker='x', linewidth=2)
 
-    upper_band = [c + (i * 0.8) for i, c in enumerate(compras_futuras)]
-    lower_band = [c - (i * 0.8) for i, c in enumerate(compras_futuras)]
-    ax1.fill_between(tiempos_futuros, lower_band, upper_band, color="#ff99cc", alpha=0.4, label="Banda de Confianza 95%")
+    # Banda de Confianza 95%
+    upper_band = [c + (i * 0.7) for i, c in enumerate(compras_futuras)]
+    lower_band = [c - (i * 0.7) for i, c in enumerate(compras_futuras)]
+    ax1.fill_between(tiempos_futuros, lower_band, upper_band, color="#ff007f", alpha=0.2, label="Banda Confianza 95%")
 
-    ax1.set_title(f"Venbot Quant - Bandas y Spread [{banco}]", color="#222222", fontsize=11, fontweight='bold')
-    ax1.set_ylabel("Precio USDT/VES (Bs)", color="#333333")
-    ax1.grid(True, linestyle='--', alpha=0.5, color='#dddddd')
-    ax1.legend(loc="upper left", facecolor="#f9f9f9", edgecolor="#cccccc", labelcolor="#222222", fontsize=9)
+    ax1.set_title(f"Venbot Quant - Terminal Institucional [{banco}]", color="#ffffff", fontsize=11, fontweight='bold')
+    ax1.set_ylabel("Precio USDT/VES (Bs)", color="#bbbbbb")
+    ax1.tick_params(colors="#bbbbbb", labelsize=8)
+    ax1.grid(True, linestyle=':', alpha=0.3, color='#444444')
     
-    plt.xticks(rotation=30)
+    legend = ax1.legend(loc="upper left", facecolor="#1e1e1e", edgecolor="#444444", labelcolor="#ffffff", fontsize=9)
+    
+    plt.xticks(rotation=25)
     plt.tight_layout()
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=120)
+    plt.savefig(buf, format="png", dpi=130)
     buf.seek(0)
     plt.close(fig)
     return buf
@@ -263,7 +261,7 @@ def obtener_teclado_menu():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
-        "🦜 *VENBOT QUANT - TERMINAL [GENERAL]*\n"
+        "🦜 *VENBOT QUANT - TERMINAL INSTITUCIONAL*\n"
         "Selecciona una opción del menú táctico:"
     )
     if update.callback_query:
@@ -285,18 +283,18 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
 
     texto = (
-        f"🦜 *VENBOT QUANT - TERMINAL [GENERAL]*\n"
+        f"🦜 *VENBOT QUANT - TERMINAL INSTITUCIONAL*\n"
         f"⏱ ({hora_actual}) | DIANA A LAS {hora_objetivo}\n"
         f"🟢 COMPRA P2P: `{c_real:.2f} Bs` | 🔴 VENTA: `{v_real:.2f} Bs`\n\n"
-        f"💳 *COMUNIDAD & LIQUIDEZ*\n"
+        f"💳 *ESTADO & LIQUIDEZ*\n"
         f"• Estado: `{datos['estado_comunidad']}`\n"
-        f"• Anuncios Detectados: `{datos['liquidez_actual']}`\n"
+        f"• Muestras Analizadas (Dataset): `{datos['muestras']}`\n"
         f"• Piso / Techo: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
         f"🔮 *PROYECCIÓN DE CONFIANZA (95%)*\n"
         f"🟢 Recompra (+7H): `{datos['pred_compra_str']}`\n"
         f"🔴 Venta Esperada (+7H): `{datos['pred_venta_str']}`\n"
         f"🎯 Tendencia: `{datos['tendencia']}`\n\n"
-        f"💡 *Análisis Táctico:* Protección de precios activa."
+        f"💡 *Motor Quant:* IA XGBoost sincronizada."
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -306,7 +304,7 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
 
-    filas = obtener_estadisticas_db(limit=25)
+    filas = obtener_estadisticas_db(limit=30)
     buf = generar_imagen_grafica_cuantica(filas, "GENERAL")
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     
@@ -314,14 +312,14 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=chat_id, 
             photo=buf, 
-            caption="📊 *Venbot Quant - Bandas y Spread [GENERAL]*", 
+            caption="📊 *Venbot Quant - Gráfica Institucional [GENERAL]*", 
             parse_mode="Markdown", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="⚠️ Datos insuficientes para trazar las bandas de proyección.", 
+            text="⚠️ Datos insuficientes para trazar las bandas institucionales.", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
@@ -335,7 +333,7 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]
     ]
     chat_id = update.effective_chat.id
-    texto = "🏦 *Selecciona el banco:*"
+    texto = "🏦 *Selecciona el banco de arbitraje:*"
     
     if update.callback_query and update.callback_query.message:
         await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -346,7 +344,7 @@ async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
 
-    texto = "💎 *Planes VIP y Premium Disponibles*\nContacta al operador para activar tu acceso Quant."
+    texto = "💎 *Planes VIP y Premium Disponibles*\nAcceso prioritario a flujos de alta liquidez."
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     chat_id = update.effective_chat.id
 
@@ -387,7 +385,7 @@ app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Quant Activo"}
+    return {"status": "Venbot Quant Institucional Activo"}
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
@@ -404,7 +402,7 @@ async def startup_event():
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
-    # Registro de comandos para barra y menú de Telegram
+    # Registro formal de comandos en barra de Telegram
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
