@@ -14,9 +14,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 import uvicorn
 
 # ==========================================
@@ -31,6 +31,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_GEMINI_API_KEY")
 CHAT_COMUNIDAD_ID = os.getenv("CHAT_COMUNIDAD_ID", "-100123456789")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")  # Render lo llena automático
 
 ULTIMO_REGISTRO_VALIDO = {"compra": 0.0, "venta": 0.0, "timestamp": None}
 
@@ -365,38 +366,10 @@ def generar_grafica_prediccion_buffer(banco_filtro="GENERAL"):
     return buf
 
 # ==========================================
-# ALERTAS PROACTIVAS
+# TELEGRAM BOT HANDLERS & WEBHOOK SETUP
 # ==========================================
-async def verificar_alertas_proactivas(bot, compra_actual, venta_actual):
-    try:
-        conn = obtener_conexion()
-        cur = conn.cursor()
-        cur.execute("SELECT MIN(compra), MAX(venta) FROM muestras_p2p WHERE id < (SELECT MAX(id) FROM muestras_p2p);")
-        res = cur.fetchone()
-        cur.close()
-        conn.close()
+telegram_app = None
 
-        if res and res[0] and res[1]:
-            piso_h, techo_h = float(res[0]), float(res[1])
-            
-            if float(compra_actual) < piso_h:
-                await bot.send_message(
-                    chat_id=CHAT_COMUNIDAD_ID,
-                    text=f"🚨 *ALERTA CRÍTICA: RUPTURA DE PISO*\nEl precio de compra ha perforado el soporte histórico: `{float(compra_actual):.2f} Bs`",
-                    parse_mode="Markdown"
-                )
-            elif float(venta_actual) > techo_h:
-                await bot.send_message(
-                    chat_id=CHAT_COMUNIDAD_ID,
-                    text=f"🚀 *ALERTA CRÍTICA: RUPTURA DE TECHO*\nEl precio de venta ha superado la resistencia histórica: `{float(venta_actual):.2f} Bs`",
-                    parse_mode="Markdown"
-                )
-    except Exception as e:
-        logger.error(f"Error en alertas proactivas: {e}")
-
-# ==========================================
-# TELEGRAM BOT HANDLERS
-# ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
         [InlineKeyboardButton("🔮 Ver Predicción +7H", callback_data="cmd_prediccion")],
@@ -601,7 +574,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# APLICACIÓN FASTAPI (MANTENER SERVIDOR ACTIVO)
+# APLICACIÓN FASTAPI + WEBHOOK NATIVO
 # ==========================================
 app = FastAPI()
 
@@ -609,8 +582,19 @@ app = FastAPI()
 def read_root():
     return {"status": "Venbot Quant Pro Activo", "timestamp": str(datetime.now(VET))}
 
-async def run_bot_polling():
+@app.post("/webhook")
+async def telegram_webhook(req: Request):
+    global telegram_app
+    data = await req.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"ok": True}
+
+@app.on_event("startup")
+async def startup_event():
+    global telegram_app
     inicializar_db()
+    
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     # Manejadores
@@ -626,19 +610,22 @@ async def run_bot_polling():
     telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
-    # Iniciar tareas en segundo plano
+    await telegram_app.initialize()
+    
+    # Configurar Webhook nativo hacia la URL de Render
+    if RENDER_EXTERNAL_URL:
+        webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
+        await telegram_app.bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook configurado exitosamente en: {webhook_url}")
+
+    await telegram_app.start()
     asyncio.create_task(tarea_recoleccion_automatica())
 
-    # Arrancar Polling nativo de Telegram (elimina webhooks colgados automáticamente)
-    await telegram_app.bot.delete_webhook(drop_pending_updates=True)
-    await telegram_app.initialize()
-    await telegram_app.start()
-    await telegram_app.updater.start_polling()
-    logger.info("Bot de Telegram iniciado en modo POLLING exitosamente.")
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(run_bot_polling())
+@app.on_event("shutdown")
+async def shutdown_event():
+    global telegram_app
+    if telegram_app:
+        await telegram_app.stop()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
