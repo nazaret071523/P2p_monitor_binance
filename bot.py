@@ -207,7 +207,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# GENERADORES DE GRÁFICAS Y HERRAMIENTAS
+# GENERADOR DE GRÁFICAS (ESTILO CLARO PROFESIONAL)
 # ==========================================
 def generar_imagen_grafica(filas, banco):
     if not filas:
@@ -216,16 +216,22 @@ def generar_imagen_grafica(filas, banco):
     compras = [f[0] for f in filas]
     ventas = [f[1] for f in filas]
 
+    # Estilo de fondo blanco limpio preferido por legibilidad institucional
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(tiemps, compras, label="Compra P2P", color="#00ffcc", linewidth=2)
-    ax.plot(tiemps, ventas, label="Venta P2P", color="#ff0055", linewidth=2)
-    ax.set_title(f"Gráfica Institucional P2P [{banco}]", color="white", fontsize=12)
-    ax.set_facecolor("#111318")
-    fig.patch.set_facecolor("#111318")
-    ax.tick_params(colors="white")
-    ax.spines['bottom'].set_color('white')
-    ax.spines['left'].set_color('white')
-    ax.legend(facecolor="#222", edgecolor="none", labelcolor="white")
+    ax.plot(tiemps, compras, label="Compra P2P", color="#009966", linewidth=2)
+    ax.plot(tiemps, ventas, label="Venta P2P", color="#cc0033", linewidth=2)
+    ax.set_title(f"Gráfica Institucional P2P [{banco}]", color="#222222", fontsize=12, fontweight='bold')
+    
+    ax.set_facecolor("#ffffff")
+    fig.patch.set_facecolor("#ffffff")
+    ax.tick_params(colors="#333333")
+    ax.spines['bottom'].set_color('#cccccc')
+    ax.spines['left'].set_color('#cccccc')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(True, linestyle='--', alpha=0.5, color='#dddddd')
+    ax.legend(facecolor="#f9f9f9", edgecolor="#cccccc", labelcolor="#222222")
+    
     plt.xticks(rotation=30)
     plt.tight_layout()
 
@@ -236,7 +242,7 @@ def generar_imagen_grafica(filas, banco):
     return buf
 
 # ==========================================
-# TELEGRAM HANDLERS & MENÚ COMPLETO
+# TELEGRAM HANDLERS UNIFICADOS (COMANDOS Y BOTONES)
 # ==========================================
 telegram_app = None
 
@@ -260,14 +266,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
         if update.callback_query.message:
             await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
-    else:
-        if update.message:
-            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+    elif update.message:
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    chat_id = query.message.chat_id if (query and query.message) else update.effective_chat.id
-    
+    if query:
+        chat_id = query.message.chat_id if query.message else update.effective_chat.id
+        await query.answer()
+    else:
+        chat_id = update.effective_chat.id
+
     try:
         conn = obtener_conexion()
         cur = conn.cursor()
@@ -303,91 +312,103 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
 
-    if query:
-        await query.answer()
-        if query.message:
-            await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    if query and query.message:
+        await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    elif update.message:
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
     else:
-        if update.message:
-            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-        filas = obtener_estadisticas_db(limit=50)
-        buf = generar_imagen_grafica(filas, "GENERAL")
         chat_id = query.message.chat_id if query.message else update.effective_chat.id
-        teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-        
-        if buf:
-            await context.bot.send_photo(
-                chat_id=chat_id, 
-                photo=buf, 
-                caption="📊 *Gráfica Institucional Actualizada*", 
-                parse_mode="Markdown", 
-                reply_markup=InlineKeyboardMarkup(teclado)
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=chat_id, 
-                text="⚠️ No hay suficientes datos históricos para generar la gráfica.", 
-                reply_markup=InlineKeyboardMarkup(teclado)
-            )
+    else:
+        chat_id = update.effective_chat.id
+
+    filas = obtener_estadisticas_db(limit=50)
+    buf = generar_imagen_grafica(filas, "GENERAL")
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    
+    if buf:
+        await context.bot.send_photo(
+            chat_id=chat_id, 
+            photo=buf, 
+            caption="📊 *Gráfica Institucional Actualizada*", 
+            parse_mode="Markdown", 
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="⚠️ No hay suficientes datos históricos para generar la gráfica.", 
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
 
 async def cmd_spread(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-        filas = obtener_estadisticas_db(limit=20)
         chat_id = query.message.chat_id if query.message else update.effective_chat.id
-        teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    else:
+        chat_id = update.effective_chat.id
+
+    filas = obtener_estadisticas_db(limit=20)
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    
+    if not filas:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Sin datos suficientes de spread.", reply_markup=InlineKeyboardMarkup(teclado))
+        return
         
-        if not filas:
-            await context.bot.send_message(chat_id=chat_id, text="⚠️ Sin datos suficientes de spread.", reply_markup=InlineKeyboardMarkup(teclado))
-            return
-            
-        spreads = [f[1] - f[0] for f in filas]
-        prom_spread = np.mean(spreads)
-        texto = f"📊 *ANÁLISIS DE SPREAD P2P*\n\n• Spread Promedio Actual: `{prom_spread:.2f} Bs`\n• Último Spread Registrado: `{spreads[-1]:.2f} Bs`"
-        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    spreads = [f[1] - f[0] for f in filas]
+    prom_spread = np.mean(spreads)
+    texto = f"📊 *ANÁLISIS DE SPREAD P2P*\n\n• Spread Promedio Actual: `{prom_spread:.2f} Bs`\n• Último Spread Registrado: `{spreads[-1]:.2f} Bs`"
+    await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_simulador(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-        c, v, _ = obtener_precios_binance_p2p()
-        spread = v - c
-        ganancia_est = spread * 100
         chat_id = query.message.chat_id if query.message else update.effective_chat.id
-        teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-        
-        texto = (
-            f"📈 *SIMULADOR P&L (100 USDT)*\n\n"
-            f"• Compra a: `{c:.2f} Bs`\n"
-            f"• Venta a: `{v:.2f} Bs`\n"
-            f"• Spread por USDT: `{spread:.2f} Bs`\n"
-            f"💰 *Ganancia Estimada (100 USDT):* `{ganancia_est:.2f} Bs`"
-        )
-        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    else:
+        chat_id = update.effective_chat.id
+
+    c, v, _ = obtener_precios_binance_p2p()
+    spread = v - c
+    ganancia_est = spread * 100
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    
+    texto = (
+        f"📈 *SIMULADOR P&L (100 USDT)*\n\n"
+        f"• Compra a: `{c:.2f} Bs`\n"
+        f"• Venta a: `{v:.2f} Bs`\n"
+        f"• Spread por USDT: `{spread:.2f} Bs`\n"
+        f"💰 *Ganancia Estimada (100 USDT):* `{ganancia_est:.2f} Bs`"
+    )
+    await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if query:
+        await query.answer()
+    
     teclado = [
         [InlineKeyboardButton("BBVA Provincial", callback_data="banco_BBVA"), InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL")],
         [InlineKeyboardButton("BNC", callback_data="banco_BNC"), InlineKeyboardButton("General (Todos)", callback_data="banco_GENERAL")],
         [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]
     ]
-    if query:
-        await query.answer()
-        if query.message:
-            await query.message.edit_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
-    else:
-        if update.message:
-            await update.message.reply_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    
+    if query and query.message:
+        await query.message.edit_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    elif update.message:
+        await update.message.reply_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if query:
+        await query.answer()
+
     texto = (
         "💎 *SISTEMA DE SUSCRIPCIÓN VIP & CREDENCIALES*\n\n"
         "Obtén acceso total al motor predictivo y la app móvil.\n\n"
@@ -402,13 +423,11 @@ async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3️⃣ El bot validará tu pago y te asignará tu contraseña VIP automáticamente."
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-    if query:
-        await query.answer()
-        if query.message:
-            await query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
-    else:
-        if update.message:
-            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    
+    if query and query.message:
+        await query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    elif update.message:
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -484,7 +503,7 @@ async def startup_event():
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
-    # Registro completo de comandos y callbacks
+    # Registro formal de comandos de texto (barra /)
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
@@ -492,6 +511,8 @@ async def startup_event():
     telegram_app.add_handler(CommandHandler("simulador", cmd_simulador))
     telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
+    
+    # Manejador de botones interactivos
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
     await telegram_app.initialize()
