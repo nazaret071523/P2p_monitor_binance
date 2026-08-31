@@ -68,7 +68,9 @@ def inicializar_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS config_usuario (
             telegram_id BIGINT PRIMARY KEY,
-            banco_preferido TEXT DEFAULT 'BBVA'
+            banco_preferido TEXT DEFAULT 'BBVA',
+            suscrito BOOLEAN DEFAULT FALSE,
+            plan TEXT DEFAULT 'FREE'
         );
     """)
     conn.commit()
@@ -394,7 +396,7 @@ async def verificar_alertas_proactivas(bot, compra_actual, venta_actual):
         logger.error(f"Error en alertas proactivas: {e}")
 
 # ==========================================
-# TELEGRAM BOT HANDLERS
+# TELEGRAM BOT HANDLERS & COMANDOS RECUPERADOS
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
@@ -402,7 +404,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Gráfica Institucional", callback_data="cmd_grafica")],
         [InlineKeyboardButton("📊 Análisis de Spread", callback_data="cmd_spread")],
         [InlineKeyboardButton("📈 Simulador P&L", callback_data="cmd_rendimiento")],
-        [InlineKeyboardButton("🏦 Seleccionar Banco", callback_data="cmd_bancos")]
+        [InlineKeyboardButton("🏦 Seleccionar Banco", callback_data="cmd_bancos")],
+        [InlineKeyboardButton("💎 Suscribirse / Planes", callback_data="cmd_suscribir")]
     ]
     reply_markup = InlineKeyboardMarkup(teclado)
     await update.message.reply_text(
@@ -412,6 +415,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=reply_markup
     )
+
+async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    message = query.message if query else update.message
+    texto = (
+        "💎 *SISTEMA DE SUSCRIPCIÓN VENBOT*\n\n"
+        "Obtén acceso completo al motor cuantitativo avanzado, alertas prioritarias y reportes extendidos.\n\n"
+        "• Usa /miplan para ver tu estado actual.\n"
+        "• Contacta a soporte para activar tu membresía Pro."
+    )
+    if query: await query.answer()
+    await message.reply_text(texto, parse_mode="Markdown")
+
+async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    conn = obtener_conexion()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO config_usuario (telegram_id, banco_preferido, suscrito, plan) VALUES (%s, 'BBVA', FALSE, 'FREE') ON CONFLICT (telegram_id) DO NOTHING;", (chat_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    await update.message.reply_text("✅ ¡Te has registrado exitosamente en el sistema de Venbot Quant!", parse_mode="Markdown")
+
+async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔑 *Gestión de Credenciales*\n\nPara restablecer tu contraseña o clave de API asociada al bot, contacta al administrador.", parse_mode="Markdown")
+
+async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    conn = obtener_conexion()
+    cur = conn.cursor()
+    cur.execute("SELECT banco_preferido, suscrito, plan FROM config_usuario WHERE telegram_id = %s;", (chat_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    plan = row[1] if row else "FREE"
+    banco = row[0] if row else "BBVA"
+    
+    texto = (
+        f"📊 *ESTADO DE TU PLAN (VENBOT)*\n\n"
+        f"• Plan Activo: `{plan}`\n"
+        f"• Banco Preferido: `{banco}`\n"
+        f"• Estado: `Activo`"
+    )
+    await update.message.reply_text(texto, parse_mode="Markdown")
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -547,6 +595,7 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "cmd_spread": await cmd_spread(update, context)
     elif data == "cmd_rendimiento": await cmd_rendimiento(update, context)
     elif data == "cmd_bancos": await cmd_bancos(update, context)
+    elif data == "cmd_suscribir": await cmd_suscribir(update, context)
 
 async def tarea_recoleccion_automatica():
     while True:
@@ -577,6 +626,10 @@ async def startup_event():
     telegram_app.add_handler(CommandHandler("spread", cmd_spread))
     telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
     telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
+    telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
+    telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
+    telegram_app.add_handler(CommandHandler("password", cmd_password))
+    telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
     await telegram_app.initialize()
