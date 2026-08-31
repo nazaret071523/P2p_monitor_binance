@@ -213,12 +213,10 @@ def generar_imagen_grafica_cuantica(filas, banco):
     tiemps = [f[3] for f in filas]
     compras = [f[0] for f in filas]
     
-    # Calcular proyección futura a 7 horas
     ultimo_tiempo = tiemps[-1]
     ultima_compra = compras[-1]
     
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=i) for i in range(1, 5)]
-    # Simulación de tendencia proyectada
     paso_tendencia = 1.5 
     compras_futuras = [ultima_compra + (i * paso_tendencia) for i in range(1, 5)]
     
@@ -229,12 +227,9 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ax1.set_facecolor("#ffffff")
     fig.patch.set_facecolor("#ffffff")
 
-    # Histórico Real
     ax1.plot(tiemps, compras, label="Historial P2P Real", color="#00cccc", marker='o', markersize=3, linewidth=2)
-    # Ruta Proyectada (+7H)
     ax1.plot(t_completo[len(tiemps)-1:], c_completo[len(tiemps)-1:], label="Ruta Proyectada (+7H)", color="#cc0066", linestyle='--', marker='x', linewidth=2)
 
-    # Banda de Confianza 95% (Área sombreada rosa)
     upper_band = [c + (i * 0.8) for i, c in enumerate(compras_futuras)]
     lower_band = [c - (i * 0.8) for i, c in enumerate(compras_futuras)]
     ax1.fill_between(tiempos_futuros, lower_band, upper_band, color="#ff99cc", alpha=0.4, label="Banda de Confianza 95%")
@@ -279,12 +274,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        chat_id = query.message.chat_id if query.message else update.effective_chat.id
-        await query.answer()
-    else:
-        chat_id = update.effective_chat.id
+    chat_id = update.effective_chat.id
+    if update.callback_query:
+        await update.callback_query.answer()
 
     c_real, v_real, liquidez = obtener_precios_binance_p2p()
     datos = motor_quant_inteligente(c_real, v_real, liquidez, "GENERAL")
@@ -307,19 +299,12 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 *Análisis Táctico:* Protección de precios activa."
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-
-    if query and query.message:
-        await query.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
-    else:
-        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
-        chat_id = query.message.chat_id if query.message else update.effective_chat.id
-    else:
-        chat_id = update.effective_chat.id
+    chat_id = update.effective_chat.id
+    if update.callback_query:
+        await update.callback_query.answer()
 
     filas = obtener_estadisticas_db(limit=25)
     buf = generar_imagen_grafica_cuantica(filas, "GENERAL")
@@ -341,31 +326,34 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
+    if update.callback_query:
+        await update.callback_query.answer()
     
     teclado = [
         [InlineKeyboardButton("BBVA", callback_data="banco_BBVA"), InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL")],
         [InlineKeyboardButton("General", callback_data="banco_GENERAL")],
         [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]
     ]
-    if query and query.message:
-        await query.message.edit_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
-    elif update.message:
-        await update.message.reply_text("🏦 *Selecciona el banco:*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    chat_id = update.effective_chat.id
+    texto = "🏦 *Selecciona el banco:*"
+    
+    if update.callback_query and update.callback_query.message:
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
+    if update.callback_query:
+        await update.callback_query.answer()
 
     texto = "💎 *Planes VIP y Premium Disponibles*\nContacta al operador para activar tu acceso Quant."
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-    if query and query.message:
-        await query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
-    elif update.message:
-        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    chat_id = update.effective_chat.id
+
+    if update.callback_query and update.callback_query.message:
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -393,7 +381,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# FASTAPI Y WEBHOOK
+# FASTAPI Y LIFESPAN (WEBHOOK)
 # ==========================================
 app = FastAPI()
 
@@ -416,7 +404,7 @@ async def startup_event():
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
-    # Registro formal de comandos para que funcionen con barra (/)
+    # Registro de comandos para barra y menú de Telegram
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
