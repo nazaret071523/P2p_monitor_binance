@@ -1,0 +1,80 @@
+VENBOT - PASOS DE DESPLIEGUE
+
+1. REEMPLAZA ESTOS ARCHIVOS EN TU PROYECTO
+   - bot.py
+   - index.html
+   - database.py
+   - requirements.txt
+   - data.json
+
+2. SUPABASE
+   Tu DATABASE_URL debe ser la cadena PostgreSQL de Supabase.
+   Ejemplo de variable en Render:
+     DATABASE_URL=postgresql://...
+
+   Puedes ejecutar schema.sql en Supabase > SQL Editor.
+   bot.py también crea las tablas automáticamente.
+
+3. RENDER - VARIABLES DE ENTORNO
+   Configura:
+     DATABASE_URL=<tu PostgreSQL de Supabase>
+     TELEGRAM_BOT_TOKEN=<token del bot>
+     RENDER_EXTERNAL_URL=https://TU-SERVICIO.onrender.com
+
+   Opcionales:
+     TELEGRAM_ALERT_CHAT_ID=<chat id>
+     COLLECT_INTERVAL_SECONDS=60
+     MARKET_MAX_AGE_SECONDS=90
+     ALLOWED_ORIGINS=*
+
+   Si el monitor tiene dominio propio, es mejor:
+     ALLOWED_ORIGINS=https://tu-dominio.com
+
+4. RENDER - BUILD / START
+   Build Command:
+     pip install -r requirements.txt
+
+   Start Command:
+     uvicorn bot:app --host 0.0.0.0 --port $PORT
+
+5. MONITOR
+   En index.html busca esta línea:
+     <meta name="venbot-api" content="https://TU-SERVICIO.onrender.com">
+
+   Reemplaza SOLO TU-SERVICIO por el nombre real del Web Service de Render.
+   Ejemplo:
+     <meta name="venbot-api" content="https://venbot-api.onrender.com">
+
+6. COMPROBACIONES
+   Abre estas URLs en el navegador:
+
+     https://TU-SERVICIO.onrender.com/
+     https://TU-SERVICIO.onrender.com/api/health
+     https://TU-SERVICIO.onrender.com/api/precios
+     https://TU-SERVICIO.onrender.com/api/history?period=1d
+
+   /api/precios debe devolver:
+     ok
+     buy
+     sell
+     bcv
+     eur
+     spread
+     spread_pct
+     timestamp
+
+7. QUÉ CAMBIÓ
+   - El monitor ya no usa 930.50 fijo.
+   - El monitor consulta /api/precios cada 15 segundos.
+   - El histórico consulta /api/history.
+   - Telegram y monitor sincronizan mediante mercado_actual en Supabase/PostgreSQL.
+   - USD BCV usa /v1/dolares/oficial.
+   - Euro BCV usa /v1/euros/oficial.
+   - Comprar USDT usa anuncios SELL de Binance.
+   - Vender USDT usa anuncios BUY de Binance.
+   - Se eliminó el fallback que inventaba precios a partir del dólar paralelo.
+   - Si Binance o BCV fallan, se conserva la última lectura real guardada.
+   - data.json queda solamente como archivo legado y ya no alimenta el monitor.
+
+IMPORTANTE
+No pongas TELEGRAM_BOT_TOKEN ni DATABASE_URL dentro de index.html o GitHub público.
