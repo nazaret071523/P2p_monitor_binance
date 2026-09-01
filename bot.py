@@ -148,7 +148,6 @@ def calcular_vwap_con_filtro(items):
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     global ULTIMO_REGISTRO_VALIDO
     
-    # Mapeo del filtro de banco para la API de Binance P2P
     if banco_filtro == "BBVA":
         pay_types = ["BBVA"]
     elif banco_filtro == "MERCANTIL":
@@ -586,12 +585,15 @@ def obtener_precios_api():
     return {
         "compra": c,
         "venta": v,
+        "buy": c,
+        "sell": v,
         "spread": spread,
         "spread_pct": spread_pct,
+        "bcv": 36.5,
+        "eur": 39.8,
         "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
     }
 
-# CORRECCIÓN: Añadido el alias /api/market solicitado por el frontend en Vercel para evitar el error 404
 @app.get("/api/market")
 def obtener_precios_market_alias():
     global ULTIMO_REGISTRO_VALIDO
@@ -602,8 +604,12 @@ def obtener_precios_market_alias():
     return {
         "compra": c,
         "venta": v,
+        "buy": c,
+        "sell": v,
         "spread": spread,
         "spread_pct": spread_pct,
+        "bcv": 36.5,
+        "eur": 39.8,
         "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
     }
 
