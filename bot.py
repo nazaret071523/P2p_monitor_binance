@@ -30,7 +30,6 @@ VET = pytz.timezone('America/Caracas')
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/venbot")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
-# ID de chat predeterminado para alertas automáticas (puedes cambiarlo o dejarlo dinámico)
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
 
 ULTIMO_REGISTRO_VALIDO = {"compra": 923.66, "venta": 934.98, "timestamp": None}
@@ -97,7 +96,6 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
 # SCRAPING BINANCE P2P CON FILTRO ANTI-SPOOFING Y VWAP
 # ==========================================
 def filtrar_outliers_iqr(precios):
-    """Filtro anti-spoofing por Rango Intercuartil para eliminar precios absurdos/gancho."""
     if not precios or len(precios) < 4:
         return precios
     arr = np.array(precios, dtype=float)
@@ -110,7 +108,6 @@ def filtrar_outliers_iqr(precios):
     return filtrados if filtrados else precios
 
 def calcular_vwap_con_filtro(items):
-    """Calcula el VWAP descartando anuncios manipulados mediante IQR."""
     precios_brutos = []
     item_map = {}
     
@@ -187,7 +184,7 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         return ULTIMO_REGISTRO_VALIDO["compra"], ULTIMO_REGISTRO_VALIDO["venta"], 20
 
 # ==========================================
-# MOTOR DE PROTECCIÓN Y QUANT INTELIGENTE
+# MOTOR DE PROTECCIÓN Y QUANT CON ESTACIONALIDAD
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
     filas = obtener_estadisticas_db(banco=banco_filtro)
@@ -201,19 +198,32 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     else:
         compras = np.array([f[0] for f in filas], dtype=float)
         ventas = np.array([f[1] for f in filas], dtype=float)
+        fechas = [f[3] for f in filas]
         piso, techo = float(np.min(compras)), float(np.max(ventas))
 
         window_size = min(total_muestras - 1, 5)
         X, y = [], []
         for i in range(window_size, len(compras)):
-            X.append(compras[i - window_size:i])
+            # Features: precios históricos + hora del día de la muestra para estacionalidad
+            dt_muestra = fechas[i]
+            hora_feat = dt_muestra.hour if dt_muestra else 12
+            
+            window_vals = list(compras[i - window_size:i])
+            window_vals.append(float(hora_feat)) # Se añade estacionalidad horaria como input
+            
+            X.append(window_vals)
             y.append(compras[i])
         
         X, y = np.array(X, dtype=float), np.array(y, dtype=float)
         if len(X) > 0:
             model = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
             model.fit(X, y)
-            pred_c_next = float(model.predict(compras[-window_size:].reshape(1, -1))[0])
+            
+            hora_actual_val = float(datetime.now(VET).hour)
+            vector_actual = list(compras[-window_size:])
+            vector_actual.append(hora_actual_val)
+            
+            pred_c_next = float(model.predict(np.array([vector_actual], dtype=float))[0])
             pred_c = round(pred_c_next, 2)
         else:
             pred_c = round(float(actual_compra), 2)
@@ -240,8 +250,6 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "tendencia": tendencia, 
         "piso_str": f"{piso:.2f} Bs", 
         "techo_str": f"{techo:.2f} Bs",
-        "piso_val": piso,
-        "techo_val": techo,
         "muestras": int(total_muestras),
         "liquidez_actual": int(liquidez_actual),
         "estado_comunidad": estado_comunidad
@@ -282,8 +290,8 @@ def generar_imagen_grafica_cuantica(filas, banco):
     for spine in ax.spines.values():
         spine.set_edgecolor('#334155')
 
-    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Anti-Spoofing)")
-    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Anti-Spoofing)")
+    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Estacional)")
+    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Estacional)")
 
     ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (+H)")
     ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (+H)")
@@ -295,7 +303,7 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ax.fill_between(tiempos_futuros, banda_inferior_dinamica, banda_superior_dinamica, color="#38bdf8", alpha=0.15, label="Canal de Volatilidad Dinámica")
 
     ax.set_xlim(tiemps[0], tiempos_futuros[-1])
-    ax.set_title(f"VENBOT PREDICCIONES // CANAL CUÁNTICO DINÁMICO [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
+    ax.set_title(f"VENBOT PREDICCIONES // CANAL ESTACIONAL [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
     ax.set_ylabel("Tasa VES / USDT", color="#94a3b8", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=VET))
     ax.tick_params(colors="#94a3b8", labelsize=8)
@@ -350,15 +358,15 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🦜 *VENBOT PREDICCIONES - PROTECCIÓN*\n"
         f"⏱ Sincronizado ({hora_actual}) | Objetivo: {hora_objetivo}\n"
         f"🟢 COMPRA P2P (VWAP): `{c_real:.2f} Bs` | 🔴 VENTA (VWAP): `{v_real:.2f} Bs`\n\n"
-        f"💳 *ESTADO DE LIQUIDEZ Y FILTRO*\n"
+        f"💳 *ESTADO DE LIQUIDEZ Y ESTACIONALIDAD*\n"
         f"• Estado: `{datos['estado_comunidad']}`\n"
-        f"• Muestras Analizadas: `{datos['muestras']}` (Anti-Spoofing OK)\n"
+        f"• Muestras Analizadas: `{datos['muestras']}` (Estacionalidad OK)\n"
         f"• Rango Piso / Techo: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
         f"🔮 *PROYECCIÓN DE PROTECCIÓN (7H)*\n"
         f"🟢 Recompra Protegida: `{datos['pred_compra_str']}`\n"
         f"🔴 Venta Estimada: `{datos['pred_venta_str']}`\n"
         f"🎯 Estado Operativo: `{datos['tendencia']}`\n\n"
-        f"💡 *Motor:* VWAP, IQR Anti-Spoofing & Bandas Dinámicas."
+        f"💡 *Motor:* XGBoost con Memoria Horaria & Bandas Dinámicas."
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -376,14 +384,14 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=chat_id, 
             photo=buf, 
-            caption="📊 *Venbot Predicciones - Canal Cuántico Dinámico [GENERAL]*", 
+            caption="📊 *Venbot Predicciones - Canal Estacional [GENERAL]*", 
             parse_mode="Markdown", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="⚠️ Datos insuficientes para trazar el canal dinámico.", 
+            text="⚠️ Datos insuficientes para trazar el canal estacional.", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
@@ -434,7 +442,7 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
 
 # ==========================================
-# TAREA EN SEGUNDO PLANO: RECOLECCIÓN Y ALERTAS PROACTIVAS
+# TAREA EN SEGUNDO PLANO: RECOLECCIÓN Y ALERTAS
 # ==========================================
 async def tarea_recoleccion_automatica():
     global ULTIMO_ESTADO_TENDENCIA, telegram_app
@@ -443,11 +451,9 @@ async def tarea_recoleccion_automatica():
             c, v, l = obtener_precios_binance_p2p()
             guardar_muestra_db(c, v, l, "GENERAL")
             
-            # Análisis proactivo en segundo plano para alertas automáticas
             datos = motor_quant_inteligente(c, v, l, "GENERAL")
             tendencia_actual = datos["tendencia"]
             
-            # Si hay cambio de tendencia o ruptura de rango y se configuró un chat ID, avisa de forma proactiva
             if TELEGRAM_ALERT_CHAT_ID and telegram_app and tendencia_actual != ULTIMO_ESTADO_TENDENCIA:
                 ULTIMO_ESTADO_TENDENCIA = tendencia_actual
                 alerta_msg = (
@@ -469,7 +475,7 @@ app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Predicciones Sistema de Protección Activo con Anti-Spoofing y Alertas Proactivas"}
+    return {"status": "Venbot Predicciones Sistema Activo con Memoria Estacional Horaria"}
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
