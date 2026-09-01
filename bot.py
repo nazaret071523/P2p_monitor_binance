@@ -537,12 +537,10 @@ async def tarea_recoleccion_automatica():
     global ULTIMO_ESTADO_TENDENCIA, telegram_app
     while True:
         try:
-            # Recolectar de manera general y de los principales bancos de forma autónoma
             for b in ["GENERAL", "BBVA", "MERCANTIL"]:
                 c, v, l = obtener_precios_binance_p2p(b)
                 guardar_muestra_db(c, v, l, b)
             
-            # Evaluar alerta general
             c_gen, v_gen, l_gen = obtener_precios_binance_p2p("GENERAL")
             datos = motor_quant_inteligente(c_gen, v_gen, l_gen, "GENERAL")
             tendencia_actual = datos["tendencia"]
@@ -580,6 +578,22 @@ def read_root():
 
 @app.get("/api/precios")
 def obtener_precios_api():
+    global ULTIMO_REGISTRO_VALIDO
+    c = ULTIMO_REGISTRO_VALIDO["compra"]
+    v = ULTIMO_REGISTRO_VALIDO["venta"]
+    spread = round(v - c, 2)
+    spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
+    return {
+        "compra": c,
+        "venta": v,
+        "spread": spread,
+        "spread_pct": spread_pct,
+        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
+    }
+
+# CORRECCIÓN: Añadido el alias /api/market solicitado por el frontend en Vercel para evitar el error 404
+@app.get("/api/market")
+def obtener_precios_market_alias():
     global ULTIMO_REGISTRO_VALIDO
     c = ULTIMO_REGISTRO_VALIDO["compra"]
     v = ULTIMO_REGISTRO_VALIDO["venta"]
