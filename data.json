@@ -1,4 +1,7 @@
 {
-  "buy": 37.71,
-  "sell": 38.21
+  "note": "Este archivo ya no alimenta el monitor. Los precios reales se obtienen desde /api/precios y Supabase/PostgreSQL.",
+  "buy": null,
+  "sell": null,
+  "bcv": null,
+  "eur": null
 }
