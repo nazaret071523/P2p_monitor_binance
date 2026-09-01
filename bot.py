@@ -312,13 +312,20 @@ def generar_imagen_grafica_cuantica(filas, banco):
             feat_v.append(float(hora_sim))
             pred_v = float(model_v.predict(np.array([feat_v], dtype=float))[0])
             
-            compras_futuras.append(round(pred_c, 2))
-            ventas_futuras.append(round(pred_v, 2))
+            # Factor de inercia aplicado para evitar aplanamiento inmediato
+            inercia_c = (current_sim_c[-1] - current_sim_c[-2]) * 0.5 if len(current_sim_c) >= 2 else 0.0
+            inercia_v = (current_sim_v[-1] - current_sim_v[-2]) * 0.5 if len(current_sim_v) >= 2 else 0.0
+            
+            pred_c_ajustado = round(pred_c + inercia_c, 2)
+            pred_v_ajustado = round(pred_v + inercia_v, 2)
+
+            compras_futuras.append(pred_c_ajustado)
+            ventas_futuras.append(pred_v_ajustado)
             
             current_sim_c.pop(0)
-            current_sim_c.append(pred_c)
+            current_sim_c.append(pred_c_ajustado)
             current_sim_v.pop(0)
-            current_sim_v.append(pred_v)
+            current_sim_v.append(pred_v_ajustado)
     else:
         compras_futuras = [round(compras[-1] + (h * 0.15), 2) for h in pasos_futuros]
         ventas_futuras = [round(ventas[-1] + (h * 0.18), 2) for h in pasos_futuros]
