@@ -180,7 +180,6 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         spread_promedio = float(np.mean(spreads_historicos))
         pred_v = round(pred_c + spread_promedio, 2)
 
-        # Histéresis de protección: Solo cambia de estado si la variación excede el 0.4% para evitar ruido
         delta_porcentual = ((pred_c - actual_compra) / actual_compra) * 100
         if delta_porcentual > 0.4:
             tendencia = "🟢 TENDENCIA ALCISTA PROTEGIDA"
@@ -205,7 +204,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# MOTOR GRÁFICO PROPIETARIO CON HORAS PRECISAS
+# MOTOR GRÁFICO CON CONTINUIDAD Y HORAS EXACTAS
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 2:
@@ -219,11 +218,10 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ultima_compra = compras[-1]
     ultima_venta = ventas[-1]
     
-    # Proyección horaria exacta hacia el futuro (+2h, +4h, +6h, +8h)
-    pasos_futuros = [2, 4, 6, 8]
+    # Horas exactas futuras unidas desde el último punto real
+    pasos_futuros = [0, 2, 4, 6, 8]
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=h) for h in pasos_futuros]
     
-    # Proyección con amortiguamiento de protección
     compras_futuras = [round(ultima_compra + (h * 0.15), 2) for h in pasos_futuros]
     ventas_futuras = [round(ultima_venta + (h * 0.18), 2) for h in pasos_futuros]
 
@@ -231,30 +229,27 @@ def generar_imagen_grafica_cuantica(filas, banco):
     fig.patch.set_facecolor("#0b0f19")
     ax.set_facecolor("#0f172a")
 
-    # Estética de rejilla táctica
     ax.grid(True, linestyle=':', alpha=0.25, color='#38bdf8')
     for spine in ax.spines.values():
         spine.set_edgecolor('#334155')
 
-    # Ploteo de datos históricos reales
-    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Histórico)")
-    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Histórico)")
+    # Histórico real
+    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real")
+    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real")
 
-    # Ploteo de proyecciones futuras con marcas de tiempo exactas
+    # Proyecciones continuas conectadas
     ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (+H)")
     ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (+H)")
 
-    # Anotación de precios en los puntos de proyección futura
+    # Etiquetas de precios flotantes en nodos futuros
     for t_fut, p_venta, p_compra in zip(tiempos_futuros, ventas_futuras, compras_futuras):
-        label_v = f"{p_venta:.1f}"
-        label_c = f"{p_compra:.1f}"
-        ax.annotate(label_v, (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
-        ax.annotate(label_c, (t_fut, p_compra), textcoords="offset points", xytext=(0, -12), ha='center', color="#10b981", fontsize=7, fontweight='bold')
+        ax.annotate(f"{p_venta:.1f}", (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
+        ax.annotate(f"{p_compra:.1f}", (t_fut, p_compra), textcoords="offset points", xytext=(0, -12), ha='center', color="#10b981", fontsize=7, fontweight='bold')
 
-    # Banda de protección de precios
+    # Canal de protección IA
     ax.fill_between(tiempos_futuros, compras_futuras, ventas_futuras, color="#38bdf8", alpha=0.15, label="Canal de Protección IA")
 
-    ax.set_title(f"VENBOT PREDICCIONES // TERMINAL DE PROTECCIÓN [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
+    ax.set_title(f"VENBOT PREDICCIONES // CANAL DE PROTECCIÓN [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
     ax.set_ylabel("Tasa VES / USDT", color="#94a3b8", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=VET))
     ax.tick_params(colors="#94a3b8", labelsize=8)
