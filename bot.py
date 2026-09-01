@@ -34,7 +34,7 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
 
 # Valores por defecto seguros para evitar ceros iniciales
-ULTIMO_REGISTRO_VALIDO = {"compra": 923.66, "venta": 934.98, "timestamp": datetime.now(VET)}
+ULTIMO_REGISTRO_VALIDO = {"compra": 943.22, "venta": 952.50, "timestamp": datetime.now(VET)}
 ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 
 # Diccionario para almacenar el filtro de banco activo por chat/usuario
@@ -98,8 +98,26 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
         return []
 
 # ==========================================
-# SCRAPING BINANCE P2P FLEXIBLE (CON RESPALDO INTELIGENTE)
+# SCRAPING BINANCE P2P Y TASAS OFICIALES BCV
 # ==========================================
+def obtener_tasas_bcv_oficiales():
+    """Consulta las tasas oficiales vigentes del BCV para Dólar y Euro con respaldo seguro."""
+    try:
+        res = requests.get("https://ve.dolarapi.com/v1/dolares/bcv", timeout=4)
+        data = res.json()
+        usd = float(data.get("promedio", 798.33))
+    except Exception:
+        usd = 798.33
+
+    try:
+        res_eur = requests.get("https://ve.dolarapi.com/v1/euros/bcv", timeout=4)
+        data_eur = res_eur.json()
+        eur = float(data_eur.get("promedio", 926.55))
+    except Exception:
+        eur = 926.55
+
+    return {"usd": round(usd, 2), "eur": round(eur, 2)}
+
 def filtrar_outliers_iqr(precios):
     if not precios or len(precios) < 4:
         return precios
@@ -205,7 +223,7 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     if ULTIMO_REGISTRO_VALIDO["compra"] > 0:
         return round(ULTIMO_REGISTRO_VALIDO["compra"], 2), round(ULTIMO_REGISTRO_VALIDO["venta"], 2), 15
     
-    return 923.66, 934.98, 15
+    return 943.22, 952.50, 15
 
 # ==========================================
 # MOTOR DE PROTECCIÓN Y QUANT CON ESTACIONALIDAD
@@ -403,7 +421,7 @@ telegram_app = None
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔮 Análisis P2P y Protección Quant", callback_data="cmd_prediccion")],
-        [InlineKeyboardButton("💎 Muestra los planes VIP y PREMIUM", callback_data="cmd_suscribir")],
+        [InlineKeyboardButton("💎 Muestra los plans VIP y PREMIUM", callback_data="cmd_suscribir")],
         [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
         [InlineKeyboardButton("🏦 Configurar Filtro de Bancos", callback_data="cmd_bancos")]
     ])
@@ -574,7 +592,7 @@ async def tarea_recoleccion_automatica():
         await asyncio.sleep(300)
 
 # ==========================================
-# FASTAPI Y LIFESPAN (WEBHOOK)
+# FASTAPI Y ENDPOINTS SINCRONIZADOS
 # ==========================================
 app = FastAPI()
 
@@ -588,7 +606,7 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Predicciones Sistema Activo con Memoria Estacional Horaria y XGBoost en Gráficas"}
+    return {"status": "Venbot Predicciones Sistema Activo con Tasas BCV Oficiales y XGBoost"}
 
 @app.get("/api/precios")
 def obtener_precios_api():
@@ -597,6 +615,7 @@ def obtener_precios_api():
     v = ULTIMO_REGISTRO_VALIDO["venta"]
     spread = round(v - c, 2)
     spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
+    tasas_bcv = obtener_tasas_bcv_oficiales()
     return {
         "compra": c,
         "venta": v,
@@ -604,8 +623,8 @@ def obtener_precios_api():
         "sell": v,
         "spread": spread,
         "spread_pct": spread_pct,
-        "bcv": 36.5,
-        "eur": 39.8,
+        "bcv": tasas_bcv["usd"],
+        "eur": tasas_bcv["eur"],
         "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
     }
 
@@ -616,6 +635,7 @@ def obtener_precios_market_alias():
     v = ULTIMO_REGISTRO_VALIDO["venta"]
     spread = round(v - c, 2)
     spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
+    tasas_bcv = obtener_tasas_bcv_oficiales()
     return {
         "compra": c,
         "venta": v,
@@ -623,8 +643,8 @@ def obtener_precios_market_alias():
         "sell": v,
         "spread": spread,
         "spread_pct": spread_pct,
-        "bcv": 36.5,
-        "eur": 39.8,
+        "bcv": tasas_bcv["usd"],
+        "eur": tasas_bcv["eur"],
         "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
     }
 
@@ -641,7 +661,6 @@ async def startup_event():
     global telegram_app
     inicializar_db()
     
-    # Captura inicial inmediata al encender para alimentar la API sin esperar 5 minutos
     try:
         logger.info("Realizando captura inicial de precios al arrancar...")
         c_ini, v_ini, l_ini = obtener_precios_binance_p2p("GENERAL")
