@@ -30,8 +30,11 @@ VET = pytz.timezone('America/Caracas')
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/venbot")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+# ID de chat predeterminado para alertas automáticas (puedes cambiarlo o dejarlo dinámico)
+TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
 
 ULTIMO_REGISTRO_VALIDO = {"compra": 923.66, "venta": 934.98, "timestamp": None}
+ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 
 # ==========================================
 # GESTIÓN DE BASE DE DATOS POSTGRESQL
@@ -91,26 +94,52 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
         return []
 
 # ==========================================
-# SCRAPING BINANCE P2P CON CÁLCULO VWAP DE PROFUNDIDAD
+# SCRAPING BINANCE P2P CON FILTRO ANTI-SPOOFING Y VWAP
 # ==========================================
-def calcular_vwap_y_profundidad(items):
-    """Calcula el VWAP (Volume Weighted Average Price) basado en la profundidad real."""
-    precio_acumulado = 0.0
-    volumen_total = 0.0
+def filtrar_outliers_iqr(precios):
+    """Filtro anti-spoofing por Rango Intercuartil para eliminar precios absurdos/gancho."""
+    if not precios or len(precios) < 4:
+        return precios
+    arr = np.array(precios, dtype=float)
+    q25, q75 = np.percentile(arr, 25), np.percentile(arr, 75)
+    iqr = q75 - q25
+    limite_inferior = q25 - 1.5 * iqr
+    limite_superior = q75 + 1.5 * iqr
+    
+    filtrados = [p for p in precios if limite_inferior <= p <= limite_superior]
+    return filtrados if filtrados else precios
+
+def calcular_vwap_con_filtro(items):
+    """Calcula el VWAP descartando anuncios manipulados mediante IQR."""
+    precios_brutos = []
+    item_map = {}
     
     for item in items:
         try:
             adv = item.get("adv", {})
             price = float(adv.get("price", 0))
-            # Usar la cantidad disponible o el límite máximo transable como ponderador de liquidez
-            itable = item.get("advertiser", {})
-            vol = float(adv.get("surplusAmount", 1000) or 1000)
-            
-            precio_acumulado += price * vol
-            volumen_total += vol
+            if price > 0:
+                precios_brutos.append(price)
+                item_map[price] = item
         except Exception:
             continue
             
+    precios_limpios = filtrar_outliers_iqr(precios_brutos)
+    
+    precio_acumulado = 0.0
+    volumen_total = 0.0
+    
+    for p in precios_limpios:
+        item = item_map.get(p)
+        if item:
+            try:
+                adv = item.get("adv", {})
+                vol = float(adv.get("surplusAmount", 1000) or 1000)
+                precio_acumulado += p * vol
+                volumen_total += vol
+            except Exception:
+                continue
+                
     if volumen_total == 0:
         return 0.0
     return precio_acumulado / volumen_total
@@ -126,7 +155,6 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    # Ampliamos a 2 páginas para capturar mayor profundidad de order book
     payload_compra = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "SELL", "transAmount": "10000", "payTypes": bancos_filtro}
     payload_venta = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "BUY", "transAmount": "300000", "payTypes": bancos_filtro}
 
@@ -138,9 +166,8 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         if not data_c or not data_v:
             raise ValueError("Respuesta vacía de Binance P2P.")
 
-        # Obtención de VWAP de profundidad en lugar de un único punto estático
-        vwap_compra = calcular_vwap_y_profundidad(data_c)
-        vwap_venta = calcular_vwap_y_profundidad(data_v)
+        vwap_compra = calcular_vwap_con_filtro(data_c)
+        vwap_venta = calcular_vwap_con_filtro(data_v)
 
         if vwap_compra == 0 or vwap_venta == 0:
             precios_c = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
@@ -156,7 +183,7 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         return round(vwap_compra, 2), round(vwap_venta, 2), liquidez_calculada
 
     except Exception as e:
-        logger.error(f"Error scraping P2P con VWAP: {e}")
+        logger.error(f"Error scraping P2P con Anti-Spoofing: {e}")
         return ULTIMO_REGISTRO_VALIDO["compra"], ULTIMO_REGISTRO_VALIDO["venta"], 20
 
 # ==========================================
@@ -213,6 +240,8 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "tendencia": tendencia, 
         "piso_str": f"{piso:.2f} Bs", 
         "techo_str": f"{techo:.2f} Bs",
+        "piso_val": piso,
+        "techo_val": techo,
         "muestras": int(total_muestras),
         "liquidez_actual": int(liquidez_actual),
         "estado_comunidad": estado_comunidad
@@ -229,7 +258,6 @@ def generar_imagen_grafica_cuantica(filas, banco):
     compras = [f[0] for f in filas]
     ventas = [f[1] for f in filas]
     
-    # Cálculo de desviación estándar histórica para bandas dinámicas de volatilidad
     std_compras = float(np.std(compras)) if len(compras) > 1 else 0.5
     std_ventas = float(np.std(ventas)) if len(ventas) > 1 else 0.5
     
@@ -240,11 +268,9 @@ def generar_imagen_grafica_cuantica(filas, banco):
     pasos_futuros = [0, 2, 4, 6, 8]
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=h) for h in pasos_futuros]
     
-    # Aplicación de factor de ensanchamiento dinámico basado en volatilidad real
     compras_futuras = [round(ultima_compra + (h * 0.15), 2) for h in pasos_futuros]
     ventas_futuras = [round(ultima_venta + (h * 0.18), 2) for h in pasos_futuros]
 
-    # Bandas superior e inferior dinámicas basadas en desviación estándar
     banda_superior_dinamica = [round(v + (std_ventas * 0.8), 2) for v in ventas_futuras]
     banda_inferior_dinamica = [round(c - (std_compras * 0.8), 2) for c in compras_futuras]
 
@@ -256,8 +282,8 @@ def generar_imagen_grafica_cuantica(filas, banco):
     for spine in ax.spines.values():
         spine.set_edgecolor('#334155')
 
-    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (VWAP)")
-    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (VWAP)")
+    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Anti-Spoofing)")
+    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Anti-Spoofing)")
 
     ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (+H)")
     ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (+H)")
@@ -266,7 +292,6 @@ def generar_imagen_grafica_cuantica(filas, banco):
         ax.annotate(f"{p_venta:.1f}", (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
         ax.annotate(f"{p_compra:.1f}", (t_fut, p_compra), textcoords="offset points", xytext=(0, -12), ha='center', color="#10b981", fontsize=7, fontweight='bold')
 
-    # Canal de protección IA expandido con Bandas de Desviación Dinámica
     ax.fill_between(tiempos_futuros, banda_inferior_dinamica, banda_superior_dinamica, color="#38bdf8", alpha=0.15, label="Canal de Volatilidad Dinámica")
 
     ax.set_xlim(tiemps[0], tiempos_futuros[-1])
@@ -325,15 +350,15 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🦜 *VENBOT PREDICCIONES - PROTECCIÓN*\n"
         f"⏱ Sincronizado ({hora_actual}) | Objetivo: {hora_objetivo}\n"
         f"🟢 COMPRA P2P (VWAP): `{c_real:.2f} Bs` | 🔴 VENTA (VWAP): `{v_real:.2f} Bs`\n\n"
-        f"💳 *ESTADO DE LIQUIDEZ*\n"
+        f"💳 *ESTADO DE LIQUIDEZ Y FILTRO*\n"
         f"• Estado: `{datos['estado_comunidad']}`\n"
-        f"• Muestras Analizadas: `{datos['muestras']}`\n"
+        f"• Muestras Analizadas: `{datos['muestras']}` (Anti-Spoofing OK)\n"
         f"• Rango Piso / Techo: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
         f"🔮 *PROYECCIÓN DE PROTECCIÓN (7H)*\n"
         f"🟢 Recompra Protegida: `{datos['pred_compra_str']}`\n"
         f"🔴 Venta Estimada: `{datos['pred_venta_str']}`\n"
         f"🎯 Estado Operativo: `{datos['tendencia']}`\n\n"
-        f"💡 *Motor:* VWAP Order Book & Bandas Dinámicas Activas."
+        f"💡 *Motor:* VWAP, IQR Anti-Spoofing & Bandas Dinámicas."
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -408,13 +433,33 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "cmd_menu":
         await start(update, context)
 
+# ==========================================
+# TAREA EN SEGUNDO PLANO: RECOLECCIÓN Y ALERTAS PROACTIVAS
+# ==========================================
 async def tarea_recoleccion_automatica():
+    global ULTIMO_ESTADO_TENDENCIA, telegram_app
     while True:
         try:
             c, v, l = obtener_precios_binance_p2p()
             guardar_muestra_db(c, v, l, "GENERAL")
+            
+            # Análisis proactivo en segundo plano para alertas automáticas
+            datos = motor_quant_inteligente(c, v, l, "GENERAL")
+            tendencia_actual = datos["tendencia"]
+            
+            # Si hay cambio de tendencia o ruptura de rango y se configuró un chat ID, avisa de forma proactiva
+            if TELEGRAM_ALERT_CHAT_ID and telegram_app and tendencia_actual != ULTIMO_ESTADO_TENDENCIA:
+                ULTIMO_ESTADO_TENDENCIA = tendencia_actual
+                alerta_msg = (
+                    f"🚨 *ALERTA PROACTIVA DE MERCADO P2P*\n"
+                    f"• Cambio detectado: `{tendencia_actual}`\n"
+                    f"• Compra VWAP actual: `{c:.2f} Bs`\n"
+                    f"• Venta VWAP actual: `{v:.2f} Bs`\n"
+                    f"• Rango Piso/Techo: `{datos['piso_str']}` / `{datos['techo_str']}`"
+                )
+                await telegram_app.bot.send_message(chat_id=TELEGRAM_ALERT_CHAT_ID, text=alerta_msg, parse_mode="Markdown")
         except Exception as e:
-            logger.error(f"Error recolección: {e}")
+            logger.error(f"Error en tarea autónoma: {e}")
         await asyncio.sleep(300)
 
 # ==========================================
@@ -424,7 +469,7 @@ app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Predicciones Sistema de Protección Activo con VWAP y Bandas Dinámicas"}
+    return {"status": "Venbot Predicciones Sistema de Protección Activo con Anti-Spoofing y Alertas Proactivas"}
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
