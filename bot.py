@@ -101,20 +101,23 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
 # SCRAPING BINANCE P2P Y TASAS OFICIALES BCV
 # ==========================================
 def obtener_tasas_bcv_oficiales():
-    """Consulta las tasas oficiales vigentes del BCV para Dólar y Euro con respaldo seguro."""
+    """Consulta las tasas oficiales vigentes del BCV en tiempo real con respaldo seguro corregido."""
+    usd, eur = 940.50, 1025.20
     try:
         res = requests.get("https://ve.dolarapi.com/v1/dolares/bcv", timeout=4)
-        data = res.json()
-        usd = float(data.get("promedio", 798.33))
+        if res.status_code == 200:
+            data = res.json()
+            usd = float(data.get("promedio", data.get("price", usd)))
     except Exception:
-        usd = 798.33
+        pass
 
     try:
         res_eur = requests.get("https://ve.dolarapi.com/v1/euros/bcv", timeout=4)
-        data_eur = res_eur.json()
-        eur = float(data_eur.get("promedio", 926.55))
+        if res_eur.status_code == 200:
+            data_eur = res_eur.json()
+            eur = float(data_eur.get("promedio", data_eur.get("price", eur)))
     except Exception:
-        eur = 926.55
+        pass
 
     return {"usd": round(usd, 2), "eur": round(eur, 2)}
 
@@ -177,6 +180,8 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
         "Referer": "https://p2p.binance.com/"
     }
     
+    payTypes_val = [banco_filtro] if banco_filtro != "GENERAL" else []
+
     payload_compra = {
         "asset": "USDT", 
         "fiat": "VES", 
@@ -185,7 +190,7 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
         "rows": 10, 
         "tradeType": "SELL", 
         "transAmount": "5000",
-        "payTypes": []
+        "payTypes": payTypes_val
     }
     payload_venta = {
         "asset": "USDT", 
@@ -195,7 +200,7 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
         "rows": 10, 
         "tradeType": "BUY", 
         "transAmount": "50000",
-        "payTypes": []
+        "payTypes": payTypes_val
     }
 
     try:
@@ -610,9 +615,8 @@ def read_root():
 
 @app.get("/api/precios")
 def obtener_precios_api():
-    global ULTIMO_REGISTRO_VALIDO
-    c = ULTIMO_REGISTRO_VALIDO["compra"]
-    v = ULTIMO_REGISTRO_VALIDO["venta"]
+    # Consulta directa y en tiempo real a Binance para evitar valores estáticos
+    c, v, _ = obtener_precios_binance_p2p("GENERAL")
     spread = round(v - c, 2)
     spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
     tasas_bcv = obtener_tasas_bcv_oficiales()
@@ -625,14 +629,12 @@ def obtener_precios_api():
         "spread_pct": spread_pct,
         "bcv": tasas_bcv["usd"],
         "eur": tasas_bcv["eur"],
-        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
+        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S")
     }
 
 @app.get("/api/market")
 def obtener_precios_market_alias():
-    global ULTIMO_REGISTRO_VALIDO
-    c = ULTIMO_REGISTRO_VALIDO["compra"]
-    v = ULTIMO_REGISTRO_VALIDO["venta"]
+    c, v, _ = obtener_precios_binance_p2p("GENERAL")
     spread = round(v - c, 2)
     spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
     tasas_bcv = obtener_tasas_bcv_oficiales()
@@ -645,7 +647,7 @@ def obtener_precios_market_alias():
         "spread_pct": spread_pct,
         "bcv": tasas_bcv["usd"],
         "eur": tasas_bcv["eur"],
-        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
+        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S")
     }
 
 @app.post("/webhook")
