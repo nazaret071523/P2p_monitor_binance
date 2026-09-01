@@ -255,13 +255,12 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA (ACTUALIZADO CON XGBOOST)
+# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA (ACTUALIZADO CON XGBOOST Y HORA FUTURA)
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 5:
         return None
     
-    tiemps = [f[3] for f in filas]
     compras = np.array([f[0] for f in filas], dtype=float)
     ventas = np.array([f[1] for f in filas], dtype=float)
     fechas = [f[3] for f in filas]
@@ -284,9 +283,10 @@ def generar_imagen_grafica_cuantica(filas, banco):
     compras_futuras = []
     ventas_futuras = []
     
+    # Pasos futuros basados en horas exactas (ej. +0h, +2h, +4h, +6h, +8h)
     pasos_futuros = [0, 2, 4, 6, 8]
-    ultimo_tiempo = tiemps[-1]
-    tiempos_futuros = [ultimo_tiempo + timedelta(hours=h) for h in pasos_futuros]
+    tiempo_base = datetime.now(VET)
+    tiempos_futuros = [tiempo_base + timedelta(hours=h) for h in pasos_futuros]
 
     if len(X) > 0:
         model_c = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
@@ -294,9 +294,9 @@ def generar_imagen_grafica_cuantica(filas, banco):
         model_c.fit(X, y_c)
         model_v.fit(X, y_v)
         
-        actual_hora = datetime.now(VET).hour
+        actual_hora = tiempo_base.hour
         
-        # El primer punto (h=0) toma el valor real actual
+        # El primer punto toma el valor real actual
         compras_futuras.append(float(compras[-1]))
         ventas_futuras.append(float(ventas[-1]))
         
@@ -339,9 +339,11 @@ def generar_imagen_grafica_cuantica(filas, banco):
     for spine in ax.spines.values():
         spine.set_edgecolor('#334155')
 
-    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Estacional)")
-    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Estacional)")
+    # Ploteo histórico real
+    ax.plot(fechas, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Estacional)")
+    ax.plot(fechas, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Estacional)")
 
+    # Ploteo de proyección futura con marcas de hora exacta
     ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (XGB)")
     ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (XGB)")
 
@@ -351,7 +353,7 @@ def generar_imagen_grafica_cuantica(filas, banco):
 
     ax.fill_between(tiempos_futuros, banda_inferior_dinamica, banda_superior_dinamica, color="#38bdf8", alpha=0.15, label="Canal de Volatilidad Dinámica")
 
-    ax.set_xlim(tiemps[0], tiempos_futuros[-1])
+    ax.set_xlim(fechas[0], tiempos_futuros[-1])
     ax.set_title(f"VENBOT PREDICCIONES // CANAL ESTACIONAL [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
     ax.set_ylabel("Tasa VES / USDT", color="#94a3b8", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=VET))
@@ -403,20 +405,35 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_actual = datetime.now(VET).strftime("%I:%M %p")
     hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
 
+    spread_actual = v_real - c_real
+    if spread_actual > 15:
+        analisis_tendencia = "📈 *Spread Amplio:* Alta volatilidad, ideal para arbitraje de rango."
+    elif spread_actual < 8:
+        analisis_tendencia = "📉 *Spread Estrecho:* Mercado comprimido, precaución en la ejecución."
+    else:
+        analisis_tendencia = "⚖️ *Spread Estable:* Liquidez normal y condiciones equilibradas."
+
     texto = (
-        f"🦜 *VENBOT PREDICCIONES - PROTECCIÓN*\n"
-        f"⏱ Sincronizado ({hora_actual}) | Objetivo: {hora_objetivo}\n"
-        f"🟢 COMPRA P2P (VWAP): `{c_real:.2f} Bs` | 🔴 VENTA (VWAP): `{v_real:.2f} Bs`\n\n"
-        f"💳 *ESTADO DE LIQUIDEZ Y ESTACIONALIDAD*\n"
-        f"• Estado: `{datos['estado_comunidad']}`\n"
-        f"• Muestras Analizadas: `{datos['muestras']}` (Estacionalidad OK)\n"
-        f"• Rango Piso / Techo: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
-        f"🔮 *PROYECCIÓN DE PROTECCIÓN (7H)*\n"
-        f"🟢 Recompra Protegida: `{datos['pred_compra_str']}`\n"
-        f"🔴 Venta Estimada: `{datos['pred_venta_str']}`\n"
-        f"🎯 Estado Operativo: `{datos['tendencia']}`\n\n"
-        f"💡 *Motor:* XGBoost con Memoria Horaria & Bandas Dinámicas."
+        f"🦜 *VENBOT PREDICCIONES // TENDENCIA P2P*\n"
+        f"──────────────────────────────\n"
+        f"⏱ *Sincronización:* `{hora_actual}` ➔ `{hora_objetivo}`\n\n"
+        f"📊 *PRECIOS VWAP ACTUALES*\n"
+        f"• Compra P2P: `{c_real:.2f} Bs`\n"
+        f"• Venta P2P: `{v_real:.2f} Bs`\n"
+        f"• Spread Actual: `{spread_actual:.2f} Bs`\n\n"
+        f"🔍 *DIAGNÓSTICO DE MERCADO*\n"
+        f"• {analisis_tendencia}\n"
+        f"• Liquidez: `{datos['estado_comunidad']}`\n"
+        f"• Muestras Analizadas: `{datos['muestras']} registros`\n"
+        f"• Rango del Canal: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
+        f"🔮 *PROYECCIÓN CUÁNTICA (7H)*\n"
+        f"• Recompra Estimada: `{datos['pred_compra_str']}`\n"
+        f"• Venta Estimada: `{datos['pred_venta_str']}`\n"
+        f"• Estado Operativo: `{datos['tendencia']}`\n"
+        f"──────────────────────────────\n"
+        f"💡 *Motor:* XGBoost con Memoria Horaria."
     )
+    
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
@@ -545,7 +562,7 @@ async def startup_event():
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
-    telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
+    telegram_app.add_handler(CommandHANDLER("bancos", cmd_bancos))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
     
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
