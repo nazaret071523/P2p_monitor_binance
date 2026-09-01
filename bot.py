@@ -97,7 +97,7 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
         return []
 
 # ==========================================
-# SCRAPING BINANCE P2P FLEXIBLE (SIN BLOQUEOS)
+# SCRAPING BINANCE P2P FLEXIBLE (CON RESPALDO INTELIGENTE)
 # ==========================================
 def filtrar_outliers_iqr(precios):
     if not precios or len(precios) < 4:
@@ -151,7 +151,9 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
         "Origin": "https://p2p.binance.com",
         "Referer": "https://p2p.binance.com/"
     }
@@ -161,9 +163,9 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
         "fiat": "VES", 
         "merchantCheck": False, 
         "page": 1, 
-        "rows": 20, 
+        "rows": 10, 
         "tradeType": "SELL", 
-        "transAmount": "10000",
+        "transAmount": "5000",
         "payTypes": []
     }
     payload_venta = {
@@ -171,46 +173,39 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
         "fiat": "VES", 
         "merchantCheck": False, 
         "page": 1, 
-        "rows": 20, 
+        "rows": 10, 
         "tradeType": "BUY", 
-        "transAmount": "100000",
+        "transAmount": "50000",
         "payTypes": []
     }
 
     try:
-        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=8).json()
-        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=8).json()
+        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=6)
+        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=6)
+        
+        data_c = res_c.json().get("data", [])
+        data_v = res_v.json().get("data", [])
 
-        data_c = res_c.get("data", [])
-        data_v = res_v.get("data", [])
-
-        if not data_c or not data_v:
-            logger.warning("Binance devolvió datos vacíos. Usando último registro válido o respaldo base.")
-            c_val = ULTIMO_REGISTRO_VALIDO["compra"] if ULTIMO_REGISTRO_VALIDO["compra"] > 0 else 920.0
-            v_val = ULTIMO_REGISTRO_VALIDO["venta"] if ULTIMO_REGISTRO_VALIDO["venta"] > 0 else 935.0
-            return c_val, v_val, 15
-
-        vwap_compra = calcular_vwap_con_filtro(data_c)
-        vwap_venta = calcular_vwap_con_filtro(data_v)
-
-        if vwap_compra == 0 or vwap_venta == 0:
-            precios_c = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
-            precios_v = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
-            vwap_compra = min(precios_c) if precios_c else 920.0
-            vwap_venta = max(precios_v) if precios_v else 935.0
-
-        if vwap_compra >= vwap_venta:
-            vwap_compra, vwap_venta = vwap_venta * 0.98, vwap_venta
-
-        liquidez_calculada = len(data_c) + len(data_v)
-        ULTIMO_REGISTRO_VALIDO = {"compra": vwap_compra, "venta": vwap_venta, "timestamp": datetime.now(VET)}
-        return round(vwap_compra, 2), round(vwap_venta, 2), liquidez_calculada
+        if data_c and data_v:
+            vwap_compra = calcular_vwap_con_filtro(data_c)
+            vwap_venta = calcular_vwap_con_filtro(data_v)
+            
+            if vwap_compra > 0 and vwap_venta > 0:
+                if vwap_compra >= vwap_venta:
+                    vwap_compra, vwap_venta = vwap_venta * 0.98, vwap_venta
+                
+                liquidez_calculada = len(data_c) + len(data_v)
+                ULTIMO_REGISTRO_VALIDO = {"compra": vwap_compra, "venta": vwap_venta, "timestamp": datetime.now(VET)}
+                return round(vwap_compra, 2), round(vwap_venta, 2), liquidez_calculada
 
     except Exception as e:
-        logger.error(f"Error crítico en scraping P2P: {e}")
-        c_val = ULTIMO_REGISTRO_VALIDO["compra"] if ULTIMO_REGISTRO_VALIDO["compra"] > 0 else 920.0
-        v_val = ULTIMO_REGISTRO_VALIDO["venta"] if ULTIMO_REGISTRO_VALIDO["venta"] > 0 else 935.0
-        return c_val, v_val, 10
+        logger.warning(f"Bloqueo o fallo de red en Binance P2P: {e}. Activando respaldo inteligente.")
+
+    # Respaldo inteligente si la IP de Render sufre restricciones de Binance
+    if ULTIMO_REGISTRO_VALIDO["compra"] > 0:
+        return round(ULTIMO_REGISTRO_VALIDO["compra"], 2), round(ULTIMO_REGISTRO_VALIDO["venta"], 2), 15
+    
+    return 923.66, 934.98, 15
 
 # ==========================================
 # MOTOR DE PROTECCIÓN Y QUANT CON ESTACIONALIDAD
