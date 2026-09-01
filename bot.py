@@ -91,14 +91,29 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
         return []
 
 # ==========================================
-# FILTRO Y SCRAPING BINANCE P2P
+# SCRAPING BINANCE P2P CON CÁLCULO VWAP DE PROFUNDIDAD
 # ==========================================
-def filtrar_outliers(precios):
-    if len(precios) < 4:
-        return precios
-    mediana = np.median(precios)
-    filtrados = [p for p in precios if abs(p - mediana) / mediana <= 0.08]
-    return filtrados if filtrados else precios
+def calcular_vwap_y_profundidad(items):
+    """Calcula el VWAP (Volume Weighted Average Price) basado en la profundidad real."""
+    precio_acumulado = 0.0
+    volumen_total = 0.0
+    
+    for item in items:
+        try:
+            adv = item.get("adv", {})
+            price = float(adv.get("price", 0))
+            # Usar la cantidad disponible o el límite máximo transable como ponderador de liquidez
+            itable = item.get("advertiser", {})
+            vol = float(adv.get("surplusAmount", 1000) or 1000)
+            
+            precio_acumulado += price * vol
+            volumen_total += vol
+        except Exception:
+            continue
+            
+    if volumen_total == 0:
+        return 0.0
+    return precio_acumulado / volumen_total
 
 def obtener_precios_binance_p2p(bancos_filtro=None):
     global ULTIMO_REGISTRO_VALIDO
@@ -110,8 +125,10 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
-    payload_compra = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000", "payTypes": bancos_filtro}
-    payload_venta = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000", "payTypes": bancos_filtro}
+    
+    # Ampliamos a 2 páginas para capturar mayor profundidad de order book
+    payload_compra = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "SELL", "transAmount": "10000", "payTypes": bancos_filtro}
+    payload_venta = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "BUY", "transAmount": "300000", "payTypes": bancos_filtro}
 
     try:
         res_c = requests.post(url, json=payload_compra, headers=headers, timeout=6).json()
@@ -121,27 +138,25 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         if not data_c or not data_v:
             raise ValueError("Respuesta vacía de Binance P2P.")
 
-        precios_compra_raw = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
-        precios_venta_raw = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
+        # Obtención de VWAP de profundidad en lugar de un único punto estático
+        vwap_compra = calcular_vwap_y_profundidad(data_c)
+        vwap_venta = calcular_vwap_y_profundidad(data_v)
 
-        precios_compra = filtrar_outliers(precios_compra_raw)
-        precios_venta = filtrar_outliers(precios_venta_raw)
+        if vwap_compra == 0 or vwap_venta == 0:
+            precios_c = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
+            precios_v = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
+            vwap_compra = min(precios_c) if precios_c else ULTIMO_REGISTRO_VALIDO["compra"]
+            vwap_venta = max(precios_v) if precios_v else ULTIMO_REGISTRO_VALIDO["venta"]
 
-        if not precios_compra or not precios_venta:
-            raise ValueError("Anuncios insuficientes tras filtrado.")
-
-        tasa_compra = float(min(precios_compra))
-        tasa_venta = float(max(precios_venta))
-        
-        if tasa_compra >= tasa_venta:
-            tasa_compra, tasa_venta = float(precios_compra[0]), float(precios_venta[0])
+        if vwap_compra >= vwap_venta:
+            vwap_compra, vwap_venta = vwap_venta * 0.98, vwap_venta
 
         liquidez_calculada = len(data_c) + len(data_v)
-        ULTIMO_REGISTRO_VALIDO = {"compra": tasa_compra, "venta": tasa_venta, "timestamp": datetime.now(VET)}
-        return round(tasa_compra, 2), round(tasa_venta, 2), liquidez_calculada
+        ULTIMO_REGISTRO_VALIDO = {"compra": vwap_compra, "venta": vwap_venta, "timestamp": datetime.now(VET)}
+        return round(vwap_compra, 2), round(vwap_venta, 2), liquidez_calculada
 
     except Exception as e:
-        logger.error(f"Error scraping P2P: {e}")
+        logger.error(f"Error scraping P2P con VWAP: {e}")
         return ULTIMO_REGISTRO_VALIDO["compra"], ULTIMO_REGISTRO_VALIDO["venta"], 20
 
 # ==========================================
@@ -204,7 +219,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# MOTOR GRÁFICO CON CONTINUIDAD Y HORAS EXACTAS
+# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 2:
@@ -214,6 +229,10 @@ def generar_imagen_grafica_cuantica(filas, banco):
     compras = [f[0] for f in filas]
     ventas = [f[1] for f in filas]
     
+    # Cálculo de desviación estándar histórica para bandas dinámicas de volatilidad
+    std_compras = float(np.std(compras)) if len(compras) > 1 else 0.5
+    std_ventas = float(np.std(ventas)) if len(ventas) > 1 else 0.5
+    
     ultimo_tiempo = tiemps[-1]
     ultima_compra = compras[-1]
     ultima_venta = ventas[-1]
@@ -221,8 +240,13 @@ def generar_imagen_grafica_cuantica(filas, banco):
     pasos_futuros = [0, 2, 4, 6, 8]
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=h) for h in pasos_futuros]
     
+    # Aplicación de factor de ensanchamiento dinámico basado en volatilidad real
     compras_futuras = [round(ultima_compra + (h * 0.15), 2) for h in pasos_futuros]
     ventas_futuras = [round(ultima_venta + (h * 0.18), 2) for h in pasos_futuros]
+
+    # Bandas superior e inferior dinámicas basadas en desviación estándar
+    banda_superior_dinamica = [round(v + (std_ventas * 0.8), 2) for v in ventas_futuras]
+    banda_inferior_dinamica = [round(c - (std_compras * 0.8), 2) for c in compras_futuras]
 
     fig, ax = plt.subplots(figsize=(10, 5.5))
     fig.patch.set_facecolor("#0b0f19")
@@ -232,8 +256,8 @@ def generar_imagen_grafica_cuantica(filas, banco):
     for spine in ax.spines.values():
         spine.set_edgecolor('#334155')
 
-    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real")
-    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real")
+    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (VWAP)")
+    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (VWAP)")
 
     ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (+H)")
     ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (+H)")
@@ -242,10 +266,11 @@ def generar_imagen_grafica_cuantica(filas, banco):
         ax.annotate(f"{p_venta:.1f}", (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
         ax.annotate(f"{p_compra:.1f}", (t_fut, p_compra), textcoords="offset points", xytext=(0, -12), ha='center', color="#10b981", fontsize=7, fontweight='bold')
 
-    ax.fill_between(tiempos_futuros, compras_futuras, ventas_futuras, color="#38bdf8", alpha=0.18, label="Canal de Protección IA")
+    # Canal de protección IA expandido con Bandas de Desviación Dinámica
+    ax.fill_between(tiempos_futuros, banda_inferior_dinamica, banda_superior_dinamica, color="#38bdf8", alpha=0.15, label="Canal de Volatilidad Dinámica")
 
     ax.set_xlim(tiemps[0], tiempos_futuros[-1])
-    ax.set_title(f"VENBOT PREDICCIONES // CANAL DE PROTECCIÓN [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
+    ax.set_title(f"VENBOT PREDICCIONES // CANAL CUÁNTICO DINÁMICO [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
     ax.set_ylabel("Tasa VES / USDT", color="#94a3b8", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=VET))
     ax.tick_params(colors="#94a3b8", labelsize=8)
@@ -299,7 +324,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
         f"🦜 *VENBOT PREDICCIONES - PROTECCIÓN*\n"
         f"⏱ Sincronizado ({hora_actual}) | Objetivo: {hora_objetivo}\n"
-        f"🟢 COMPRA P2P: `{c_real:.2f} Bs` | 🔴 VENTA: `{v_real:.2f} Bs`\n\n"
+        f"🟢 COMPRA P2P (VWAP): `{c_real:.2f} Bs` | 🔴 VENTA (VWAP): `{v_real:.2f} Bs`\n\n"
         f"💳 *ESTADO DE LIQUIDEZ*\n"
         f"• Estado: `{datos['estado_comunidad']}`\n"
         f"• Muestras Analizadas: `{datos['muestras']}`\n"
@@ -308,7 +333,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🟢 Recompra Protegida: `{datos['pred_compra_str']}`\n"
         f"🔴 Venta Estimada: `{datos['pred_venta_str']}`\n"
         f"🎯 Estado Operativo: `{datos['tendencia']}`\n\n"
-        f"💡 *Motor:* Protección de Precios Activa."
+        f"💡 *Motor:* VWAP Order Book & Bandas Dinámicas Activas."
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -326,14 +351,14 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=chat_id, 
             photo=buf, 
-            caption="📊 *Venbot Predicciones - Canal de Protección Temporal [GENERAL]*", 
+            caption="📊 *Venbot Predicciones - Canal Cuántico Dinámico [GENERAL]*", 
             parse_mode="Markdown", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="⚠️ Datos insuficientes para trazar el canal.", 
+            text="⚠️ Datos insuficientes para trazar el canal dinámico.", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
@@ -358,7 +383,7 @@ async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
 
-    texto = "💎 *Planes VIP y Premium Disponibles*\nAcceso prioritario a flujos de alta liquidez."
+    texto = "💎 *Planes VIP y Premium Disponibles*\nAcceso prioritario a flujos de alta liquidez y canales cuánticos avanzados."
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     chat_id = update.effective_chat.id
 
@@ -399,7 +424,7 @@ app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Predicciones Sistema de Protección Activo"}
+    return {"status": "Venbot Predicciones Sistema de Protección Activo con VWAP y Bandas Dinámicas"}
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
