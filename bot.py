@@ -204,12 +204,11 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         window_size = min(total_muestras - 1, 5)
         X, y = [], []
         for i in range(window_size, len(compras)):
-            # Features: precios históricos + hora del día de la muestra para estacionalidad
             dt_muestra = fechas[i]
             hora_feat = dt_muestra.hour if dt_muestra else 12
             
             window_vals = list(compras[i - window_size:i])
-            window_vals.append(float(hora_feat)) # Se añade estacionalidad horaria como input
+            window_vals.append(float(hora_feat))
             
             X.append(window_vals)
             y.append(compras[i])
@@ -256,28 +255,78 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA
+# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA (ACTUALIZADO CON XGBOOST)
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
-    if not filas or len(filas) < 2:
+    if not filas or len(filas) < 5:
         return None
     
     tiemps = [f[3] for f in filas]
-    compras = [f[0] for f in filas]
-    ventas = [f[1] for f in filas]
+    compras = np.array([f[0] for f in filas], dtype=float)
+    ventas = np.array([f[1] for f in filas], dtype=float)
+    fechas = [f[3] for f in filas]
     
-    std_compras = float(np.std(compras)) if len(compras) > 1 else 0.5
-    std_ventas = float(np.std(ventas)) if len(ventas) > 1 else 0.5
+    window_size = min(len(compras) - 1, 5)
+    X, y_c, y_v = [], [], []
+    for i in range(window_size, len(compras)):
+        dt_muestra = fechas[i]
+        hora_feat = dt_muestra.hour if dt_muestra else 12
+        window_vals = list(compras[i - window_size:i])
+        window_vals.append(float(hora_feat))
+        X.append(window_vals)
+        y_c.append(compras[i])
+        y_v.append(ventas[i])
+        
+    X = np.array(X, dtype=float)
+    y_c = np.array(y_c, dtype=float)
+    y_v = np.array(y_v, dtype=float)
     
-    ultimo_tiempo = tiemps[-1]
-    ultima_compra = compras[-1]
-    ultima_venta = ventas[-1]
+    compras_futuras = []
+    ventas_futuras = []
     
     pasos_futuros = [0, 2, 4, 6, 8]
+    ultimo_tiempo = tiemps[-1]
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=h) for h in pasos_futuros]
-    
-    compras_futuras = [round(ultima_compra + (h * 0.15), 2) for h in pasos_futuros]
-    ventas_futuras = [round(ultima_venta + (h * 0.18), 2) for h in pasos_futuros]
+
+    if len(X) > 0:
+        model_c = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
+        model_v = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
+        model_c.fit(X, y_c)
+        model_v.fit(X, y_v)
+        
+        actual_hora = datetime.now(VET).hour
+        
+        # El primer punto (h=0) toma el valor real actual
+        compras_futuras.append(float(compras[-1]))
+        ventas_futuras.append(float(ventas[-1]))
+        
+        current_sim_c = list(compras[-window_size:])
+        current_sim_v = list(ventas[-window_size:])
+        
+        for h in pasos_futuros[1:]:
+            hora_sim = (actual_hora + h) % 24
+            
+            feat_c = list(current_sim_c[-window_size:])
+            feat_c.append(float(hora_sim))
+            pred_c = float(model_c.predict(np.array([feat_c], dtype=float))[0])
+            
+            feat_v = list(current_sim_v[-window_size:])
+            feat_v.append(float(hora_sim))
+            pred_v = float(model_v.predict(np.array([feat_v], dtype=float))[0])
+            
+            compras_futuras.append(round(pred_c, 2))
+            ventas_futuras.append(round(pred_v, 2))
+            
+            current_sim_c.pop(0)
+            current_sim_c.append(pred_c)
+            current_sim_v.pop(0)
+            current_sim_v.append(pred_v)
+    else:
+        compras_futuras = [round(compras[-1] + (h * 0.15), 2) for h in pasos_futuros]
+        ventas_futuras = [round(ventas[-1] + (h * 0.18), 2) for h in pasos_futuros]
+
+    std_compras = float(np.std(compras)) if len(compras) > 1 else 0.5
+    std_ventas = float(np.std(ventas)) if len(ventas) > 1 else 0.5
 
     banda_superior_dinamica = [round(v + (std_ventas * 0.8), 2) for v in ventas_futuras]
     banda_inferior_dinamica = [round(c - (std_compras * 0.8), 2) for c in compras_futuras]
@@ -293,8 +342,8 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Estacional)")
     ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Estacional)")
 
-    ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (+H)")
-    ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (+H)")
+    ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (XGB)")
+    ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (XGB)")
 
     for t_fut, p_venta, p_compra in zip(tiempos_futuros, ventas_futuras, compras_futuras):
         ax.annotate(f"{p_venta:.1f}", (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
@@ -391,7 +440,7 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="⚠️ Datos insuficientes para trazar el canal estacional.", 
+            text="⚠️ Datos insuficientes (se requieren al menos 5 registros) para trazar el canal estacional con XGBoost.", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
@@ -475,7 +524,7 @@ app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Predicciones Sistema Activo con Memoria Estacional Horaria"}
+    return {"status": "Venbot Predicciones Sistema Activo con Memoria Estacional Horaria y XGBoost en Gráficas"}
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
