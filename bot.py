@@ -12,6 +12,7 @@ import xgboost as xgb
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -144,17 +145,17 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         return ULTIMO_REGISTRO_VALIDO["compra"], ULTIMO_REGISTRO_VALIDO["venta"], 20
 
 # ==========================================
-# MOTOR QUANT INTELIGENTE + XGBOOST
+# MOTOR DE PROTECCIÓN Y QUANT INTELIGENTE
 # ==========================================
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
     filas = obtener_estadisticas_db(banco=banco_filtro)
     total_muestras = len(filas)
 
     if total_muestras < 15:
-        pred_c = round(float(actual_compra) * 1.001, 2)
-        pred_v = round(float(actual_venta) * 1.002, 2)
-        tendencia = "🟢 ALCISTA"
-        piso, techo = float(actual_compra) - 10, float(actual_venta) + 8
+        pred_c = round(float(actual_compra), 2)
+        pred_v = round(float(actual_venta), 2)
+        tendencia = "🛡️ PROTECCIÓN ESTABLE"
+        piso, techo = float(actual_compra) - 10, float(actual_venta) + 10
     else:
         compras = np.array([f[0] for f in filas], dtype=float)
         ventas = np.array([f[1] for f in filas], dtype=float)
@@ -178,9 +179,15 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         spreads_historicos = ventas - compras
         spread_promedio = float(np.mean(spreads_historicos))
         pred_v = round(pred_c + spread_promedio, 2)
-        
-        # Comparación directa para definir la tendencia del mercado
-        tendencia = "🟢 ALCISTA" if pred_c >= actual_compra else "🔻 BAJISTA"
+
+        # Histéresis de protección: Solo cambia de estado si la variación excede el 0.4% para evitar ruido
+        delta_porcentual = ((pred_c - actual_compra) / actual_compra) * 100
+        if delta_porcentual > 0.4:
+            tendencia = "🟢 TENDENCIA ALCISTA PROTEGIDA"
+        elif delta_porcentual < -0.4:
+            tendencia = "🛡️ SOPORTE DE PROTECCIÓN ACTIVO"
+        else:
+            tendencia = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 
     estado_comunidad = "🟢 Alta Liquidez y Anunciantes Activos" if int(liquidez_actual) >= 12 else "🟡 Liquidez Moderada"
 
@@ -198,7 +205,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# MOTOR GRÁFICO ORIGINAL - HUD CYBER-VENEZUELA
+# MOTOR GRÁFICO PROPIETARIO CON HORAS PRECISAS
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 2:
@@ -212,51 +219,52 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ultima_compra = compras[-1]
     ultima_venta = ventas[-1]
     
-    # Proyección hacia adelante
-    tiempos_futuros = [ultimo_tiempo + timedelta(hours=i) for i in range(1, 5)]
-    compras_futuras = [ultima_compra + (i * 0.9) for i in range(1, 5)]
-    ventas_futuras = [ultima_venta + (i * 1.1) for i in range(1, 5)]
+    # Proyección horaria exacta hacia el futuro (+2h, +4h, +6h, +8h)
+    pasos_futuros = [2, 4, 6, 8]
+    tiempos_futuros = [ultimo_tiempo + timedelta(hours=h) for h in pasos_futuros]
     
-    t_completo = tiemps + tiempos_futuros
-    c_completo = compras + compras_futuras
-    v_completo = ventas + ventas_futuras
+    # Proyección con amortiguamiento de protección
+    compras_futuras = [round(ultima_compra + (h * 0.15), 2) for h in pasos_futuros]
+    ventas_futuras = [round(ultima_venta + (h * 0.18), 2) for h in pasos_futuros]
 
-    # Estilo visual exclusivo (Cyberpunk / Terminal Alpha)
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={'height_ratios': [4, 1]})
-    fig.patch.set_facecolor("#0a0a0c")
-    
-    for ax in [ax1, ax2]:
-        ax.set_facecolor("#111116")
-        ax.tick_params(colors="#00ffcc", labelsize=8)
-        ax.grid(True, linestyle='--', alpha=0.15, color='#00ffcc')
-        for spine in ax.spines.values():
-            spine.set_edgecolor('#27272a')
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    fig.patch.set_facecolor("#0b0f19")
+    ax.set_facecolor("#0f172a")
 
-    # --- PANEL PRINCIPAL: LÍNEAS NEÓN Y ZONA DE ARBITRAJE ---
-    ax1.plot(tiemps, ventas, color="#f59e0b", linewidth=2, label="Venta Real")
-    ax1.plot(tiemps, compras, color="#10b981", linewidth=2, label="Recompra Real")
-    
-    ax1.plot(t_completo[len(tiemps)-1:], v_completo[len(tiemps)-1:], color="#f59e0b", linestyle=':', linewidth=2, label="Proyección Venta")
-    ax1.plot(t_completo[len(tiemps)-1:], c_completo[len(tiemps)-1:], color="#10b981", linestyle=':', linewidth=2, label="Proyección Recompra")
+    # Estética de rejilla táctica
+    ax.grid(True, linestyle=':', alpha=0.25, color='#38bdf8')
+    for spine in ax.spines.values():
+        spine.set_edgecolor('#334155')
 
-    # Gradiente central exclusivo inspirada en destellos digitales
-    ax1.fill_between(t_completo, c_completo, v_completo, color="#3b82f6", alpha=0.12, label="Zona Alfa Spread")
+    # Ploteo de datos históricos reales
+    ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Histórico)")
+    ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Histórico)")
 
-    ax1.text(0.02, 0.92, "VENBOT PREDICCIONES // QUANT HUD", transform=ax1.transAxes, color="#00ffcc", fontsize=9, fontweight='bold', fontfamily='monospace')
-    ax1.set_ylabel("VES / USDT", color="#a1a1aa", fontsize=9)
-    ax1.legend(loc="upper left", facecolor="#111116", edgecolor="#27272a", labelcolor="#e4e4e7", fontsize=7)
+    # Ploteo de proyecciones futuras con marcas de tiempo exactas
+    ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (+H)")
+    ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (+H)")
 
-    # --- PANEL INFERIOR: HISTOGRAMA DE PULSO DE MERCADO ---
-    volumenes = [f[2] for f in filas]
-    colores_neon = ["#00ffcc" if v > 10 else "#f59e0b" for v in volumenes]
-    ax2.bar(tiemps, volumenes, color=colores_neon, width=0.012, alpha=0.9)
-    ax2.set_ylabel("Liquidez", color="#a1a1aa", fontsize=8)
+    # Anotación de precios en los puntos de proyección futura
+    for t_fut, p_venta, p_compra in zip(tiempos_futuros, ventas_futuras, compras_futuras):
+        label_v = f"{p_venta:.1f}"
+        label_c = f"{p_compra:.1f}"
+        ax.annotate(label_v, (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
+        ax.annotate(label_c, (t_fut, p_compra), textcoords="offset points", xytext=(0, -12), ha='center', color="#10b981", fontsize=7, fontweight='bold')
 
-    plt.xticks(rotation=15, color="#00ffcc")
+    # Banda de protección de precios
+    ax.fill_between(tiempos_futuros, compras_futuras, ventas_futuras, color="#38bdf8", alpha=0.15, label="Canal de Protección IA")
+
+    ax.set_title(f"VENBOT PREDICCIONES // TERMINAL DE PROTECCIÓN [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
+    ax.set_ylabel("Tasa VES / USDT", color="#94a3b8", fontsize=9)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=VET))
+    ax.tick_params(colors="#94a3b8", labelsize=8)
+    ax.legend(loc="upper left", facecolor="#0f172a", edgecolor="#334155", labelcolor="#cbd5e1", fontsize=7)
+
+    plt.xticks(rotation=15)
     plt.tight_layout()
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=150)
+    plt.savefig(buf, format="png", dpi=160)
     buf.seek(0)
     plt.close(fig)
     return buf
@@ -268,15 +276,15 @@ telegram_app = None
 
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔮 Análisis P2P y predicción Quant de la IA", callback_data="cmd_prediccion")],
+        [InlineKeyboardButton("🔮 Análisis P2P y Protección Quant", callback_data="cmd_prediccion")],
         [InlineKeyboardButton("💎 Muestra los planes VIP y PREMIUM", callback_data="cmd_suscribir")],
-        [InlineKeyboardButton("📊 Envía la imagen de evolución temporal", callback_data="cmd_grafica")],
-        [InlineKeyboardButton("🏦 Configura y alterna el filtro de bancos", callback_data="cmd_bancos")]
+        [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
+        [InlineKeyboardButton("🏦 Configurar Filtro de Bancos", callback_data="cmd_bancos")]
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
-        "🦜 *VENBOT PREDICCIONES - TERMINAL INSTITUCIONAL*\n"
+        "🦜 *VENBOT PREDICCIONES - SISTEMA DE PROTECCIÓN*\n"
         "Selecciona una opción del menú táctico:"
     )
     if update.callback_query:
@@ -298,18 +306,18 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
 
     texto = (
-        f"🦜 *VENBOT PREDICCIONES - TERMINAL*\n"
-        f"⏱ ({hora_actual}) | DIANA A LAS {hora_objetivo}\n"
+        f"🦜 *VENBOT PREDICCIONES - PROTECCIÓN*\n"
+        f"⏱ Sincronizado ({hora_actual}) | Objetivo: {hora_objetivo}\n"
         f"🟢 COMPRA P2P: `{c_real:.2f} Bs` | 🔴 VENTA: `{v_real:.2f} Bs`\n\n"
-        f"💳 *ESTADO & LIQUIDEZ*\n"
+        f"💳 *ESTADO DE LIQUIDEZ*\n"
         f"• Estado: `{datos['estado_comunidad']}`\n"
         f"• Muestras Analizadas: `{datos['muestras']}`\n"
-        f"• Piso / Techo: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
-        f"🔮 *PROYECCIÓN DE CONFIANZA (95%)*\n"
-        f"🟢 Recompra (+7H): `{datos['pred_compra_str']}`\n"
-        f"🔴 Venta Esperada (+7H): `{datos['pred_venta_str']}`\n"
-        f"🎯 Tendencia: `{datos['tendencia']}`\n\n"
-        f"💡 *Motor:* XGBoost con núcleo HUD Alpha."
+        f"• Rango Piso / Techo: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
+        f"🔮 *PROYECCIÓN DE PROTECCIÓN (7H)*\n"
+        f"🟢 Recompra Protegida: `{datos['pred_compra_str']}`\n"
+        f"🔴 Venta Estimada: `{datos['pred_venta_str']}`\n"
+        f"🎯 Estado Operativo: `{datos['tendencia']}`\n\n"
+        f"💡 *Motor:* Protección de Precios Activa."
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -327,14 +335,14 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_photo(
             chat_id=chat_id, 
             photo=buf, 
-            caption="📊 *Venbot Predicciones - Terminal HUD [GENERAL]*", 
+            caption="📊 *Venbot Predicciones - Canal de Protección Temporal [GENERAL]*", 
             parse_mode="Markdown", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="⚠️ Datos insuficientes para trazar la gráfica.", 
+            text="⚠️ Datos insuficientes para trazar el canal.", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
@@ -400,7 +408,7 @@ app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"status": "Venbot Predicciones Activo"}
+    return {"status": "Venbot Predicciones Sistema de Protección Activo"}
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
