@@ -218,7 +218,6 @@ def generar_imagen_grafica_cuantica(filas, banco):
     ultima_compra = compras[-1]
     ultima_venta = ventas[-1]
     
-    # Horas exactas futuras unidas desde el último punto real
     pasos_futuros = [0, 2, 4, 6, 8]
     tiempos_futuros = [ultimo_tiempo + timedelta(hours=h) for h in pasos_futuros]
     
@@ -233,22 +232,19 @@ def generar_imagen_grafica_cuantica(filas, banco):
     for spine in ax.spines.values():
         spine.set_edgecolor('#334155')
 
-    # Histórico real
     ax.plot(tiemps, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real")
     ax.plot(tiemps, compras, color="#10b981", linewidth=2.2, label="Recompra Real")
 
-    # Proyecciones continuas conectadas
     ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (+H)")
     ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (+H)")
 
-    # Etiquetas de precios flotantes en nodos futuros
     for t_fut, p_venta, p_compra in zip(tiempos_futuros, ventas_futuras, compras_futuras):
         ax.annotate(f"{p_venta:.1f}", (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
         ax.annotate(f"{p_compra:.1f}", (t_fut, p_compra), textcoords="offset points", xytext=(0, -12), ha='center', color="#10b981", fontsize=7, fontweight='bold')
 
-    # Canal de protección IA
-    ax.fill_between(tiempos_futuros, compras_futuras, ventas_futuras, color="#38bdf8", alpha=0.15, label="Canal de Protección IA")
+    ax.fill_between(tiempos_futuros, compras_futuras, ventas_futuras, color="#38bdf8", alpha=0.18, label="Canal de Protección IA")
 
+    ax.set_xlim(tiemps[0], tiempos_futuros[-1])
     ax.set_title(f"VENBOT PREDICCIONES // CANAL DE PROTECCIÓN [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
     ax.set_ylabel("Tasa VES / USDT", color="#94a3b8", fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=VET))
