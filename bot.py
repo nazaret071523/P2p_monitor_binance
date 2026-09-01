@@ -33,7 +33,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
 
-ULTIMO_REGISTRO_VALIDO = {"compra": 923.66, "venta": 934.98, "timestamp": None}
+# Valores por defecto seguros para evitar ceros iniciales
+ULTIMO_REGISTRO_VALIDO = {"compra": 923.66, "venta": 934.98, "timestamp": datetime.now(VET)}
 ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 
 # Diccionario para almacenar el filtro de banco activo por chat/usuario
@@ -201,7 +202,6 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     except Exception as e:
         logger.warning(f"Bloqueo o fallo de red en Binance P2P: {e}. Activando respaldo inteligente.")
 
-    # Respaldo inteligente si la IP de Render sufre restricciones de Binance
     if ULTIMO_REGISTRO_VALIDO["compra"] > 0:
         return round(ULTIMO_REGISTRO_VALIDO["compra"], 2), round(ULTIMO_REGISTRO_VALIDO["venta"], 2), 15
     
@@ -640,6 +640,15 @@ async def telegram_webhook(req: Request):
 async def startup_event():
     global telegram_app
     inicializar_db()
+    
+    # Captura inicial inmediata al encender para alimentar la API sin esperar 5 minutos
+    try:
+        logger.info("Realizando captura inicial de precios al arrancar...")
+        c_ini, v_ini, l_ini = obtener_precios_binance_p2p("GENERAL")
+        guardar_muestra_db(c_ini, v_ini, l_ini, "GENERAL")
+        logger.info(f"Captura inicial exitosa: Compra={c_ini}, Venta={v_ini}")
+    except Exception as e:
+        logger.error(f"Error en la captura inicial de arranque: {e}")
     
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
     
