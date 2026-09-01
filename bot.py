@@ -1,784 +1,706 @@
 import os
+import io
 import asyncio
+import logging
+from datetime import datetime, timedelta
+import pytz
+
 import psycopg2
 import requests
-import json
 import numpy as np
-import urllib3
-import time
-from bs4 import BeautifulSoup
-from datetime import datetime, timedelta, timezone
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Body, Request
-from fastapi.responses import Response, JSONResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-
-# Importaciones de Machine Learning (XGBoost Quant)
-from sklearn.linear_model import Ridge
 import xgboost as xgb
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
-# Importaciones de Telegram
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
-
-from google import genai
-from google.genai import types
-
-# Deshabilitar advertencias SSL en caso de fluctuaciones en el certificado del BCV
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Configuración de zona horaria Venezuela
-VET = timezone(timedelta(hours=-4))
-DATABASE_URL = os.getenv("DATABASE_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+import uvicorn
 
 # ==========================================
-# SISTEMA DE CACHÉ DE IA (15 MINUTOS)
+# CONFIGURACIÓN GENERAL Y ZONA HORARIA VET
 # ==========================================
-_gemini_cache = {
-    "resultado": None,
-    "ultima_actualizacion": 0
-}
-CACHE_EXPIRATION_TIME = 900  # 900 segundos = 15 minutos
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+VET = pytz.timezone('America/Caracas')
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/venbot")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
+
+# Valores por defecto seguros actualizados
+ULTIMO_REGISTRO_VALIDO = {"compra": 943.22, "venta": 952.50, "timestamp": datetime.now(VET)}
+ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
+
+CONFIGURACION_BANCOS = {}
 
 # ==========================================
-# AUTODESCUBRIMIENTO AUTÓNOMO DE MODELOS IA
+# GESTIÓN DE BASE DE DATOS POSTGRESQL
 # ==========================================
-def obtener_modelo_gemini_activo() -> str:
-    modelo_por_defecto = "gemini-1.5-flash"
-    if not gemini_client:
-        return modelo_por_defecto
+def obtener_conexion():
+    return psycopg2.connect(DATABASE_URL)
+
+def inicializar_db():
     try:
-        models_pager = gemini_client.models.list()
-        candidatos = []
-        for m in models_pager:
-            nombre = getattr(m, "name", "")
-            if nombre.startswith("models/"):
-                nombre = nombre.replace("models/", "", 1)
-            if "flash" in nombre.lower():
-                candidatos.append(nombre)
-        if candidatos:
-            candidatos.sort(reverse=True)
-            return candidatos[0]
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS muestras_p2p (
+                id SERIAL PRIMARY KEY,
+                compra FLOAT,
+                venta FLOAT,
+                liquidez_score INT DEFAULT 0,
+                banco TEXT DEFAULT 'GENERAL',
+                fecha TIMESTAMP
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("Base de datos inicializada correctamente.")
+    except Exception as e:
+        logger.error(f"Error inicializando DB: {e}")
+
+def guardar_muestra_db(compra, venta, liquidez_score=100, banco="GENERAL"):
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO muestras_p2p (compra, venta, liquidez_score, banco, fecha) VALUES (%s, %s, %s, %s, %s)",
+            (float(compra), float(venta), int(liquidez_score), banco, datetime.now(VET))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error guardando muestra: {e}")
+
+def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
+    try:
+        conn = obtener_conexion()
+        cur = conn.cursor()
+        if banco == "GENERAL":
+            cur.execute("SELECT compra, venta, liquidez_score, fecha FROM muestras_p2p ORDER BY id DESC LIMIT %s;", (limit,))
+        else:
+            cur.execute("SELECT compra, venta, liquidez_score, fecha FROM muestras_p2p WHERE banco = %s ORDER BY id DESC LIMIT %s;", (banco, limit))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return list(reversed(rows))
+    except Exception as e:
+        logger.error(f"Error obteniendo estadísticas: {e}")
+        return []
+
+# ==========================================
+# SCRAPING BINANCE P2P Y TASAS OFICIALES BCV
+# ==========================================
+def obtener_tasas_bcv_oficiales():
+    usd, eur = 940.50, 1025.20
+    try:
+        res = requests.get("https://ve.dolarapi.com/v1/dolares/bcv", timeout=4)
+        if res.status_code == 200:
+            data = res.json()
+            usd = float(data.get("promedio", data.get("price", usd)))
     except Exception:
         pass
-    return modelo_por_defecto
-
-# ==========================================
-# SCRAPING / OBTENCIÓN TASAS BCV Y EURO EN VIVO
-# ==========================================
-def obtener_tasas_oficiales_bcv():
-    usd_bcv = 898.50
-    eur_bcv = 1050.00
-    try:
-        url = "https://www.bcv.org.ve/"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        res = requests.get(url, headers=headers, verify=False, timeout=4)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            usd_elem = soup.find('div', {'id': 'dolar'})
-            if usd_elem:
-                val = usd_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
-                usd_bcv = float(val)
-            eur_elem = soup.find('div', {'id': 'euro'})
-            if eur_elem:
-                val = eur_elem.find('strong').text.strip().replace('.', '').replace(',', '.')
-                eur_bcv = float(val)
-            return usd_bcv, eur_bcv
-    except Exception as e:
-        print(f"Error consultando sitio oficial BCV: {e}")
 
     try:
-        res_backup = requests.get("https://rates.dolarvzla.com/bcv/current.json", timeout=3).json()
-        usd_bcv = float(res_backup.get("current", {}).get("usd", usd_bcv))
-        eur_bcv = float(res_backup.get("current", {}).get("eur", eur_bcv))
-    except Exception as e:
-        print(f"Error consultando API respaldo BCV: {e}")
+        res_eur = requests.get("https://ve.dolarapi.com/v1/euros/bcv", timeout=4)
+        if res_eur.status_code == 200:
+            data_eur = res_eur.json()
+            eur = float(data_eur.get("promedio", data_eur.get("price", eur)))
+    except Exception:
+        pass
 
-    return usd_bcv, eur_bcv
+    return {"usd": round(usd, 2), "eur": round(eur, 2)}
 
-# ==========================================
-# BASE DE DATOS POSTGRESQL (SUPABASE)
-# ==========================================
-def get_db_connection():
-    if not DATABASE_URL:
-        return None
-    try:
-        return psycopg2.connect(DATABASE_URL)
-    except Exception as e:
-        print(f"Error conectando a DB: {e}")
-        return None
+def filtrar_outliers_iqr(precios):
+    if not precios or len(precios) < 4:
+        return precios
+    arr = np.array(precios, dtype=float)
+    q25, q75 = np.percentile(arr, 25), np.percentile(arr, 75)
+    iqr = q75 - q25
+    limite_inferior = q25 - 1.5 * iqr
+    limite_superior = q75 + 1.5 * iqr
+    
+    filtrados = [p for p in precios if limite_inferior <= p <= limite_superior]
+    return filtrados if filtrados else precios
 
-def init_db():
-    conn = get_db_connection()
-    if conn:
+def calcular_vwap_con_filtro(items):
+    precios_brutos = []
+    item_map = {}
+    
+    for item in items:
         try:
-            with conn.cursor() as cursor:
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS historial (
-                        id SERIAL PRIMARY KEY,
-                        timestamp TEXT,
-                        compra REAL,
-                        venta REAL
-                    );
-                ''')
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS usuarios_p2p (
-                        id SERIAL PRIMARY KEY,
-                        telegram_id BIGINT UNIQUE,
-                        username TEXT,
-                        estado_suscripcion TEXT DEFAULT 'pendiente',
-                        referencia_pago TEXT,
-                        fecha_expiracion TIMESTAMP,
-                        tipo_plan TEXT DEFAULT 'vip',
-                        password TEXT
-                    );
-                ''')
-                cursor.execute("ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS tipo_plan TEXT DEFAULT 'vip';")
-                cursor.execute("ALTER TABLE usuarios_p2p ADD COLUMN IF NOT EXISTS password TEXT;")
-                conn.commit()
-        finally:
-            conn.close()
+            adv = item.get("adv", {})
+            price = float(adv.get("price", 0))
+            if price > 0:
+                precios_brutos.append(price)
+                item_map[price] = item
+        except Exception:
+            continue
+            
+    precios_limpios = filtrar_outliers_iqr(precios_brutos)
+    
+    precio_acumulado = 0.0
+    volumen_total = 0.0
+    
+    for p in precios_limpios:
+        item = item_map.get(p)
+        if item:
+            try:
+                adv = item.get("adv", {})
+                vol = float(adv.get("surplusAmount", 1000) or 1000)
+                precio_acumulado += p * vol
+                volumen_total += vol
+            except Exception:
+                continue
+                
+    if volumen_total == 0:
+        return 0.0
+    return precio_acumulado / volumen_total
 
-init_db()
-
-def registrar_pago_db(telegram_id: int, username: str, referencia: str, plan_elegido: str = 'vip') -> bool:
-    conn = get_db_connection()
-    if not conn:
-        return None
-    try:
-        import random
-        pass_temporal = f"vb_{telegram_id}_{random.randint(100, 999)}"
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO usuarios_p2p (telegram_id, username, estado_suscripcion, referencia_pago, tipo_plan, password)
-                    VALUES (%s, %s, 'pendiente', %s, %s, %s)
-                    ON CONFLICT (telegram_id) 
-                    DO UPDATE SET referencia_pago = %s, estado_suscripcion = 'pendiente', tipo_plan = %s;
-                """, (telegram_id, username, referencia, plan_elegido, pass_temporal, referencia, plan_elegido))
-        return True
-    except Exception as e:
-        print(f"Error en registrar_pago_db: {e}")
-        return False
-    finally:
-        conn.close()
-
-def verificar_estado_usuario(telegram_id: int) -> dict:
-    conn = get_db_connection()
-    if not conn:
-        return {"estado": "error"}
-    try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT estado_suscripcion, fecha_expiracion, referencia_pago, tipo_plan, password, username 
-                    FROM usuarios_p2p WHERE telegram_id = %s;
-                """, (telegram_id,))
-                row = cur.fetchone()
-                if row:
-                    return {
-                        "estado": row[0],
-                        "expiracion": row[1],
-                        "referencia": row[2],
-                        "plan": row[3] or "vip",
-                        "password": row[4],
-                        "username": row[5]
-                    }
-        return {"estado": "no_registrado"}
-    except Exception as e:
-        print(f"Error en verificar_estado_usuario: {e}")
-        return {"estado": "error"}
-    finally:
-        conn.close()
-
-def guardar_muestra_db(compra, venta):
-    conn = get_db_connection()
-    if conn:
-        try:
-            hora_str = datetime.now(VET).isoformat()
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "INSERT INTO historial (timestamp, compra, venta) VALUES (%s, %s, %s);",
-                    (hora_str, compra, venta)
-                )
-                cursor.execute('''
-                    DELETE FROM historial 
-                    WHERE id NOT IN (
-                        SELECT id FROM historial ORDER BY id DESC LIMIT 2000
-                    );
-                ''')
-                conn.commit()
-        except Exception as e:
-            print(f"Error guardando en DB: {e}")
-        finally:
-            conn.close()
-
-def obtener_estadisticas_db(limit=2000):
-    conn = get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT compra, venta, timestamp FROM historial ORDER BY id ASC LIMIT %s;", (limit,))
-                filas = cursor.fetchall()
-            return filas
-        except Exception as e:
-            print(f"Error leyendo DB: {e}")
-            return []
-        finally:
-            conn.close()
-    return []
-
-# ==========================================
-# LECTURA P2P BINANCE
-# ==========================================
-def fetch_binance_p2p():
-    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
+    global ULTIMO_REGISTRO_VALIDO
+    
+    # URL oficial pública alternativa de Binance P2P (bapi/c2c/v1/public/c2c/adv/search)
+    url = "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search"
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
-    bancos_filtro = ["BBVA", "Mercantil", "BNC"]
+    
+    payTypes_val = [banco_filtro] if banco_filtro != "GENERAL" else []
 
+    # Payload simplificado para garantizar respuesta inmediata de anuncios reales
     payload_compra = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "SELL", "transAmount": "10000",
-        "payTypes": bancos_filtro
+        "asset": "USDT", 
+        "fiat": "VES", 
+        "page": 1, 
+        "rows": 10, 
+        "tradeType": "BUY",  # BUY en API pública significa anuncios donde los usuarios compran USDT (es decir, el usuario vende VES, equivalente a la compra del bot)
+        "payTypes": payTypes_val
     }
     payload_venta = {
-        "asset": "USDT", "fiat": "VES", "merchantCheck": False,
-        "page": 1, "rows": 10, "tradeType": "BUY", "transAmount": "300000",
-        "payTypes": bancos_filtro
+        "asset": "USDT", 
+        "fiat": "VES", 
+        "page": 1, 
+        "rows": 10, 
+        "tradeType": "SELL", # SELL en API pública significa anuncios donde los usuarios venden USDT (es decir, el usuario compra VES)
+        "payTypes": payTypes_val
     }
 
     try:
-        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=5).json()
-        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=5).json()
+        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=5)
+        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=5)
+        
+        data_c = res_c.json().get("data", []) if res_c.status_code == 200 else []
+        data_v = res_v.json().get("data", []) if res_v.status_code == 200 else []
 
-        data_c = res_c.get("data", [])
-        data_v = res_v.get("data", [])
+        if data_c and data_v:
+            vwap_compra = calcular_vwap_con_filtro(data_c)
+            vwap_venta = calcular_vwap_con_filtro(data_v)
+            
+            if vwap_compra > 0 and vwap_venta > 0:
+                if vwap_compra >= vwap_venta:
+                    vwap_compra, vwap_venta = vwap_venta * 0.98, vwap_venta
+                
+                liquidez_calculada = len(data_c) + len(data_v)
+                ULTIMO_REGISTRO_VALIDO = {"compra": vwap_compra, "venta": vwap_venta, "timestamp": datetime.now(VET)}
+                return round(vwap_compra, 2), round(vwap_venta, 2), liquidez_calculada
 
-        if not data_c or not data_v:
-            return None, None, None, None
-
-        precios_compra = [float(item["adv"]["price"]) for item in data_c if "adv" in item]
-        precios_venta = [float(item["adv"]["price"]) for item in data_v if "adv" in item]
-
-        if not precios_compra or not precios_venta:
-            return None, None, None, None
-
-        tasa_compra = min(precios_compra)
-        tasa_venta = max(precios_venta)
-
-        if tasa_compra >= tasa_venta:
-            tasa_compra = precios_compra[0]
-            tasa_venta = precios_venta[0]
-
-        spread = round(tasa_venta - tasa_compra, 2)
-        pct_bruto = round((spread / tasa_compra) * 100, 2) if tasa_compra > 0 else 0.0
-
-        return tasa_compra, tasa_venta, spread, pct_bruto
     except Exception as e:
-        print(f"Error consultando Binance: {e}")
-        return None, None, None, None
+        logger.warning(f"Fallo en API Binance P2P: {e}. Intentando API de respaldo DolarAPI.")
 
-# ==========================================
-# GEMINI IA CON CACHÉ
-# ==========================================
-def obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia_quant, pred_compra, pred_venta):
-    global _gemini_cache
-    tiempo_actual = time.time()
-
-    if _gemini_cache["resultado"] is not None and (tiempo_actual - _gemini_cache["ultima_actualizacion"] < CACHE_EXPIRATION_TIME):
-        return _gemini_cache["resultado"]
-
-    fallback_response = {
-        "estado_actual": f"El spread P2P actual se ubica en {spread:.2f} Bs con ordenes activas en compra ({actual_compra:.2f} Bs) y venta ({actual_venta:.2f} Bs).",
-        "proyeccion_7_12h": f"Tendencia {tendencia_quant}. Nivel óptimo de recompra estimado en {pred_compra:.2f} Bs.",
-        "recomendacion_tactica": "Mantener margen dinámico en los anuncios de compra para acelerar la rotación de capital.",
-        "tactica": {
-            "texto": f"El spread P2P de {spread:.2f} Bs permite colocación rápida de órdenes en la punta competitiva.",
-            "senal": "COMPRA MODERADA", "velocidad": "ALTA (< 5 min)", "sombra": "NORMAL", "rango": f"{actual_compra:.2f} - {pred_venta:.2f} Bs"
-        },
-        "flujo": {
-            "texto": "Absorción constante de volumen P2P orientada a comerciantes no verificados.",
-            "dominio": "COMPRADORES ACTIVOS", "spread_status": f"{spread:.2f} Bs", "riesgo": "BAJO", "proyeccion_12h": f"{pred_venta:.2f} Bs"
-        },
-        "niveles": {
-            "texto": "Comportamiento del libro de órdenes ajustado al canal actual de USDT/VES.",
-            "momentum": "MEDIO (65%)", "liquidez": "ESTABLE", "quiebre": f"{actual_compra:.2f} Bs", "techo": f"{pred_venta:.2f} Bs"
-        }
-    }
-
-    if not gemini_client:
-        _gemini_cache["resultado"] = fallback_response
-        _gemini_cache["ultima_actualizacion"] = tiempo_actual
-        return fallback_response
-
+    # Respaldo en tiempo real mediante API pública de DolarAPI / Monitor si Binance bloquea temporalmente la IP
     try:
-        system_instruction = (
-            "Eres el analista de mercado P2P para VENBOT en Binance Venezuela (USDT/VES). "
-            "PROHIBIDO ABSOLUTAMENTE: Mencionar BCV, tasa oficial, Euro, brechas cambiarías institucionales o entes gubernamentales."
-        )
-
-        prompt = f"""
-        Datos Binance P2P Tiempo Real:
-        - Compra: {actual_compra:.2f} Bs | Venta: {actual_venta:.2f} Bs | Spread: {spread:.2f} Bs
-        - Tendencia: {tendencia_quant} | Recompra Proyectada: {pred_compra:.2f} Bs | Venta Proyectada: {pred_venta:.2f} Bs
-
-        Genera este formato JSON estricto enfocando el análisis exclusivamente en Binance P2P:
-        {{
-          "estado_actual": "Análisis exclusivo de las puntas P2P y spread actual en Binance (1 frase corta).",
-          "proyeccion_7_12h": "Proyección de rotación P2P y recompra esperada en Binance (1 frase corta).",
-          "recomendacion_tactica": "Recomendación de colocación de anuncios P2P (1 frase corta).",
-          "tactica": {{
-            "texto": "Lectura operativa P2P.",
-            "senal": "COMPRA FUERTE | COMPRA MODERADA | ESPERAR",
-            "velocidad": "ALTA (< 5 min) | MEDIA",
-            "sombra": "ESCASEZ DE USDT | NORMAL",
-            "rango": "{actual_compra:.2f} - {pred_venta:.2f} Bs"
-          }},
-          "flujo": {{
-            "texto": "Análisis del flujo de liquidez P2P.",
-            "dominio": "COMPRADORES AGRESIVOS | LATERAL | VENDEDORES ACTIVOS",
-            "spread_status": "{spread:.2f} Bs",
-            "riesgo": "BAJO | MEDIO | ALTO",
-            "proyeccion_12h": "{pred_venta:.2f} Bs"
-          }},
-          "niveles": {{
-            "texto": "Evaluación del soporte y resistencia en el libro P2P.",
-            "momentum": "ALTO (80%) | MEDIO (65%) | BAJO",
-            "liquidez": "ABUNDANTE | ESTABLE | ESCASA",
-            "quiebre": "{pred_compra:.2f} Bs",
-            "techo": "{pred_venta:.2f} Bs"
-          }}
-        }}
-        """
-
-        modelo_activo = obtener_modelo_gemini_activo()
-        response = gemini_client.models.generate_content(
-            model=modelo_activo,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_mime_type="application/json",
-                temperature=0.3
-            ),
-        )
-
-        resultado_json = json.loads(response.text)
-        _gemini_cache["resultado"] = resultado_json
-        _gemini_cache["ultima_actualizacion"] = tiempo_actual
-        return resultado_json
-
+        res_paralelo = requests.get("https://ve.dolarapi.com/v1/dolares/enparalelovzla", timeout=4)
+        if res_paralelo.status_code == 200:
+            p_paralelo = float(res_paralelo.json().get("promedio", 0))
+            if p_paralelo > 0:
+                c_resp = round(p_paralelo * 0.99, 2)
+                v_resp = round(p_paralelo * 1.01, 2)
+                ULTIMO_REGISTRO_VALIDO = {"compra": c_resp, "venta": v_resp, "timestamp": datetime.now(VET)}
+                return c_resp, v_resp, 20
     except Exception:
-        _gemini_cache["resultado"] = fallback_response
-        _gemini_cache["ultima_actualizacion"] = tiempo_actual + 900 
-        return fallback_response
+        pass
+
+    if ULTIMO_REGISTRO_VALIDO["compra"] > 0:
+        return round(ULTIMO_REGISTRO_VALIDO["compra"], 2), round(ULTIMO_REGISTRO_VALIDO["venta"], 2), 15
+    
+    return 943.22, 952.50, 15
 
 # ==========================================
-# MOTOR QUANT (XGBOOST QUANT MACHINE LEARNING)
+# MOTOR DE PROTECCIÓN Y QUANT CON ESTACIONALIDAD
 # ==========================================
-def motor_quant_inteligente(actual_compra, actual_venta):
-    filas = obtener_estadisticas_db()
+def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
+    filas = obtener_estadisticas_db(banco=banco_filtro)
     total_muestras = len(filas)
 
     if total_muestras < 15:
-        pred_c = round(actual_compra * 0.999, 2)
-        pred_v = round(actual_venta * 1.001, 2)
-        tendencia = "➖ ESTABLE / LATERAL"
-        piso = actual_compra
-        techo = actual_venta
+        pred_c = round(float(actual_compra), 2)
+        pred_v = round(float(actual_venta), 2)
+        tendencia = "🛡️ PROTECCIÓN ESTABLE"
+        piso, techo = float(actual_compra) - 10, float(actual_venta) + 10
     else:
-        compras = np.array([f[0] for f in filas])
-        ventas = np.array([f[1] for f in filas])
-        piso = np.min(compras)
-        techo = np.max(ventas)
+        compras = np.array([f[0] for f in filas], dtype=float)
+        ventas = np.array([f[1] for f in filas], dtype=float)
+        fechas = [f[3] for f in filas]
+        piso, techo = float(np.min(compras)), float(np.max(ventas))
 
         window_size = min(total_muestras - 1, 5)
         X, y = [], []
         for i in range(window_size, len(compras)):
-            X.append(compras[i - window_size:i])
+            dt_muestra = fechas[i]
+            hora_feat = dt_muestra.hour if dt_muestra else 12
+            
+            window_vals = list(compras[i - window_size:i])
+            window_vals.append(float(hora_feat))
+            
+            X.append(window_vals)
             y.append(compras[i])
         
-        X = np.array(X)
-        y = np.array(y)
-
+        X, y = np.array(X, dtype=float), np.array(y, dtype=float)
         if len(X) > 0:
             model = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
             model.fit(X, y)
             
-            last_window = compras[-window_size:].reshape(1, -1)
-            pred_c_next = model.predict(last_window)[0]
+            hora_actual_val = float(datetime.now(VET).hour)
+            vector_actual = list(compras[-window_size:])
+            vector_actual.append(hora_actual_val)
             
-            recent_x = np.arange(min(total_muestras, 30))
-            recent_y = compras[-len(recent_x):]
-            slope_c, _ = np.polyfit(recent_x, recent_y, 1)
-            
-            delta_estimado = (pred_c_next - actual_compra) + (slope_c * 10)
-            pred_c = round(actual_compra + delta_estimado, 2)
+            pred_c_next = float(model.predict(np.array([vector_actual], dtype=float))[0])
+            pred_c = round(pred_c_next, 2)
         else:
-            pred_c = round(actual_compra, 2)
-            slope_c = 0.0
+            pred_c = round(float(actual_compra), 2)
 
-        spread_historico_promedio = np.mean(ventas - compras)
-        pred_v = round(pred_c + spread_historico_promedio, 2)
+        spreads_historicos = ventas - compras
+        spread_promedio = float(np.mean(spreads_historicos))
+        pred_v = round(pred_c + spread_promedio, 2)
 
-        if total_muestras >= 10:
-            recent_x = np.arange(min(total_muestras, 30))
-            recent_y = compras[-len(recent_x):]
-            slope_c, _ = np.polyfit(recent_x, recent_y, 1)
+        delta_porcentual = ((pred_c - actual_compra) / actual_compra) * 100
+        if delta_porcentual > 0.4:
+            tendencia = "🟢 TENDENCIA ALCISTA PROTEGIDA"
+        elif delta_porcentual < -0.4:
+            tendencia = "🛡️ SOPORTE DE PROTECCIÓN ACTIVO"
         else:
-            slope_c = 0.0
+            tendencia = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 
-        if slope_c > 0.015:
-            tendencia = "🚀 ALCISTA"
-        elif slope_c < -0.015:
-            tendencia = "🔻 BAJISTA"
-        else:
-            tendencia = "➖ ESTABLE / LATERAL"
-
-    spread = round(actual_venta - actual_compra, 2)
-    analisis_ia = obtener_analisis_ia_coherente(actual_compra, actual_venta, spread, tendencia, pred_c, pred_v)
+    estado_comunidad = "🟢 Alta Liquidez y Anunciantes Activos" if int(liquidez_actual) >= 12 else "🟡 Liquidez Moderada"
 
     return {
-        "pred_compra_str": f"{pred_c:.2f} Bs",
+        "pred_compra": pred_c,
+        "pred_venta": pred_v,
+        "pred_compra_str": f"{pred_c:.2f} Bs", 
         "pred_venta_str": f"{pred_v:.2f} Bs",
-        "tendencia": tendencia,
-        "recompra": pred_c,
-        "venta_esperada": pred_v,
-        "piso_str": f"{piso:.2f} Bs",
+        "tendencia": tendencia, 
+        "piso_str": f"{piso:.2f} Bs", 
         "techo_str": f"{techo:.2f} Bs",
-        "muestras": total_muestras,
-        "analisis_ia": analisis_ia
+        "muestras": int(total_muestras),
+        "liquidez_actual": int(liquidez_actual),
+        "estado_comunidad": estado_comunidad
     }
 
 # ==========================================
-# RECOLECCIÓN AUTOMÁTICA
+# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA
 # ==========================================
-async def tarea_recoleccion_automatica():
-    while True:
-        try:
-            compra, venta, _, _ = await asyncio.to_thread(fetch_binance_p2p)
-            if compra and venta:
-                await asyncio.to_thread(guardar_muestra_db, compra, venta)
-        except Exception as e:
-            print(f"Error en recolección: {e}")
-        await asyncio.sleep(300)
+def generar_imagen_grafica_cuantica(filas, banco):
+    if not filas or len(filas) < 5:
+        return None
+    
+    compras = np.array([f[0] for f in filas], dtype=float)
+    ventas = np.array([f[1] for f in filas], dtype=float)
+    fechas = [f[3] for f in filas]
+    
+    window_size = min(len(compras) - 1, 5)
+    X, y_c, y_v = [], [], []
+    for i in range(window_size, len(compras)):
+        dt_muestra = fechas[i]
+        hora_feat = dt_muestra.hour if dt_muestra else 12
+        window_vals = list(compras[i - window_size:i])
+        window_vals.append(float(hora_feat))
+        X.append(window_vals)
+        y_c.append(compras[i])
+        y_v.append(ventas[i])
+        
+    X = np.array(X, dtype=float)
+    y_c = np.array(y_c, dtype=float)
+    y_v = np.array(y_v, dtype=float)
+    
+    compras_futuras = []
+    ventas_futuras = []
+    
+    pasos_futuros = [0, 2, 4, 6, 8]
+    tiempo_base = datetime.now(VET)
+    tiempos_futuros = [tiempo_base + timedelta(hours=h) for h in pasos_futuros]
+
+    if len(X) > 0:
+        model_c = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
+        model_v = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0)
+        model_c.fit(X, y_c)
+        model_v.fit(X, y_v)
+        
+        actual_hora = tiempo_base.hour
+        
+        compras_futuras.append(float(compras[-1]))
+        ventas_futuras.append(float(ventas[-1]))
+        
+        current_sim_c = list(compras[-window_size:])
+        current_sim_v = list(ventas[-window_size:])
+        
+        for h in pasos_futuros[1:]:
+            hora_sim = (actual_hora + h) % 24
+            
+            feat_c = list(current_sim_c[-window_size:])
+            feat_c.append(float(hora_sim))
+            pred_c = float(model_c.predict(np.array([feat_c], dtype=float))[0])
+            
+            feat_v = list(current_sim_v[-window_size:])
+            feat_v.append(float(hora_sim))
+            pred_v = float(model_v.predict(np.array([feat_v], dtype=float))[0])
+            
+            inercia_c = (current_sim_c[-1] - current_sim_c[-2]) * 0.5 if len(current_sim_c) >= 2 else 0.0
+            inercia_v = (current_sim_v[-1] - current_sim_v[-2]) * 0.5 if len(current_sim_v) >= 2 else 0.0
+            
+            pred_c_ajustado = round(pred_c + inercia_c, 2)
+            pred_v_ajustado = round(pred_v + inercia_v, 2)
+
+            compras_futuras.append(pred_c_ajustado)
+            ventas_futuras.append(pred_v_ajustado)
+            
+            current_sim_c.pop(0)
+            current_sim_c.append(pred_c_ajustado)
+            current_sim_v.pop(0)
+            current_sim_v.append(pred_v_ajustado)
+    else:
+        compras_futuras = [round(compras[-1] + (h * 0.15), 2) for h in pasos_futuros]
+        ventas_futuras = [round(ventas[-1] + (h * 0.18), 2) for h in pasos_futuros]
+
+    std_compras = float(np.std(compras)) if len(compras) > 1 else 0.5
+    std_ventas = float(np.std(ventas)) if len(ventas) > 1 else 0.5
+
+    banda_superior_dinamica = [round(v + (std_ventas * 0.8), 2) for v in ventas_futuras]
+    banda_inferior_dinamica = [round(c - (std_compras * 0.8), 2) for c in compras_futuras]
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    fig.patch.set_facecolor("#0b0f19")
+    ax.set_facecolor("#0f172a")
+
+    ax.grid(True, linestyle=':', alpha=0.25, color='#38bdf8')
+    for spine in ax.spines.values():
+        spine.set_edgecolor('#334155')
+
+    ax.plot(fechas, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Estacional)")
+    ax.plot(fechas, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Estacional)")
+
+    ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (XGB)")
+    ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (XGB)")
+
+    for t_fut, p_venta, p_compra in zip(tiempos_futuros, ventas_futuras, compras_futuras):
+        ax.annotate(f"{p_venta:.1f}", (t_fut, p_venta), textcoords="offset points", xytext=(0, 8), ha='center', color="#f59e0b", fontsize=7, fontweight='bold')
+        ax.annotate(f"{p_compra:.1f}", (t_fut, p_compra), textcoords="offset points", xytext=(0, -12), ha='center', color="#10b981", fontsize=7, fontweight='bold')
+
+    ax.fill_between(tiempos_futuros, banda_inferior_dinamica, banda_superior_dinamica, color="#38bdf8", alpha=0.15, label="Canal de Volatilidad Dinámica")
+
+    ax.set_xlim(fechas[0], tiempos_futuros[-1])
+    ax.set_title(f"VENBOT PREDICCIONES // CANAL ESTACIONAL [{banco}]", color="#38bdf8", fontsize=10, fontweight='bold', loc='left', pad=12)
+    ax.set_ylabel("Tasa VES / USDT", color="#94a3b8", fontsize=9)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=VET))
+    ax.tick_params(colors="#94a3b8", labelsize=8)
+    ax.legend(loc="upper left", facecolor="#0f172a", edgecolor="#334155", labelcolor="#cbd5e1", fontsize=7)
+
+    plt.xticks(rotation=15)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=160)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
 
 # ==========================================
-# BOT DE TELEGRAM (COMANDOS Y BOTONES)
+# HANDLERS DE TELEGRAM UNIFICADOS
 # ==========================================
 telegram_app = None
 
-async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        datos_usuario = verificar_estado_usuario(user_id)
-        
-        if datos_usuario.get("estado") != "activo":
-            await update.message.reply_text(
-                "🔒 *Contenido Exclusivo para Miembros Suscritos*\n\n"
-                "No tienes una suscripción activa. Usa `/suscribir` para ver los planes y desbloquear las señales de predicción.",
-                parse_mode="Markdown"
-            )
-            return
+def obtener_teclado_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔮 Análisis P2P y Protección Quant", callback_data="cmd_prediccion")],
+        [InlineKeyboardButton("💎 Muestra los plans VIP y PREMIUM", callback_data="cmd_suscribir")],
+        [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
+        [InlineKeyboardButton("🏦 Configurar Filtro de Bancos", callback_data="cmd_bancos")]
+    ])
 
-        compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-        if not compra or not venta:
-            compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
-        
-        pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-        hora_actual = datetime.now(VET).strftime("%I:%M %p")
-        
-        mensaje = (
-            f"🦜 **VENBOT PREDICCIONES**\n"
-            f"⏱ ({hora_actual}) | BLOQUE P2P\n"
-            f"🟢 COMPRA (10k): {compra:.2f} Bs\n"
-            f"🔴 VENTA (300k): {venta:.2f} Bs\n"
-            f"⚡ MARGEN: {spread:.2f} Bs ({pct:.2f}%)\n\n"
-            f"🔮 **PROYECCIÓN +7H (IA QUANT - XGBOOST)**\n"
-            f"🟢 Recompra Esperada: {pred['pred_compra_str']}\n"
-            f"🔴 Venta Esperada: {pred['pred_venta_str']}\n"
-            f"🎯 Dirección: {pred['tendencia']}\n\n"
-            f"📊 Piso: {pred['piso_str']} | Techo: {pred['techo_str']}\n"
-            f"💾 Base de Datos: {pred['muestras']} Muestras"
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = (
+        "🦜 *VENBOT PREDICCIONES - SISTEMA DE PROTECCIÓN*\n"
+        "Selecciona una opción del menú táctico:"
+    )
+    if update.callback_query:
+        await update.callback_query.answer()
+        if update.callback_query.message:
+            await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+    elif update.message:
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
+
+async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if update.callback_query:
+        await update.callback_query.answer()
+
+    banco_activo = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+    c_real, v_real, liquidez = obtener_precios_binance_p2p(banco_activo)
+    datos = motor_quant_inteligente(c_real, v_real, liquidez, banco_activo)
+
+    hora_actual = datetime.now(VET).strftime("%I:%M %p")
+    hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
+
+    spread_actual = v_real - c_real
+    if spread_actual > 15:
+        analisis_tendencia = "📈 *Spread Amplio:* Alta volatilidad, ideal para arbitraje de rango."
+    elif spread_actual < 8:
+        analisis_tendencia = "📉 *Spread Estrecho:* Mercado comprimido, precaución en la ejecución."
+    else:
+        analisis_tendencia = "⚖️ *Spread Estable:* Liquidez normal y condiciones equilibradas."
+
+    texto = (
+        f"🦜 *VENBOT PREDICCIONES // TENDENCIA P2P*\n"
+        f"🏦 *Filtro Banco:* `{banco_activo}`\n"
+        f"──────────────────────────────\n"
+        f"⏱ *Sincronización:* `{hora_actual}` ➔ `{hora_objetivo}`\n\n"
+        f"📊 *PRECIOS VWAP ACTUALES*\n"
+        f"• Compra P2P: `{c_real:.2f} Bs`\n"
+        f"• Venta P2P: `{v_real:.2f} Bs`\n"
+        f"• Spread Actual: `{spread_actual:.2f} Bs`\n\n"
+        f"🔍 *DIAGNÓSTICO DE MERCADO*\n"
+        f"• {analisis_tendencia}\n"
+        f"• Liquidez: `{datos['estado_comunidad']}`\n"
+        f"• Muestras Analizadas: `{datos['muestras']} registros`\n"
+        f"• Rango del Canal: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
+        f"🔮 *PROYECCIÓN CUÁNTICA (7H)*\n"
+        f"• Recompra Estimada: `{datos['pred_compra_str']}`\n"
+        f"• Venta Estimada: `{datos['pred_venta_str']}`\n"
+        f"• Estado Operativo: `{datos['tendencia']}`\n"
+        f"──────────────────────────────\n"
+        f"💡 *Motor:* XGBoost con Memoria Horaria."
+    )
+    
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+
+async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if update.callback_query:
+        await update.callback_query.answer()
+
+    banco_activo = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+    filas = obtener_estadisticas_db(limit=35, banco=banco_activo)
+    buf = generar_imagen_grafica_cuantica(filas, banco_activo)
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    
+    if buf:
+        await context.bot.send_photo(
+            chat_id=chat_id, 
+            photo=buf, 
+            caption=f"📊 *Venbot Predicciones - Canal Estacional [{banco_activo}]*", 
+            parse_mode="Markdown", 
+            reply_markup=InlineKeyboardMarkup(teclado)
         )
-        await update.message.reply_text(mensaje, parse_mode="Markdown")
-    except Exception as e:
-        print(f"Error en comando telegram: {e}")
-        await update.message.reply_text("⚠️ Ocurrió un error al procesar la predicción.")
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"⚠️ Datos insuficientes (se requieren al menos 5 registros para [{banco_activo}]) para trazar el canal estacional con XGBoost.", 
+            reply_markup=InlineKeyboardMarkup(teclado)
+        )
+
+async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    
+    teclado = [
+        [InlineKeyboardButton("BBVA", callback_data="banco_BBVA"), InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL")],
+        [InlineKeyboardButton("General", callback_data="banco_GENERAL")],
+        [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]
+    ]
+    chat_id = update.effective_chat.id
+    banco_actual = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+    texto = f"🏦 *Selecciona el banco de arbitraje:*\nActualmente seleccionado: `{banco_actual}`"
+    
+    if update.callback_query and update.callback_query.message:
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    teclado = [
-        [InlineKeyboardButton("⭐ Plan PREMIUN (5 USD)", callback_data="plan_vip")],
-        [InlineKeyboardButton("🚀 Plan VIP (15 USD)", callback_data="plan_premium")],
-        [InlineKeyboardButton("❌ Cancelar", callback_data="plan_cancelar")]
-    ]
-    reply_markup = InlineKeyboardMarkup(teclado)
-    texto = "💎 **SELECCIONA TU PLAN DE SUSCRIPCIÓN**\n\nElige el plan que deseas adquirir para procesar tu reporte de pago:"
-    await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+    if update.callback_query:
+        await update.callback_query.answer()
 
-async def callback_botones_suscripcion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = "💎 *Planes VIP y Premium Disponibles*\nAcceso prioritario a flujos de alta liquidez y canales cuánticos avanzados."
+    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+    chat_id = update.effective_chat.id
+
+    if update.callback_query and update.callback_query.message:
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+
+async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    if not query:
+        return
     data = query.data
-    
-    if data == "plan_cancelar":
-        await query.message.edit_text("❌ Operación cancelada.")
-        return
+    chat_id = update.effective_chat.id
 
-    plan_seleccionado = "VIP" if data == "plan_vip" else "PREMIUM"
-    comando_ejemplo = f"/registrar vip [referencia]" if plan_seleccionado == "VIP" else f"/registrar premium [referencia]"
-
-    texto_metodos = (
-        f"💳 **MÉTODOS DE PAGO - PLAN {plan_seleccionado}**\n\n"
-        "🇻🇪 **Pago Móvil (Bs. a Tasa BCV):**\n"
-        "• Banco: Mercantil (0105)\n"
-        "• Teléfono: 0424-5734635\n"
-        "• C.I: V-20.414.065\n\n"
-        "🌍 **Binance Pay:**\n"
-        "• Pay ID / Email: `nazaretgarcia69@gmail.com`\n\n"
-        "📝 **¿Cómo registrar tu pago?**\n"
-        f"Envía el comando con tu número de referencia:\n`{comando_ejemplo}`"
-    )
-    await query.message.edit_text(texto_metodos, parse_mode="Markdown")
-
-async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    username = update.effective_user.username or f"user_{user_id}"
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text(
-            "⚠️ **Formato incorrecto.**\n"
-            "Debes especificar el plan y la referencia. Ejemplo:\n"
-            "`/registrar vip 8492` o `/registrar premium 8492`", 
-            parse_mode="Markdown"
-        )
-        return
-    
-    plan_elegido = args[0].lower()
-    if plan_elegido not in ["vip", "premium"]:
-        await update.message.reply_text("⚠️ El plan debe ser exactamente `vip` o `premium`.")
-        return
-        
-    referencia = args[1]
-    exito = registrar_pago_db(user_id, username, referencia, plan_elegido)
-    
-    if exito:
-        datos = verificar_estado_usuario(user_id)
-        password_web = datos.get("password", "N/A")
-        await update.message.reply_text(
-            "✅ **¡Comprobante enviado con éxito!**\n\n"
-            f"• Plan solicitado: **{plan_elegido.upper()}**\n"
-            f"• Referencia registrada: `{referencia}`\n\n"
-            f"🔐 **Tus credenciales generadas para el Monitor Web:**\n"
-            f"• Usuario / ID: `{user_id}`\n"
-            f"• Contraseña: `{password_web}`\n\n"
-            "Tu pago está en estado **pendiente** de aprobación por el administrador.",
-            parse_mode="Markdown"
-        )
-    else:
-        await update.message.reply_text("❌ Ocurrió un error al registrar el pago en el sistema.")
-
-async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    datos = verificar_estado_usuario(user_id)
-    
-    if datos.get("estado") == "no_registrado":
-        await update.message.reply_text("❌ No estás registrado en el sistema. Usa `/suscribir` para comenzar.", parse_mode="Markdown")
-        return
-        
-    password_web = datos.get("password")
-    plan = datos.get("plan", "vip").upper()
-    estado = datos.get("estado").upper()
-    
-    mensaje = (
-        f"🔐 **Tus Credenciales para el Monitor Web**\n\n"
-        f"📦 Plan: **{plan}**\n"
-        f"🟢 Estado: **{estado}**\n\n"
-        f"• Usuario (Telegram ID): `{user_id}`\n"
-        f"• Contraseña Web: `{password_web}`\n\n"
-        "Usa estos datos en la pantalla de inicio de sesión de la plataforma web."
-    )
-    await update.message.reply_text(mensaje, parse_mode="Markdown")
-
-async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    datos = verificar_estado_usuario(user_id)
-    estado = datos.get("estado")
-    plan_actual = datos.get("plan", "vip").upper()
-    
-    if estado == "activo":
-        exp = datos.get("expiracion")
-        exp_texto = exp if exp else "Ilimitado / Vitalicio"
-        await update.message.reply_text(
-            f"✨ *Tu suscripción está ACTIVA*\n"
-            f"📦 Plan: **{plan_actual}**\n"
-            f"⏳ Vence el: `{exp_texto}`\n\n"
-            "💡 Usa `/password` para ver tus credenciales de acceso web.", 
-            parse_mode="Markdown"
-        )
-    elif estado == "pendiente":
-        ref = datos.get("referencia")
-        await update.message.reply_text(
-            f"⏳ *Suscripción en revisión*\n"
-            f"📦 Plan solicitado: **{plan_actual}**\n"
-            f"🔢 Referencia enviada: `{ref}`\n"
-            "Espera la aprobación del administrador.", 
-            parse_mode="Markdown"
-        )
-    else:
-        await update.message.reply_text("❌ No tienes una suscripción activa. Usa `/suscribir` para ver los planes disponibles.", parse_mode="Markdown")
-
-async def iniciar_telegram_bot():
-    global telegram_app
-    if not TELEGRAM_BOT_TOKEN:
-        print("⚠️ TELEGRAM_BOT_TOKEN no configurado.")
-        return
-    try:
-        telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
-        telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
-        telegram_app.add_handler(CommandHandler("registrar", cmd_registrar))
-        telegram_app.add_handler(CommandHandler("password", cmd_password))
-        telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
-        telegram_app.add_handler(CallbackQueryHandler(callback_botones_suscripcion))
-        
-        await telegram_app.initialize()
-        await telegram_app.start()
-        print("🤖 Bot de Telegram inicializado con éxito con manejo de contraseñas web.")
-    except Exception as e:
-        print(f"Error al iniciar el bot de Telegram: {e}")
+    if data == "cmd_prediccion":
+        await cmd_prediccion(update, context)
+    elif data == "cmd_grafica":
+        await cmd_grafica(update, context)
+    elif data == "cmd_bancos":
+        await cmd_bancos(update, context)
+    elif data == "cmd_suscribir":
+        await cmd_suscribir(update, context)
+    elif data == "cmd_menu":
+        await start(update, context)
+    elif data.startswith("banco_"):
+        banco_seleccionado = data.replace("banco_", "")
+        CONFIGURACION_BANCOS[chat_id] = banco_seleccionado
+        await query.answer(f"¡Filtro cambiado a {banco_seleccionado}!")
+        await cmd_prediccion(update, context)
 
 # ==========================================
-# SERVIDOR FASTAPI Y ENDPOINTS ASÍNCRONOS
+# TAREA EN SEGUNDO PLANO: RECOLECCIÓN Y ALERTAS
 # ==========================================
-@asynccontextmanager
-async def lifespan(app_fastapi: FastAPI):
-    asyncio.create_task(tarea_recoleccion_automatica())
-    await iniciar_telegram_bot()
-    yield
+async def tarea_recoleccion_automatica():
+    global ULTIMO_ESTADO_TENDENCIA, telegram_app
+    while True:
+        try:
+            for b in ["GENERAL", "BBVA", "MERCANTIL"]:
+                c, v, l = obtener_precios_binance_p2p(b)
+                guardar_muestra_db(c, v, l, b)
+            
+            c_gen, v_gen, l_gen = obtener_precios_binance_p2p("GENERAL")
+            datos = motor_quant_inteligente(c_gen, v_gen, l_gen, "GENERAL")
+            tendencia_actual = datos["tendencia"]
+            
+            if TELEGRAM_ALERT_CHAT_ID and telegram_app and tendencia_actual != ULTIMO_ESTADO_TENDENCIA:
+                ULTIMO_ESTADO_TENDENCIA = tendencia_actual
+                alerta_msg = (
+                    f"🚨 *ALERTA PROACTIVA DE MERCADO P2P*\n"
+                    f"• Cambio detectado: `{tendencia_actual}`\n"
+                    f"• Compra VWAP actual: `{c_gen:.2f} Bs`\n"
+                    f"• Venta VWAP actual: `{v_gen:.2f} Bs`\n"
+                    f"• Rango Piso/Techo: `{datos['piso_str']}` / `{datos['techo_str']}`"
+                )
+                await telegram_app.bot.send_message(chat_id=TELEGRAM_ALERT_CHAT_ID, text=alerta_msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Error en tarea autónoma: {e}")
+        await asyncio.sleep(300)
 
-app = FastAPI(lifespan=lifespan)
+# ==========================================
+# FASTAPI Y ENDPOINTS SINCRONIZADOS
+# ==========================================
+app = FastAPI()
 
 app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=["*"], 
+    CORSMiddleware,
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"], 
-    allow_headers=["*"]
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-@app.api_route("/", methods=["GET", "HEAD"])
-async def home():
-    return {"status": "ok", "message": "Venbot P2P Activo con Autenticación Web y XGBoost"}
+@app.get("/")
+def read_root():
+    return {"status": "Venbot Predicciones Sistema Activo con Tasas BCV Oficiales y XGBoost"}
+
+@app.get("/api/precios")
+def obtener_precios_api():
+    c, v, _ = obtener_precios_binance_p2p("GENERAL")
+    spread = round(v - c, 2)
+    spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
+    tasas_bcv = obtener_tasas_bcv_oficiales()
+    return {
+        "compra": c,
+        "venta": v,
+        "buy": c,
+        "sell": v,
+        "spread": spread,
+        "spread_pct": spread_pct,
+        "bcv": tasas_bcv["usd"],
+        "eur": tasas_bcv["eur"],
+        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+@app.get("/api/market")
+def obtener_precios_market_alias():
+    c, v, _ = obtener_precios_binance_p2p("GENERAL")
+    spread = round(v - c, 2)
+    spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
+    tasas_bcv = obtener_tasas_bcv_oficiales()
+    return {
+        "compra": c,
+        "venta": v,
+        "buy": c,
+        "sell": v,
+        "spread": spread,
+        "spread_pct": spread_pct,
+        "bcv": tasas_bcv["usd"],
+        "eur": tasas_bcv["eur"],
+        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S")
+    }
 
 @app.post("/webhook")
-async def telegram_webhook(request: Request):
-    if not telegram_app:
-        return {"status": "error", "message": "Telegram app not initialized"}
+async def telegram_webhook(req: Request):
+    global telegram_app
+    data = await req.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"ok": True}
+
+@app.on_event("startup")
+async def startup_event():
+    global telegram_app
+    inicializar_db()
+    
     try:
-        json_data = await request.json()
-        update = Update.de_json(json_data, telegram_app.bot)
-        await telegram_app.process_update(update)
-        return {"status": "ok"}
+        logger.info("Realizando captura inicial de precios al arrancar...")
+        c_ini, v_ini, l_ini = obtener_precios_binance_p2p("GENERAL")
+        guardar_muestra_db(c_ini, v_ini, l_ini, "GENERAL")
+        logger.info(f"Captura inicial exitosa: Compra={c_ini}, Venta={v_ini}")
     except Exception as e:
-        print(f"Error procesando webhook: {e}")
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Error en la captura inicial de arranque: {e}")
+    
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
+    
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+    telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
+    telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
+    telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
+    telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
+    
+    telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
-@app.post("/api/login")
-async def api_login(payload: dict = Body(...)):
-    usuario_ingresado = str(payload.get("username", "")).strip()
-    password_ingresado = str(payload.get("password", "")).strip()
+    await telegram_app.initialize()
+    if RENDER_EXTERNAL_URL:
+        webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
+        await telegram_app.bot.delete_webhook(drop_pending_updates=True)
+        await telegram_app.bot.set_webhook(url=webhook_url)
 
-    if not usuario_ingresado or not password_ingresado:
-        return JSONResponse(status_code=400, content={"success": False, "message": "Faltan credenciales"})
+    await telegram_app.start()
+    asyncio.create_task(tarea_recoleccion_automatica())
 
-    conn = get_db_connection()
-    if not conn:
-        return JSONResponse(status_code=500, content={"success": False, "message": "Error de base de datos"})
+@app.on_event("shutdown")
+async def shutdown_event():
+    global telegram_app
+    if telegram_app:
+        await telegram_app.stop()
 
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT telegram_id, estado_suscripcion, tipo_plan, password 
-                FROM usuarios_p2p 
-                WHERE (CAST(telegram_id AS TEXT) = %s OR username ILIKE %s) AND password = %s;
-            """, (usuario_ingresado, usuario_ingresado, password_ingresado))
-            row = cur.fetchone()
-
-            if row:
-                telegram_id, estado, plan, _ = row
-                if estado == "activo":
-                    return {"success": True, "message": "Login exitoso", "plan": plan, "telegram_id": telegram_id}
-                else:
-                    return JSONResponse(status_code=403, content={"success": False, "message": "Tu cuenta está pendiente de aprobación o inactiva."})
-            else:
-                return JSONResponse(status_code=401, content={"success": False, "message": "Usuario o contraseña inválidos."})
-    except Exception as e:
-        print(f"Error en login: {e}")
-        return JSONResponse(status_code=500, content={"success": False, "message": "Error interno en el servidor"})
-    finally:
-        conn.close()
-
-@app.get("/api/stream")
-async def event_stream():
-    async def event_generator():
-        yield "retry: 3000\n\n"
-        while True:
-            try:
-                compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-                usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-                
-                if not compra:
-                    compra, venta, spread, pct = 945.25, 956.00, 10.75, 1.14
-
-                pred = await asyncio.to_thread(motor_quant_inteligente, compra, venta)
-
-                payload = {
-                    "compra": compra,
-                    "venta": venta,
-                    "spread": spread,
-                    "pct_bruto": pct,
-                    "diferencia": spread,
-                    "buy_price": compra,
-                    "sell_price": venta,
-                    "bcv": usd_bcv,
-                    "euro": eur_bcv,
-                    "prediccion": pred,
-                    "timestamp": datetime.now(VET).isoformat(),
-                    "status": "connected"
-                }
-                yield f"data: {json.dumps(payload)}\n\n"
-            except Exception as e:
-                print(f"Error en stream generator: {e}")
-            await asyncio.sleep(5)
-
-    headers = {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no"
-    }
-    return StreamingResponse(event_generator(), headers=headers)
-
-@app.get("/api/v1/p2p-rates")
-async def get_p2p_rates_v1():
-    compra, venta, spread, pct = await asyncio.to_thread(fetch_binance_p2p)
-    usd_bcv, eur_bcv = await asyncio.to_thread(obtener_tasas_oficiales_bcv)
-    if not compra:
-        compra, venta = 945.25, 956.00
-    data = {
-        "buy_price": compra,
-        "sell_price": venta,
-        "bcv_price": usd_bcv,
-        "euro_price": eur_bcv
-    }
-    return JSONResponse(
-        content=data,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    )
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run("bot:app", host="0.0.0.0", port=port)
