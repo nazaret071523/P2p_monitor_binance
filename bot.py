@@ -255,7 +255,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 # ==========================================
-# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA (ACTUALIZADO CON XGBOOST Y HORA FUTURA)
+# MOTOR GRÁFICO CON BANDAS DE DESVIACIÓN DINÁMICA
 # ==========================================
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 5:
@@ -283,7 +283,6 @@ def generar_imagen_grafica_cuantica(filas, banco):
     compras_futuras = []
     ventas_futuras = []
     
-    # Pasos futuros basados en horas exactas (ej. +0h, +2h, +4h, +6h, +8h)
     pasos_futuros = [0, 2, 4, 6, 8]
     tiempo_base = datetime.now(VET)
     tiempos_futuros = [tiempo_base + timedelta(hours=h) for h in pasos_futuros]
@@ -296,7 +295,6 @@ def generar_imagen_grafica_cuantica(filas, banco):
         
         actual_hora = tiempo_base.hour
         
-        # El primer punto toma el valor real actual
         compras_futuras.append(float(compras[-1]))
         ventas_futuras.append(float(ventas[-1]))
         
@@ -339,11 +337,9 @@ def generar_imagen_grafica_cuantica(filas, banco):
     for spine in ax.spines.values():
         spine.set_edgecolor('#334155')
 
-    # Ploteo histórico real
     ax.plot(fechas, ventas, color="#f59e0b", linewidth=2.2, label="Venta Real (Estacional)")
     ax.plot(fechas, compras, color="#10b981", linewidth=2.2, label="Recompra Real (Estacional)")
 
-    # Ploteo de proyección futura con marcas de hora exacta
     ax.plot(tiempos_futuros, ventas_futuras, color="#f59e0b", linestyle='--', linewidth=2, marker='^', label="Proyección Venta (XGB)")
     ax.plot(tiempos_futuros, compras_futuras, color="#10b981", linestyle='--', linewidth=2, marker='v', label="Proyección Recompra (XGB)")
 
@@ -562,7 +558,7 @@ async def startup_event():
     telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
     telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
-    telegram_app.add_handler(CommandHANDLER("bancos", cmd_bancos))
+    telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
     telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
     
     telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
