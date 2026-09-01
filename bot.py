@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import uvicorn
@@ -312,7 +313,6 @@ def generar_imagen_grafica_cuantica(filas, banco):
             feat_v.append(float(hora_sim))
             pred_v = float(model_v.predict(np.array([feat_v], dtype=float))[0])
             
-            # Factor de inercia aplicado para evitar aplanamiento inmediato
             inercia_c = (current_sim_c[-1] - current_sim_c[-2]) * 0.5 if len(current_sim_c) >= 2 else 0.0
             inercia_v = (current_sim_v[-1] - current_sim_v[-2]) * 0.5 if len(current_sim_v) >= 2 else 0.0
             
@@ -542,9 +542,33 @@ async def tarea_recoleccion_automatica():
 # ==========================================
 app = FastAPI()
 
+# Configuración de CORS para permitir la lectura desde Vercel u otros frontends
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/")
 def read_root():
     return {"status": "Venbot Predicciones Sistema Activo con Memoria Estacional Horaria y XGBoost en Gráficas"}
+
+@app.get("/api/precios")
+def obtener_precios_api():
+    global ULTIMO_REGISTRO_VALIDO
+    c = ULTIMO_REGISTRO_VALIDO["compra"]
+    v = ULTIMO_REGISTRO_VALIDO["venta"]
+    spread = round(v - c, 2)
+    spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
+    return {
+        "compra": c,
+        "venta": v,
+        "spread": spread,
+        "spread_pct": spread_pct,
+        "timestamp": datetime.now(VET).strftime("%Y-%m-%d %H:%M:%S") if ULTIMO_REGISTRO_VALIDO["timestamp"] else None
+    }
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
