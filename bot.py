@@ -36,6 +36,9 @@ TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
 ULTIMO_REGISTRO_VALIDO = {"compra": 923.66, "venta": 934.98, "timestamp": None}
 ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 
+# Diccionario para almacenar el filtro de banco activo por chat/usuario
+CONFIGURACION_BANCOS = {}
+
 # ==========================================
 # GESTIÓN DE BASE DE DATOS POSTGRESQL
 # ==========================================
@@ -142,10 +145,16 @@ def calcular_vwap_con_filtro(items):
         return 0.0
     return precio_acumulado / volumen_total
 
-def obtener_precios_binance_p2p(bancos_filtro=None):
+def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     global ULTIMO_REGISTRO_VALIDO
-    if bancos_filtro is None:
-        bancos_filtro = ["BBVA", "Mercantil", "BNC"]
+    
+    # Mapeo del filtro de banco para la API de Binance P2P
+    if banco_filtro == "BBVA":
+        pay_types = ["BBVA"]
+    elif banco_filtro == "MERCANTIL":
+        pay_types = ["Mercantil"]
+    else:
+        pay_types = ["BBVA", "Mercantil", "BNC"]
 
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     headers = {
@@ -153,8 +162,8 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    payload_compra = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "SELL", "transAmount": "10000", "payTypes": bancos_filtro}
-    payload_venta = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "BUY", "transAmount": "300000", "payTypes": bancos_filtro}
+    payload_compra = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "SELL", "transAmount": "10000", "payTypes": pay_types}
+    payload_venta = {"asset": "USDT", "fiat": "VES", "merchantCheck": False, "page": 1, "rows": 20, "tradeType": "BUY", "transAmount": "300000", "payTypes": pay_types}
 
     try:
         res_c = requests.post(url, json=payload_compra, headers=headers, timeout=6).json()
@@ -181,7 +190,7 @@ def obtener_precios_binance_p2p(bancos_filtro=None):
         return round(vwap_compra, 2), round(vwap_venta, 2), liquidez_calculada
 
     except Exception as e:
-        logger.error(f"Error scraping P2P con Anti-Spoofing: {e}")
+        logger.error(f"Error scraping P2P con Anti-Spoofing [{banco_filtro}]: {e}")
         return ULTIMO_REGISTRO_VALIDO["compra"], ULTIMO_REGISTRO_VALIDO["venta"], 20
 
 # ==========================================
@@ -402,8 +411,9 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
 
-    c_real, v_real, liquidez = obtener_precios_binance_p2p()
-    datos = motor_quant_inteligente(c_real, v_real, liquidez, "GENERAL")
+    banco_activo = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+    c_real, v_real, liquidez = obtener_precios_binance_p2p(banco_activo)
+    datos = motor_quant_inteligente(c_real, v_real, liquidez, banco_activo)
 
     hora_actual = datetime.now(VET).strftime("%I:%M %p")
     hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
@@ -418,6 +428,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         f"🦜 *VENBOT PREDICCIONES // TENDENCIA P2P*\n"
+        f"🏦 *Filtro Banco:* `{banco_activo}`\n"
         f"──────────────────────────────\n"
         f"⏱ *Sincronización:* `{hora_actual}` ➔ `{hora_objetivo}`\n\n"
         f"📊 *PRECIOS VWAP ACTUALES*\n"
@@ -445,22 +456,23 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
 
-    filas = obtener_estadisticas_db(limit=35)
-    buf = generar_imagen_grafica_cuantica(filas, "GENERAL")
+    banco_activo = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+    filas = obtener_estadisticas_db(limit=35, banco=banco_activo)
+    buf = generar_imagen_grafica_cuantica(filas, banco_activo)
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     
     if buf:
         await context.bot.send_photo(
             chat_id=chat_id, 
             photo=buf, 
-            caption="📊 *Venbot Predicciones - Canal Estacional [GENERAL]*", 
+            caption=f"📊 *Venbot Predicciones - Canal Estacional [{banco_activo}]*", 
             parse_mode="Markdown", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
     else:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="⚠️ Datos insuficientes (se requieren al menos 5 registros) para trazar el canal estacional con XGBoost.", 
+            text=f"⚠️ Datos insuficientes (se requieren al menos 5 registros para [{banco_activo}]) para trazar el canal estacional con XGBoost.", 
             reply_markup=InlineKeyboardMarkup(teclado)
         )
 
@@ -474,7 +486,8 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]
     ]
     chat_id = update.effective_chat.id
-    texto = "🏦 *Selecciona el banco de arbitraje:*"
+    banco_actual = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+    texto = f"🏦 *Selecciona el banco de arbitraje:*\nActualmente seleccionado: `{banco_actual}`"
     
     if update.callback_query and update.callback_query.message:
         await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -499,6 +512,8 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         return
     data = query.data
+    chat_id = update.effective_chat.id
+
     if data == "cmd_prediccion":
         await cmd_prediccion(update, context)
     elif data == "cmd_grafica":
@@ -509,6 +524,11 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd_suscribir(update, context)
     elif data == "cmd_menu":
         await start(update, context)
+    elif data.startswith("banco_"):
+        banco_seleccionado = data.replace("banco_", "")
+        CONFIGURACION_BANCOS[chat_id] = banco_seleccionado
+        await query.answer(f"¡Filtro cambiado a {banco_seleccionado}!")
+        await cmd_prediccion(update, context)
 
 # ==========================================
 # TAREA EN SEGUNDO PLANO: RECOLECCIÓN Y ALERTAS
@@ -517,10 +537,14 @@ async def tarea_recoleccion_automatica():
     global ULTIMO_ESTADO_TENDENCIA, telegram_app
     while True:
         try:
-            c, v, l = obtener_precios_binance_p2p()
-            guardar_muestra_db(c, v, l, "GENERAL")
+            # Recolectar de manera general y de los principales bancos de forma autónoma
+            for b in ["GENERAL", "BBVA", "MERCANTIL"]:
+                c, v, l = obtener_precios_binance_p2p(b)
+                guardar_muestra_db(c, v, l, b)
             
-            datos = motor_quant_inteligente(c, v, l, "GENERAL")
+            # Evaluar alerta general
+            c_gen, v_gen, l_gen = obtener_precios_binance_p2p("GENERAL")
+            datos = motor_quant_inteligente(c_gen, v_gen, l_gen, "GENERAL")
             tendencia_actual = datos["tendencia"]
             
             if TELEGRAM_ALERT_CHAT_ID and telegram_app and tendencia_actual != ULTIMO_ESTADO_TENDENCIA:
@@ -528,8 +552,8 @@ async def tarea_recoleccion_automatica():
                 alerta_msg = (
                     f"🚨 *ALERTA PROACTIVA DE MERCADO P2P*\n"
                     f"• Cambio detectado: `{tendencia_actual}`\n"
-                    f"• Compra VWAP actual: `{c:.2f} Bs`\n"
-                    f"• Venta VWAP actual: `{v:.2f} Bs`\n"
+                    f"• Compra VWAP actual: `{c_gen:.2f} Bs`\n"
+                    f"• Venta VWAP actual: `{v_gen:.2f} Bs`\n"
                     f"• Rango Piso/Techo: `{datos['piso_str']}` / `{datos['techo_str']}`"
                 )
                 await telegram_app.bot.send_message(chat_id=TELEGRAM_ALERT_CHAT_ID, text=alerta_msg, parse_mode="Markdown")
@@ -542,7 +566,6 @@ async def tarea_recoleccion_automatica():
 # ==========================================
 app = FastAPI()
 
-# Configuración de CORS para permitir la lectura desde Vercel u otros frontends
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
