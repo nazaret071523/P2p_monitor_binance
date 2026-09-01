@@ -33,11 +33,10 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
 
-# Valores por defecto seguros para evitar ceros iniciales
+# Valores por defecto seguros actualizados
 ULTIMO_REGISTRO_VALIDO = {"compra": 943.22, "venta": 952.50, "timestamp": datetime.now(VET)}
 ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 
-# Diccionario para almacenar el filtro de banco activo por chat/usuario
 CONFIGURACION_BANCOS = {}
 
 # ==========================================
@@ -101,7 +100,6 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL"):
 # SCRAPING BINANCE P2P Y TASAS OFICIALES BCV
 # ==========================================
 def obtener_tasas_bcv_oficiales():
-    """Consulta las tasas oficiales vigentes del BCV en tiempo real con respaldo seguro corregido."""
     usd, eur = 940.50, 1025.20
     try:
         res = requests.get("https://ve.dolarapi.com/v1/dolares/bcv", timeout=4)
@@ -170,45 +168,39 @@ def calcular_vwap_con_filtro(items):
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     global ULTIMO_REGISTRO_VALIDO
     
-    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    # URL oficial pública alternativa de Binance P2P (bapi/c2c/v1/public/c2c/adv/search)
+    url = "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search"
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Origin": "https://p2p.binance.com",
-        "Referer": "https://p2p.binance.com/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     
     payTypes_val = [banco_filtro] if banco_filtro != "GENERAL" else []
 
+    # Payload simplificado para garantizar respuesta inmediata de anuncios reales
     payload_compra = {
         "asset": "USDT", 
         "fiat": "VES", 
-        "merchantCheck": False, 
         "page": 1, 
         "rows": 10, 
-        "tradeType": "SELL", 
-        "transAmount": "5000",
+        "tradeType": "BUY",  # BUY en API pública significa anuncios donde los usuarios compran USDT (es decir, el usuario vende VES, equivalente a la compra del bot)
         "payTypes": payTypes_val
     }
     payload_venta = {
         "asset": "USDT", 
         "fiat": "VES", 
-        "merchantCheck": False, 
         "page": 1, 
         "rows": 10, 
-        "tradeType": "BUY", 
-        "transAmount": "50000",
+        "tradeType": "SELL", # SELL en API pública significa anuncios donde los usuarios venden USDT (es decir, el usuario compra VES)
         "payTypes": payTypes_val
     }
 
     try:
-        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=6)
-        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=6)
+        res_c = requests.post(url, json=payload_compra, headers=headers, timeout=5)
+        res_v = requests.post(url, json=payload_venta, headers=headers, timeout=5)
         
-        data_c = res_c.json().get("data", [])
-        data_v = res_v.json().get("data", [])
+        data_c = res_c.json().get("data", []) if res_c.status_code == 200 else []
+        data_v = res_v.json().get("data", []) if res_v.status_code == 200 else []
 
         if data_c and data_v:
             vwap_compra = calcular_vwap_con_filtro(data_c)
@@ -223,7 +215,20 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
                 return round(vwap_compra, 2), round(vwap_venta, 2), liquidez_calculada
 
     except Exception as e:
-        logger.warning(f"Bloqueo o fallo de red en Binance P2P: {e}. Activando respaldo inteligente.")
+        logger.warning(f"Fallo en API Binance P2P: {e}. Intentando API de respaldo DolarAPI.")
+
+    # Respaldo en tiempo real mediante API pública de DolarAPI / Monitor si Binance bloquea temporalmente la IP
+    try:
+        res_paralelo = requests.get("https://ve.dolarapi.com/v1/dolares/enparalelovzla", timeout=4)
+        if res_paralelo.status_code == 200:
+            p_paralelo = float(res_paralelo.json().get("promedio", 0))
+            if p_paralelo > 0:
+                c_resp = round(p_paralelo * 0.99, 2)
+                v_resp = round(p_paralelo * 1.01, 2)
+                ULTIMO_REGISTRO_VALIDO = {"compra": c_resp, "venta": v_resp, "timestamp": datetime.now(VET)}
+                return c_resp, v_resp, 20
+    except Exception:
+        pass
 
     if ULTIMO_REGISTRO_VALIDO["compra"] > 0:
         return round(ULTIMO_REGISTRO_VALIDO["compra"], 2), round(ULTIMO_REGISTRO_VALIDO["venta"], 2), 15
@@ -615,7 +620,6 @@ def read_root():
 
 @app.get("/api/precios")
 def obtener_precios_api():
-    # Consulta directa y en tiempo real a Binance para evitar valores estáticos
     c, v, _ = obtener_precios_binance_p2p("GENERAL")
     spread = round(v - c, 2)
     spread_pct = round((spread / c) * 100, 2) if c > 0 else 0.0
