@@ -16,10 +16,18 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import uvicorn
+
+try:
+    from google import genai
+    from google.genai import types
+except Exception:
+    genai = None
+    types = None
 
 # ==========================================
 # CONFIGURACIÓN GENERAL
@@ -38,6 +46,8 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
 COLLECT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
 MARKET_MAX_AGE_SECONDS = int(os.getenv("MARKET_MAX_AGE_SECONDS", "90"))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash").strip()
 
 # Orígenes separados por coma. Si no se configura, se permite cualquier origen
 # sin credenciales, suficiente para un monitor público.
@@ -375,244 +385,63 @@ def calcular_vwap_con_filtro(items):
     return pv / vol if vol > 0 else 0.0
 
 
-# Parámetros de referencia P2P solicitados.
-# "Comprar USDT" en Venbot = anuncios SELL (el comerciante vende USDT).
-# "Vender USDT" en Venbot  = anuncios BUY  (el comerciante compra USDT).
-# Los montos son en VES y se usan para que Binance devuelva anuncios
-# ejecutables para ese tamaño de operación.
-VENTA_REFERENCIA_VES = 300_000.0
-RECOMPRA_REFERENCIA_VES = 10_000.0
-TOP_ANUNCIOS = 10
-PAGINAS_BUSQUEDA = 5
-ANUNCIOS_POR_PAGINA = 20
-
-# Tres bancos de referencia. Los aliases permiten que Binance cambie el
-# identificador visible sin romper el filtro.
-BANCOS_REFERENCIA = {
-    "MERCANTIL": ["MERCANTIL", "Mercantil"],
-    "PROVINCIAL": ["BBVABank", "PROVINCIAL", "Provincial"],
-    "BNC": ["BNCBancoNacional", "BNC", "BNC Banco Nacional de Crédito"],
-}
-
-
-def _normalizar_texto(value):
-    return " ".join(str(value or "").strip().lower().split())
-
-
-def _anuncio_no_verificado(item):
-    """Acepta únicamente anuncios de usuarios/comerciantes NO verificados.
-
-    Binance expone varias señales de identidad. La API usa `merchant` para
-    los comerciantes verificados; además, `proMerchant`/`merchant` permiten
-    excluirlos aunque `publisherType` no venga explícito en la respuesta.
-    Los campos ausentes no se consideran verificados para evitar descartar
-    anuncios normales por cambios de esquema.
-    """
-    advertiser = item.get("advertiser") or {}
-
-    if advertiser.get("proMerchant") is True:
-        return False
-    if advertiser.get("merchant") is True:
-        return False
-
-    identity = _normalizar_texto(advertiser.get("userIdentity"))
-    if identity in {"merchant", "pro_merchant", "verified_merchant", "merchant_verified"}:
-        return False
-
-    user_type = _normalizar_texto(advertiser.get("userType"))
-    if user_type in {"merchant_verified", "verified_merchant", "pro_merchant"}:
-        return False
-
-    return True
-
-
-def _ad_contiene_banco(item, banco_filtro):
-    if banco_filtro not in BANCOS_REFERENCIA:
-        return True
-    aliases = {_normalizar_texto(x) for x in BANCOS_REFERENCIA[banco_filtro]}
-    adv = item.get("adv") or {}
-    for method in adv.get("tradeMethods") or []:
-        valores = [
-            method.get("identifier"),
-            method.get("tradeMethodName"),
-            method.get("tradeMethodShortName"),
-            method.get("name"),
-        ]
-        normalizados = {_normalizar_texto(x) for x in valores if x}
-        if aliases & normalizados:
-            return True
-        combinado = " | ".join(sorted(normalizados))
-        if banco_filtro == "MERCANTIL" and "mercantil" in combinado:
-            return True
-        if banco_filtro == "PROVINCIAL" and ("provincial" in combinado or "bbvabank" in combinado):
-            return True
-        if banco_filtro == "BNC" and ("bnc" in combinado or "banco nacional de credito" in combinado):
-            return True
-    return False
-
-
-def _binance_post(payload, endpoint):
-    r = HTTP.post(
-        endpoint,
-        json=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Origin": "https://p2p.binance.com",
-            "Referer": "https://p2p.binance.com/",
-        },
-        timeout=10,
-    )
-    r.raise_for_status()
-    body = r.json()
-    return body.get("data") or []
-
-
 def _binance_search(trade_type, banco_filtro="GENERAL"):
-    """
-    Devuelve hasta los primeros TOP_ANUNCIOS anuncios elegibles.
-
-    Filtros de estrategia:
-      - SELL / Comprar USDT: 300.000 VES.
-      - BUY  / Vender USDT:   10.000 VES.
-      - Banco: Mercantil, Provincial o BNC.
-      - Solo anuncios de comerciantes/usuarios NO verificados.
-
-    Primero se pide a Binance que filtre por monto y banco. Si Binance no
-    reconoce el identificador del banco, se hace fallback por páginas y se
-    filtran los métodos de pago en la respuesta, conservando el orden.
-    """
-    endpoint = "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    url = "https://www.binance.com/bapi/c2c/v1/friendly/c2c/adv/search"
+    # Algunos despliegues siguen respondiendo en /public/. Se usa como fallback.
     urls = [
-        endpoint,
-        "https://www.binance.com/bapi/c2c/v1/friendly/c2c/adv/search",
+        url,
         "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search",
     ]
 
-    trans_amount = VENTA_REFERENCIA_VES if trade_type == "SELL" else RECOMPRA_REFERENCIA_VES
-    pay_types = [] if banco_filtro == "GENERAL" else BANCOS_REFERENCIA.get(banco_filtro, [banco_filtro])
-    last_error = None
+    payload = {
+        "asset": "USDT",
+        "fiat": "VES",
+        "page": 1,
+        "rows": 10,
+        "tradeType": trade_type,
+        "payTypes": [] if banco_filtro == "GENERAL" else [banco_filtro],
+        "publisherType": None,
+        "merchantCheck": False,
+    }
 
-    # Camino principal: filtro de Binance por monto + banco.
-    for endpoint_url in urls:
+    last_error = None
+    for endpoint in urls:
         try:
-            payload = {
-                "asset": "USDT",
-                "fiat": "VES",
-                "page": 1,
-                "rows": ANUNCIOS_POR_PAGINA,
-                "tradeType": trade_type,
-                "payTypes": pay_types,
-                "publisherType": None,
-                "merchantCheck": False,
-                "transAmount": trans_amount,
-                "countries": [],
-                "proMerchantAds": False,
-                "shieldMerchantAds": False,
-                "filterType": "all",
-                "periods": [],
-                "additionalKycVerifyFilter": 0,
-            }
-            data = _binance_post(payload, endpoint_url)
+            r = HTTP.post(
+                endpoint,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": "https://p2p.binance.com",
+                    "Referer": "https://p2p.binance.com/",
+                },
+                timeout=10,
+            )
+            r.raise_for_status()
+            body = r.json()
+            data = body.get("data") or []
             if data:
-                # Regla fija: excluir comerciantes verificados/pro antes de
-                # seleccionar los primeros 10 anuncios elegibles.
-                data = [x for x in data if _anuncio_no_verificado(x)]
-                if banco_filtro != "GENERAL":
-                    data = [x for x in data if _ad_contiene_banco(x, banco_filtro)]
-                if len(data) >= TOP_ANUNCIOS:
-                    return data[:TOP_ANUNCIOS]
-                # No devolvemos una muestra corta: seguimos con paginación.
-                encontrados = list(data)
-                for page in range(2, PAGINAS_BUSQUEDA + 1):
-                    payload["page"] = page
-                    more = _binance_post(payload, endpoint_url)
-                    if not more:
-                        break
-                    more = [x for x in more if _anuncio_no_verificado(x)]
-                    if banco_filtro != "GENERAL":
-                        more = [x for x in more if _ad_contiene_banco(x, banco_filtro)]
-                    encontrados.extend(more)
-                    if len(encontrados) >= TOP_ANUNCIOS:
-                        return encontrados[:TOP_ANUNCIOS]
-                if encontrados:
-                    return encontrados[:TOP_ANUNCIOS]
-            last_error = f"respuesta sin anuncios en {endpoint_url}"
+                return data
+            last_error = f"respuesta sin anuncios en {endpoint}"
         except Exception as e:
             last_error = str(e)
-
-    # Fallback robusto: consulta el libro sin payTypes y recoge los primeros
-    # 10 anuncios del banco solicitado, manteniendo el orden de Binance.
-    if banco_filtro != "GENERAL":
-        for endpoint_url in urls:
-            try:
-                encontrados = []
-                for page in range(1, 6):
-                    payload = {
-                        "asset": "USDT",
-                        "fiat": "VES",
-                        "page": page,
-                        "rows": 20,
-                        "tradeType": trade_type,
-                        "payTypes": [],
-                        "publisherType": None,
-                        "merchantCheck": False,
-                        "transAmount": trans_amount,
-                        "countries": [],
-                        "proMerchantAds": False,
-                        "shieldMerchantAds": False,
-                        "filterType": "all",
-                        "periods": [],
-                        "additionalKycVerifyFilter": 0,
-                    }
-                    data = _binance_post(payload, endpoint_url)
-                    if not data:
-                        break
-                    for item in data:
-                        if _anuncio_no_verificado(item) and _ad_contiene_banco(item, banco_filtro):
-                            encontrados.append(item)
-                            if len(encontrados) >= TOP_ANUNCIOS:
-                                return encontrados[:TOP_ANUNCIOS]
-                last_error = f"no se encontraron {TOP_ANUNCIOS} anuncios elegibles para {banco_filtro}"
-            except Exception as e:
-                last_error = str(e)
 
     if last_error:
         raise RuntimeError(last_error)
     return []
 
 
-def _combinar_anuncios_bancos(trade_type):
-    """Agrega los primeros 10 anuncios elegibles de cada banco de referencia."""
-    todos = []
-    errores = []
-    for banco in BANCOS_REFERENCIA:
-        try:
-            todos.extend(_binance_search(trade_type, banco))
-        except Exception as e:
-            errores.append(f"{banco}: {e}")
-    if errores:
-        logger.warning("Problemas consultando bancos de referencia (%s): %s", trade_type, " | ".join(errores))
-    return todos
-
-
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     """
-    Estrategia fija de referencia:
-      - GENERAL = Mercantil + Provincial + BNC.
-      - Comprar USDT = SELL con monto objetivo de 300.000 VES.
-      - Vender USDT  = BUY con monto objetivo de 10.000 VES.
-      - Se toman los primeros 10 anuncios elegibles por banco, después de excluir
-        comerciantes verificados, y se calcula VWAP.
+    Desde la perspectiva del usuario:
+    - Comprar USDT => anuncios SELL.
+    - Vender USDT  => anuncios BUY.
     """
     global ULTIMO_REGISTRO_VALIDO
 
     try:
-        if banco_filtro == "GENERAL":
-            anuncios_compra_usuario = _combinar_anuncios_bancos("SELL")
-            anuncios_venta_usuario = _combinar_anuncios_bancos("BUY")
-        else:
-            anuncios_compra_usuario = _binance_search("SELL", banco_filtro)
-            anuncios_venta_usuario = _binance_search("BUY", banco_filtro)
+        anuncios_compra_usuario = _binance_search("SELL", banco_filtro)
+        anuncios_venta_usuario = _binance_search("BUY", banco_filtro)
 
         compra = calcular_vwap_con_filtro(anuncios_compra_usuario)
         venta = calcular_vwap_con_filtro(anuncios_venta_usuario)
@@ -628,7 +457,7 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     except Exception as e:
         logger.warning("Binance P2P no disponible para %s: %s", banco_filtro, e)
 
-    # Solo GENERAL conserva el último mercado general real.
+    # Última lectura real persistida. No se fabrican precios.
     if banco_filtro == "GENERAL":
         db = obtener_mercado_actual_db()
         if db and db["compra"] > 0 and db["venta"] > 0:
@@ -642,6 +471,7 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
         )
 
     return 0.0, 0.0, 0
+
 
 def recolectar_mercado_general():
     compra, venta, liquidez = obtener_precios_binance_p2p("GENERAL")
@@ -927,17 +757,13 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
     teclado = [
-        [InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL"), InlineKeyboardButton("Provincial", callback_data="banco_PROVINCIAL")],
-        [InlineKeyboardButton("BNC", callback_data="banco_BNC"), InlineKeyboardButton("3 Bancos", callback_data="banco_GENERAL")],
+        [InlineKeyboardButton("BBVA", callback_data="banco_BBVA"), InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL")],
+        [InlineKeyboardButton("General", callback_data="banco_GENERAL")],
         [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")],
     ]
     chat_id = update.effective_chat.id
     banco_actual = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
-    texto = (f"🏦 *Referencia P2P:*\nActualmente: `{banco_actual}`\n\n"
-             f"• Mercantil + Provincial + BNC en GENERAL\n"
-             f"• Comprar/SELL: 300.000 Bs\n"
-             f"• Vender/BUY: 10.000 Bs\n"
-             f"• Hasta 10 anuncios por banco y dirección")
+    texto = f"🏦 *Selecciona el banco de arbitraje:*\nActualmente: `{banco_actual}`"
     if update.callback_query and update.callback_query.message:
         await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
     else:
@@ -989,7 +815,7 @@ async def tarea_recoleccion_automatica():
             mercado = await asyncio.to_thread(recolectar_mercado_general)
 
             # Bancos separados, solo para histórico/Telegram.
-            for banco in BANCOS_REFERENCIA:
+            for banco in ("BBVA", "MERCANTIL"):
                 c, v, l = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
@@ -1025,6 +851,152 @@ async def tarea_recoleccion_automatica():
 
 
 # ==========================================
+# VENBOT AI CONVERSACIONAL
+# ==========================================
+VENBOT_AI_SYSTEM = """
+Eres Venbot AI, un asistente conversacional inteligente integrado en un monitor de Binance P2P.
+Hablas español claro, natural y profesional. Tu estilo es cercano, razonado y útil, como un buen
+analista que conversa con el usuario, no como un robot que repite indicadores.
+
+REGLAS IMPORTANTES:
+1. Puedes responder preguntas generales y educativas, no solo preguntas de trading.
+2. Cuando la pregunta se refiera al mercado, usa PRIORITARIAMENTE los datos reales que aparecen
+   en CONTEXTO DE MERCADO. Nunca inventes precios, tasas, liquidez ni histórico.
+3. Distingue entre datos observados, cálculos derivados, estimaciones y opinión analítica.
+4. Recuerda que en Venbot: "Comprar USDT" significa comprar USDT en Binance P2P (anuncios SELL),
+   y "Vender USDT" significa vender USDT (anuncios BUY). No inviertas estos significados.
+5. Puedes hacer cálculos sencillos con los datos proporcionados y explicar el procedimiento.
+6. Si faltan datos para responder con precisión, dilo y pide solo el dato necesario.
+7. Para preguntas de inversión/trading, no prometas ganancias ni presentes una predicción como certeza.
+8. No afirmes haber ejecutado operaciones, consultado fuentes externas o visto datos que no estén en el contexto.
+9. Mantén las respuestas concisas pero suficientemente explicativas. Usa listas cuando ayuden.
+10. Conserva el contexto de la conversación y responde a referencias como "eso", "y si espero", etc.
+
+Tu objetivo es que el usuario pueda conversar contigo de forma natural y recibir respuestas útiles,
+razonadas y contextualizadas.
+"""
+
+
+def _serializar_contexto_mercado():
+    mercado = obtener_mercado_actual_db() or {}
+    compra = float(mercado.get("compra") or 0)
+    venta = float(mercado.get("venta") or 0)
+    spread = venta - compra if compra and venta else 0
+    spread_pct = (spread / compra * 100) if compra else 0
+    liquidez = int(mercado.get("liquidez") or 0)
+
+    try:
+        filas = obtener_estadisticas_db(limit=120, banco="GENERAL")
+    except Exception:
+        filas = []
+
+    historico = []
+    for c, v, l, f in filas[-60:]:
+        historico.append({
+            "compra": round(float(c), 2),
+            "venta": round(float(v), 2),
+            "liquidez": int(l or 0),
+            "timestamp": f.isoformat() if f else None,
+        })
+
+    quant = {}
+    if compra > 0 and venta > 0:
+        try:
+            quant = motor_quant_inteligente(compra, venta, liquidez, "GENERAL")
+        except Exception as e:
+            logger.warning("No se pudo calcular contexto quant para IA: %s", e)
+
+    return {
+        "ahora": {
+            "comprar_usdt": round(compra, 2),
+            "vender_usdt": round(venta, 2),
+            "spread_bs": round(spread, 2),
+            "spread_pct": round(spread_pct, 2),
+            "liquidez": liquidez,
+            "bcv_usd": round(float(mercado.get("bcv") or 0), 2),
+            "euro_bcv": round(float(mercado.get("eur") or 0), 2),
+            "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None,
+        },
+        "analisis_quant": quant,
+        "historico_reciente": historico,
+    }
+
+
+def generar_respuesta_ia(mensaje, historial):
+    if not GEMINI_API_KEY or genai is None:
+        return ("La IA conversacional todavía no está configurada en el servidor. "
+                "Falta GEMINI_API_KEY en las variables de entorno de Render.")
+
+    contexto = _serializar_contexto_mercado()
+    historial_seguro = []
+    for item in (historial or [])[-12:]:
+        if not isinstance(item, dict):
+            continue
+        role = "user" if item.get("role") == "user" else "model"
+        content = str(item.get("content") or "").strip()
+        if content:
+            historial_seguro.append({"role": role, "content": content[:4000]})
+
+    prompt = f"""
+CONTEXTO DE MERCADO VENBOT (datos observados/derivados del backend):
+{contexto}
+
+HISTORIAL RECIENTE DE LA CONVERSACIÓN:
+{historial_seguro}
+
+MENSAJE ACTUAL DEL USUARIO:
+{str(mensaje).strip()[:6000]}
+
+Responde al mensaje actual teniendo en cuenta el contexto y la conversación. Si el usuario pregunta
+por el mercado, explica brevemente qué datos sustentan tu conclusión. Si pregunta algo general,
+responde normalmente sin forzar la conversación hacia trading.
+"""
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        config = types.GenerateContentConfig(
+            system_instruction=VENBOT_AI_SYSTEM,
+            temperature=0.45,
+            max_output_tokens=900,
+        )
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=config,
+        )
+        text = (response.text or "").strip()
+        if text:
+            return text
+    except Exception as first_error:
+        logger.exception("Gemini %s falló: %s", GEMINI_MODEL, first_error)
+        if GEMINI_MODEL != "gemini-2.5-flash":
+            try:
+                client = genai.Client(api_key=GEMINI_API_KEY)
+                config = types.GenerateContentConfig(
+                    system_instruction=VENBOT_AI_SYSTEM,
+                    temperature=0.45,
+                    max_output_tokens=900,
+                )
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=config,
+                )
+                text = (response.text or "").strip()
+                if text:
+                    return text
+            except Exception as second_error:
+                logger.exception("Fallback Gemini 2.5 Flash falló: %s", second_error)
+
+    return "No pude generar una respuesta en este momento. El mercado sigue disponible; intenta de nuevo en unos segundos."
+
+
+class AIChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=6000)
+    history: list[dict] = Field(default_factory=list)
+
+
+# ==========================================
 # FASTAPI
 # ==========================================
 app = FastAPI(title="Venbot API", version="2.0")
@@ -1055,8 +1027,19 @@ def health():
         "status": "ok",
         "database": bool(mercado) if DATABASE_URL else False,
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
+        "ai_configured": bool(GEMINI_API_KEY and genai is not None),
+        "ai_model": GEMINI_MODEL,
         "timestamp": datetime.now(VET).isoformat(),
     }
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(payload: AIChatRequest):
+    mensaje = payload.message.strip()
+    if not mensaje:
+        return {"ok": False, "error": "Mensaje vacío."}
+    respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history)
+    return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else "not_configured"}
 
 
 def _mercado_desactualizado(mercado):
@@ -1124,152 +1107,6 @@ def obtener_precios_api(refresh: bool = Query(False)):
         "liquidez": mercado["liquidez"],
         "fuente_bcv": mercado["fuente_bcv"],
         "timestamp": fecha.astimezone(VET).isoformat() if fecha else datetime.now(VET).isoformat(),
-    }
-
-
-@app.get("/api/analysis")
-def obtener_analysis_api(banco: str = Query("GENERAL")):
-    """Lectura analítica P2P real, separada en táctica, flujo y niveles."""
-    banco = banco.upper().strip()
-    if banco not in ("GENERAL", *BANCOS_REFERENCIA.keys()):
-        banco = "GENERAL"
-
-    mercado = obtener_mercado_actual_db() if banco == "GENERAL" else None
-    if banco == "GENERAL" and (not mercado or _mercado_desactualizado(mercado)):
-        try:
-            recolectar_mercado_general()
-            mercado = obtener_mercado_actual_db()
-        except Exception:
-            mercado = obtener_mercado_actual_db()
-
-    if banco != "GENERAL":
-        try:
-            c, v, l = obtener_precios_binance_p2p(banco)
-            mercado = {"compra": c, "venta": v, "liquidez": l}
-        except Exception:
-            mercado = None
-
-    if not mercado or float(mercado.get("compra", 0) or 0) <= 0 or float(mercado.get("venta", 0) or 0) <= 0:
-        return {"ok": False, "error": "No existe una lectura P2P real disponible para analizar."}
-
-    compra = float(mercado["compra"])
-    venta = float(mercado["venta"])
-    liquidez = int(mercado.get("liquidez", 0) or 0)
-    spread = venta - compra
-    spread_pct = (spread / compra * 100) if compra else 0.0
-    datos = motor_quant_inteligente(compra, venta, liquidez, banco)
-
-    filas = obtener_estadisticas_db(limit=300, banco=banco)
-    compras = np.array([float(f[0]) for f in filas if f[0] is not None], dtype=float)
-    ventas = np.array([float(f[1]) for f in filas if f[1] is not None], dtype=float)
-    liquidez_hist = np.array([float(f[2] or 0) for f in filas], dtype=float) if filas else np.array([])
-
-    if len(compras) >= 2:
-        mid = (compras + ventas) / 2
-        ventana = min(20, len(mid))
-        reciente = mid[-ventana:]
-        anterior = mid[-min(ventana, len(mid)-ventana):] if len(mid) > ventana else mid[:-1]
-        cambio_reciente = float(reciente[-1] - reciente[0]) if len(reciente) >= 2 else 0.0
-        cambio_pct = (cambio_reciente / reciente[0] * 100) if reciente[0] else 0.0
-        volatilidad = float(np.std(np.diff(reciente))) if len(reciente) >= 3 else 0.0
-        if len(anterior) >= 2:
-            cambio_anterior = float(anterior[-1] - anterior[0])
-            base_anterior = float(anterior[0]) or 1.0
-            cambio_anterior_pct = cambio_anterior / base_anterior * 100
-        else:
-            cambio_anterior_pct = 0.0
-        aceleracion = cambio_pct - cambio_anterior_pct
-        if cambio_pct > 0.15:
-            direccion = "alcista"
-        elif cambio_pct < -0.15:
-            direccion = "bajista"
-        else:
-            direccion = "lateral"
-    else:
-        cambio_pct = 0.0
-        cambio_anterior_pct = 0.0
-        aceleracion = 0.0
-        volatilidad = 0.0
-        direccion = "sin tendencia suficiente"
-
-    if len(ventas) >= 4:
-        q_low, q_high = np.quantile(np.concatenate([compras, ventas]), [0.10, 0.90])
-        soporte = float(np.quantile(compras, 0.25))
-        resistencia = float(np.quantile(ventas, 0.75))
-        nivel_medio = float(np.median(np.concatenate([compras, ventas])))
-    else:
-        q_low, q_high = compra, venta
-        soporte, resistencia, nivel_medio = compra, venta, (compra + venta) / 2
-
-    avg_liquidez = float(np.mean(liquidez_hist[-20:])) if len(liquidez_hist) else float(liquidez)
-    delta_liquidez = liquidez - avg_liquidez
-    spread_hist = ventas - compras if len(ventas) == len(compras) else np.array([])
-    spread_medio = float(np.mean(spread_hist[-20:])) if len(spread_hist) else spread
-    spread_delta = spread - spread_medio
-    mid_actual = (compra + venta) / 2
-    rango = max(q_high - q_low, 0.01)
-    posicion_rango = (mid_actual - q_low) / rango * 100
-    rango_4h = (float(q_low), float(q_high))
-
-    # 1) TÁCTICA: combina dirección, aceleración y coste de ejecución.
-    if direccion == "alcista" and aceleracion > 0 and spread_pct < 1.5:
-        tactica_estado = "🟢 MOMENTO FAVORABLE"
-        tactica_texto = (f"El impulso reciente es alcista ({cambio_pct:+.2f}%) y está acelerando ({aceleracion:+.2f} pp). "
-                         f"Con spread de {spread_pct:.2f}%, la zona a vigilar es {soporte:.2f}–{nivel_medio:.2f} Bs; "
-                         f"la lectura pierde calidad si el precio se aleja hacia {resistencia:.2f} Bs sin confirmar flujo.")
-    elif direccion == "bajista" and aceleracion < 0:
-        tactica_estado = "🟡 DEFENSIVA"
-        tactica_texto = (f"La presión reciente es bajista ({cambio_pct:+.2f}%) y continúa perdiendo terreno ({aceleracion:+.2f} pp). "
-                         f"Prioriza confirmación cerca de {soporte:.2f} Bs y evita perseguir rebotes mientras el precio siga debajo de {nivel_medio:.2f} Bs.")
-    elif spread_pct >= 1.5:
-        tactica_estado = "🟠 EJECUCIÓN COSTOSA"
-        tactica_texto = (f"El precio está {direccion} pero el spread de {spread_pct:.2f}% está por encima del umbral táctico. "
-                         f"La prioridad es esperar compresión del diferencial o una mejor zona entre {soporte:.2f} y {nivel_medio:.2f} Bs.")
-    else:
-        tactica_estado = "⚪ ESPERA / RANGO"
-        tactica_texto = (f"La dirección no tiene confirmación suficiente ({cambio_pct:+.2f}%). "
-                         f"El escenario operativo está entre {soporte:.2f} y {resistencia:.2f} Bs; espera ruptura acompañada por flujo antes de cambiar de sesgo.")
-
-    # 2) FLUJO P2P: profundidad observada, aceleración y comportamiento del spread.
-    if liquidez >= max(12, avg_liquidez * 1.15) and delta_liquidez > 0:
-        flujo_estado = "⚡ FLUJO EXPANSIVO"
-    elif liquidez <= max(1, avg_liquidez * 0.75):
-        flujo_estado = "🟡 FLUJO CONTRAÍDO"
-    else:
-        flujo_estado = "🟢 FLUJO NORMAL"
-    spread_direction = "ampliándose" if spread_delta > max(0.05, spread_medio * 0.05) else ("comprimiéndose" if spread_delta < -max(0.05, spread_medio * 0.05) else "estable")
-    flujo_texto = (f"Se observan {liquidez} unidades de liquidez frente a una media de {avg_liquidez:.1f} ({delta_liquidez:+.1f}). "
-                   f"El spread está {spread_direction} ({spread_delta:+.2f} Bs frente a su media), la volatilidad corta es {volatilidad:.3f} Bs y el ritmo del precio muestra {direccion}.")
-
-    # 3) NIVELES P2P: ubicación exacta dentro del rango y niveles que invalidan/confirmarían la lectura.
-    posicion = "zona alta" if posicion_rango >= 66 else ("zona baja" if posicion_rango <= 34 else "zona media")
-    niveles_estado = "🎯 CERCA DE RESISTENCIA" if posicion_rango >= 75 else ("🛡️ CERCA DE SOPORTE" if posicion_rango <= 25 else "⚖️ ZONA MEDIA")
-    niveles_texto = (f"Soporte {soporte:.2f} Bs · medio {nivel_medio:.2f} Bs · resistencia {resistencia:.2f} Bs. "
-                     f"El precio medio está en {posicion} del rango ({posicion_rango:.0f}%). "
-                     f"Una ruptura sostenida sobre {resistencia:.2f} Bs confirmaría fortaleza; perder {soporte:.2f} Bs aumentaría el riesgo de continuación bajista.")
-
-    diagnostico = f"{tactica_estado} · {flujo_estado} · {niveles_estado}"
-    resumen = f"P2P {banco}: comprar {compra:.2f} Bs, vender {venta:.2f} Bs, spread {spread:.2f} Bs ({spread_pct:.2f}%). Tendencia {direccion}; liquidez {liquidez}."
-
-    return {
-        "ok": True,
-        "fuente": "Binance P2P + histórico Venbot",
-        "banco": banco,
-        "actual": {"compra": round(compra, 2), "venta": round(venta, 2), "spread": round(spread, 2), "spread_pct": round(spread_pct, 2)},
-        "prediccion": {"compra": datos["pred_compra"], "venta": datos["pred_venta"]},
-        "rango": {"piso": round(float(q_low), 2), "techo": round(float(q_high), 2)},
-        "niveles": {"soporte": round(soporte, 2), "medio": round(nivel_medio, 2), "resistencia": round(resistencia, 2)},
-        "liquidez": {"valor": liquidez, "estado": datos["estado_comunidad"], "media": round(avg_liquidez, 1), "delta": round(delta_liquidez, 1)},
-        "muestras": len(filas),
-        "tendencia": direccion,
-        "diagnostico": diagnostico,
-        "modos": {
-            "tactica": {"titulo": "Táctica P2P", "texto": tactica_texto, "indicadores": [tactica_estado, f"Spread {spread_pct:.2f}%", f"Entrada vigilancia {soporte:.2f} Bs", f"Proyección {datos['pred_compra']:.2f} Bs"]},
-            "flujo": {"titulo": "Flujo P2P", "texto": flujo_texto, "indicadores": [flujo_estado, f"Liquidez {liquidez}", f"Media {avg_liquidez:.1f}", f"Cambio {delta_liquidez:+.1f}"]},
-            "niveles": {"titulo": "Niveles P2P", "texto": niveles_texto, "indicadores": [niveles_estado, f"Soporte {soporte:.2f} Bs", f"Medio {nivel_medio:.2f} Bs", f"Resistencia {resistencia:.2f} Bs"]},
-        },
-        "resumen": resumen,
-        "timestamp": datetime.now(VET).isoformat(),
     }
 
 
