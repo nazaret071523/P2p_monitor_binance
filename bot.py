@@ -5,6 +5,15 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+from pydantic import BaseModel, Field
+
+try:
+    from google import genai
+    from google.genai import types
+except Exception:
+    genai = None
+    types = None
+
 import pytz
 import psycopg2
 import requests
@@ -16,18 +25,10 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query
-from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import uvicorn
-
-try:
-    from google import genai
-    from google.genai import types
-except Exception:
-    genai = None
-    types = None
 
 # ==========================================
 # CONFIGURACIÓN GENERAL
@@ -385,50 +386,97 @@ def calcular_vwap_con_filtro(items):
     return pv / vol if vol > 0 else 0.0
 
 
-def _binance_search(trade_type, banco_filtro="GENERAL"):
-    url = "https://www.binance.com/bapi/c2c/v1/friendly/c2c/adv/search"
-    # Algunos despliegues siguen respondiendo en /public/. Se usa como fallback.
+def _ad_contiene_banco(item, banco):
+    """Filtra por banco usando todos los campos visibles del anuncio."""
+    if banco == "GENERAL":
+        return True
+    aliases = {
+        "MERCANTIL": ["mercantil"],
+        "PROVINCIAL": ["provincial", "bbva provincial", "bbva"],
+        "BNC": ["bnc", "banco nacional de credito", "banco nacional de crédito"],
+    }.get(banco, [banco.lower()])
+    try:
+        import json
+        blob = json.dumps(item, ensure_ascii=False).lower()
+    except Exception:
+        blob = str(item).lower()
+    return any(a in blob for a in aliases)
+
+
+def _anuncio_no_verificado(item):
+    """Excluye comerciantes Pro/Verificados de forma defensiva."""
+    try:
+        adv = item.get("adv") or {}
+        advertiser = item.get("advertiser") or {}
+        for obj in (item, adv, advertiser):
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("proMerchant") is True or obj.get("proMerchantAds") is True:
+                return False
+            if str(obj.get("userType", "")).lower() in {"merchant", "pro", "verified", "verifiedmerchant"}:
+                return False
+            if obj.get("merchant") is True or obj.get("verifiedMerchant") is True:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _binance_fetch_raw(trade_type, rows=30):
+    # Endpoint v2 activo para el libro P2P web; v1 adv/search está devolviendo 404.
     urls = [
-        url,
-        "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search",
+        "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
+        "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
+        "https://www.binance.com/bapi/c2c/v2/friendly/c2c/p2p/searchAds",
+        "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/p2p/searchAds",
     ]
-
     payload = {
-        "asset": "USDT",
-        "fiat": "VES",
-        "page": 1,
-        "rows": 10,
-        "tradeType": trade_type,
-        "payTypes": [] if banco_filtro == "GENERAL" else [banco_filtro],
-        "publisherType": None,
-        "merchantCheck": False,
+        "asset": "USDT", "fiat": "VES", "page": 1, "rows": rows,
+        "tradeType": trade_type, "payTypes": ["BANK"],
+        "publisherType": None, "merchantCheck": False,
+        "proMerchantAds": False, "shieldMerchantAds": False,
+        "transAmount": 300000 if trade_type == "SELL" else 10000,
     }
-
     last_error = None
     for endpoint in urls:
         try:
-            r = HTTP.post(
-                endpoint,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Origin": "https://p2p.binance.com",
-                    "Referer": "https://p2p.binance.com/",
-                },
-                timeout=10,
-            )
+            r = HTTP.post(endpoint, json=payload, headers={
+                "Content-Type": "application/json",
+                "Origin": "https://p2p.binance.com",
+                "Referer": "https://p2p.binance.com/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/139 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+            }, timeout=12)
             r.raise_for_status()
             body = r.json()
             data = body.get("data") or []
+            if isinstance(data, dict):
+                data = data.get("data") or data.get("rows") or []
             if data:
                 return data
             last_error = f"respuesta sin anuncios en {endpoint}"
         except Exception as e:
             last_error = str(e)
+    raise RuntimeError(last_error or "Binance P2P sin respuesta")
 
-    if last_error:
-        raise RuntimeError(last_error)
-    return []
+
+def _binance_search(trade_type, banco_filtro="GENERAL"):
+    raw = _binance_fetch_raw(trade_type, rows=30)
+    bancos = ["MERCANTIL", "PROVINCIAL", "BNC"] if banco_filtro == "GENERAL" else [banco_filtro]
+    result = []
+    for banco in bancos:
+        elegibles = [x for x in raw if _anuncio_no_verificado(x) and _ad_contiene_banco(x, banco)]
+        result.extend(elegibles[:10])
+    # GENERAL combina los 10 primeros de cada banco; elimina duplicados.
+    seen = set()
+    unique = []
+    for item in result:
+        adv = item.get("adv") or {}
+        key = str(adv.get("advNo") or item.get("advNo") or id(item))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
 
 
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
@@ -757,8 +805,8 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
     teclado = [
-        [InlineKeyboardButton("BBVA", callback_data="banco_BBVA"), InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL")],
-        [InlineKeyboardButton("General", callback_data="banco_GENERAL")],
+        [InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL"), InlineKeyboardButton("Provincial", callback_data="banco_PROVINCIAL")],
+        [InlineKeyboardButton("BNC", callback_data="banco_BNC"), InlineKeyboardButton("3 Bancos", callback_data="banco_GENERAL")],
         [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")],
     ]
     chat_id = update.effective_chat.id
@@ -815,7 +863,7 @@ async def tarea_recoleccion_automatica():
             mercado = await asyncio.to_thread(recolectar_mercado_general)
 
             # Bancos separados, solo para histórico/Telegram.
-            for banco in ("BBVA", "MERCANTIL"):
+            for banco in ("MERCANTIL", "PROVINCIAL", "BNC"):
                 c, v, l = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
@@ -851,152 +899,6 @@ async def tarea_recoleccion_automatica():
 
 
 # ==========================================
-# VENBOT AI CONVERSACIONAL
-# ==========================================
-VENBOT_AI_SYSTEM = """
-Eres Venbot AI, un asistente conversacional inteligente integrado en un monitor de Binance P2P.
-Hablas español claro, natural y profesional. Tu estilo es cercano, razonado y útil, como un buen
-analista que conversa con el usuario, no como un robot que repite indicadores.
-
-REGLAS IMPORTANTES:
-1. Puedes responder preguntas generales y educativas, no solo preguntas de trading.
-2. Cuando la pregunta se refiera al mercado, usa PRIORITARIAMENTE los datos reales que aparecen
-   en CONTEXTO DE MERCADO. Nunca inventes precios, tasas, liquidez ni histórico.
-3. Distingue entre datos observados, cálculos derivados, estimaciones y opinión analítica.
-4. Recuerda que en Venbot: "Comprar USDT" significa comprar USDT en Binance P2P (anuncios SELL),
-   y "Vender USDT" significa vender USDT (anuncios BUY). No inviertas estos significados.
-5. Puedes hacer cálculos sencillos con los datos proporcionados y explicar el procedimiento.
-6. Si faltan datos para responder con precisión, dilo y pide solo el dato necesario.
-7. Para preguntas de inversión/trading, no prometas ganancias ni presentes una predicción como certeza.
-8. No afirmes haber ejecutado operaciones, consultado fuentes externas o visto datos que no estén en el contexto.
-9. Mantén las respuestas concisas pero suficientemente explicativas. Usa listas cuando ayuden.
-10. Conserva el contexto de la conversación y responde a referencias como "eso", "y si espero", etc.
-
-Tu objetivo es que el usuario pueda conversar contigo de forma natural y recibir respuestas útiles,
-razonadas y contextualizadas.
-"""
-
-
-def _serializar_contexto_mercado():
-    mercado = obtener_mercado_actual_db() or {}
-    compra = float(mercado.get("compra") or 0)
-    venta = float(mercado.get("venta") or 0)
-    spread = venta - compra if compra and venta else 0
-    spread_pct = (spread / compra * 100) if compra else 0
-    liquidez = int(mercado.get("liquidez") or 0)
-
-    try:
-        filas = obtener_estadisticas_db(limit=120, banco="GENERAL")
-    except Exception:
-        filas = []
-
-    historico = []
-    for c, v, l, f in filas[-60:]:
-        historico.append({
-            "compra": round(float(c), 2),
-            "venta": round(float(v), 2),
-            "liquidez": int(l or 0),
-            "timestamp": f.isoformat() if f else None,
-        })
-
-    quant = {}
-    if compra > 0 and venta > 0:
-        try:
-            quant = motor_quant_inteligente(compra, venta, liquidez, "GENERAL")
-        except Exception as e:
-            logger.warning("No se pudo calcular contexto quant para IA: %s", e)
-
-    return {
-        "ahora": {
-            "comprar_usdt": round(compra, 2),
-            "vender_usdt": round(venta, 2),
-            "spread_bs": round(spread, 2),
-            "spread_pct": round(spread_pct, 2),
-            "liquidez": liquidez,
-            "bcv_usd": round(float(mercado.get("bcv") or 0), 2),
-            "euro_bcv": round(float(mercado.get("eur") or 0), 2),
-            "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None,
-        },
-        "analisis_quant": quant,
-        "historico_reciente": historico,
-    }
-
-
-def generar_respuesta_ia(mensaje, historial):
-    if not GEMINI_API_KEY or genai is None:
-        return ("La IA conversacional todavía no está configurada en el servidor. "
-                "Falta GEMINI_API_KEY en las variables de entorno de Render.")
-
-    contexto = _serializar_contexto_mercado()
-    historial_seguro = []
-    for item in (historial or [])[-12:]:
-        if not isinstance(item, dict):
-            continue
-        role = "user" if item.get("role") == "user" else "model"
-        content = str(item.get("content") or "").strip()
-        if content:
-            historial_seguro.append({"role": role, "content": content[:4000]})
-
-    prompt = f"""
-CONTEXTO DE MERCADO VENBOT (datos observados/derivados del backend):
-{contexto}
-
-HISTORIAL RECIENTE DE LA CONVERSACIÓN:
-{historial_seguro}
-
-MENSAJE ACTUAL DEL USUARIO:
-{str(mensaje).strip()[:6000]}
-
-Responde al mensaje actual teniendo en cuenta el contexto y la conversación. Si el usuario pregunta
-por el mercado, explica brevemente qué datos sustentan tu conclusión. Si pregunta algo general,
-responde normalmente sin forzar la conversación hacia trading.
-"""
-
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        config = types.GenerateContentConfig(
-            system_instruction=VENBOT_AI_SYSTEM,
-            temperature=0.45,
-            max_output_tokens=900,
-        )
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=config,
-        )
-        text = (response.text or "").strip()
-        if text:
-            return text
-    except Exception as first_error:
-        logger.exception("Gemini %s falló: %s", GEMINI_MODEL, first_error)
-        if GEMINI_MODEL != "gemini-2.5-flash":
-            try:
-                client = genai.Client(api_key=GEMINI_API_KEY)
-                config = types.GenerateContentConfig(
-                    system_instruction=VENBOT_AI_SYSTEM,
-                    temperature=0.45,
-                    max_output_tokens=900,
-                )
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt,
-                    config=config,
-                )
-                text = (response.text or "").strip()
-                if text:
-                    return text
-            except Exception as second_error:
-                logger.exception("Fallback Gemini 2.5 Flash falló: %s", second_error)
-
-    return "No pude generar una respuesta en este momento. El mercado sigue disponible; intenta de nuevo en unos segundos."
-
-
-class AIChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=6000)
-    history: list[dict] = Field(default_factory=list)
-
-
-# ==========================================
 # FASTAPI
 # ==========================================
 app = FastAPI(title="Venbot API", version="2.0")
@@ -1027,19 +929,10 @@ def health():
         "status": "ok",
         "database": bool(mercado) if DATABASE_URL else False,
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
-        "ai_configured": bool(GEMINI_API_KEY and genai is not None),
-        "ai_model": GEMINI_MODEL,
+        "ai_configured": bool(GEMINI_API_KEY and genai),
+        "ai_model": GEMINI_MODEL if GEMINI_API_KEY else None,
         "timestamp": datetime.now(VET).isoformat(),
     }
-
-
-@app.post("/api/ai/chat")
-async def ai_chat(payload: AIChatRequest):
-    mensaje = payload.message.strip()
-    if not mensaje:
-        return {"ok": False, "error": "Mensaje vacío."}
-    respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history)
-    return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else "not_configured"}
 
 
 def _mercado_desactualizado(mercado):
@@ -1157,6 +1050,67 @@ def obtener_history(period: str = Query("1d", pattern="^(1d|7d|30d)$")):
                 puntos.append(last_point)
 
     return {"ok": True, "period": period, "count": len(puntos), "data": puntos}
+
+
+VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional intelectual en español integrado en un monitor P2P de Binance USDT/VES. Puedes responder preguntas generales y preguntas sobre trading/P2P. Cuando hables del mercado usa exclusivamente el contexto real que recibes. Nunca inventes precios, tasas, liquidez, noticias ni datos. Distingue claramente entre dato observado, cálculo, estimación e interpretación. Regla semántica obligatoria: Comprar USDT = anuncios SELL de Binance (el usuario compra USDT); Vender USDT = anuncios BUY (el usuario vende USDT). Mantén continuidad conversacional usando el historial. Sé natural, claro, razonado y útil; no prometas ganancias ni certeza financiera. Si no tienes un dato actual, dilo."""
+
+
+def _serializar_contexto_mercado():
+    mercado = obtener_mercado_actual_db() or {}
+    filas = obtener_estadisticas_db(limit=60, banco="GENERAL")
+    hist = []
+    for c, v, l, f in filas:
+        hist.append({"compra": round(float(c),2), "venta": round(float(v),2), "liquidez": int(l or 0), "fecha": f.isoformat() if f else None})
+    compra = float(mercado.get("compra",0) or 0); venta = float(mercado.get("venta",0) or 0)
+    spread = venta-compra if compra and venta else 0
+    return {"mercado_actual": {"comprar_usdt_sell": compra, "vender_usdt_buy": venta, "spread": round(spread,2), "spread_pct": round(spread/compra*100,2) if compra else 0, "liquidez": int(mercado.get("liquidez",0) or 0), "bcv_usd": mercado.get("bcv",0), "euro": mercado.get("eur",0), "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None}, "historial_general": hist[-60:]}
+
+
+def generar_respuesta_ia(mensaje, historial):
+    if not GEMINI_API_KEY or genai is None:
+        return "La IA conversacional todavía no está configurada en el servidor."
+    import json
+    contexto = _serializar_contexto_mercado()
+    prev = []
+    for h in (historial or [])[-12:]:
+        role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
+        content = str(h.get("content", h.get("text", "")))[:3000]
+        if content:
+            prev.append({"role": role, "content": content})
+    prompt = "CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) + "\n\nHISTORIAL:\n" + json.dumps(prev, ensure_ascii=False) + "\n\nPREGUNTA ACTUAL:\n" + mensaje
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=0.45, max_output_tokens=900),
+        )
+        text = getattr(response, "text", None)
+        if text:
+            return text.strip()
+    except Exception as e:
+        logger.warning("Gemini %s falló: %s", GEMINI_MODEL, e)
+        if GEMINI_MODEL != "gemini-2.5-flash":
+            try:
+                client = genai.Client(api_key=GEMINI_API_KEY)
+                response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=0.45, max_output_tokens=900))
+                text = getattr(response, "text", None)
+                if text: return text.strip()
+            except Exception as e2:
+                logger.warning("Gemini fallback falló: %s", e2)
+    return "No pude generar una respuesta en este momento. Intenta de nuevo en unos segundos."
+
+
+class AIChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=6000)
+    history: list[dict] = Field(default_factory=list)
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(payload: AIChatRequest):
+    mensaje = payload.message.strip()
+    respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history)
+    return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else "not_configured"}
 
 
 @app.post("/webhook")
