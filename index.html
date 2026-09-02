@@ -7,7 +7,7 @@
   <meta name="description" content="Venbot: consulta y análisis exclusivo del mercado P2P USDT/VES, tasas oficiales BCV en vivo y herramientas de trader.">
 
   <!-- IMPORTANTE: reemplaza SOLO esta URL por la URL pública de tu Web Service en Render -->
-  <meta name="venbot-api" content="https://TU-SERVICIO.onrender.com">
+  <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com">
 
   <title>Venbot · USDT/VES</title>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -301,14 +301,14 @@
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-        <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI (Binance P2P)</h3><p class="text-[10px] text-emerald-400 font-semibold">Conversación inteligente · P2P, trading y preguntas generales</p></div></div>
+        <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI (Binance P2P)</h3><p class="text-[10px] text-emerald-400 font-semibold">Exclusivo para análisis P2P y arbitraje</p></div></div>
         <button type="button" onclick="closeAIChatModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"><i class="fa-solid fa-xmark text-sm"></i></button>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedes preguntarme sobre el mercado P2P, trading, cálculos, conceptos o cualquier otra cosa. Cuando hables del mercado, usaré las lecturas reales de Venbot para responderte.</div></div>
+        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo mostrarte un resumen de las lecturas actuales P2P, BCV y Euro disponibles en el monitor.</div></div>
       </div>
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center gap-2">
-        <input id="ai-user-input" type="text" placeholder="Pregúntame lo que quieras…" onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
+        <input id="ai-user-input" type="text" placeholder="Pregunta sobre el mercado P2P..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
         <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1"><i class="fa-solid fa-paper-plane"></i></button>
       </div>
     </div>
@@ -670,72 +670,39 @@
       })[ch]);
     }
 
-    let aiRequestRunning = false;
-
     function appendAIMessage(role, text) {
       const chat = document.getElementById('ai-chat-messages');
       const safe = escapeHTML(text).replace(/\n/g, '<br>');
-      if (role === 'user') {
-        chat.insertAdjacentHTML('beforeend',
-          `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${safe}</div></div>`
-        );
-      } else {
-        chat.insertAdjacentHTML('beforeend',
-          `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">${safe}</div></div>`
-        );
-      }
+      const user = role === 'user';
+      chat.insertAdjacentHTML('beforeend', user
+        ? `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${safe}</div></div>`
+        : `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">${safe}</div></div>`);
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function setAITyping(show) {
-      const chat = document.getElementById('ai-chat-messages');
-      const existing = document.getElementById('ai-typing');
-      if (show && !existing) {
-        chat.insertAdjacentHTML('beforeend', `<div id="ai-typing" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
-        chat.scrollTop = chat.scrollHeight;
-      } else if (!show && existing) {
-        existing.remove();
-      }
-    }
-
     async function sendAIMessage() {
-      if (aiRequestRunning) return;
       const input = document.getElementById('ai-user-input');
       const text = input.value.trim();
       if (!text) return;
-
-      const historyForRequest = aiConversation.slice(-12);
+      input.value = '';
       appendAIMessage('user', text);
       aiConversation.push({ role: 'user', content: text });
-      input.value = '';
-      aiRequestRunning = true;
-      input.disabled = true;
-      setAITyping(true);
-
+      const typingId = 'ai-typing-' + Date.now();
+      const chat = document.getElementById('ai-chat-messages');
+      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
+      chat.scrollTop = chat.scrollHeight;
       try {
-        const response = await fetch(API_AI_CHAT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ message: text, history: historyForRequest })
-        });
+        const response = await fetch(API_AI_CHAT, { method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json'}, body: JSON.stringify({ message: text, history: aiConversation.slice(-12) }) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-        const answer = String(data.answer || 'No recibí una respuesta válida.');
-        setAITyping(false);
+        document.getElementById(typingId)?.remove();
+        const answer = data.answer || 'No recibí una respuesta válida.';
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
       } catch (error) {
         console.error('Venbot AI:', error);
-        setAITyping(false);
-        const fallback = marketState.buy > 0
-          ? `Ahora mismo tengo la lectura P2P: comprar ${money(marketState.buy)} Bs, vender ${money(marketState.sell)} Bs, spread ${pct(marketState.spreadPct)}%. La IA conversacional no pudo responder temporalmente; intenta de nuevo en unos segundos.`
-          : 'No pude conectar con Venbot AI en este momento. Intenta de nuevo en unos segundos.';
-        appendAIMessage('assistant', fallback);
-        aiConversation.push({ role: 'assistant', content: fallback });
-      } finally {
-        aiRequestRunning = false;
-        input.disabled = false;
-        input.focus();
+        document.getElementById(typingId)?.remove();
+        appendAIMessage('assistant', 'No pude conectar con la IA en este momento. El monitor sigue funcionando con los datos del mercado.');
       }
     }
 
@@ -775,7 +742,7 @@
     async function bootVenbot() {
       if (!API_BASE_URL || API_BASE_URL.includes('TU-SERVICIO')) {
         setSyncState(false, 'configura URL Render');
-        console.error('Configura <meta name="venbot-api" content="https://TU-SERVICIO.onrender.com"> con la URL real de Render.');
+        console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
         return;
       }
       await Promise.allSettled([loadPrices(), loadHistory('1d')]);
