@@ -10,3 +10,4 @@ matplotlib>=3.9,<4
 pytz>=2024.1
 beautifulsoup4>=4.12,<5
 google-genai>=1,<2
+pydantic>=2.9,<3
