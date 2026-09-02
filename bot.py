@@ -375,68 +375,244 @@ def calcular_vwap_con_filtro(items):
     return pv / vol if vol > 0 else 0.0
 
 
+# Parámetros de referencia P2P solicitados.
+# "Comprar USDT" en Venbot = anuncios SELL (el comerciante vende USDT).
+# "Vender USDT" en Venbot  = anuncios BUY  (el comerciante compra USDT).
+# Los montos son en VES y se usan para que Binance devuelva anuncios
+# ejecutables para ese tamaño de operación.
+VENTA_REFERENCIA_VES = 300_000.0
+RECOMPRA_REFERENCIA_VES = 10_000.0
+TOP_ANUNCIOS = 10
+PAGINAS_BUSQUEDA = 5
+ANUNCIOS_POR_PAGINA = 20
+
+# Tres bancos de referencia. Los aliases permiten que Binance cambie el
+# identificador visible sin romper el filtro.
+BANCOS_REFERENCIA = {
+    "MERCANTIL": ["MERCANTIL", "Mercantil"],
+    "PROVINCIAL": ["BBVABank", "PROVINCIAL", "Provincial"],
+    "BNC": ["BNCBancoNacional", "BNC", "BNC Banco Nacional de Crédito"],
+}
+
+
+def _normalizar_texto(value):
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _anuncio_no_verificado(item):
+    """Acepta únicamente anuncios de usuarios/comerciantes NO verificados.
+
+    Binance expone varias señales de identidad. La API usa `merchant` para
+    los comerciantes verificados; además, `proMerchant`/`merchant` permiten
+    excluirlos aunque `publisherType` no venga explícito en la respuesta.
+    Los campos ausentes no se consideran verificados para evitar descartar
+    anuncios normales por cambios de esquema.
+    """
+    advertiser = item.get("advertiser") or {}
+
+    if advertiser.get("proMerchant") is True:
+        return False
+    if advertiser.get("merchant") is True:
+        return False
+
+    identity = _normalizar_texto(advertiser.get("userIdentity"))
+    if identity in {"merchant", "pro_merchant", "verified_merchant", "merchant_verified"}:
+        return False
+
+    user_type = _normalizar_texto(advertiser.get("userType"))
+    if user_type in {"merchant_verified", "verified_merchant", "pro_merchant"}:
+        return False
+
+    return True
+
+
+def _ad_contiene_banco(item, banco_filtro):
+    if banco_filtro not in BANCOS_REFERENCIA:
+        return True
+    aliases = {_normalizar_texto(x) for x in BANCOS_REFERENCIA[banco_filtro]}
+    adv = item.get("adv") or {}
+    for method in adv.get("tradeMethods") or []:
+        valores = [
+            method.get("identifier"),
+            method.get("tradeMethodName"),
+            method.get("tradeMethodShortName"),
+            method.get("name"),
+        ]
+        normalizados = {_normalizar_texto(x) for x in valores if x}
+        if aliases & normalizados:
+            return True
+        combinado = " | ".join(sorted(normalizados))
+        if banco_filtro == "MERCANTIL" and "mercantil" in combinado:
+            return True
+        if banco_filtro == "PROVINCIAL" and ("provincial" in combinado or "bbvabank" in combinado):
+            return True
+        if banco_filtro == "BNC" and ("bnc" in combinado or "banco nacional de credito" in combinado):
+            return True
+    return False
+
+
+def _binance_post(payload, endpoint):
+    r = HTTP.post(
+        endpoint,
+        json=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Origin": "https://p2p.binance.com",
+            "Referer": "https://p2p.binance.com/",
+        },
+        timeout=10,
+    )
+    r.raise_for_status()
+    body = r.json()
+    return body.get("data") or []
+
+
 def _binance_search(trade_type, banco_filtro="GENERAL"):
-    # Endpoint P2P vigente usado por clientes públicos de Binance.
-    # El endpoint antiguo /bapi/c2c/v1/... en www.binance.com devuelve 404.
+    """
+    Devuelve hasta los primeros TOP_ANUNCIOS anuncios elegibles.
+
+    Filtros de estrategia:
+      - SELL / Comprar USDT: 300.000 VES.
+      - BUY  / Vender USDT:   10.000 VES.
+      - Banco: Mercantil, Provincial o BNC.
+      - Solo anuncios de comerciantes/usuarios NO verificados.
+
+    Primero se pide a Binance que filtre por monto y banco. Si Binance no
+    reconoce el identificador del banco, se hace fallback por páginas y se
+    filtran los métodos de pago en la respuesta, conservando el orden.
+    """
+    endpoint = "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     urls = [
-        "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
-        "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
+        endpoint,
+        "https://www.binance.com/bapi/c2c/v1/friendly/c2c/adv/search",
+        "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search",
     ]
 
-    payload = {
-        "asset": "USDT",
-        "fiat": "VES",
-        "page": 1,
-        "rows": 20,
-        "tradeType": trade_type,
-        "payTypes": [] if banco_filtro == "GENERAL" else [banco_filtro],
-        "publisherType": None,
-        "merchantCheck": False,
-        "countries": [],
-        "proMerchantAds": False,
-        "shieldMerchantAds": False,
-    }
-
+    trans_amount = VENTA_REFERENCIA_VES if trade_type == "SELL" else RECOMPRA_REFERENCIA_VES
+    pay_types = [] if banco_filtro == "GENERAL" else BANCOS_REFERENCIA.get(banco_filtro, [banco_filtro])
     last_error = None
-    for endpoint in urls:
+
+    # Camino principal: filtro de Binance por monto + banco.
+    for endpoint_url in urls:
         try:
-            r = HTTP.post(
-                endpoint,
-                json=payload,
-                headers={
-                    "Accept": "*/*",
-                    "Content-Type": "application/json",
-                    "Origin": "https://p2p.binance.com",
-                    "Referer": "https://p2p.binance.com/",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
-                },
-                timeout=10,
-            )
-            r.raise_for_status()
-            body = r.json()
-            data = body.get("data") or []
+            payload = {
+                "asset": "USDT",
+                "fiat": "VES",
+                "page": 1,
+                "rows": ANUNCIOS_POR_PAGINA,
+                "tradeType": trade_type,
+                "payTypes": pay_types,
+                "publisherType": None,
+                "merchantCheck": False,
+                "transAmount": trans_amount,
+                "countries": [],
+                "proMerchantAds": False,
+                "shieldMerchantAds": False,
+                "filterType": "all",
+                "periods": [],
+                "additionalKycVerifyFilter": 0,
+            }
+            data = _binance_post(payload, endpoint_url)
             if data:
-                return data
-            last_error = f"respuesta sin anuncios en {endpoint}"
+                # Regla fija: excluir comerciantes verificados/pro antes de
+                # seleccionar los primeros 10 anuncios elegibles.
+                data = [x for x in data if _anuncio_no_verificado(x)]
+                if banco_filtro != "GENERAL":
+                    data = [x for x in data if _ad_contiene_banco(x, banco_filtro)]
+                if len(data) >= TOP_ANUNCIOS:
+                    return data[:TOP_ANUNCIOS]
+                # No devolvemos una muestra corta: seguimos con paginación.
+                encontrados = list(data)
+                for page in range(2, PAGINAS_BUSQUEDA + 1):
+                    payload["page"] = page
+                    more = _binance_post(payload, endpoint_url)
+                    if not more:
+                        break
+                    more = [x for x in more if _anuncio_no_verificado(x)]
+                    if banco_filtro != "GENERAL":
+                        more = [x for x in more if _ad_contiene_banco(x, banco_filtro)]
+                    encontrados.extend(more)
+                    if len(encontrados) >= TOP_ANUNCIOS:
+                        return encontrados[:TOP_ANUNCIOS]
+                if encontrados:
+                    return encontrados[:TOP_ANUNCIOS]
+            last_error = f"respuesta sin anuncios en {endpoint_url}"
         except Exception as e:
             last_error = str(e)
+
+    # Fallback robusto: consulta el libro sin payTypes y recoge los primeros
+    # 10 anuncios del banco solicitado, manteniendo el orden de Binance.
+    if banco_filtro != "GENERAL":
+        for endpoint_url in urls:
+            try:
+                encontrados = []
+                for page in range(1, 6):
+                    payload = {
+                        "asset": "USDT",
+                        "fiat": "VES",
+                        "page": page,
+                        "rows": 20,
+                        "tradeType": trade_type,
+                        "payTypes": [],
+                        "publisherType": None,
+                        "merchantCheck": False,
+                        "transAmount": trans_amount,
+                        "countries": [],
+                        "proMerchantAds": False,
+                        "shieldMerchantAds": False,
+                        "filterType": "all",
+                        "periods": [],
+                        "additionalKycVerifyFilter": 0,
+                    }
+                    data = _binance_post(payload, endpoint_url)
+                    if not data:
+                        break
+                    for item in data:
+                        if _anuncio_no_verificado(item) and _ad_contiene_banco(item, banco_filtro):
+                            encontrados.append(item)
+                            if len(encontrados) >= TOP_ANUNCIOS:
+                                return encontrados[:TOP_ANUNCIOS]
+                last_error = f"no se encontraron {TOP_ANUNCIOS} anuncios elegibles para {banco_filtro}"
+            except Exception as e:
+                last_error = str(e)
 
     if last_error:
         raise RuntimeError(last_error)
     return []
 
 
+def _combinar_anuncios_bancos(trade_type):
+    """Agrega los primeros 10 anuncios elegibles de cada banco de referencia."""
+    todos = []
+    errores = []
+    for banco in BANCOS_REFERENCIA:
+        try:
+            todos.extend(_binance_search(trade_type, banco))
+        except Exception as e:
+            errores.append(f"{banco}: {e}")
+    if errores:
+        logger.warning("Problemas consultando bancos de referencia (%s): %s", trade_type, " | ".join(errores))
+    return todos
+
+
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     """
-    Desde la perspectiva del usuario:
-    - Comprar USDT => anuncios SELL.
-    - Vender USDT  => anuncios BUY.
+    Estrategia fija de referencia:
+      - GENERAL = Mercantil + Provincial + BNC.
+      - Comprar USDT = SELL con monto objetivo de 300.000 VES.
+      - Vender USDT  = BUY con monto objetivo de 10.000 VES.
+      - Se toman los primeros 10 anuncios elegibles por banco, después de excluir
+        comerciantes verificados, y se calcula VWAP.
     """
     global ULTIMO_REGISTRO_VALIDO
 
     try:
-        anuncios_compra_usuario = _binance_search("SELL", banco_filtro)
-        anuncios_venta_usuario = _binance_search("BUY", banco_filtro)
+        if banco_filtro == "GENERAL":
+            anuncios_compra_usuario = _combinar_anuncios_bancos("SELL")
+            anuncios_venta_usuario = _combinar_anuncios_bancos("BUY")
+        else:
+            anuncios_compra_usuario = _binance_search("SELL", banco_filtro)
+            anuncios_venta_usuario = _binance_search("BUY", banco_filtro)
 
         compra = calcular_vwap_con_filtro(anuncios_compra_usuario)
         venta = calcular_vwap_con_filtro(anuncios_venta_usuario)
@@ -452,7 +628,7 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     except Exception as e:
         logger.warning("Binance P2P no disponible para %s: %s", banco_filtro, e)
 
-    # Última lectura real persistida. No se fabrican precios.
+    # Solo GENERAL conserva el último mercado general real.
     if banco_filtro == "GENERAL":
         db = obtener_mercado_actual_db()
         if db and db["compra"] > 0 and db["venta"] > 0:
@@ -466,7 +642,6 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
         )
 
     return 0.0, 0.0, 0
-
 
 def recolectar_mercado_general():
     compra, venta, liquidez = obtener_precios_binance_p2p("GENERAL")
@@ -752,13 +927,17 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
     teclado = [
-        [InlineKeyboardButton("BBVA", callback_data="banco_BBVA"), InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL")],
-        [InlineKeyboardButton("General", callback_data="banco_GENERAL")],
+        [InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL"), InlineKeyboardButton("Provincial", callback_data="banco_PROVINCIAL")],
+        [InlineKeyboardButton("BNC", callback_data="banco_BNC"), InlineKeyboardButton("3 Bancos", callback_data="banco_GENERAL")],
         [InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")],
     ]
     chat_id = update.effective_chat.id
     banco_actual = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
-    texto = f"🏦 *Selecciona el banco de arbitraje:*\nActualmente: `{banco_actual}`"
+    texto = (f"🏦 *Referencia P2P:*\nActualmente: `{banco_actual}`\n\n"
+             f"• Mercantil + Provincial + BNC en GENERAL\n"
+             f"• Comprar/SELL: 300.000 Bs\n"
+             f"• Vender/BUY: 10.000 Bs\n"
+             f"• Hasta 10 anuncios por banco y dirección")
     if update.callback_query and update.callback_query.message:
         await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
     else:
@@ -810,7 +989,7 @@ async def tarea_recoleccion_automatica():
             mercado = await asyncio.to_thread(recolectar_mercado_general)
 
             # Bancos separados, solo para histórico/Telegram.
-            for banco in ("BBVA", "MERCANTIL"):
+            for banco in BANCOS_REFERENCIA:
                 c, v, l = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
