@@ -7,7 +7,7 @@
   <meta name="description" content="Venbot: consulta y análisis exclusivo del mercado P2P USDT/VES, tasas oficiales BCV en vivo y herramientas de trader.">
 
   <!-- IMPORTANTE: reemplaza SOLO esta URL por la URL pública de tu Web Service en Render -->
-  <meta name="venbot-api" content="https://TU-SERVICIO.onrender.com">
+  <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com">
 
   <title>Venbot · USDT/VES</title>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -342,6 +342,7 @@
     const API_BASE_URL = (document.querySelector('meta[name="venbot-api"]')?.content || '').replace(/\/+$/, '');
     const API_PRICES = `${API_BASE_URL}/api/precios`;
     const API_HISTORY = `${API_BASE_URL}/api/history`;
+    const API_ANALYSIS = `${API_BASE_URL}/api/analysis`;
 
     const marketState = {
       buy: 0,
@@ -359,6 +360,7 @@
     let marketChart = null;
     let lastSuccessfulFetch = null;
     let priceRequestRunning = false;
+    let analysisRequestRunning = false;
 
     function money(n) {
       const value = Number(n);
@@ -417,6 +419,7 @@
 
       calculateRate();
       renderAIIndicators();
+      loadAnalysis();
       checkLocalAlert();
 
       if (marketState.sell > 0) {
@@ -467,6 +470,34 @@
         renderChart();
       } catch (error) {
         console.error('Venbot /api/history:', error);
+      }
+    }
+
+    async function loadAnalysis() {
+      if (analysisRequestRunning || marketState.buy <= 0 || marketState.sell <= 0) return;
+      analysisRequestRunning = true;
+      try {
+        const payload = await fetchJSON(`${API_ANALYSIS}?banco=GENERAL&t=${Date.now()}`, 20000);
+        if (!payload?.ok) return;
+        const predBuy = Number(payload.prediccion?.compra ?? 0);
+        const predSell = Number(payload.prediccion?.venta ?? 0);
+        const piso = payload.rango?.piso;
+        const techo = payload.rango?.techo;
+        const texto = payload.resumen || `Lectura basada en datos P2P reales: comprar USDT ${money(marketState.buy)} Bs y vender USDT ${money(marketState.sell)} Bs.`;
+        const insight = document.getElementById('gemini-insight-text');
+        if (insight) insight.textContent = texto;
+        const m1 = document.getElementById('m1-val');
+        const m2 = document.getElementById('m2-val');
+        const m3 = document.getElementById('m3-val');
+        const m4 = document.getElementById('m4-val');
+        if (m1) m1.textContent = payload.diagnostico || 'Lectura en vivo';
+        if (m2) m2.textContent = payload.liquidez?.estado || `${marketState.liquidity} anuncios observados`;
+        if (m3) m3.textContent = predBuy > 0 && predSell > 0 ? `Compra ${money(predBuy)} · Venta ${money(predSell)}` : 'Sin proyección';
+        if (m4 && Number.isFinite(Number(piso)) && Number.isFinite(Number(techo))) m4.textContent = `${money(piso)} – ${money(techo)} Bs`;
+      } catch (error) {
+        console.error('Venbot /api/analysis:', error);
+      } finally {
+        analysisRequestRunning = false;
       }
     }
 
@@ -727,13 +758,14 @@
     }
 
     async function bootVenbot() {
-      if (!API_BASE_URL || API_BASE_URL.includes('TU-SERVICIO')) {
+      if (!API_BASE_URL) {
         setSyncState(false, 'configura URL Render');
-        console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
+        console.error('Configura la URL del backend Render en la meta venbot-api.');
         return;
       }
       await Promise.allSettled([loadPrices(), loadHistory('1d')]);
       setInterval(loadPrices, 15000);
+      setInterval(loadAnalysis, 30000);
       setInterval(updateAgoLabel, 1000);
       setInterval(() => loadHistory(marketState.period), 60000);
     }
