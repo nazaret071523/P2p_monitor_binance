@@ -422,22 +422,45 @@ def _anuncio_no_verificado(item):
         return False
 
 
+def _normalizar_anuncio(item):
+    """Normaliza anuncios de la API Agent tanto si vienen con adv anidado como planos."""
+    if not isinstance(item, dict):
+        return None
+    if isinstance(item.get("adv"), dict):
+        return item
+    # Algunas respuestas pueden entregar los campos del anuncio en el nivel raíz.
+    if any(k in item for k in ("price", "advNo", "minSingleTransAmount", "maxSingleTransAmount", "surplusAmount")):
+        return {"adv": item, "advertiser": item.get("advertiser") or item.get("merchant") or {}}
+    return item
+
+
 def _extraer_ads_binance(body):
     """Normaliza respuestas de los endpoints públicos C2C actuales."""
-    data = body.get("data") if isinstance(body, dict) else body
-    if isinstance(data, dict):
-        for key in ("ads", "data", "rows", "list"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-    return data if isinstance(data, list) else []
+    candidates = []
+    if isinstance(body, dict):
+        data = body.get("data")
+        candidates.append(data)
+        if isinstance(data, dict):
+            for key in ("ads", "data", "rows", "list", "items"):
+                candidates.append(data.get(key))
+        for key in ("ads", "rows", "list", "items"):
+            candidates.append(body.get(key))
+    else:
+        candidates.append(body)
+
+    for value in candidates:
+        if isinstance(value, list):
+            normalized = [_normalizar_anuncio(x) for x in value]
+            return [x for x in normalized if x]
+    return []
 
 
 def _binance_fetch_raw(trade_type, rows=20):
-    """Consulta primero el MGS C2C Agent API público documentado por Binance.
+    """Consulta el MGS C2C Agent API público actual de Binance.
 
-    No se usa /p2p/searchAds porque actualmente devuelve 404.  El endpoint
-    agent/ad-list es GET y usa tradeMethodIdentifiers como parámetro simple.
+    Primero se intenta con el filtro BANK documentado. Si Binance devuelve vacío,
+    se reintenta sin filtro de método de pago y el banco se filtra localmente.
+    Esto evita perder anuncios cuando el identificador del método bancario cambia.
     """
     headers = {
         "Accept": "application/json, text/plain, */*",
@@ -446,46 +469,49 @@ def _binance_fetch_raw(trade_type, rows=20):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/139 Safari/537.36",
     }
     agent_url = "https://www.binance.com/bapi/c2c/v1/public/c2c/agent/ad-list"
-    try:
-        r = HTTP.get(
-            agent_url,
-            params={
-                "fiat": "VES",
-                "asset": "USDT",
-                "tradeType": trade_type,
-                "limit": min(max(int(rows), 1), 20),
-                "order": "price",
-                "tradeMethodIdentifiers": "BANK",
-            },
-            headers=headers,
-            timeout=12,
-        )
-        r.raise_for_status()
-        data = _extraer_ads_binance(r.json())
-        if data:
-            return data
-        raise RuntimeError("ad-list respondió sin anuncios")
-    except Exception as primary_error:
-        # Fallback histórico del sitio web; se mantiene como respaldo, no como
-        # endpoint principal. Nunca se intenta /p2p/searchAds (404 actual).
-        fallback = "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-        payload = {
-            "asset": "USDT", "fiat": "VES", "page": 1, "rows": min(max(int(rows), 1), 20),
-            "tradeType": trade_type, "payTypes": ["BANK"], "publisherType": None,
-            "merchantCheck": False, "proMerchantAds": False, "shieldMerchantAds": False,
-            "countries": [],
-        }
+    limit = min(max(int(rows), 1), 20)
+    last_error = None
+
+    # 1) Método BANK documentado por Binance.
+    attempts = [
+        {"fiat": "VES", "asset": "USDT", "tradeType": trade_type,
+         "limit": limit, "order": "price", "tradeMethodIdentifiers": "BANK"},
+        # 2) Sin filtro de método: filtramos Mercantil/Provincial/BNC localmente.
+        {"fiat": "VES", "asset": "USDT", "tradeType": trade_type,
+         "limit": limit, "order": "price"},
+    ]
+
+    for params in attempts:
         try:
-            r = HTTP.post(fallback, json=payload, headers=headers, timeout=12)
+            r = HTTP.get(agent_url, params=params, headers=headers, timeout=12)
             r.raise_for_status()
             data = _extraer_ads_binance(r.json())
             if data:
+                logger.info("Binance ad-list %s: %s anuncios recibidos", trade_type, len(data))
                 return data
-            raise RuntimeError("fallback adv/search respondió sin anuncios")
-        except Exception as fallback_error:
-            raise RuntimeError(
-                f"ad-list: {primary_error}; fallback adv/search: {fallback_error}"
-            )
+            last_error = RuntimeError("ad-list respondió sin anuncios")
+        except Exception as e:
+            last_error = e
+            logger.warning("Binance ad-list %s falló con params %s: %s", trade_type, params, e)
+
+    # Fallback histórico del sitio web; se evita el endpoint obsoleto.
+    fallback = "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    payload = {
+        "asset": "USDT", "fiat": "VES", "page": 1, "rows": limit,
+        "tradeType": trade_type, "payTypes": ["BANK"], "publisherType": None,
+        "merchantCheck": False, "proMerchantAds": False, "shieldMerchantAds": False,
+        "countries": [],
+    }
+    try:
+        r = HTTP.post(fallback, json=payload, headers=headers, timeout=12)
+        r.raise_for_status()
+        data = _extraer_ads_binance(r.json())
+        if data:
+            logger.info("Binance fallback adv/search %s: %s anuncios recibidos", trade_type, len(data))
+            return data
+        raise RuntimeError("fallback adv/search respondió sin anuncios")
+    except Exception as fallback_error:
+        raise RuntimeError(f"ad-list: {last_error}; fallback adv/search: {fallback_error}")
 
 def _ad_contiene_banco(item, banco_filtro):
     if banco_filtro == "GENERAL":
