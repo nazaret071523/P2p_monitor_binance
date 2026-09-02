@@ -1127,6 +1127,152 @@ def obtener_precios_api(refresh: bool = Query(False)):
     }
 
 
+@app.get("/api/analysis")
+def obtener_analysis_api(banco: str = Query("GENERAL")):
+    """Lectura analítica P2P real, separada en táctica, flujo y niveles."""
+    banco = banco.upper().strip()
+    if banco not in ("GENERAL", *BANCOS_REFERENCIA.keys()):
+        banco = "GENERAL"
+
+    mercado = obtener_mercado_actual_db() if banco == "GENERAL" else None
+    if banco == "GENERAL" and (not mercado or _mercado_desactualizado(mercado)):
+        try:
+            recolectar_mercado_general()
+            mercado = obtener_mercado_actual_db()
+        except Exception:
+            mercado = obtener_mercado_actual_db()
+
+    if banco != "GENERAL":
+        try:
+            c, v, l = obtener_precios_binance_p2p(banco)
+            mercado = {"compra": c, "venta": v, "liquidez": l}
+        except Exception:
+            mercado = None
+
+    if not mercado or float(mercado.get("compra", 0) or 0) <= 0 or float(mercado.get("venta", 0) or 0) <= 0:
+        return {"ok": False, "error": "No existe una lectura P2P real disponible para analizar."}
+
+    compra = float(mercado["compra"])
+    venta = float(mercado["venta"])
+    liquidez = int(mercado.get("liquidez", 0) or 0)
+    spread = venta - compra
+    spread_pct = (spread / compra * 100) if compra else 0.0
+    datos = motor_quant_inteligente(compra, venta, liquidez, banco)
+
+    filas = obtener_estadisticas_db(limit=300, banco=banco)
+    compras = np.array([float(f[0]) for f in filas if f[0] is not None], dtype=float)
+    ventas = np.array([float(f[1]) for f in filas if f[1] is not None], dtype=float)
+    liquidez_hist = np.array([float(f[2] or 0) for f in filas], dtype=float) if filas else np.array([])
+
+    if len(compras) >= 2:
+        mid = (compras + ventas) / 2
+        ventana = min(20, len(mid))
+        reciente = mid[-ventana:]
+        anterior = mid[-min(ventana, len(mid)-ventana):] if len(mid) > ventana else mid[:-1]
+        cambio_reciente = float(reciente[-1] - reciente[0]) if len(reciente) >= 2 else 0.0
+        cambio_pct = (cambio_reciente / reciente[0] * 100) if reciente[0] else 0.0
+        volatilidad = float(np.std(np.diff(reciente))) if len(reciente) >= 3 else 0.0
+        if len(anterior) >= 2:
+            cambio_anterior = float(anterior[-1] - anterior[0])
+            base_anterior = float(anterior[0]) or 1.0
+            cambio_anterior_pct = cambio_anterior / base_anterior * 100
+        else:
+            cambio_anterior_pct = 0.0
+        aceleracion = cambio_pct - cambio_anterior_pct
+        if cambio_pct > 0.15:
+            direccion = "alcista"
+        elif cambio_pct < -0.15:
+            direccion = "bajista"
+        else:
+            direccion = "lateral"
+    else:
+        cambio_pct = 0.0
+        cambio_anterior_pct = 0.0
+        aceleracion = 0.0
+        volatilidad = 0.0
+        direccion = "sin tendencia suficiente"
+
+    if len(ventas) >= 4:
+        q_low, q_high = np.quantile(np.concatenate([compras, ventas]), [0.10, 0.90])
+        soporte = float(np.quantile(compras, 0.25))
+        resistencia = float(np.quantile(ventas, 0.75))
+        nivel_medio = float(np.median(np.concatenate([compras, ventas])))
+    else:
+        q_low, q_high = compra, venta
+        soporte, resistencia, nivel_medio = compra, venta, (compra + venta) / 2
+
+    avg_liquidez = float(np.mean(liquidez_hist[-20:])) if len(liquidez_hist) else float(liquidez)
+    delta_liquidez = liquidez - avg_liquidez
+    spread_hist = ventas - compras if len(ventas) == len(compras) else np.array([])
+    spread_medio = float(np.mean(spread_hist[-20:])) if len(spread_hist) else spread
+    spread_delta = spread - spread_medio
+    mid_actual = (compra + venta) / 2
+    rango = max(q_high - q_low, 0.01)
+    posicion_rango = (mid_actual - q_low) / rango * 100
+    rango_4h = (float(q_low), float(q_high))
+
+    # 1) TÁCTICA: combina dirección, aceleración y coste de ejecución.
+    if direccion == "alcista" and aceleracion > 0 and spread_pct < 1.5:
+        tactica_estado = "🟢 MOMENTO FAVORABLE"
+        tactica_texto = (f"El impulso reciente es alcista ({cambio_pct:+.2f}%) y está acelerando ({aceleracion:+.2f} pp). "
+                         f"Con spread de {spread_pct:.2f}%, la zona a vigilar es {soporte:.2f}–{nivel_medio:.2f} Bs; "
+                         f"la lectura pierde calidad si el precio se aleja hacia {resistencia:.2f} Bs sin confirmar flujo.")
+    elif direccion == "bajista" and aceleracion < 0:
+        tactica_estado = "🟡 DEFENSIVA"
+        tactica_texto = (f"La presión reciente es bajista ({cambio_pct:+.2f}%) y continúa perdiendo terreno ({aceleracion:+.2f} pp). "
+                         f"Prioriza confirmación cerca de {soporte:.2f} Bs y evita perseguir rebotes mientras el precio siga debajo de {nivel_medio:.2f} Bs.")
+    elif spread_pct >= 1.5:
+        tactica_estado = "🟠 EJECUCIÓN COSTOSA"
+        tactica_texto = (f"El precio está {direccion} pero el spread de {spread_pct:.2f}% está por encima del umbral táctico. "
+                         f"La prioridad es esperar compresión del diferencial o una mejor zona entre {soporte:.2f} y {nivel_medio:.2f} Bs.")
+    else:
+        tactica_estado = "⚪ ESPERA / RANGO"
+        tactica_texto = (f"La dirección no tiene confirmación suficiente ({cambio_pct:+.2f}%). "
+                         f"El escenario operativo está entre {soporte:.2f} y {resistencia:.2f} Bs; espera ruptura acompañada por flujo antes de cambiar de sesgo.")
+
+    # 2) FLUJO P2P: profundidad observada, aceleración y comportamiento del spread.
+    if liquidez >= max(12, avg_liquidez * 1.15) and delta_liquidez > 0:
+        flujo_estado = "⚡ FLUJO EXPANSIVO"
+    elif liquidez <= max(1, avg_liquidez * 0.75):
+        flujo_estado = "🟡 FLUJO CONTRAÍDO"
+    else:
+        flujo_estado = "🟢 FLUJO NORMAL"
+    spread_direction = "ampliándose" if spread_delta > max(0.05, spread_medio * 0.05) else ("comprimiéndose" if spread_delta < -max(0.05, spread_medio * 0.05) else "estable")
+    flujo_texto = (f"Se observan {liquidez} unidades de liquidez frente a una media de {avg_liquidez:.1f} ({delta_liquidez:+.1f}). "
+                   f"El spread está {spread_direction} ({spread_delta:+.2f} Bs frente a su media), la volatilidad corta es {volatilidad:.3f} Bs y el ritmo del precio muestra {direccion}.")
+
+    # 3) NIVELES P2P: ubicación exacta dentro del rango y niveles que invalidan/confirmarían la lectura.
+    posicion = "zona alta" if posicion_rango >= 66 else ("zona baja" if posicion_rango <= 34 else "zona media")
+    niveles_estado = "🎯 CERCA DE RESISTENCIA" if posicion_rango >= 75 else ("🛡️ CERCA DE SOPORTE" if posicion_rango <= 25 else "⚖️ ZONA MEDIA")
+    niveles_texto = (f"Soporte {soporte:.2f} Bs · medio {nivel_medio:.2f} Bs · resistencia {resistencia:.2f} Bs. "
+                     f"El precio medio está en {posicion} del rango ({posicion_rango:.0f}%). "
+                     f"Una ruptura sostenida sobre {resistencia:.2f} Bs confirmaría fortaleza; perder {soporte:.2f} Bs aumentaría el riesgo de continuación bajista.")
+
+    diagnostico = f"{tactica_estado} · {flujo_estado} · {niveles_estado}"
+    resumen = f"P2P {banco}: comprar {compra:.2f} Bs, vender {venta:.2f} Bs, spread {spread:.2f} Bs ({spread_pct:.2f}%). Tendencia {direccion}; liquidez {liquidez}."
+
+    return {
+        "ok": True,
+        "fuente": "Binance P2P + histórico Venbot",
+        "banco": banco,
+        "actual": {"compra": round(compra, 2), "venta": round(venta, 2), "spread": round(spread, 2), "spread_pct": round(spread_pct, 2)},
+        "prediccion": {"compra": datos["pred_compra"], "venta": datos["pred_venta"]},
+        "rango": {"piso": round(float(q_low), 2), "techo": round(float(q_high), 2)},
+        "niveles": {"soporte": round(soporte, 2), "medio": round(nivel_medio, 2), "resistencia": round(resistencia, 2)},
+        "liquidez": {"valor": liquidez, "estado": datos["estado_comunidad"], "media": round(avg_liquidez, 1), "delta": round(delta_liquidez, 1)},
+        "muestras": len(filas),
+        "tendencia": direccion,
+        "diagnostico": diagnostico,
+        "modos": {
+            "tactica": {"titulo": "Táctica P2P", "texto": tactica_texto, "indicadores": [tactica_estado, f"Spread {spread_pct:.2f}%", f"Entrada vigilancia {soporte:.2f} Bs", f"Proyección {datos['pred_compra']:.2f} Bs"]},
+            "flujo": {"titulo": "Flujo P2P", "texto": flujo_texto, "indicadores": [flujo_estado, f"Liquidez {liquidez}", f"Media {avg_liquidez:.1f}", f"Cambio {delta_liquidez:+.1f}"]},
+            "niveles": {"titulo": "Niveles P2P", "texto": niveles_texto, "indicadores": [niveles_estado, f"Soporte {soporte:.2f} Bs", f"Medio {nivel_medio:.2f} Bs", f"Resistencia {resistencia:.2f} Bs"]},
+        },
+        "resumen": resumen,
+        "timestamp": datetime.now(VET).isoformat(),
+    }
+
+
 @app.get("/api/market")
 def obtener_precios_market_alias():
     return obtener_precios_api(False)
