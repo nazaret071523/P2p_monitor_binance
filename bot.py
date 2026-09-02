@@ -39,9 +39,12 @@ TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
 COLLECT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
 MARKET_MAX_AGE_SECONDS = int(os.getenv("MARKET_MAX_AGE_SECONDS", "90"))
 
+# Orígenes separados por coma. Si no se configura, se permite cualquier origen
+# sin credenciales, suficiente para un monitor público.
 ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*").strip()
 ALLOWED_ORIGINS = [x.strip() for x in ALLOWED_ORIGINS_RAW.split(",") if x.strip()] or ["*"]
 
+# Solo se usan si todavía no existe ninguna lectura real.
 ULTIMO_REGISTRO_VALIDO = {
     "compra": 0.0,
     "venta": 0.0,
@@ -213,6 +216,7 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL", desde: Optional[datetim
                     conditions.append("banco = %s")
                     params.append(banco)
                 else:
+                    # GENERAL debe leer solo GENERAL, no mezclar BBVA/MERCANTIL.
                     conditions.append("banco = 'GENERAL'")
                 if desde is not None:
                     conditions.append("fecha >= %s")
@@ -242,7 +246,7 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL", desde: Optional[datetim
 # ==========================================
 HTTP = requests.Session()
 HTTP.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://render.com)",
     "Accept": "application/json,text/plain,*/*",
 })
 
@@ -259,6 +263,12 @@ def _float_positivo(value):
 # TASAS BCV
 # ==========================================
 def obtener_tasas_bcv_oficiales():
+    """
+    DolarAPI publica las cotizaciones oficiales BCV en:
+      /v1/dolares/oficial
+      /v1/euros/oficial
+    Conservamos la última lectura real si la fuente falla.
+    """
     global ULTIMO_BCV_VALIDO
 
     usd = 0.0
@@ -294,9 +304,11 @@ def obtener_tasas_bcv_oficiales():
     if errores:
         logger.warning("Fallo parcial/total consultando BCV: %s", " | ".join(errores))
 
+    # Nunca inventamos una tasa. Si existe una lectura real anterior, se conserva.
     if ULTIMO_BCV_VALIDO["usd"] > 0 or ULTIMO_BCV_VALIDO["eur"] > 0:
         return dict(ULTIMO_BCV_VALIDO)
 
+    # Intentar recuperar la última tasa persistida.
     db = obtener_mercado_actual_db()
     if db and (db["bcv"] > 0 or db["eur"] > 0):
         return {
@@ -346,6 +358,7 @@ def calcular_vwap_con_filtro(items):
     precios = [p for p, _ in pares]
     permitidos = filtrar_outliers_iqr(precios)
 
+    # Contador para preservar anuncios con precios duplicados.
     remaining = {}
     for p in permitidos:
         remaining[p] = remaining.get(p, 0) + 1
@@ -363,47 +376,57 @@ def calcular_vwap_con_filtro(items):
 
 
 def _binance_search(trade_type, banco_filtro="GENERAL"):
-    endpoint = "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search"
+    url = "https://www.binance.com/bapi/c2c/v1/friendly/c2c/adv/search"
+    # Algunos despliegues siguen respondiendo en /public/. Se usa como fallback.
+    urls = [
+        url,
+        "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search",
+    ]
 
     payload = {
         "asset": "USDT",
         "fiat": "VES",
         "page": 1,
-        "rows": 20,
+        "rows": 10,
         "tradeType": trade_type,
         "payTypes": [] if banco_filtro == "GENERAL" else [banco_filtro],
         "publisherType": None,
         "merchantCheck": False,
-        "transAmount": "",
     }
 
-    try:
-        r = HTTP.post(
-            endpoint,
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Origin": "https://p2p.binance.com",
-                "Referer": "https://p2p.binance.com/",
-                "Accept": "application/json, text/plain, */*",
-            },
-            timeout=10,
-        )
-        r.raise_for_status()
+    last_error = None
+    for endpoint in urls:
+        try:
+            r = HTTP.post(
+                endpoint,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": "https://p2p.binance.com",
+                    "Referer": "https://p2p.binance.com/",
+                },
+                timeout=10,
+            )
+            r.raise_for_status()
+            body = r.json()
+            data = body.get("data") or []
+            if data:
+                return data
+            last_error = f"respuesta sin anuncios en {endpoint}"
+        except Exception as e:
+            last_error = str(e)
 
-        if "application/json" not in r.headers.get("Content-Type", ""):
-            logger.warning("Bloqueo de seguridad HTML recibido en Binance P2P")
-            return []
-
-        body = r.json()
-        data = body.get("data") or []
-        return data
-    except Exception as e:
-        logger.warning("Fallo en _binance_search (%s): %s", trade_type, e)
+    if last_error:
+        raise RuntimeError(last_error)
     return []
 
 
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
+    """
+    Desde la perspectiva del usuario:
+    - Comprar USDT => anuncios SELL.
+    - Vender USDT  => anuncios BUY.
+    """
     global ULTIMO_REGISTRO_VALIDO
 
     try:
@@ -424,6 +447,7 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     except Exception as e:
         logger.warning("Binance P2P no disponible para %s: %s", banco_filtro, e)
 
+    # Última lectura real persistida. No se fabrican precios.
     if banco_filtro == "GENERAL":
         db = obtener_mercado_actual_db()
         if db and db["compra"] > 0 and db["venta"] > 0:
@@ -780,6 +804,7 @@ async def tarea_recoleccion_automatica():
         try:
             mercado = await asyncio.to_thread(recolectar_mercado_general)
 
+            # Bancos separados, solo para histórico/Telegram.
             for banco in ("BBVA", "MERCANTIL"):
                 c, v, l = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
                 if c > 0 and v > 0:
@@ -823,44 +848,177 @@ app = FastAPI(title="Venbot API", version="2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def read_root():
-    return {"status": "ok", "bot": "Venbot P2P active"}
-
-@app.get("/api/mercado")
-def api_mercado():
-    db = obtener_mercado_actual_db()
-    if not db:
-        return {"compra": 0.0, "venta": 0.0, "liquidez": 0, "bcv": 0.0, "eur": 0.0, "fuente_bcv": "sin_datos"}
     return {
-        "compra": db["compra"],
-        "venta": db["venta"],
-        "liquidez": db["liquidez"],
-        "bcv": db["bcv"],
-        "eur": db["eur"],
-        "fuente_bcv": db["fuente_bcv"],
-        "timestamp": db["fecha"].isoformat() if db["fecha"] else None,
+        "status": "ok",
+        "service": "Venbot",
+        "api": "/api/precios",
+        "history": "/api/history?period=1d",
     }
 
 
-# ==========================================
-# INICIO Y CICLOS DE VIDA
-# ==========================================
+@app.get("/api/health")
+def health():
+    mercado = obtener_mercado_actual_db()
+    return {
+        "status": "ok",
+        "database": bool(mercado) if DATABASE_URL else False,
+        "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
+        "timestamp": datetime.now(VET).isoformat(),
+    }
+
+
+def _mercado_desactualizado(mercado):
+    if not mercado or not mercado.get("fecha"):
+        return True
+    fecha = mercado["fecha"]
+    if fecha.tzinfo is None:
+        fecha = VET.localize(fecha)
+    age = (datetime.now(VET) - fecha.astimezone(VET)).total_seconds()
+    return age > MARKET_MAX_AGE_SECONDS
+
+
+@app.get("/api/precios")
+def obtener_precios_api(refresh: bool = Query(False)):
+    mercado = obtener_mercado_actual_db()
+
+    if refresh or _mercado_desactualizado(mercado):
+        nuevo = recolectar_mercado_general()
+        mercado = obtener_mercado_actual_db()
+        if not mercado and nuevo["compra"] > 0:
+            mercado = {
+                "compra": nuevo["compra"],
+                "venta": nuevo["venta"],
+                "liquidez": nuevo["liquidez"],
+                "bcv": nuevo["bcv"],
+                "eur": nuevo["eur"],
+                "fuente_bcv": nuevo["fuente_bcv"],
+                "fecha": nuevo["timestamp"],
+            }
+
+    if not mercado:
+        return {
+            "ok": False,
+            "compra": 0,
+            "venta": 0,
+            "buy": 0,
+            "sell": 0,
+            "spread": 0,
+            "spread_pct": 0,
+            "bcv": 0,
+            "eur": 0,
+            "liquidez": 0,
+            "timestamp": datetime.now(VET).isoformat(),
+            "error": "Todavía no existe una lectura real.",
+        }
+
+    compra = round(mercado["compra"], 2)
+    venta = round(mercado["venta"], 2)
+    spread = round(venta - compra, 2)
+    spread_pct = round((spread / compra) * 100, 2) if compra > 0 else 0.0
+    fecha = mercado["fecha"]
+    if fecha and fecha.tzinfo is None:
+        fecha = VET.localize(fecha)
+
+    return {
+        "ok": compra > 0 and venta > 0,
+        "compra": compra,
+        "venta": venta,
+        "buy": compra,
+        "sell": venta,
+        "spread": spread,
+        "spread_pct": spread_pct,
+        "bcv": round(mercado["bcv"], 2),
+        "eur": round(mercado["eur"], 2),
+        "liquidez": mercado["liquidez"],
+        "fuente_bcv": mercado["fuente_bcv"],
+        "timestamp": fecha.astimezone(VET).isoformat() if fecha else datetime.now(VET).isoformat(),
+    }
+
+
+@app.get("/api/market")
+def obtener_precios_market_alias():
+    return obtener_precios_api(False)
+
+
+@app.get("/api/history")
+def obtener_history(period: str = Query("1d", pattern="^(1d|7d|30d)$")):
+    horas = {"1d": 24, "7d": 24 * 7, "30d": 24 * 30}[period]
+    desde = datetime.now(VET) - timedelta(hours=horas)
+    limite = {"1d": 500, "7d": 2500, "30d": 10000}[period]
+    filas = obtener_estadisticas_db(limit=limite, banco="GENERAL", desde=desde)
+
+    puntos = [
+        {
+            "compra": round(float(c), 2),
+            "venta": round(float(v), 2),
+            "liquidez": int(l or 0),
+            "timestamp": (
+                VET.localize(f).isoformat()
+                if f and f.tzinfo is None
+                else f.astimezone(VET).isoformat()
+            ),
+        }
+        for c, v, l, f in filas
+    ]
+
+    # Reducir carga del navegador en 30D.
+    max_points = 800
+    if len(puntos) > max_points:
+        step = max(1, len(puntos) // max_points)
+        puntos = puntos[::step]
+        if filas:
+            ultimo = filas[-1]
+            last_point = {
+                "compra": round(float(ultimo[0]), 2),
+                "venta": round(float(ultimo[1]), 2),
+                "liquidez": int(ultimo[2] or 0),
+                "timestamp": (
+                    VET.localize(ultimo[3]).isoformat()
+                    if ultimo[3].tzinfo is None
+                    else ultimo[3].astimezone(VET).isoformat()
+                ),
+            }
+            if not puntos or puntos[-1]["timestamp"] != last_point["timestamp"]:
+                puntos.append(last_point)
+
+    return {"ok": True, "period": period, "count": len(puntos), "data": puntos}
+
+
+@app.post("/webhook")
+async def telegram_webhook(req: Request):
+    if not telegram_app:
+        return {"ok": False, "error": "Telegram no inicializado"}
+    data = await req.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"ok": True}
+
+
 @app.on_event("startup")
 async def startup_event():
     global telegram_app, collector_task
     validar_configuracion()
-    inicializar_db()
+
+    if DATABASE_URL:
+        await asyncio.to_thread(inicializar_db)
+        try:
+            await asyncio.to_thread(recolectar_mercado_general)
+        except Exception as e:
+            logger.exception("Captura inicial falló: %s", e)
 
     if TELEGRAM_BOT_TOKEN:
-        telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
         telegram_app.add_handler(CommandHandler("start", start))
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
         telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
         telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
@@ -870,35 +1028,29 @@ async def startup_event():
         await telegram_app.start()
 
         if RENDER_EXTERNAL_URL:
-            webhook_url = f"{RENDER_EXTERNAL_URL}/telegram-webhook"
-            await telegram_app.bot.set_webhook(webhook_url)
-            logger.info("Webhook configurado en: %s", webhook_url)
+            webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
+            await telegram_app.bot.delete_webhook(drop_pending_updates=False)
+            await telegram_app.bot.set_webhook(url=webhook_url)
+            logger.info("Webhook Telegram configurado: %s", webhook_url)
 
-    collector_task = asyncio.create_task(tarea_recoleccion_automatica())
-    logger.info("Ciclos de vida iniciados correctamente.")
+    if DATABASE_URL:
+        collector_task = asyncio.create_task(tarea_recoleccion_automatica())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global telegram_app, collector_task
+    global collector_task, telegram_app
     if collector_task:
         collector_task.cancel()
+        try:
+            await collector_task
+        except asyncio.CancelledError:
+            pass
     if telegram_app:
         await telegram_app.stop()
         await telegram_app.shutdown()
-    logger.info("Aplicación detenida limpiamente.")
-
-
-@app.post("/telegram-webhook")
-async def telegram_webhook(request: Request):
-    if not telegram_app:
-        return {"status": "bot_disabled"}
-    data = await request.json()
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
-    return {"status": "ok"}
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+    port = int(os.getenv("PORT", "10000"))
+    uvicorn.run("bot:app", host="0.0.0.0", port=port, reload=False)
