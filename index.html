@@ -729,7 +729,7 @@
     async function bootVenbot() {
       if (!API_BASE_URL || API_BASE_URL.includes('TU-SERVICIO')) {
         setSyncState(false, 'configura URL Render');
-        console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
+        console.error('Configura <meta name="venbot-api" content="https://TU-SERVICIO.onrender.com"> con la URL real de Render.');
         return;
       }
       await Promise.allSettled([loadPrices(), loadHistory('1d')]);
