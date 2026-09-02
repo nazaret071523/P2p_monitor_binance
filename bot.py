@@ -422,52 +422,135 @@ def _anuncio_no_verificado(item):
         return False
 
 
-def _binance_fetch_raw(trade_type, rows=30):
-    # Endpoint v2 activo para el libro P2P web; v1 adv/search está devolviendo 404.
-    urls = [
-        "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
-        "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
-        "https://www.binance.com/bapi/c2c/v2/friendly/c2c/p2p/searchAds",
-        "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/p2p/searchAds",
-    ]
-    payload = {
-        "asset": "USDT", "fiat": "VES", "page": 1, "rows": rows,
-        "tradeType": trade_type, "payTypes": ["BANK"],
-        "publisherType": None, "merchantCheck": False,
-        "proMerchantAds": False, "shieldMerchantAds": False,
-        "transAmount": 300000 if trade_type == "SELL" else 10000,
+def _extraer_ads_binance(body):
+    """Normaliza respuestas de los endpoints públicos C2C actuales."""
+    data = body.get("data") if isinstance(body, dict) else body
+    if isinstance(data, dict):
+        for key in ("ads", "data", "rows", "list"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    return data if isinstance(data, list) else []
+
+
+def _binance_fetch_raw(trade_type, rows=20):
+    """Consulta primero el MGS C2C Agent API público documentado por Binance.
+
+    No se usa /p2p/searchAds porque actualmente devuelve 404.  El endpoint
+    agent/ad-list es GET y usa tradeMethodIdentifiers como parámetro simple.
+    """
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.binance.com",
+        "Referer": "https://www.binance.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/139 Safari/537.36",
     }
-    last_error = None
-    for endpoint in urls:
+    agent_url = "https://www.binance.com/bapi/c2c/v1/public/c2c/agent/ad-list"
+    try:
+        r = HTTP.get(
+            agent_url,
+            params={
+                "fiat": "VES",
+                "asset": "USDT",
+                "tradeType": trade_type,
+                "limit": min(max(int(rows), 1), 20),
+                "order": "price",
+                "tradeMethodIdentifiers": "BANK",
+            },
+            headers=headers,
+            timeout=12,
+        )
+        r.raise_for_status()
+        data = _extraer_ads_binance(r.json())
+        if data:
+            return data
+        raise RuntimeError("ad-list respondió sin anuncios")
+    except Exception as primary_error:
+        # Fallback histórico del sitio web; se mantiene como respaldo, no como
+        # endpoint principal. Nunca se intenta /p2p/searchAds (404 actual).
+        fallback = "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+        payload = {
+            "asset": "USDT", "fiat": "VES", "page": 1, "rows": min(max(int(rows), 1), 20),
+            "tradeType": trade_type, "payTypes": ["BANK"], "publisherType": None,
+            "merchantCheck": False, "proMerchantAds": False, "shieldMerchantAds": False,
+            "countries": [],
+        }
         try:
-            r = HTTP.post(endpoint, json=payload, headers={
-                "Content-Type": "application/json",
-                "Origin": "https://p2p.binance.com",
-                "Referer": "https://p2p.binance.com/",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/139 Safari/537.36",
-                "Accept": "application/json, text/plain, */*",
-            }, timeout=12)
+            r = HTTP.post(fallback, json=payload, headers=headers, timeout=12)
             r.raise_for_status()
-            body = r.json()
-            data = body.get("data") or []
-            if isinstance(data, dict):
-                data = data.get("data") or data.get("rows") or []
+            data = _extraer_ads_binance(r.json())
             if data:
                 return data
-            last_error = f"respuesta sin anuncios en {endpoint}"
-        except Exception as e:
-            last_error = str(e)
-    raise RuntimeError(last_error or "Binance P2P sin respuesta")
+            raise RuntimeError("fallback adv/search respondió sin anuncios")
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"ad-list: {primary_error}; fallback adv/search: {fallback_error}"
+            )
+
+def _ad_contiene_banco(item, banco_filtro):
+    if banco_filtro == "GENERAL":
+        return True
+    try:
+        blob = json.dumps(item, ensure_ascii=False).lower()
+    except Exception:
+        blob = str(item).lower()
+    aliases = {
+        "MERCANTIL": ("mercantil",),
+        "PROVINCIAL": ("provincial", "bbva provincial", "bbva"),
+        "BNC": ("bnc", "banco nacional de credito", "banco nacional de crédito"),
+    }
+    return any(alias in blob for alias in aliases.get(banco_filtro, (banco_filtro.lower(),)))
+
+
+def _anuncio_no_verificado(item):
+    """Excluye comerciantes Pro/Verificados de forma defensiva."""
+    try:
+        adv = item.get("adv") or {}
+        advertiser = item.get("advertiser") or item.get("merchant") or {}
+        for obj in (item, adv, advertiser):
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("proMerchant") is True or obj.get("proMerchantAds") is True:
+                return False
+            if obj.get("merchant") is True or obj.get("verifiedMerchant") is True:
+                return False
+            if obj.get("isVerified") is True or obj.get("verified") is True:
+                return False
+            if str(obj.get("userType", "")).lower() in {"merchant", "pro", "verified", "verifiedmerchant"}:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _anuncio_cumple_monto(item, trade_type):
+    """Comprueba que el anuncio pueda atender el monto de referencia."""
+    target = 300000.0 if trade_type == "SELL" else 10000.0
+    adv = item.get("adv") or {}
+    try:
+        minimo = float(adv.get("minSingleTransAmount") or adv.get("minAmount") or 0)
+        maximo = float(adv.get("maxSingleTransAmount") or adv.get("maxAmount") or 0)
+        if minimo and target < minimo:
+            return False
+        if maximo and target > maximo:
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _binance_search(trade_type, banco_filtro="GENERAL"):
-    raw = _binance_fetch_raw(trade_type, rows=30)
+    raw = _binance_fetch_raw(trade_type, rows=20)
     bancos = ["MERCANTIL", "PROVINCIAL", "BNC"] if banco_filtro == "GENERAL" else [banco_filtro]
     result = []
     for banco in bancos:
-        elegibles = [x for x in raw if _anuncio_no_verificado(x) and _ad_contiene_banco(x, banco)]
+        elegibles = [
+            x for x in raw
+            if _anuncio_no_verificado(x)
+            and _anuncio_cumple_monto(x, trade_type)
+            and _ad_contiene_banco(x, banco)
+        ]
         result.extend(elegibles[:10])
-    # GENERAL combina los 10 primeros de cada banco; elimina duplicados.
     seen = set()
     unique = []
     for item in result:
@@ -477,7 +560,6 @@ def _binance_search(trade_type, banco_filtro="GENERAL"):
             seen.add(key)
             unique.append(item)
     return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
-
 
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     """
