@@ -376,22 +376,25 @@ def calcular_vwap_con_filtro(items):
 
 
 def _binance_search(trade_type, banco_filtro="GENERAL"):
-    url = "https://www.binance.com/bapi/c2c/v1/friendly/c2c/adv/search"
-    # Algunos despliegues siguen respondiendo en /public/. Se usa como fallback.
+    # Endpoint P2P vigente usado por clientes públicos de Binance.
+    # El endpoint antiguo /bapi/c2c/v1/... en www.binance.com devuelve 404.
     urls = [
-        url,
-        "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search",
+        "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
+        "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
     ]
 
     payload = {
         "asset": "USDT",
         "fiat": "VES",
         "page": 1,
-        "rows": 10,
+        "rows": 20,
         "tradeType": trade_type,
         "payTypes": [] if banco_filtro == "GENERAL" else [banco_filtro],
         "publisherType": None,
         "merchantCheck": False,
+        "countries": [],
+        "proMerchantAds": False,
+        "shieldMerchantAds": False,
     }
 
     last_error = None
@@ -401,9 +404,11 @@ def _binance_search(trade_type, banco_filtro="GENERAL"):
                 endpoint,
                 json=payload,
                 headers={
+                    "Accept": "*/*",
                     "Content-Type": "application/json",
                     "Origin": "https://p2p.binance.com",
                     "Referer": "https://p2p.binance.com/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
                 },
                 timeout=10,
             )
