@@ -363,11 +363,7 @@ def calcular_vwap_con_filtro(items):
 
 
 def _binance_search(trade_type, banco_filtro="GENERAL"):
-    url = "https://www.binance.com/bapi/c2c/v1/friendly/c2c/adv/search"
-    urls = [
-        url,
-        "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search",
-    ]
+    endpoint = "https://www.binance.com/bapi/c2c/v1/public/c2c/adv/search"
 
     payload = {
         "asset": "USDT",
@@ -381,36 +377,29 @@ def _binance_search(trade_type, banco_filtro="GENERAL"):
         "transAmount": "",
     }
 
-    last_error = None
-    for endpoint in urls:
-        try:
-            r = HTTP.post(
-                endpoint,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Origin": "https://p2p.binance.com",
-                    "Referer": "https://p2p.binance.com/",
-                    "Accept": "application/json, text/plain, */*",
-                },
-                timeout=10,
-            )
-            r.raise_for_status()
+    try:
+        r = HTTP.post(
+            endpoint,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "https://p2p.binance.com",
+                "Referer": "https://p2p.binance.com/",
+                "Accept": "application/json, text/plain, */*",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
 
-            if "application/json" not in r.headers.get("Content-Type", ""):
-                last_error = f"Bloqueo de seguridad HTML recibido en {endpoint}"
-                continue
+        if "application/json" not in r.headers.get("Content-Type", ""):
+            logger.warning("Bloqueo de seguridad HTML recibido en Binance P2P")
+            return []
 
-            body = r.json()
-            data = body.get("data") or []
-            if data:
-                return data
-            last_error = f"respuesta sin anuncios en {endpoint}"
-        except Exception as e:
-            last_error = str(e)
-
-    if last_error:
-        logger.warning("Fallo en _binance_search (%s): %s", trade_type, last_error)
+        body = r.json()
+        data = body.get("data") or []
+        return data
+    except Exception as e:
+        logger.warning("Fallo en _binance_search (%s): %s", trade_type, e)
     return []
 
 
