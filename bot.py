@@ -678,15 +678,30 @@ def _clasificar_spread(spread, precio):
 
 
 def _obtener_punto_cercano_por_horas(fechas, valores, horas):
-    """Busca el valor más cercano a N horas atrás, sin asumir 1 muestra = 1 minuto."""
+    """Obtiene una referencia temporal real para una ventana.
+
+    Primero busca el último dato anterior al objetivo (la comparación que tiene
+    sentido para momentum). Si no existe, usa el dato más cercano. Se toleran
+    huecos moderados porque Render puede dormir o la recolección puede tener
+    pequeños saltos; no se fuerza una muestra por minuto.
+    """
     if len(fechas) == 0 or len(valores) == 0:
         return None
     try:
         objetivo = fechas[-1] - timedelta(hours=horas)
-        mejor_i = min(range(len(fechas)), key=lambda i: abs(fechas[i] - objetivo))
-        if abs(fechas[mejor_i] - objetivo) > timedelta(minutes=max(10, horas * 15)):
+        anteriores = [i for i, dt in enumerate(fechas) if dt <= objetivo]
+        if anteriores:
+            i = anteriores[-1]
+            distancia = objetivo - fechas[i]
+        else:
+            i = min(range(len(fechas)), key=lambda j: abs(fechas[j] - objetivo))
+            distancia = abs(fechas[i] - objetivo)
+
+        # Aceptar huecos de hasta 1.5x la ventana (mínimo 10 min).
+        tolerancia = timedelta(minutes=max(10.0, horas * 60.0 * 1.5))
+        if distancia > tolerancia:
             return None
-        return float(valores[mejor_i])
+        return float(valores[i])
     except Exception:
         return None
 
@@ -1424,34 +1439,56 @@ def obtener_analysis_api():
 
 
 @app.get("/api/history")
-def obtener_history(period: str = Query("1d", pattern="^(1d|7d|30d)$")):
-    horas = {"1d": 24, "7d": 24 * 7, "30d": 24 * 30}[period]
+def obtener_history(period: str = Query("1m", pattern="^(1m|5m|15m|30m|1h|1d)$")):
+    """Histórico para las temporalidades de velas del monitor.
+
+    El intervalo elegido es la temporalidad de cada vela; el horizonte se
+    adapta para que cada botón tenga suficientes velas sin cargar miles de
+    puntos innecesarios en el navegador.
+    """
+    configuracion = {
+        "1m": (6, 5000),
+        "5m": (24, 5000),
+        "15m": (72, 5000),
+        "30m": (7 * 24, 5000),
+        "1h": (14 * 24, 5000),
+        "1d": (90 * 24, 10000),
+    }
+    horas, limite = configuracion[period]
     desde = datetime.now(VET) - timedelta(hours=horas)
-    limite = {"1d": 500, "7d": 2500, "30d": 10000}[period]
     filas = obtener_estadisticas_db(limit=limite, banco="GENERAL", desde=desde)
 
-    puntos = [
-        {
-            "compra": round(float(c), 2),
-            "venta": round(float(v), 2),
-            "liquidez": int(l or 0),
-            "timestamp": (
-                VET.localize(f).isoformat()
-                if f and f.tzinfo is None
-                else f.astimezone(VET).isoformat()
-            ),
-        }
-        for c, v, l, f in filas
-    ]
+    puntos = []
+    for c, v, l, f in filas:
+        if not f:
+            continue
+        try:
+            ts = VET.localize(f).isoformat() if f.tzinfo is None else f.astimezone(VET).isoformat()
+            compra = float(c or 0)
+            venta = float(v or 0)
+            if compra > 0 and venta > 0:
+                puntos.append({
+                    "compra": round(compra, 2),
+                    "venta": round(venta, 2),
+                    "liquidez": int(l or 0),
+                    "timestamp": ts,
+                })
+        except Exception:
+            continue
 
-    # Añadir la lectura actual real al final si es más reciente que el histórico.
-    # Así el gráfico, las tarjetas y el análisis parten de la misma serie.
+    # Añadir siempre la lectura real actual. Esto evita que una apertura después
+    # de que Render estuvo dormido deje el gráfico vacío mientras vuelve a
+    # comenzar la recolección.
     mercado = obtener_mercado_actual_db() or {}
     mc = float(mercado.get("compra", 0) or 0)
     mv = float(mercado.get("venta", 0) or 0)
     mf = mercado.get("fecha")
-    if mc > 0 and mv > 0 and mf:
-        live_ts = VET.localize(mf).isoformat() if mf.tzinfo is None else mf.astimezone(VET).isoformat()
+    if mc > 0 and mv > 0:
+        if mf:
+            live_dt = VET.localize(mf) if mf.tzinfo is None else mf.astimezone(VET)
+        else:
+            live_dt = datetime.now(VET)
+        live_ts = live_dt.isoformat()
         if not puntos or live_ts > puntos[-1]["timestamp"]:
             puntos.append({
                 "compra": round(mc, 2),
@@ -1460,25 +1497,26 @@ def obtener_history(period: str = Query("1d", pattern="^(1d|7d|30d)$")):
                 "timestamp": live_ts,
             })
 
-    # Reducir carga del navegador en 30D.
-    max_points = 800
-    if len(puntos) > max_points:
-        last_point = puntos[-1]
-        step = max(1, len(puntos) // max_points)
-        puntos = puntos[::step]
-        if not puntos or puntos[-1]["timestamp"] != last_point["timestamp"]:
-            puntos.append(last_point)
-
     return {"ok": True, "period": period, "count": len(puntos), "data": puntos}
 
 
-VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional avanzado en español. Eres el copiloto del usuario: puedes conversar sobre temas generales, explicar conceptos, ayudar con cálculos, planificación y razonamiento, y también analizar el mercado P2P USDT/VES cuando el usuario lo pida. Cuando hables del mercado, usa exclusivamente los datos reales del contexto de Venbot. Nunca inventes precios, tasas, liquidez, noticias o hechos actuales. Distingue dato observado, cálculo, estimación e interpretación. Regla semántica obligatoria: Comprar USDT = anuncios SELL de Binance (el usuario compra USDT); Vender USDT = anuncios BUY (el usuario vende USDT). Mantén continuidad con el historial. Responde de forma natural, útil y con suficiente profundidad; no te limites a respuestas de una línea. Si una pregunta no es de mercado, contéstala normalmente. No prometas ganancias ni certeza financiera."""
+VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional avanzado en español. Eres el copiloto del usuario: puedes conversar sobre temas generales, explicar conceptos, ayudar con cálculos, planificación y razonamiento, y también analizar el mercado P2P USDT/VES cuando el usuario lo pida.
+
+REGLAS ESTRICTAS PARA MERCADO:
+1) Usa exclusivamente el CONTEXTO REAL DE VENBOT recibido en cada consulta. Nunca inventes precios, tasas, liquidez, muestras, horarios, momentum, soporte, resistencia o proyecciones.
+2) Distingue siempre: dato observado, cálculo estadístico, estimación y recomendación. Una proyección nunca es un precio garantizado.
+3) Comprar USDT = anuncios SELL de Binance (el usuario compra USDT). Vender USDT = anuncios BUY (el usuario vende USDT). No inviertas jamás estas etiquetas.
+4) Si una ventana temporal aparece como n/d, significa que no hay datos suficientes o continuidad suficiente para calcularla; no la rellenes con 0.00% ni inventes una lectura.
+5) Si los datos son insuficientes por falta de histórico, dilo claramente y usa solo lo que sí está observado.
+6) Para preguntas de mercado, responde primero con una lectura breve y después con los números relevantes del contexto. No contradigas el bloque analítico de Venbot.
+
+Mantén continuidad con el historial. Responde de forma natural, útil y con suficiente profundidad. Si una pregunta no es de mercado, contéstala normalmente. No prometas ganancias ni certeza financiera."""
 
 
 def _serializar_contexto_mercado():
     mercado = obtener_mercado_actual_db() or {}
     analisis = calcular_analisis_monitor("GENERAL")
-    filas = obtener_estadisticas_db(limit=120, banco="GENERAL")
+    filas = obtener_estadisticas_db(limit=240, banco="GENERAL")
     hist = []
     for c, v, l, f in filas:
         hist.append({"compra": round(float(c),2), "venta": round(float(v),2), "liquidez": int(l or 0), "fecha": f.isoformat() if f else None})
@@ -1487,16 +1525,17 @@ def _serializar_contexto_mercado():
     return {
         "mercado_actual": {"comprar_usdt_sell": compra, "vender_usdt_buy": venta, "spread": round(spread,2), "spread_pct": round(spread/compra*100,2) if compra else 0, "liquidez": int(mercado.get("liquidez",0) or 0), "bcv_usd": mercado.get("bcv",0), "euro": mercado.get("eur",0), "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None},
         "analisis_cuantitativo": analisis,
-        "historial_general": hist[-120:]
+        "historial_general": hist[-240:],
+        "regla_temporal": "Las variaciones 5m/15m/30m/1h/3h/7h se calculan contra datos con timestamp real; n/d significa insuficiencia de histórico o un hueco demasiado grande."
     }
 
 
-def _respuesta_gemini(prompt, model):
+def _respuesta_gemini(prompt, model, temperature=0.35):
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
         model=model,
         contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=0.55, max_output_tokens=1600),
+        config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=temperature, max_output_tokens=1600),
     )
     return getattr(response, "text", None)
 
@@ -1531,6 +1570,12 @@ def generar_respuesta_ia(mensaje, historial):
         if content:
             prev.append({"role": role, "content": content})
     prompt = "CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) + "\n\nHISTORIAL CONVERSACIONAL:\n" + json.dumps(prev, ensure_ascii=False) + "\n\nPREGUNTA ACTUAL:\n" + mensaje
+    market_query = any(k in mensaje.lower() for k in (
+        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado",
+        "spread", "liquidez", "momentum", "soporte", "resistencia",
+        "proyeccion", "proyección", "tendencia", "bcv"
+    ))
+    ai_temperature = 0.22 if market_query else 0.55
 
     if GEMINI_API_KEY and genai is not None:
         modelos = [GEMINI_MODEL]
@@ -1539,7 +1584,7 @@ def generar_respuesta_ia(mensaje, historial):
                 modelos.append(fallback)
         for model in modelos:
             try:
-                text = _respuesta_gemini(prompt, model)
+                text = _respuesta_gemini(prompt, model, ai_temperature)
                 if text:
                     return text.strip()
             except Exception as e:
