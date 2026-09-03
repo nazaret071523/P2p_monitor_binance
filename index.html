@@ -176,13 +176,12 @@
           <div>
             <div class="flex items-center gap-2">
               <h3 class="font-bold text-slate-100 text-sm">USDT / VES · Evolución P2P (Velas)</h3>
-              <span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">1 min</span>
+              <span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">5 min</span>
             </div>
             <p class="text-[10px] text-slate-500 mt-1">Gráfico de velas exclusivo del mercado Binance P2P.</p>
           </div>
           <div role="tablist" class="flex items-center gap-1 bg-slate-950/70 border border-slate-800 rounded-xl p-1">
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="true" onclick="setChartPeriod('1m',this)">1m</button>
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('5m',this)">5m</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="true" onclick="setChartPeriod('5m',this)">5m</button>
             <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('15m',this)">15m</button>
             <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('30m',this)">30m</button>
             <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('1h',this)">1h</button>
@@ -224,7 +223,7 @@
         <div class="space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
-              <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-bolt text-amber-400"></i> Táctica</button>
+              <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-bolt text-amber-400"></i> Proyección 7H</button>
               <button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-chart-pie text-sky-400"></i> Flujo P2P</button>
               <button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-bullseye text-purple-400"></i> Niveles P2P</button>
             </div>
@@ -275,9 +274,9 @@
         </article>
 
         <div class="flex items-center justify-center gap-6 py-2 text-slate-400 text-sm font-bold">
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-x-twitter"></i> X</a>
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-instagram"></i> Instagram</a>
-          <a href="#" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
+          <a href="#" aria-disabled="true" title="Próximamente" onclick="event.preventDefault()" class="opacity-60 hover:text-slate-300 transition flex items-center gap-1.5"><i class="fa-brands fa-x-twitter"></i> X</a>
+          <a href="https://www.instagram.com/venbotquant/" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-instagram"></i> Instagram</a>
+          <a href="https://www.tiktok.com/@venbotquant" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
         </div>
 
         <div class="ad-slot rounded-xl p-4 text-center">
@@ -304,11 +303,11 @@
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-        <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI (Binance P2P)</h3><p class="text-[10px] text-emerald-400 font-semibold">Copiloto conversacional · mercado + preguntas generales</p></div></div>
+        <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI</h3><p class="text-[10px] text-emerald-400 font-semibold">Copiloto conversacional · mercado + preguntas generales</p></div></div>
         <button type="button" onclick="closeAIChatModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"><i class="fa-solid fa-xmark text-sm"></i></button>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo mostrarte un resumen de las lecturas actuales P2P, BCV y Euro disponibles en el monitor.</div></div>
+        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con cualquier tema y, cuando preguntes por el mercado, usaré el mismo motor P2P del monitor y Telegram.</div></div>
       </div>
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center gap-2">
         <input id="ai-user-input" type="text" placeholder="Escribe cualquier pregunta o consulta sobre el mercado..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
@@ -358,7 +357,8 @@
       liquidity: 0,
       timestamp: null,
       history: [],
-      period: '1m',
+      period: '5m',
+      candles: [],
       analysis: null
     };
 
@@ -474,6 +474,7 @@
       try {
         const payload = await fetchJSON(`${API_HISTORY}?period=${encodeURIComponent(period)}&t=${Date.now()}`, 12000);
         marketState.history = Array.isArray(payload?.data) ? payload.data : [];
+        marketState.candles = Array.isArray(payload?.candles) ? payload.candles : [];
         renderChart();
       } catch (error) {
         console.error('Venbot /api/history:', error);
@@ -491,14 +492,13 @@
 
     function candleBucketMs(period) {
       const map = {
-        '1m': 60 * 1000,
         '5m': 5 * 60 * 1000,
         '15m': 15 * 60 * 1000,
         '30m': 30 * 60 * 1000,
         '1h': 60 * 60 * 1000,
         '1d': 24 * 60 * 60 * 1000
       };
-      return map[period] || map['1m'];
+      return map[period] || map['5m'];
     }
 
     function buildCandles(rows, period = marketState.period) {
@@ -525,7 +525,7 @@
     function renderChart() {
       const canvas = document.getElementById('marketChart');
       if (!canvas) return;
-      let candles = buildCandles(marketState.history, marketState.period);
+      let candles = Array.isArray(marketState.candles) && marketState.candles.length ? marketState.candles.map(c => ({x:Number(c.x),o:Number(c.o),h:Number(c.h),l:Number(c.l),c:Number(c.c)})) : buildCandles(marketState.history, marketState.period);
       const mids = marketState.history
         .map(x => (Number(x.compra)+Number(x.venta))/2)
         .filter(v => Number.isFinite(v) && v > 0);
@@ -582,7 +582,7 @@
           label: 'USDT/VES P2P', data: candles,
           borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' },
           color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' },
-          barThickness: 'flex', maxBarThickness: 10,
+          barThickness: 'flex', maxBarThickness: 16,
         }]},
         options: {
           responsive: true, maintainAspectRatio: false, parsing: false,
@@ -596,7 +596,7 @@
           },
           scales: {
             x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7 }, grid:{ color:'rgba(51,65,85,.25)' } },
-            y: { position:'right', grace:'3%', ticks:{ color:'#64748b', maxTicksLimit:7, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
+            y: { position:'right', grace:'1.5%', ticks:{ color:'#64748b', maxTicksLimit:7, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
           }
         }
       });
@@ -635,7 +635,7 @@
       marketState.period = period;
       document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
       if (btn) btn.setAttribute('aria-selected', 'true');
-      const labels = { '1m':'1 min', '5m':'5 min', '15m':'15 min', '30m':'30 min', '1h':'1 hora', '1d':'1 día' };
+      const labels = { '5m':'5 min', '15m':'15 min', '30m':'30 min', '1h':'1 hora', '1d':'1 día' };
       document.getElementById('chart-period-label').innerText = labels[period] || period;
       window.__venbotLastHistory = Date.now();
       await loadHistory(period);
@@ -649,12 +649,12 @@
       const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
       const views = {
         '1': {
-          title:'Proyección Operativa Binance P2P',
-          m1:['SEÑAL P2P', a.tactica?.estado || '--'],
-          m2:['15 MIN', fmtWindow(m.momentum_15m_pct)],
-          m3:['1 HORA', fmtWindow(m.momentum_1h_pct)],
-          m4:['VOLATILIDAD', `${pct(m.volatilidad_pct)}%`],
-          text:`${a.tactica?.detalle || 'Esperando análisis.'} Calidad de datos: ${m.calidad_datos ?? 0}%.`
+          title:'Proyección Cuantitativa Binance P2P · 7H',
+          m1:['COMPRA EST. 7H', a.proyeccion_7h?.compra ? `${money(a.proyeccion_7h.compra)} Bs` : 'n/d'],
+          m2:['VENTA EST. 7H', a.proyeccion_7h?.venta ? `${money(a.proyeccion_7h.venta)} Bs` : 'n/d'],
+          m3:['TENDENCIA', a.tendencia || '--'],
+          m4:['CALIDAD SEÑAL', `${a.proyeccion_7h?.calidad ?? m.calidad_datos ?? 0}%`],
+          text:`${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado: ${money(a.proyeccion_7h?.rango_mid_min)} – ${money(a.proyeccion_7h?.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
@@ -768,7 +768,7 @@
       chat.scrollTop = chat.scrollHeight;
       try {
         const controller = new AbortController();
-        const aiTimer = setTimeout(() => controller.abort(), 25000);
+        const aiTimer = setTimeout(() => controller.abort(), 40000);
         const response = await fetch(API_AI_CHAT, { method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json'}, body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }), signal: controller.signal });
         clearTimeout(aiTimer);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -825,7 +825,7 @@
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
         return;
       }
-      await Promise.allSettled([loadPrices(), loadHistory('1m'), loadAnalysis()]);
+      await Promise.allSettled([loadPrices(), loadHistory('5m'), loadAnalysis()]);
       setInterval(loadPrices, 15000);
       setInterval(updateAgoLabel, 1000);
 
@@ -833,7 +833,7 @@
       // navegador cada 15s para todas las temporalidades. Se adapta la frecuencia
       // al marco seleccionado para reducir tráfico y trabajo de Chart.js.
       setInterval(() => {
-        const interval = ({'1m':15000,'5m':30000,'15m':60000,'30m':90000,'1h':120000,'1d':180000})[marketState.period] || 60000;
+        const interval = ({'5m':30000,'15m':60000,'30m':90000,'1h':120000,'1d':180000})[marketState.period] || 60000;
         const now = Date.now();
         if (!window.__venbotLastHistory || now - window.__venbotLastHistory >= interval) {
           window.__venbotLastHistory = now;
