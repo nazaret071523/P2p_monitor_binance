@@ -1613,7 +1613,7 @@ def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35):
         "model": model,
         "system_instruction": VENBOT_AI_SYSTEM,
         "input": prompt,
-        "generation_config": {"temperature": temperature, "max_tokens": 900},
+        "generation_config": {"max_output_tokens": 900},
         "store": False,
     }
     try:
@@ -1652,7 +1652,7 @@ def _respuesta_gemini_interactions_sdk(prompt, model, temperature=0.35):
             model=model,
             system_instruction=VENBOT_AI_SYSTEM,
             input=prompt,
-            generation_config={"temperature": temperature, "max_tokens": 900},
+            generation_config={"max_output_tokens": 900},
             store=False,
         )
         text = (getattr(interaction, "output_text", None) or "").strip()
