@@ -365,6 +365,8 @@
     let marketChart = null;
     let lastSuccessfulFetch = null;
     let priceRequestRunning = false;
+    let historyRequestRunning = false;
+    let aiRequestRunning = false;
 
     function money(n) {
       const value = Number(n);
@@ -467,12 +469,16 @@
     }
 
     async function loadHistory(period = marketState.period) {
+      if (historyRequestRunning) return;
+      historyRequestRunning = true;
       try {
-        const payload = await fetchJSON(`${API_HISTORY}?period=${encodeURIComponent(period)}&t=${Date.now()}`, 20000);
+        const payload = await fetchJSON(`${API_HISTORY}?period=${encodeURIComponent(period)}&t=${Date.now()}`, 12000);
         marketState.history = Array.isArray(payload?.data) ? payload.data : [];
         renderChart();
       } catch (error) {
         console.error('Venbot /api/history:', error);
+      } finally {
+        historyRequestRunning = false;
       }
     }
 
@@ -540,8 +546,13 @@
       document.getElementById('chart-high').textContent = allValues.length ? `${money(Math.max(...allValues))} Bs` : '--,-- Bs';
       document.getElementById('chart-current').textContent = currentMid > 0 ? `${money(currentMid)} Bs` : '--,-- Bs';
 
-      if (marketChart) marketChart.destroy();
-      if (!candles.length) return;
+      if (!candles.length) {
+        if (marketChart) {
+          marketChart.data.datasets[0].data = [];
+          marketChart.update('none');
+        }
+        return;
+      }
 
       // Actualiza la última vela con la lectura viva para que 1M/5M/15M etc.
       // evolucionen sin esperar a la siguiente consulta histórica.
@@ -555,6 +566,14 @@
           last.l = Math.min(last.l, currentMid);
           last.c = currentMid;
         }
+      }
+
+      // Reutilizar la instancia de Chart.js evita destruir/recrear el canvas cada
+      // 15 segundos, algo especialmente costoso en móvil.
+      if (marketChart) {
+        marketChart.data.datasets[0].data = candles;
+        marketChart.update('none');
+        return;
       }
 
       marketChart = new Chart(canvas.getContext('2d'), {
@@ -618,6 +637,7 @@
       if (btn) btn.setAttribute('aria-selected', 'true');
       const labels = { '1m':'1 min', '5m':'5 min', '15m':'15 min', '30m':'30 min', '1h':'1 hora', '1d':'1 día' };
       document.getElementById('chart-period-label').innerText = labels[period] || period;
+      window.__venbotLastHistory = Date.now();
       await loadHistory(period);
     }
 
@@ -734,9 +754,11 @@
 
 
     async function sendAIMessage() {
+      if (aiRequestRunning) return;
       const input = document.getElementById('ai-user-input');
       const text = input.value.trim();
       if (!text) return;
+      aiRequestRunning = true;
       input.value = '';
       appendAIMessage('user', text);
       aiConversation.push({ role: 'user', content: text });
@@ -745,7 +767,10 @@
       chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
       chat.scrollTop = chat.scrollHeight;
       try {
-        const response = await fetch(API_AI_CHAT, { method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json'}, body: JSON.stringify({ message: text, history: aiConversation.slice(-12) }) });
+        const controller = new AbortController();
+        const aiTimer = setTimeout(() => controller.abort(), 25000);
+        const response = await fetch(API_AI_CHAT, { method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json'}, body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }), signal: controller.signal });
+        clearTimeout(aiTimer);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         document.getElementById(typingId)?.remove();
@@ -756,6 +781,8 @@
         console.error('Venbot AI:', error);
         document.getElementById(typingId)?.remove();
         appendAIMessage('assistant', 'No pude conectar con la IA en este momento. El monitor sigue funcionando con los datos del mercado.');
+      } finally {
+        aiRequestRunning = false;
       }
     }
 
@@ -801,7 +828,18 @@
       await Promise.allSettled([loadPrices(), loadHistory('1m'), loadAnalysis()]);
       setInterval(loadPrices, 15000);
       setInterval(updateAgoLabel, 1000);
-      setInterval(() => loadHistory(marketState.period), 15000);
+
+      // El precio se actualiza rápido, pero el histórico no necesita viajar al
+      // navegador cada 15s para todas las temporalidades. Se adapta la frecuencia
+      // al marco seleccionado para reducir tráfico y trabajo de Chart.js.
+      setInterval(() => {
+        const interval = ({'1m':15000,'5m':30000,'15m':60000,'30m':90000,'1h':120000,'1d':180000})[marketState.period] || 60000;
+        const now = Date.now();
+        if (!window.__venbotLastHistory || now - window.__venbotLastHistory >= interval) {
+          window.__venbotLastHistory = now;
+          loadHistory(marketState.period);
+        }
+      }, 5000);
       setInterval(loadAnalysis, 30000);
     }
 
