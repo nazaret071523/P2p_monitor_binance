@@ -621,25 +621,53 @@ def _binance_search(trade_type, banco_filtro="GENERAL"):
     return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
 
 def _seleccionar_anuncios_por_banco(raw, trade_type, banco_filtro):
-    bancos = ["MERCANTIL", "PROVINCIAL", "BNC"] if banco_filtro == "GENERAL" else [banco_filtro]
-    result = []
-    for banco in bancos:
-        elegibles = [
-            x for x in raw
-            if _anuncio_no_verificado(x)
-            and _anuncio_cumple_monto(x, trade_type)
-            and _ad_contiene_banco(x, banco)
-        ]
-        result.extend(elegibles[:10])
-    seen = set()
-    unique = []
-    for item in result:
-        adv = item.get("adv") or {}
-        key = str(adv.get("advNo") or item.get("advNo") or id(item))
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-    return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
+    """Selecciona anuncios elegibles sin dejar GENERAL sin datos.
+
+    GENERAL = combinación de Mercantil + Provincial + BNC. Si Binance no
+    expone el nombre del banco dentro del payload de algún anuncio, usamos
+    como respaldo los anuncios elegibles por monto/verificación para no
+    romper el monitor general. Los filtros individuales siguen siendo
+    estrictos y nunca reciben datos de GENERAL.
+    """
+    if banco_filtro == "GENERAL":
+        result = []
+        for banco in ("MERCANTIL", "PROVINCIAL", "BNC"):
+            elegibles = [
+                x for x in raw
+                if _anuncio_no_verificado(x)
+                and _anuncio_cumple_monto(x, trade_type)
+                and _ad_contiene_banco(x, banco)
+            ]
+            result.extend(elegibles[:10])
+
+        # Si el payload de Binance no trae el nombre del banco, no debemos
+        # dejar GENERAL en cero: usar la misma muestra P2P bancaria, pero sin
+        # inventar precios ni mezclar comerciantes verificados.
+        if not result:
+            result = [
+                x for x in raw
+                if _anuncio_no_verificado(x) and _anuncio_cumple_monto(x, trade_type)
+            ][:30]
+
+        seen = set()
+        unique = []
+        for item in result:
+            adv = item.get("adv") or {}
+            key = str(adv.get("advNo") or item.get("advNo") or id(item))
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        logger.info("P2P selección GENERAL %s: %s anuncios elegibles", trade_type, len(unique[:30]))
+        return unique[:30]
+
+    elegibles = [
+        x for x in raw
+        if _anuncio_no_verificado(x)
+        and _anuncio_cumple_monto(x, trade_type)
+        and _ad_contiene_banco(x, banco_filtro)
+    ]
+    logger.info("P2P selección %s %s: %s anuncios elegibles", banco_filtro, trade_type, len(elegibles[:10]))
+    return elegibles[:10]
 
 
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
@@ -1272,7 +1300,14 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
 
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
-    c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
+    # Telegram debe usar la misma captura persistida que alimenta el monitor.
+    # Así no genera otra consulta Binance ni queda desincronizado del frontend.
+    mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+    c_real = float(mercado.get("compra", 0) or 0)
+    v_real = float(mercado.get("venta", 0) or 0)
+    liquidez = int(mercado.get("liquidez", 0) or 0)
+    if c_real <= 0 or v_real <= 0:
+        c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
     datos = await asyncio.to_thread(motor_quant_inteligente, c_real, v_real, liquidez, banco)
 
     ahora = datetime.now(VET)
@@ -1427,6 +1462,7 @@ async def tarea_recoleccion_automatica():
             for banco in ("GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"):
                 c, v, l = calcular_desde_raw(banco)
                 resultados[banco] = (c, v, l)
+                logger.info("P2P %s listo: %.2f compra / %.2f venta / %s anuncios", banco, c, v, l)
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
                 if banco == "GENERAL":
