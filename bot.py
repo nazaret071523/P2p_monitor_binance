@@ -3,6 +3,9 @@ import io
 import asyncio
 import logging
 import time
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -46,8 +49,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
-COLLECT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
-MARKET_MAX_AGE_SECONDS = int(os.getenv("MARKET_MAX_AGE_SECONDS", "90"))
+COLLECT_INTERVAL_SECONDS = max(10, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
+MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -83,7 +86,9 @@ _HISTORY_CACHE = {}
 _AI_CONTEXT_CACHE = {"value": None, "expires": 0.0}
 _CACHE_TTL_ANALYSIS = 8.0
 _CACHE_TTL_HISTORY = 10.0
-_CACHE_TTL_AI = 8.0
+_CACHE_TTL_AI = 5.0
+LIVE_CACHE = {"value": None, "expires": 0.0}
+LIVE_LOCK = threading.Lock()
 
 
 # ==========================================
@@ -601,44 +606,32 @@ def _binance_search(trade_type, banco_filtro="GENERAL"):
     return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
 
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
-    """
-    Desde la perspectiva del usuario:
-    - Comprar USDT => anuncios SELL.
-    - Vender USDT  => anuncios BUY.
+    """Lee Binance P2P en vivo. Comprar=SELL y Vender=BUY.
+    Las dos patas se consultan en paralelo para minimizar latencia.
     """
     global ULTIMO_REGISTRO_VALIDO
-
     try:
-        anuncios_compra_usuario = _binance_search("SELL", banco_filtro)
-        anuncios_venta_usuario = _binance_search("BUY", banco_filtro)
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            f_sell = ex.submit(_binance_search, "SELL", banco_filtro)
+            f_buy = ex.submit(_binance_search, "BUY", banco_filtro)
+            anuncios_compra_usuario = f_sell.result(timeout=9)
+            anuncios_venta_usuario = f_buy.result(timeout=9)
 
         compra = calcular_vwap_con_filtro(anuncios_compra_usuario)
         venta = calcular_vwap_con_filtro(anuncios_venta_usuario)
-
         if compra > 0 and venta > 0:
             liquidez = len(anuncios_compra_usuario) + len(anuncios_venta_usuario)
-            ULTIMO_REGISTRO_VALIDO = {
-                "compra": compra,
-                "venta": venta,
-                "timestamp": datetime.now(VET),
-            }
+            ULTIMO_REGISTRO_VALIDO = {"compra": compra, "venta": venta, "timestamp": datetime.now(VET)}
             return round(compra, 2), round(venta, 2), liquidez
     except Exception as e:
         logger.warning("Binance P2P no disponible para %s: %s", banco_filtro, e)
 
-    # Última lectura real persistida. No se fabrican precios.
     if banco_filtro == "GENERAL":
         db = obtener_mercado_actual_db()
         if db and db["compra"] > 0 and db["venta"] > 0:
             return round(db["compra"], 2), round(db["venta"], 2), int(db["liquidez"])
-
     if ULTIMO_REGISTRO_VALIDO["compra"] > 0 and ULTIMO_REGISTRO_VALIDO["venta"] > 0:
-        return (
-            round(ULTIMO_REGISTRO_VALIDO["compra"], 2),
-            round(ULTIMO_REGISTRO_VALIDO["venta"], 2),
-            0,
-        )
-
+        return round(ULTIMO_REGISTRO_VALIDO["compra"], 2), round(ULTIMO_REGISTRO_VALIDO["venta"], 2), 0
     return 0.0, 0.0, 0
 
 
@@ -706,6 +699,46 @@ def _obtener_punto_cercano_por_horas(fechas, valores, horas):
         return float(valores[i])
     except Exception:
         return None
+
+
+def detectar_manipulacion_mercado(mids, spreads, actual_mid, actual_spread):
+    """Detecta patrones anómalos, no afirma manipulación intencional.
+    Requiere señales combinadas para reducir falsos positivos.
+    """
+    try:
+        arr = np.asarray(mids, dtype=float)
+        spr = np.asarray(spreads, dtype=float)
+        if len(arr) < 8:
+            return {"activa": False, "nivel": "normal", "motivos": []}
+        recent = arr[-12:]
+        returns = np.diff(recent) / recent[:-1] * 100.0
+        typical = float(np.median(np.abs(returns))) if len(returns) else 0.0
+        last_move = float(returns[-1]) if len(returns) else 0.0
+        median = float(np.median(arr[-60:]))
+        distance = abs(actual_mid - median) / median * 100.0 if median else 0.0
+        avg_spread = float(np.median(spr[-60:])) if len(spr) else actual_spread
+        spread_jump = abs(actual_spread - avg_spread) / avg_spread * 100.0 if avg_spread > 0 else 0.0
+        shock_threshold = max(0.18, typical * 4.0)
+        reasons = []
+        score = 0
+        if abs(last_move) >= shock_threshold:
+            score += 1; reasons.append(f"movimiento puntual {last_move:+.3f}%")
+        if distance >= max(0.30, typical * 6.0):
+            score += 1; reasons.append(f"desviación {distance:.3f}% de la mediana")
+        if spread_jump >= 25.0:
+            score += 1; reasons.append(f"spread cambia {spread_jump:.1f}%")
+        # Reversión rápida: salto y corrección en las dos últimas muestras.
+        if len(returns) >= 3 and abs(returns[-2]) >= shock_threshold * 0.75 and (returns[-2] * returns[-1] < 0):
+            score += 1; reasons.append("salto con reversión rápida")
+        if score >= 3:
+            level = "alto"
+        elif score == 2:
+            level = "vigilancia"
+        else:
+            level = "normal"
+        return {"activa": score >= 2, "nivel": level, "score": score, "motivos": reasons}
+    except Exception:
+        return {"activa": False, "nivel": "normal", "score": 0, "motivos": []}
 
 
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
@@ -866,6 +899,8 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         agreement = 0.0
     confianza = int(round(100 * (0.32*coverage_score + 0.23*density_score + 0.25*agreement + 0.20*regression_r2)))
     confianza = max(15, min(92, confianza)) if len(series) >= 3 else 0
+
+    manipulacion = detectar_manipulacion_mercado(mids, spreads, mid_actual, spread_actual)
 
     liquidez = int(liquidez_actual)
     if liquidez >= 40:
@@ -1059,7 +1094,11 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
     score_values = [x for x in (c15, c30, c1h) if x is not None]
     score = (0.45 * (c15 or 0) + 0.30 * (c30 or 0) + 0.25 * (c1h or 0)) if score_values else 0.0
 
-    if spread_pct >= 1.50:
+    manipulacion = q.get("manipulacion") or {"activa": False, "nivel": "normal", "motivos": []}
+    if manipulacion.get("nivel") == "alto":
+        tactica_estado = "🚨 VIGILANCIA · MOVIMIENTO ANÓMALO"
+        tactica_detail = "Posible anomalía de mercado: " + "; ".join(manipulacion.get("motivos", [])[:3]) + ". No implica manipulación intencional."
+    elif spread_pct >= 1.50:
         tactica_estado = "🟠 EJECUCIÓN COSTOSA"
         tactica_detail = f"El spread está en {spread_pct:.2f}%; el coste de ejecución es elevado."
     elif aligned_up >= 2 and score > threshold:
@@ -1112,6 +1151,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
         "niveles": {"estado": niveles_estado, "detalle": niveles_detail},
         "tendencia": q.get("tendencia"),
         "detalle_tendencia": q.get("detalle_tendencia"),
+        "manipulacion": manipulacion,
         "proyeccion_7h": {
             "compra": q.get("pred_compra"),
             "venta": q.get("pred_venta"),
@@ -1315,9 +1355,12 @@ async def tarea_recoleccion_automatica():
         try:
             mercado = await asyncio.to_thread(recolectar_mercado_general)
 
-            # Bancos separados, solo para histórico/Telegram.
-            for banco in ("MERCANTIL", "PROVINCIAL", "BNC"):
-                c, v, l = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
+            # Bancos separados en paralelo para no serializar seis consultas HTTP.
+            resultados_bancos = await asyncio.gather(*[
+                asyncio.to_thread(obtener_precios_binance_p2p, banco)
+                for banco in ("MERCANTIL", "PROVINCIAL", "BNC")
+            ])
+            for banco, (c, v, l) in zip(("MERCANTIL", "PROVINCIAL", "BNC"), resultados_bancos):
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
 
@@ -1327,19 +1370,22 @@ async def tarea_recoleccion_automatica():
                     mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL"
                 )
                 tendencia = datos["tendencia"]
-                if (
-                    TELEGRAM_ALERT_CHAT_ID
-                    and telegram_app
-                    and tendencia != ULTIMO_ESTADO_TENDENCIA
-                ):
-                    ULTIMO_ESTADO_TENDENCIA = tendencia
+                manip = datos.get("manipulacion") or {}
+                debe_alertar_tendencia = tendencia != ULTIMO_ESTADO_TENDENCIA
+                if TELEGRAM_ALERT_CHAT_ID and telegram_app and (debe_alertar_tendencia or manip.get("activa")):
+                    if debe_alertar_tendencia:
+                        ULTIMO_ESTADO_TENDENCIA = tendencia
+                    tipo = "🚨 ALERTA DE MOVIMIENTO ANÓMALO" if manip.get("activa") else "🚨 ALERTA PROACTIVA DE MERCADO P2P"
+                    motivos = "; ".join(manip.get("motivos", [])[:3])
+                    extra = f"\n• Anomalía: `{motivos}`" if motivos else ""
                     await telegram_app.bot.send_message(
                         chat_id=TELEGRAM_ALERT_CHAT_ID,
                         text=(
-                            "🚨 *ALERTA PROACTIVA DE MERCADO P2P*\n"
-                            f"• Cambio: `{tendencia}`\n"
+                            f"{tipo}\n"
+                            f"• Tendencia: `{tendencia}`\n"
                             f"• Comprar USDT: `{mercado['compra']:.2f} Bs`\n"
-                            f"• Vender USDT: `{mercado['venta']:.2f} Bs`"
+                            f"• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra +
+                            "\n• La anomalía es una señal estadística y no prueba manipulación intencional."
                         ),
                         parse_mode="Markdown",
                     )
@@ -1348,7 +1394,7 @@ async def tarea_recoleccion_automatica():
         except Exception as e:
             logger.exception("Error en tarea autónoma: %s", e)
 
-        await asyncio.sleep(max(30, COLLECT_INTERVAL_SECONDS))
+        await asyncio.sleep(COLLECT_INTERVAL_SECONDS)
 
 
 # ==========================================
@@ -1400,60 +1446,50 @@ def _mercado_desactualizado(mercado):
 
 @app.get("/api/precios")
 def obtener_precios_api(refresh: bool = Query(False)):
-    mercado = obtener_mercado_actual_db()
+    """Entrega la última lectura real; si supera 5 s, fuerza una lectura P2P.
+    Nunca fabrica precios. El frontend puede consultar cada pocos segundos sin
+    multiplicar llamadas a Binance gracias a esta caché ultracorta.
+    """
+    now_mono = time.monotonic()
+    cached = LIVE_CACHE.get("value")
+    if cached and not refresh and now_mono < LIVE_CACHE.get("expires", 0):
+        return cached
 
-    if refresh or _mercado_desactualizado(mercado):
+    with LIVE_LOCK:
+        now_mono = time.monotonic()
+        cached = LIVE_CACHE.get("value")
+        if cached and not refresh and now_mono < LIVE_CACHE.get("expires", 0):
+            return cached
         nuevo = recolectar_mercado_general()
-        mercado = obtener_mercado_actual_db()
-        if not mercado and nuevo["compra"] > 0:
-            mercado = {
-                "compra": nuevo["compra"],
-                "venta": nuevo["venta"],
-                "liquidez": nuevo["liquidez"],
-                "bcv": nuevo["bcv"],
-                "eur": nuevo["eur"],
-                "fuente_bcv": nuevo["fuente_bcv"],
-                "fecha": nuevo["timestamp"],
-            }
+        mercado = obtener_mercado_actual_db() or {}
+        if nuevo.get("compra", 0) > 0 and nuevo.get("venta", 0) > 0:
+            compra = float(nuevo["compra"]); venta = float(nuevo["venta"])
+            liquidez = int(nuevo.get("liquidez", 0))
+            bcv = float(nuevo.get("bcv", 0) or 0); eur = float(nuevo.get("eur", 0) or 0)
+            fecha = nuevo.get("timestamp") or datetime.now(VET)
+            source = nuevo.get("fuente_bcv", "sin_datos")
+        elif mercado:
+            compra = float(mercado.get("compra",0)); venta = float(mercado.get("venta",0))
+            liquidez = int(mercado.get("liquidez",0)); bcv = float(mercado.get("bcv",0)); eur = float(mercado.get("eur",0))
+            fecha = mercado.get("fecha") or datetime.now(VET); source = mercado.get("fuente_bcv", "DB")
+        else:
+            return {"ok": False, "error": "Todavía no existe una lectura real."}
 
-    if not mercado:
-        return {
-            "ok": False,
-            "compra": 0,
-            "venta": 0,
-            "buy": 0,
-            "sell": 0,
-            "spread": 0,
-            "spread_pct": 0,
-            "bcv": 0,
-            "eur": 0,
-            "liquidez": 0,
-            "timestamp": datetime.now(VET).isoformat(),
-            "error": "Todavía no existe una lectura real.",
+        if fecha and fecha.tzinfo is None:
+            fecha = VET.localize(fecha)
+        age = max(0.0, (datetime.now(VET) - fecha.astimezone(VET)).total_seconds()) if fecha else 9999.0
+        spread = round(venta - compra, 2)
+        result = {
+            "ok": compra > 0 and venta > 0, "compra": round(compra,2), "venta": round(venta,2),
+            "buy": round(compra,2), "sell": round(venta,2), "spread": spread,
+            "spread_pct": round((spread/compra)*100,2) if compra else 0.0,
+            "bcv": round(bcv,2), "eur": round(eur,2), "liquidez": liquidez,
+            "fuente_bcv": source, "timestamp": fecha.astimezone(VET).isoformat() if fecha else datetime.now(VET).isoformat(),
+            "age_seconds": round(age,1), "stale": age > MARKET_MAX_AGE_SECONDS, "source": "Binance P2P live" if age <= MARKET_MAX_AGE_SECONDS else "última lectura real"
         }
-
-    compra = round(mercado["compra"], 2)
-    venta = round(mercado["venta"], 2)
-    spread = round(venta - compra, 2)
-    spread_pct = round((spread / compra) * 100, 2) if compra > 0 else 0.0
-    fecha = mercado["fecha"]
-    if fecha and fecha.tzinfo is None:
-        fecha = VET.localize(fecha)
-
-    return {
-        "ok": compra > 0 and venta > 0,
-        "compra": compra,
-        "venta": venta,
-        "buy": compra,
-        "sell": venta,
-        "spread": spread,
-        "spread_pct": spread_pct,
-        "bcv": round(mercado["bcv"], 2),
-        "eur": round(mercado["eur"], 2),
-        "liquidez": mercado["liquidez"],
-        "fuente_bcv": mercado["fuente_bcv"],
-        "timestamp": fecha.astimezone(VET).isoformat() if fecha else datetime.now(VET).isoformat(),
-    }
+        LIVE_CACHE["value"] = result
+        LIVE_CACHE["expires"] = time.monotonic() + 5.0
+        return result
 
 
 @app.get("/api/market")
@@ -1568,79 +1604,100 @@ def _serializar_contexto_mercado():
     return result
 
 
-def _respuesta_gemini(prompt, model, temperature=0.35):
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=temperature, max_output_tokens=1100),
-    )
-    return getattr(response, "text", None)
+def _respuesta_gemini_rest(prompt, model, temperature=0.35):
+    """Ruta REST directa de Gemini; evita depender de compatibilidad del SDK."""
+    if not GEMINI_API_KEY:
+        return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {
+        "system_instruction": {"parts": [{"text": VENBOT_AI_SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": temperature, "maxOutputTokens": 900},
+    }
+    try:
+        r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=12)
+        if not r.ok:
+            logger.warning("Gemini REST %s HTTP %s: %s", model, r.status_code, r.text[:500])
+            return None
+        data = r.json()
+        parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+        text = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict)).strip()
+        return text or None
+    except Exception as e:
+        logger.warning("Gemini REST %s falló: %s", model, e)
+        return None
 
+def _respuesta_gemini_sdk(prompt, model, temperature=0.35):
+    if not GEMINI_API_KEY or genai is None or types is None:
+        return None
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(model=model, contents=prompt, config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=temperature, max_output_tokens=900))
+        return (getattr(response, "text", None) or "").strip() or None
+    except Exception as e:
+        logger.warning("Gemini SDK %s falló: %s", model, e)
+        return None
 
-def _respuesta_openrouter(prompt):
+def _respuesta_openrouter(prompt, temperature=0.45):
     if not OPENROUTER_API_KEY:
         return None
     try:
         r = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json", "HTTP-Referer": RENDER_EXTERNAL_URL or "https://p2p-monitor-binance.onrender.com", "X-Title": "Venbot"},
-            json={"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": VENBOT_AI_SYSTEM}, {"role": "user", "content": prompt}], "temperature": 0.45, "max_tokens": 1100},
-            timeout=30,
+            json={"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": VENBOT_AI_SYSTEM}, {"role": "user", "content": prompt}], "temperature": temperature, "max_tokens": 900},
+            timeout=15,
         )
-        r.raise_for_status()
+        if not r.ok:
+            logger.warning("OpenRouter HTTP %s: %s", r.status_code, r.text[:500])
+            return None
         data = r.json()
         return (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or None
     except Exception as e:
         logger.warning("OpenRouter fallback falló: %s", e)
         return None
 
-
 def generar_respuesta_ia(mensaje, historial):
     if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
-        return "La IA conversacional todavía no está configurada en el servidor."
-    import json
+        return "La IA no tiene proveedor configurado en Render. Añade GEMINI_API_KEY o OPENROUTER_API_KEY."
     market_query = any(k in mensaje.lower() for k in (
-        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado",
-        "spread", "liquidez", "momentum", "soporte", "resistencia",
-        "proyeccion", "proyección", "prediccion", "predicción", "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje"
+        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
+        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
+        "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas"
     ))
-    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general", "nota": "La consulta no requiere datos de mercado P2P."}
+    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
     prev = []
-    for h in (historial or [])[-20:]:
+    for h in (historial or [])[-12:]:
         role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
-        content = str(h.get("content", h.get("text", "")))[:5000]
-        if content:
-            prev.append({"role": role, "content": content})
-    prompt = "CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) + "\n\nHISTORIAL CONVERSACIONAL:\n" + json.dumps(prev, ensure_ascii=False) + "\n\nPREGUNTA ACTUAL:\n" + mensaje
-    ai_temperature = 0.18 if market_query else 0.45
+        content = str(h.get("content", h.get("text", "")))[:2500]
+        if content: prev.append({"role": role, "content": content})
+    prompt = ("CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) +
+              "\n\nHISTORIAL:\n" + json.dumps(prev, ensure_ascii=False) +
+              "\n\nPREGUNTA ACTUAL:\n" + mensaje)
+    temperature = 0.15 if market_query else 0.55
 
-    if GEMINI_API_KEY and genai is not None:
-        # Modelos estables/rápidos primero. Evita perder segundos intentando un
-        # nombre de modelo obsoleto configurado en Render antes del fallback.
-        primary = "gemini-2.5-flash" if market_query else "gemini-2.5-flash-lite"
-        modelos = [primary]
+    if GEMINI_API_KEY:
+        modelos = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
         if GEMINI_MODEL and GEMINI_MODEL not in modelos:
             modelos.append(GEMINI_MODEL)
-        if "gemini-2.5-flash" not in modelos:
-            modelos.append("gemini-2.5-flash")
         for model in modelos:
-            try:
-                text = _respuesta_gemini(prompt, model, ai_temperature)
-                if text:
-                    return text.strip()
-            except Exception as e:
-                logger.warning("Gemini %s falló: %s", model, e)
-
-    text = _respuesta_openrouter(prompt)
-    if text:
-        return text
-    return "No pude generar una respuesta en este momento. Intenta de nuevo en unos segundos."
+            text = _respuesta_gemini_rest(prompt, model, temperature)
+            if text: return text
+            text = _respuesta_gemini_sdk(prompt, model, temperature)
+            if text: return text
+    text = _respuesta_openrouter(prompt, temperature)
+    if text: return text
+    return "La IA no pudo completar la respuesta. Revisa en Render que GEMINI_API_KEY sea válida y que el servicio tenga salida HTTPS."
 
 
 class AIChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=6000)
     history: list[dict] = Field(default_factory=list)
+
+
+@app.get("/api/ai/health")
+def ai_health():
+    return {"configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY), "gemini_configured": bool(GEMINI_API_KEY), "openrouter_configured": bool(OPENROUTER_API_KEY), "preferred_models": ["gemini-2.5-flash", "gemini-2.5-flash-lite"]}
 
 
 @app.post("/api/ai/chat")
