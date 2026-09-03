@@ -9,6 +9,6 @@ scikit-learn>=1.5,<2
 matplotlib>=3.9,<4
 pytz>=2024.1
 beautifulsoup4>=4.12,<5
-google-genai>=1,<2
+google-genai>=2,<3
 
 pydantic>=2.9,<3
