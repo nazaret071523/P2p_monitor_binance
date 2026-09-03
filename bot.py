@@ -679,7 +679,7 @@ def _clasificar_spread(spread, precio):
 
 def _obtener_punto_cercano_por_horas(fechas, valores, horas):
     """Busca el valor más cercano a N horas atrás, sin asumir 1 muestra = 1 minuto."""
-    if not fechas or not valores:
+    if len(fechas) == 0 or len(valores) == 0:
         return None
     try:
         objetivo = fechas[-1] - timedelta(hours=horas)
