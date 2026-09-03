@@ -52,7 +52,7 @@ TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
 COLLECT_INTERVAL_SECONDS = max(10, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 
@@ -1604,8 +1604,76 @@ def _serializar_contexto_mercado():
     return result
 
 
+def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35):
+    """Ruta REST recomendada por Google para Gemini Interactions API."""
+    if not GEMINI_API_KEY:
+        return None
+    url = "https://generativelanguage.googleapis.com/v1beta/interactions"
+    payload = {
+        "model": model,
+        "system_instruction": VENBOT_AI_SYSTEM,
+        "input": prompt,
+        "generation_config": {"temperature": temperature, "max_tokens": 900},
+        "store": False,
+    }
+    try:
+        r = requests.post(
+            url,
+            headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+            json=payload,
+            timeout=20,
+        )
+        if not r.ok:
+            logger.warning("Gemini Interactions REST %s HTTP %s: %s", model, r.status_code, r.text[:500])
+            return None
+        data = r.json()
+        # Interactions API returns model_output steps containing text blocks.
+        for step in reversed(data.get("steps") or []):
+            if not isinstance(step, dict) or step.get("type") != "model_output":
+                continue
+            for block in step.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = str(block.get("text", "")).strip()
+                    if text:
+                        return text
+        text = str(data.get("output_text", "") or "").strip()
+        return text or None
+    except Exception as e:
+        logger.warning("Gemini Interactions REST %s falló: %s", model, e)
+        return None
+
+
+def _respuesta_gemini_interactions_sdk(prompt, model, temperature=0.35):
+    if not GEMINI_API_KEY or genai is None:
+        return None
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        interaction = client.interactions.create(
+            model=model,
+            system_instruction=VENBOT_AI_SYSTEM,
+            input=prompt,
+            generation_config={"temperature": temperature, "max_tokens": 900},
+            store=False,
+        )
+        text = (getattr(interaction, "output_text", None) or "").strip()
+        if text:
+            return text
+        for step in reversed(getattr(interaction, "steps", None) or []):
+            if getattr(step, "type", None) != "model_output":
+                continue
+            for block in getattr(step, "content", None) or []:
+                if getattr(block, "type", None) == "text":
+                    text = (getattr(block, "text", None) or "").strip()
+                    if text:
+                        return text
+        return None
+    except Exception as e:
+        logger.warning("Gemini Interactions SDK %s falló: %s", model, e)
+        return None
+
+
 def _respuesta_gemini_rest(prompt, model, temperature=0.35):
-    """Ruta REST directa de Gemini; evita depender de compatibilidad del SDK."""
+    """Compatibilidad legacy generateContent, útil como último fallback."""
     if not GEMINI_API_KEY:
         return None
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -1615,27 +1683,36 @@ def _respuesta_gemini_rest(prompt, model, temperature=0.35):
         "generationConfig": {"temperature": temperature, "maxOutputTokens": 900},
     }
     try:
-        r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=12)
+        r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=15)
         if not r.ok:
-            logger.warning("Gemini REST %s HTTP %s: %s", model, r.status_code, r.text[:500])
+            logger.warning("Gemini legacy REST %s HTTP %s: %s", model, r.status_code, r.text[:500])
             return None
         data = r.json()
         parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
         text = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict)).strip()
         return text or None
     except Exception as e:
-        logger.warning("Gemini REST %s falló: %s", model, e)
+        logger.warning("Gemini legacy REST %s falló: %s", model, e)
         return None
+
 
 def _respuesta_gemini_sdk(prompt, model, temperature=0.35):
     if not GEMINI_API_KEY or genai is None or types is None:
         return None
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(model=model, contents=prompt, config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=temperature, max_output_tokens=900))
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=VENBOT_AI_SYSTEM,
+                temperature=temperature,
+                max_output_tokens=900,
+            ),
+        )
         return (getattr(response, "text", None) or "").strip() or None
     except Exception as e:
-        logger.warning("Gemini SDK %s falló: %s", model, e)
+        logger.warning("Gemini legacy SDK %s falló: %s", model, e)
         return None
 
 def _respuesta_openrouter(prompt, temperature=0.45):
@@ -1677,10 +1754,15 @@ def generar_respuesta_ia(mensaje, historial):
     temperature = 0.15 if market_query else 0.55
 
     if GEMINI_API_KEY:
-        modelos = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+        modelos = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
         if GEMINI_MODEL and GEMINI_MODEL not in modelos:
-            modelos.append(GEMINI_MODEL)
+            modelos.insert(0, GEMINI_MODEL)
         for model in modelos:
+            text = _respuesta_gemini_interactions_rest(prompt, model, temperature)
+            if text: return text
+            text = _respuesta_gemini_interactions_sdk(prompt, model, temperature)
+            if text: return text
+            # Fallback adicional para cuentas/modelos que aún expongan generateContent.
             text = _respuesta_gemini_rest(prompt, model, temperature)
             if text: return text
             text = _respuesta_gemini_sdk(prompt, model, temperature)
@@ -1697,7 +1779,7 @@ class AIChatRequest(BaseModel):
 
 @app.get("/api/ai/health")
 def ai_health():
-    return {"configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY), "gemini_configured": bool(GEMINI_API_KEY), "openrouter_configured": bool(OPENROUTER_API_KEY), "preferred_models": ["gemini-2.5-flash", "gemini-2.5-flash-lite"]}
+    return {"configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY), "gemini_configured": bool(GEMINI_API_KEY), "openrouter_configured": bool(OPENROUTER_API_KEY), "preferred_models": ["gemini-3.6-flash", "gemini-3.5-flash-lite"], "api": "Interactions API"}
 
 
 @app.post("/api/ai/chat")
