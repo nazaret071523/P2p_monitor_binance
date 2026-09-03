@@ -191,7 +191,7 @@
           <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Alcista (Verde)</span>
           <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Bajista (Roja)</span>
         </div>
-        <div class="relative h-64 w-full"><canvas id="marketChart"></canvas></div>
+        <div class="relative h-80 w-full"><canvas id="marketChart"></canvas></div>
         <div class="grid grid-cols-3 gap-2 text-[10px]">
           <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Mínimo P2P</span><strong id="chart-low" class="tabular text-white">--,-- Bs</strong></div>
           <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-2.5"><span class="text-slate-500 block">Actual P2P</span><strong id="chart-current" class="tabular text-emerald-300">--,-- Bs</strong></div>
@@ -210,7 +210,7 @@
                 <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI · Binance P2P</h3>
                 <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Exclusivo P2P</span>
               </div>
-              <p class="text-[11px] text-slate-400 mt-0.5">Análisis inteligente enfocado 100% en el mercado P2P de Binance (USDT/VES).</p>
+              <p class="text-[11px] text-slate-400 mt-0.5">Copiloto conversacional con datos reales del mercado P2P de Binance (USDT/VES).</p>
             </div>
           </div>
           <button type="button" onclick="handleAIClick()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
@@ -301,14 +301,14 @@
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-        <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI (Binance P2P)</h3><p class="text-[10px] text-emerald-400 font-semibold">Exclusivo para análisis P2P y arbitraje</p></div></div>
+        <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI (Binance P2P)</h3><p class="text-[10px] text-emerald-400 font-semibold">Copiloto conversacional · mercado + preguntas generales</p></div></div>
         <button type="button" onclick="closeAIChatModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"><i class="fa-solid fa-xmark text-sm"></i></button>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
         <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo mostrarte un resumen de las lecturas actuales P2P, BCV y Euro disponibles en el monitor.</div></div>
       </div>
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center gap-2">
-        <input id="ai-user-input" type="text" placeholder="Pregunta sobre el mercado P2P..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
+        <input id="ai-user-input" type="text" placeholder="Escribe cualquier pregunta o consulta sobre el mercado..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
         <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1"><i class="fa-solid fa-paper-plane"></i></button>
       </div>
     </div>
@@ -355,7 +355,8 @@
       liquidity: 0,
       timestamp: null,
       history: [],
-      period: '1d'
+      period: '1d',
+      analysis: null
     };
 
     let marketChart = null;
@@ -472,93 +473,75 @@
       }
     }
 
-    function buildCandles(rows) {
+    async function loadAnalysis() {
+      try {
+        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 15000);
+        if (data && data.ok !== false) { marketState.analysis = data; renderAIIndicators(); }
+      } catch (error) { console.error('Venbot /api/analysis:', error); }
+    }
+
+    function candleBucketMs(period) {
+      if (period === '1d') return 5 * 60 * 1000;
+      if (period === '7d') return 15 * 60 * 1000;
+      return 60 * 60 * 1000;
+    }
+
+    function buildCandles(rows, period = marketState.period) {
       if (!Array.isArray(rows) || !rows.length) return [];
-      const candles = [];
-      let previousClose = null;
+      const bucketMs = candleBucketMs(period);
+      const buckets = new Map();
       for (const row of rows) {
         const buy = Number(row.compra);
         const sell = Number(row.venta);
         const time = new Date(row.timestamp).getTime();
-        if (!Number.isFinite(buy) || !Number.isFinite(sell) || !Number.isFinite(time)) continue;
+        if (!(buy > 0) || !(sell > 0) || !Number.isFinite(time)) continue;
         const mid = (buy + sell) / 2;
-        const open = previousClose ?? mid;
-        const close = mid;
-        candles.push({
-          x: time,
-          o: open,
-          h: Math.max(open, close, buy, sell),
-          l: Math.min(open, close, buy, sell),
-          c: close
-        });
-        previousClose = close;
+        const key = Math.floor(time / bucketMs) * bucketMs;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push({ time, mid });
       }
-      return candles;
+      return [...buckets.entries()].sort((a,b) => a[0]-b[0]).map(([key, points]) => {
+        points.sort((a,b) => a.time-b.time);
+        const vals = points.map(p => p.mid);
+        return { x: key, o: vals[0], h: Math.max(...vals), l: Math.min(...vals), c: vals[vals.length-1] };
+      });
     }
 
     function renderChart() {
       const canvas = document.getElementById('marketChart');
       if (!canvas) return;
+      const candles = buildCandles(marketState.history, marketState.period);
+      const mids = marketState.history.map(x => (Number(x.compra)+Number(x.venta))/2).filter(Number.isFinite);
+      const current = Number(marketState.sell || 0);
 
-      const candles = buildCandles(marketState.history);
-      const lows = marketState.history.map(x => Number(x.compra)).filter(Number.isFinite);
-      const highs = marketState.history.map(x => Number(x.venta)).filter(Number.isFinite);
+      document.getElementById('chart-low').textContent = mids.length ? `${money(Math.min(...mids))} Bs` : '--,-- Bs';
+      document.getElementById('chart-high').textContent = mids.length ? `${money(Math.max(...mids))} Bs` : '--,-- Bs';
+      document.getElementById('chart-current').textContent = current > 0 ? `${money(current)} Bs` : (mids.length ? `${money(mids[mids.length-1])} Bs` : '--,-- Bs');
 
-      document.getElementById('chart-low').textContent = lows.length ? `${money(Math.min(...lows))} Bs` : '--,-- Bs';
-      document.getElementById('chart-high').textContent = highs.length ? `${money(Math.max(...highs))} Bs` : '--,-- Bs';
-      document.getElementById('chart-current').textContent = highs.length ? `${money(highs[highs.length - 1])} Bs` : '--,-- Bs';
-
-      if (marketChart) {
-        marketChart.destroy();
-        marketChart = null;
-      }
+      if (marketChart) marketChart.destroy();
+      if (!candles.length) return;
 
       marketChart = new Chart(canvas.getContext('2d'), {
         type: 'candlestick',
-        data: {
-          datasets: [{
-            label: 'USDT/VES P2P',
-            data: candles,
-            borderColor: {
-              up: '#34d399',
-              down: '#fb7185',
-              unchanged: '#94a3b8'
-            },
-            color: {
-              up: '#34d399',
-              down: '#fb7185',
-              unchanged: '#94a3b8'
-            }
-          }]
-        },
+        data: { datasets: [{
+          label: 'USDT/VES P2P', data: candles,
+          borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' },
+          color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' },
+          barThickness: 'flex', maxBarThickness: 10,
+        }]},
         options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          parsing: false,
-          interaction: { intersect: false, mode: 'nearest' },
+          responsive: true, maintainAspectRatio: false, parsing: false,
+          animation: false, interaction: { intersect: false, mode: 'nearest' },
           plugins: {
             legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: (ctx) => {
-                  const raw = ctx.raw;
-                  if (!raw) return '';
-                  return `O ${money(raw.o)} · H ${money(raw.h)} · L ${money(raw.l)} · C ${money(raw.c)} Bs`;
-                }
-              }
-            }
+            tooltip: { callbacks: {
+              title: (items) => items.length ? new Date(items[0].raw.x).toLocaleString('es-VE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '',
+              label: (ctx) => { const r=ctx.raw; return `O ${money(r.o)} · H ${money(r.h)} · L ${money(r.l)} · C ${money(r.c)} Bs`; }
+            }}
           },
           scales: {
-            x: {
-              type: 'time',
-              time: { tooltipFormat: 'dd/LL HH:mm' },
-              ticks: { color: '#64748b', maxRotation: 0 },
-              grid: { color: 'rgba(51,65,85,.25)' }
-            },
-            y: {
-              ticks: { color: '#64748b' },
-              grid: { color: 'rgba(51,65,85,.25)' }
-            }
+            x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7 }, grid:{ color:'rgba(51,65,85,.25)' } },
+            y: { position:'right', grace:'2%', ticks:{ color:'#64748b', maxTicksLimit:7, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
           }
         }
       });
@@ -600,28 +583,43 @@
     }
 
     function renderAIIndicators() {
-      const buy = marketState.buy;
-      const sell = marketState.sell;
-      const spreadPct = marketState.spreadPct;
-      const liquidity = marketState.liquidity;
-
-      document.getElementById('m1-val').textContent =
-        spreadPct > 2 ? '🟡 SPREAD AMPLIO' : spreadPct > 0 ? '🟢 MERCADO ACTIVO' : '⚪ SIN SEÑAL';
-      document.getElementById('m2-val').textContent =
-        liquidity >= 15 ? '⚡ ALTA ACTIVIDAD' : liquidity > 0 ? '🟡 ACTIVIDAD MEDIA' : '⚪ SIN DATOS';
-      document.getElementById('m3-val').textContent =
-        liquidity >= 12 ? '🟢 ALTA ROTACIÓN' : liquidity > 0 ? '🟡 MODERADA' : '⚪ SIN DATOS';
-
-      const recent = marketState.history.slice(-240);
-      const values = recent.flatMap(x => [Number(x.compra), Number(x.venta)]).filter(Number.isFinite);
-      document.getElementById('m4-val').textContent = values.length
-        ? `${money(Math.min(...values))} – ${money(Math.max(...values))} Bs`
-        : (buy > 0 && sell > 0 ? `${money(buy)} – ${money(sell)} Bs` : '--.-- – --.-- Bs');
-
-      document.getElementById('gemini-insight-text').textContent =
-        buy > 0 && sell > 0
-          ? `Lectura sincronizada: comprar USDT ${money(buy)} Bs, vender USDT ${money(sell)} Bs, spread ${pct(spreadPct)}% y liquidez observada ${liquidity}.`
-          : 'Esperando una lectura válida del backend.';
+      const a = marketState.analysis;
+      const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
+      if (!a || !a.metricas) return;
+      const m = a.metricas;
+      const views = {
+        '1': {
+          title:'Proyección Operativa Binance P2P',
+          m1:['SEÑAL P2P', a.tactica?.estado || '--'],
+          m2:['IMPULSO', `${m.momentum_pct >= 0 ? '+' : ''}${pct(m.momentum_pct)}%`],
+          m3:['COSTO SPREAD', `${pct(m.spread_pct)}%`],
+          m4:['VOLATILIDAD', `${pct(m.volatilidad_pct)}%`],
+          text:a.tactica?.detalle || 'Esperando análisis.'
+        },
+        '2': {
+          title:'Flujo y Liquidez Binance P2P',
+          m1:['ESTADO DE FLUJO', a.flujo?.estado || '--'],
+          m2:['LIQUIDEZ', String(m.liquidez ?? 0)],
+          m3:['SPREAD MEDIO', `${money(m.spread_promedio)} Bs`],
+          m4:['CAMBIO SPREAD', `${m.spread_promedio ? (m.spread_pct - (m.spread_promedio / (marketState.buy || 1) * 100)).toFixed(2) : '0.00'}%`],
+          text:a.flujo?.detalle || 'Esperando análisis.'
+        },
+        '3': {
+          title:'Niveles y Rango Binance P2P',
+          m1:['ZONA ACTUAL', a.niveles?.estado || '--'],
+          m2:['SOPORTE', `${money(m.soporte)} Bs`],
+          m3:['MEDIANA', `${money(m.mediana)} Bs`],
+          m4:['RESISTENCIA', `${money(m.resistencia)} Bs`],
+          text:a.niveles?.detalle || 'Esperando análisis.'
+        }
+      }[mode] || null;
+      if (!views) return;
+      document.getElementById('ai-title-display').textContent = views.title;
+      document.getElementById('gemini-insight-text').textContent = views.text;
+      [['m1-title','m1-val'],['m2-title','m2-val'],['m3-title','m3-val'],['m4-title','m4-val']].forEach((ids,i)=>{
+        document.getElementById(ids[0]).textContent=views[['m1','m2','m3','m4'][i]][0];
+        document.getElementById(ids[1]).textContent=views[['m1','m2','m3','m4'][i]][1];
+      });
     }
 
     function handleLoginClick() { alert('Redirigiendo al panel de inicio de sesión de la plataforma.'); }
@@ -745,10 +743,11 @@
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
         return;
       }
-      await Promise.allSettled([loadPrices(), loadHistory('1d')]);
+      await Promise.allSettled([loadPrices(), loadHistory('1d'), loadAnalysis()]);
       setInterval(loadPrices, 15000);
       setInterval(updateAgoLabel, 1000);
       setInterval(() => loadHistory(marketState.period), 60000);
+      setInterval(loadAnalysis, 30000);
     }
 
     document.addEventListener('DOMContentLoaded', bootVenbot);
