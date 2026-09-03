@@ -176,14 +176,17 @@
           <div>
             <div class="flex items-center gap-2">
               <h3 class="font-bold text-slate-100 text-sm">USDT / VES · Evolución P2P (Velas)</h3>
-              <span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">1 día</span>
+              <span id="chart-period-label" class="text-[9px] font-bold text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-full uppercase">1 min</span>
             </div>
             <p class="text-[10px] text-slate-500 mt-1">Gráfico de velas exclusivo del mercado Binance P2P.</p>
           </div>
           <div role="tablist" class="flex items-center gap-1 bg-slate-950/70 border border-slate-800 rounded-xl p-1">
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="true" onclick="setChartPeriod('1d',this)">1D</button>
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('7d',this)">7D</button>
-            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('30d',this)">30D</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="true" onclick="setChartPeriod('1m',this)">1m</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('5m',this)">5m</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('15m',this)">15m</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('30m',this)">30m</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('1h',this)">1h</button>
+            <button type="button" class="period-btn focus-ring rounded-lg border border-transparent px-2.5 py-1.5 text-[10px] font-bold text-slate-400" aria-selected="false" onclick="setChartPeriod('1d',this)">1D</button>
           </div>
         </div>
 
@@ -355,7 +358,7 @@
       liquidity: 0,
       timestamp: null,
       history: [],
-      period: '1d',
+      period: '1m',
       analysis: null
     };
 
@@ -481,9 +484,15 @@
     }
 
     function candleBucketMs(period) {
-      if (period === '1d') return 5 * 60 * 1000;
-      if (period === '7d') return 15 * 60 * 1000;
-      return 60 * 60 * 1000;
+      const map = {
+        '1m': 60 * 1000,
+        '5m': 5 * 60 * 1000,
+        '15m': 15 * 60 * 1000,
+        '30m': 30 * 60 * 1000,
+        '1h': 60 * 60 * 1000,
+        '1d': 24 * 60 * 60 * 1000
+      };
+      return map[period] || map['1m'];
     }
 
     function buildCandles(rows, period = marketState.period) {
@@ -510,13 +519,21 @@
     function renderChart() {
       const canvas = document.getElementById('marketChart');
       if (!canvas) return;
-      const candles = buildCandles(marketState.history, marketState.period);
+      let candles = buildCandles(marketState.history, marketState.period);
       const mids = marketState.history
         .map(x => (Number(x.compra)+Number(x.venta))/2)
         .filter(v => Number.isFinite(v) && v > 0);
       const currentMid = marketState.buy > 0 && marketState.sell > 0
         ? (marketState.buy + marketState.sell) / 2
         : (mids.length ? mids[mids.length - 1] : 0);
+
+      // Incluso con histórico vacío tras un despertar de Render, dibujamos una
+      // vela viva con el último precio real. Nunca dejamos el canvas sin datos.
+      const liveTime = marketState.timestamp ? new Date(marketState.timestamp).getTime() : Date.now();
+      if (!candles.length && currentMid > 0 && Number.isFinite(liveTime)) {
+        const key = Math.floor(liveTime / candleBucketMs(marketState.period)) * candleBucketMs(marketState.period);
+        candles = [{ x:key, o:currentMid, h:currentMid, l:currentMid, c:currentMid }];
+      }
 
       const allValues = currentMid > 0 ? [...mids, currentMid] : mids;
       document.getElementById('chart-low').textContent = allValues.length ? `${money(Math.min(...allValues))} Bs` : '--,-- Bs';
@@ -526,11 +543,10 @@
       if (marketChart) marketChart.destroy();
       if (!candles.length) return;
 
-      // Si la lectura actual todavía no pertenece al último bucket, se añade
-      // como una vela de un solo punto para que el gráfico nunca quede atrás.
-      const bucketMs = candleBucketMs(marketState.period);
-      const liveTime = marketState.timestamp ? new Date(marketState.timestamp).getTime() : Date.now();
+      // Actualiza la última vela con la lectura viva para que 1M/5M/15M etc.
+      // evolucionen sin esperar a la siguiente consulta histórica.
       if (currentMid > 0 && Number.isFinite(liveTime)) {
+        const bucketMs = candleBucketMs(marketState.period);
         const key = Math.floor(liveTime / bucketMs) * bucketMs;
         const last = candles[candles.length - 1];
         if (!last || key > last.x) candles.push({ x:key, o:currentMid, h:currentMid, l:currentMid, c:currentMid });
@@ -561,11 +577,12 @@
           },
           scales: {
             x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7 }, grid:{ color:'rgba(51,65,85,.25)' } },
-            y: { position:'right', grace:'2%', ticks:{ color:'#64748b', maxTicksLimit:7, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
+            y: { position:'right', grace:'3%', ticks:{ color:'#64748b', maxTicksLimit:7, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
           }
         }
       });
     }
+
 
 
     function calculateRate() {
@@ -599,7 +616,8 @@
       marketState.period = period;
       document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
       if (btn) btn.setAttribute('aria-selected', 'true');
-      document.getElementById('chart-period-label').innerText = period === '1d' ? '1 día' : (period === '7d' ? '7 días' : '30 días');
+      const labels = { '1m':'1 min', '5m':'5 min', '15m':'15 min', '30m':'30 min', '1h':'1 hora', '1d':'1 día' };
+      document.getElementById('chart-period-label').innerText = labels[period] || period;
       await loadHistory(period);
     }
 
@@ -780,10 +798,10 @@
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
         return;
       }
-      await Promise.allSettled([loadPrices(), loadHistory('1d'), loadAnalysis()]);
+      await Promise.allSettled([loadPrices(), loadHistory('1m'), loadAnalysis()]);
       setInterval(loadPrices, 15000);
       setInterval(updateAgoLabel, 1000);
-      setInterval(() => loadHistory(marketState.period), 60000);
+      setInterval(() => loadHistory(marketState.period), 15000);
       setInterval(loadAnalysis, 30000);
     }
 
