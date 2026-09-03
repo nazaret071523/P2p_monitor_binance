@@ -661,79 +661,207 @@ def recolectar_mercado_general():
 # ==========================================
 # MOTOR QUANT
 # ==========================================
+def _porcentaje_cambio(base, actual):
+    try:
+        return ((float(actual) - float(base)) / float(base) * 100.0) if float(base) else 0.0
+    except Exception:
+        return 0.0
+
+
+def _clasificar_spread(spread, precio):
+    pct = (spread / precio * 100.0) if precio > 0 else 0.0
+    if pct >= 1.50:
+        return "🔴 *Spread Amplio:* ejecución más costosa."
+    if pct >= 0.80:
+        return "🟡 *Spread Normal:* mercado con margen intermedio."
+    return "🟢 *Spread Estrecho:* mercado relativamente comprimido."
+
+
+def _obtener_punto_cercano_por_horas(fechas, valores, horas):
+    """Busca el valor más cercano a N horas atrás, sin asumir 1 muestra = 1 minuto."""
+    if not fechas or not valores:
+        return None
+    try:
+        objetivo = fechas[-1] - timedelta(hours=horas)
+        mejor_i = min(range(len(fechas)), key=lambda i: abs(fechas[i] - objetivo))
+        if abs(fechas[mejor_i] - objetivo) > timedelta(minutes=max(10, horas * 15)):
+            return None
+        return float(valores[mejor_i])
+    except Exception:
+        return None
+
+
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
-    filas = obtener_estadisticas_db(banco=banco_filtro)
+    """
+    Motor estadístico para Telegram.
+
+    No intenta adivinar un precio con una caja negra. Usa la misma serie real
+    de muestras P2P y calcula cambios por tiempo real (15m/1h/3h/7h), rango
+    reciente, volatilidad y una proyección moderada a 7h.
+    """
+    filas = obtener_estadisticas_db(limit=2000, banco=banco_filtro)
     total_muestras = len(filas)
 
     if actual_compra <= 0 or actual_venta <= 0:
         return {
-            "pred_compra": 0.0,
-            "pred_venta": 0.0,
-            "pred_compra_str": "Sin datos",
-            "pred_venta_str": "Sin datos",
+            "pred_compra": 0.0, "pred_venta": 0.0,
+            "pred_compra_str": "Sin datos", "pred_venta_str": "Sin datos",
             "tendencia": "⚠️ SIN DATOS DE MERCADO",
-            "piso_str": "Sin datos",
-            "techo_str": "Sin datos",
-            "muestras": int(total_muestras),
-            "liquidez_actual": int(liquidez_actual),
-            "estado_comunidad": "⚠️ Sin lectura",
+            "piso_str": "Sin datos", "techo_str": "Sin datos",
+            "muestras": int(total_muestras), "liquidez_actual": int(liquidez_actual),
+            "estado_comunidad": "⚠️ Sin lectura", "confianza": 0,
+            "cambios": {}, "volatilidad_pct": 0.0, "spread_pct": 0.0,
+            "spread_promedio": 0.0, "rango_pct": 0.0,
         }
 
-    if total_muestras < 15:
-        pred_c = round(float(actual_compra), 2)
-        pred_v = round(float(actual_venta), 2)
-        tendencia = "🛡️ PROTECCIÓN ESTABLE"
-        piso, techo = float(actual_compra), float(actual_venta)
+    now = datetime.now(VET)
+    compra = float(actual_compra)
+    venta = float(actual_venta)
+    mid_actual = (compra + venta) / 2.0
+
+    # Serie histórica en orden cronológico.
+    series = []
+    for f in filas:
+        try:
+            c, v, _, fecha = f
+            c, v = float(c), float(v)
+            if c > 0 and v > 0 and fecha:
+                series.append((fecha.astimezone(VET) if getattr(fecha, 'tzinfo', None) else VET.localize(fecha), (c + v) / 2.0, c, v))
+        except Exception:
+            continue
+
+    # Incorporar la lectura actual al final para que Telegram y el monitor no
+    # trabajen con una muestra histórica que quedó 1 minuto atrás.
+    if not series or now >= series[-1][0]:
+        series.append((now, mid_actual, compra, venta))
+
+    fechas = [x[0] for x in series]
+    mids = np.array([x[1] for x in series], dtype=float)
+    compras = np.array([x[2] for x in series], dtype=float)
+    ventas = np.array([x[3] for x in series], dtype=float)
+
+    cambios = {}
+    for horas, etiqueta in [(5/60, "5m"), (0.25, "15m"), (0.5, "30m"), (1.0, "1h"), (3.0, "3h"), (7.0, "7h")]:
+        previo = _obtener_punto_cercano_por_horas(fechas, mids, horas)
+        cambios[etiqueta] = round(_porcentaje_cambio(previo, mid_actual), 3) if previo else None
+
+    # Ventana temporal real de 7h. No asumimos que una muestra equivale a un minuto.
+    cutoff_7h = now - timedelta(hours=7)
+    idx_7h = [i for i, dt in enumerate(fechas) if dt >= cutoff_7h]
+    if len(idx_7h) >= 2:
+        recent_idx = idx_7h
     else:
-        compras = np.array([f[0] for f in filas], dtype=float)
-        ventas = np.array([f[1] for f in filas], dtype=float)
-        fechas = [f[3] for f in filas]
-        piso, techo = float(np.min(compras)), float(np.max(ventas))
+        recent_idx = list(range(max(0, len(mids) - min(len(mids), 120)), len(mids)))
+    recent = mids[recent_idx] if recent_idx else mids
+    if len(recent) > 2:
+        returns = np.diff(recent) / recent[:-1] * 100.0
+        volatilidad = float(np.std(returns))
+    else:
+        volatilidad = 0.0
 
-        window_size = min(total_muestras - 1, 5)
-        X, y = [], []
-        for i in range(window_size, len(compras)):
-            dt_muestra = fechas[i]
-            hora_feat = dt_muestra.hour if dt_muestra else 12
-            vals = list(compras[i - window_size:i]) + [float(hora_feat)]
-            X.append(vals)
-            y.append(compras[i])
+    # Rango de 7h usando las mismas marcas temporales.
+    recent_buy = compras[recent_idx] if recent_idx else compras
+    recent_sell = ventas[recent_idx] if recent_idx else ventas
+    min_7h = float(np.min(recent_buy))
+    max_7h = float(np.max(recent_sell))
+    rango = max_7h - min_7h
+    rango_pct = (rango / mid_actual * 100.0) if mid_actual else 0.0
 
-        X = np.array(X, dtype=float)
-        y = np.array(y, dtype=float)
-        if len(X):
-            model = xgb.XGBRegressor(
-                n_estimators=50, max_depth=3, learning_rate=0.1,
-                verbosity=0, random_state=42
-            )
-            model.fit(X, y)
-            vector_actual = list(compras[-window_size:]) + [float(datetime.now(VET).hour)]
-            pred_c = round(float(model.predict(np.array([vector_actual], dtype=float))[0]), 2)
-        else:
-            pred_c = round(float(actual_compra), 2)
+    # Tendencia multi-ventana: evita llamar "lateral" a cualquier movimiento
+    # que caiga debajo de un umbral fijo en porcentaje.
+    c15, c1h, c3h = cambios.get("15m"), cambios.get("1h"), cambios.get("3h")
+    señales = [x for x in (c15, c1h, c3h) if x is not None]
+    if señales:
+        score = (c15 or 0.0) * 0.45 + (c1h or 0.0) * 0.35 + (c3h or 0.0) * 0.20
+    else:
+        score = 0.0
 
-        spread_promedio = float(np.mean(ventas - compras))
-        pred_v = round(pred_c + spread_promedio, 2)
-        delta = ((pred_c - actual_compra) / actual_compra) * 100
-        if delta > 0.4:
-            tendencia = "🟢 TENDENCIA ALCISTA PROTEGIDA"
-        elif delta < -0.4:
-            tendencia = "🛡️ SOPORTE DE PROTECCIÓN ACTIVO"
-        else:
-            tendencia = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
+    # Umbral adaptativo: evita clasificar como lateral por un límite fijo.
+    abs_typical = float(np.median(np.abs(returns))) if len(returns) else 0.0
+    umbral = max(0.025, volatilidad * 2.2, abs_typical * 2.5)
+    if score > umbral and sum(1 for x in señales if x > 0) >= 2:
+        tendencia = "🟢 TENDENCIA ALCISTA"
+        detalle = "Impulso comprador confirmado en varias ventanas."
+    elif score < -umbral and sum(1 for x in señales if x < 0) >= 2:
+        tendencia = "🔴 TENDENCIA BAJISTA"
+        detalle = "Presión vendedora confirmada en varias ventanas."
+    elif abs(score) <= umbral:
+        tendencia = "⚪ RANGO / LATERAL"
+        detalle = "Los cambios recientes no superan el ruido estadístico observado."
+    else:
+        tendencia = "🟡 SEÑAL MIXTA"
+        detalle = "Las ventanas temporales no están alineadas."
 
-    estado = "🟢 Alta Liquidez y Anunciantes Activos" if int(liquidez_actual) >= 12 else "🟡 Liquidez Moderada"
+    # Proyección moderada: extrapola el movimiento medio observado en 1h/3h,
+    # pero limita la magnitud para no convertir ruido en una predicción extrema.
+    rate_1h = (c1h / 1.0) if c1h is not None else 0.0
+    rate_3h = (c3h / 3.0) if c3h is not None else rate_1h
+    rate_h = 0.65 * rate_1h + 0.35 * rate_3h
+    raw_delta_pct = rate_h * 7.0
+    max_delta_pct = max(0.35, min(3.0, max(0.35, rango_pct * 1.25)))
+    delta_pct = float(np.clip(raw_delta_pct, -max_delta_pct, max_delta_pct))
+    pred_mid = mid_actual * (1.0 + delta_pct / 100.0)
+
+    spread_actual = venta - compra
+    spreads = ventas - compras
+    recent_spreads = spreads[recent_idx] if recent_idx else spreads
+    avg_spread = float(np.mean(recent_spreads)) if len(recent_spreads) else spread_actual
+    spread_change_pct = ((spread_actual - avg_spread) / avg_spread * 100.0) if avg_spread > 0 else 0.0
+    support_7h = float(np.min(recent_buy)) if len(recent_buy) else mid_actual
+    resistance_7h = float(np.max(recent_sell)) if len(recent_sell) else mid_actual
+    median_7h = float(np.median(recent)) if len(recent) else mid_actual
+    range_size_7h = resistance_7h - support_7h
+    range_position_7h = ((mid_actual - support_7h) / range_size_7h * 100.0) if range_size_7h > 0 else 50.0
+    # Mantener el spread proyectado cerca del spread observado, sin prometer
+    # que el libro de órdenes permanecerá igual durante 7 horas.
+    pred_spread = max(0.01, 0.70 * spread_actual + 0.30 * avg_spread)
+    pred_compra = pred_mid - pred_spread / 2.0
+    pred_venta = pred_mid + pred_spread / 2.0
+
+    spread_pct = (spread_actual / compra * 100.0) if compra else 0.0
+
+    # Confianza orientativa, basada en cantidad de muestras, continuidad y
+    # acuerdo entre ventanas; no es probabilidad de acierto.
+    acuerdo = 0.0
+    if len(señales) >= 3:
+        positivos = sum(1 for x in señales if x > 0)
+        negativos = sum(1 for x in señales if x < 0)
+        acuerdo = max(positivos, negativos) / len(señales)
+    continuidad = min(1.0, len(series) / 420.0)
+    confianza = int(round(100 * (0.55 * continuidad + 0.45 * acuerdo))) if señales else int(round(55 * continuidad))
+
+    liquidez = int(liquidez_actual)
+    if liquidez >= 40:
+        estado_comunidad = "🟢 Alta Liquidez y Anunciantes Activos"
+    elif liquidez >= 20:
+        estado_comunidad = "🟡 Liquidez Moderada"
+    else:
+        estado_comunidad = "🔴 Liquidez Baja / Poca Cobertura"
+
     return {
-        "pred_compra": pred_c,
-        "pred_venta": pred_v,
-        "pred_compra_str": f"{pred_c:.2f} Bs",
-        "pred_venta_str": f"{pred_v:.2f} Bs",
+        "pred_compra": round(pred_compra, 2),
+        "pred_venta": round(pred_venta, 2),
+        "pred_compra_str": f"{pred_compra:.2f} Bs",
+        "pred_venta_str": f"{pred_venta:.2f} Bs",
         "tendencia": tendencia,
-        "piso_str": f"{piso:.2f} Bs",
-        "techo_str": f"{techo:.2f} Bs",
+        "detalle_tendencia": detalle,
+        "piso_str": f"{min_7h:.2f} Bs",
+        "techo_str": f"{max_7h:.2f} Bs",
         "muestras": int(total_muestras),
-        "liquidez_actual": int(liquidez_actual),
-        "estado_comunidad": estado,
+        "liquidez_actual": liquidez,
+        "estado_comunidad": estado_comunidad,
+        "confianza": confianza,
+        "cambios": cambios,
+        "volatilidad_pct": round(volatilidad, 4),
+        "spread_pct": round(spread_pct, 3),
+        "spread_promedio": round(avg_spread, 2),
+        "spread_cambio_pct": round(spread_change_pct, 2),
+        "soporte_7h": round(support_7h, 2),
+        "resistencia_7h": round(resistance_7h, 2),
+        "mediana_7h": round(median_7h, 2),
+        "posicion_rango_7h": round(range_position_7h, 1),
+        "rango_pct": round(rango_pct, 3),
+        "max_delta_pct": round(max_delta_pct, 3),
     }
 
 
@@ -817,98 +945,129 @@ def generar_imagen_grafica_cuantica(filas, banco):
 
 
 def calcular_analisis_monitor(banco_filtro="GENERAL"):
-    """Motor único para el bloque analítico y el contexto de la IA."""
+    """Diagnóstico único y compartido por monitor web, IA y Telegram.
+
+    Usa la misma serie P2P real y las mismas reglas que el motor de Telegram.
+    Las ventanas se calculan por tiempo, no por cantidad fija de muestras.
+    """
     mercado = obtener_mercado_actual_db() or {}
     compra = float(mercado.get("compra", 0) or 0)
     venta = float(mercado.get("venta", 0) or 0)
     liquidez = int(mercado.get("liquidez", 0) or 0)
-    spread = (venta - compra) if compra > 0 and venta > 0 else 0.0
-    spread_pct = (spread / compra * 100) if compra > 0 else 0.0
 
-    filas = obtener_estadisticas_db(limit=300, banco=banco_filtro)
-    mids = []
-    spreads = []
-    for c, v, l, f in filas:
-        c = float(c or 0); v = float(v or 0)
-        if c > 0 and v > 0:
-            mids.append((c + v) / 2)
-            spreads.append(v - c)
-
-    if not mids:
+    if compra <= 0 or venta <= 0:
         return {
-            "ok": False, "banco": banco_filtro, "tactica": {"estado": "⚪ ESPERA / SIN DATOS", "detalle": "Aún no hay suficiente histórico válido."},
-            "flujo": {"estado": "⚪ SIN DATOS", "detalle": "Sin lectura suficiente de liquidez y flujo."},
+            "ok": False,
+            "banco": banco_filtro,
+            "tactica": {"estado": "⚪ ESPERA / SIN DATOS", "detalle": "Aún no hay una lectura P2P válida."},
+            "flujo": {"estado": "⚪ SIN DATOS", "detalle": "Sin lectura suficiente de liquidez y spread."},
             "niveles": {"estado": "⚪ SIN DATOS", "detalle": "Sin rango histórico suficiente."},
-            "metricas": {"momentum_pct": 0, "volatilidad_pct": 0, "spread_pct": round(spread_pct,2), "liquidez": liquidez, "soporte": 0, "resistencia": 0, "mediana": 0, "posicion_rango": 0},
+            "metricas": {
+                "momentum_pct": 0, "volatilidad_pct": 0, "spread_pct": 0,
+                "spread_promedio": 0, "spread_cambio_pct": 0, "liquidez": liquidez,
+                "soporte": 0, "resistencia": 0, "mediana": 0, "posicion_rango": 0,
+                "muestras": 0, "calidad_datos": 0,
+            },
+            "ventanas": {},
         }
 
-    arr = np.array(mids, dtype=float)
-    recent = arr[-min(48, len(arr)):]
-    last_mid = float((compra + venta) / 2) if compra > 0 and venta > 0 else float(arr[-1])
-    def pct_change(a, b):
-        return ((b-a)/a*100) if a else 0.0
+    q = motor_quant_inteligente(compra, venta, liquidez, banco_filtro)
+    cambios = q.get("cambios", {}) or {}
+    c5 = cambios.get("5m")
+    c15 = cambios.get("15m")
+    c30 = cambios.get("30m")
+    c1h = cambios.get("1h")
+    c3h = cambios.get("3h")
 
-    momentum = pct_change(float(recent[0]), float(recent[-1])) if len(recent) > 1 else 0.0
-    short_n = min(12, len(arr))
-    prev_n = min(12, max(0, len(arr)-short_n))
-    short_move = pct_change(float(arr[-short_n]), float(arr[-1])) if short_n > 1 else 0.0
-    acceleration = 0.0
-    if prev_n > 1:
-        prev_move = pct_change(float(arr[-short_n-prev_n]), float(arr[-short_n])) if len(arr) >= short_n + prev_n else 0.0
-        acceleration = short_move - prev_move
+    filas = obtener_estadisticas_db(limit=2000, banco=banco_filtro)
+    mids = []
+    spreads = []
+    fechas = []
+    for c, v, l, f in filas:
+        try:
+            c, v = float(c or 0), float(v or 0)
+            if c > 0 and v > 0 and f:
+                mids.append((c + v) / 2.0)
+                spreads.append(v - c)
+                fechas.append(f)
+        except Exception:
+            continue
 
-    returns = np.diff(arr) / arr[:-1] * 100 if len(arr) > 1 else np.array([0.0])
-    volatility = float(np.std(returns[-min(48, len(returns)):])) if len(returns) else 0.0
-    p20, median, p80 = [float(x) for x in np.percentile(arr, [20,50,80])]
-    support = float(np.min(recent))
-    resistance = float(np.max(recent))
+    now = datetime.now(VET)
+    current_mid = (compra + venta) / 2.0
+    if not mids or (fechas and now >= (fechas[-1].astimezone(VET) if getattr(fechas[-1], 'tzinfo', None) else VET.localize(fechas[-1]))):
+        mids.append(current_mid)
+        spreads.append(venta - compra)
+        fechas.append(now)
+
+    arr = np.asarray(mids, dtype=float)
+    recent = arr[-min(len(arr), 420):]
+    support = float(np.min(recent)) if len(recent) else current_mid
+    resistance = float(np.max(recent)) if len(recent) else current_mid
+    median = float(np.median(recent)) if len(recent) else current_mid
     range_size = resistance - support
-    range_pos = ((last_mid-support)/range_size*100) if range_size > 0 else 50.0
-    avg_spread = float(np.mean(spreads[-min(48,len(spreads)):])) if spreads else spread
-    spread_change = spread - avg_spread
+    range_pos = ((current_mid - support) / range_size * 100.0) if range_size > 0 else 50.0
 
-    # Táctica: combina dirección de corto plazo + coste de ejecución.
-    if compra > 0 and venta > 0:
-        if spread_pct >= 2.0:
-            tactica_estado = "🟠 EJECUCIÓN COSTOSA"
-            tactica_detail = f"El spread está en {spread_pct:.2f}%; el coste de entrada/salida está elevado."
-        elif momentum > 0.35 and acceleration >= -0.15:
-            tactica_estado = "🟢 MOMENTO FAVORABLE"
-            tactica_detail = f"El precio medio avanza {momentum:.2f}% en la ventana reciente y mantiene impulso."
-        elif momentum < -0.35:
-            tactica_estado = "🟡 DEFENSIVA"
-            tactica_detail = f"El precio medio cae {abs(momentum):.2f}% en la ventana reciente; conviene proteger ejecución."
-        else:
-            tactica_estado = "⚪ ESPERA / RANGO"
-            tactica_detail = f"Movimiento corto de {momentum:+.2f}% con señal mixta; el mercado está relativamente lateral."
+    spread_actual = venta - compra
+    avg_spread = float(np.mean(spreads[-min(len(spreads), 420):])) if spreads else spread_actual
+    spread_change_pct = ((spread_actual - avg_spread) / avg_spread * 100.0) if avg_spread > 0 else 0.0
+    spread_pct = (spread_actual / compra * 100.0) if compra > 0 else 0.0
+
+    # Umbral adaptativo: se basa en el ruido observado, no en ±0.35% fijo.
+    returns = np.diff(recent) / recent[:-1] * 100.0 if len(recent) > 2 else np.array([])
+    vol = float(np.std(returns)) if len(returns) else float(q.get("volatilidad_pct", 0) or 0)
+    abs_typical = float(np.median(np.abs(returns))) if len(returns) else 0.0
+    threshold = max(0.025, vol * 2.2, abs_typical * 2.5)
+
+    aligned_up = sum(1 for x in (c15, c30, c1h) if x is not None and x > threshold)
+    aligned_down = sum(1 for x in (c15, c30, c1h) if x is not None and x < -threshold)
+    score_values = [x for x in (c15, c30, c1h) if x is not None]
+    score = (0.45 * (c15 or 0) + 0.30 * (c30 or 0) + 0.25 * (c1h or 0)) if score_values else 0.0
+
+    if spread_pct >= 1.50:
+        tactica_estado = "🟠 EJECUCIÓN COSTOSA"
+        tactica_detail = f"El spread está en {spread_pct:.2f}%; el coste de ejecución es elevado."
+    elif aligned_up >= 2 and score > threshold:
+        tactica_estado = "🟢 MOMENTO FAVORABLE"
+        tactica_detail = f"Impulso alcista confirmado en varias ventanas; lectura corta {score:+.2f}%."
+    elif aligned_down >= 2 and score < -threshold:
+        tactica_estado = "🟡 DEFENSIVA"
+        tactica_detail = f"Presión bajista confirmada en varias ventanas; lectura corta {score:+.2f}%."
+    elif aligned_up and aligned_down:
+        tactica_estado = "🟡 SEÑAL MIXTA"
+        tactica_detail = "Las ventanas recientes están divididas; conviene esperar confirmación."
     else:
-        tactica_estado = "⚪ ESPERA / SIN DATOS"
-        tactica_detail = "Esperando una lectura P2P válida."
+        tactica_estado = "⚪ ESPERA / RANGO"
+        tactica_detail = f"El movimiento reciente está dentro del ruido observado ({threshold:.3f}% de umbral adaptativo)."
 
-    # Flujo: liquidez + expansión/contracción del spread.
-    if liquidez >= 15 and spread_change > 0.5:
+    if liquidez >= 40 and spread_change_pct > 8:
         flujo_estado = "⚡ FLUJO EXPANSIVO"
-        flujo_detail = "La actividad es alta y el spread está por encima de su media reciente."
-    elif liquidez > 0 and (liquidez < 8 or spread_change < -0.5):
+        flujo_detail = f"Liquidez alta y spread {spread_change_pct:+.1f}% sobre su media reciente."
+    elif liquidez <= 15 or spread_change_pct < -8:
         flujo_estado = "🟡 FLUJO CONTRAÍDO"
-        flujo_detail = "La actividad o el diferencial reciente sugieren un mercado más comprimido."
-    elif liquidez > 0:
-        flujo_estado = "🟢 FLUJO NORMAL"
-        flujo_detail = "La actividad observada está dentro de un rango operativo normal."
+        flujo_detail = f"La cobertura o el spread reciente sugieren menor actividad relativa ({spread_change_pct:+.1f}%)."
     else:
-        flujo_estado = "⚪ SIN DATOS"
-        flujo_detail = "No hay lectura actual de liquidez."
+        flujo_estado = "🟢 FLUJO NORMAL"
+        flujo_detail = f"Actividad operativa estable; spread {spread_change_pct:+.1f}% vs. media reciente."
 
-    # Niveles: percentiles + posición en rango reciente.
-    if range_pos >= 80:
+    if range_size <= 0:
+        niveles_estado = "⚖️ ZONA MEDIA"
+        niveles_detail = "No hay rango suficiente para separar soporte y resistencia."
+    elif range_pos >= 80:
         niveles_estado = "🎯 CERCA DE RESISTENCIA"
-        niveles_detail = f"El precio está en el {range_pos:.0f}% del rango reciente; resistencia ~ {resistance:.2f} Bs."
+        niveles_detail = f"Precio en {range_pos:.0f}% del rango reciente; resistencia {resistance:.2f} Bs."
     elif range_pos <= 20:
         niveles_estado = "🛡️ CERCA DE SOPORTE"
-        niveles_detail = f"El precio está en el {range_pos:.0f}% del rango reciente; soporte ~ {support:.2f} Bs."
+        niveles_detail = f"Precio en {range_pos:.0f}% del rango reciente; soporte {support:.2f} Bs."
     else:
         niveles_estado = "⚖️ ZONA MEDIA"
-        niveles_detail = f"El precio ocupa el {range_pos:.0f}% del rango reciente, entre soporte y resistencia."
+        niveles_detail = f"Precio en {range_pos:.0f}% del rango reciente, entre soporte y resistencia."
+
+    # Calidad: continuidad + cantidad + acuerdo entre ventanas.
+    available = [x for x in (c5, c15, c30, c1h) if x is not None]
+    agreement = max(aligned_up, aligned_down, len(available) - aligned_up - aligned_down) / max(1, len(available))
+    continuity = min(1.0, len(arr) / 420.0)
+    quality = int(round(100 * (0.55 * continuity + 0.45 * agreement))) if available else 0
 
     return {
         "ok": True,
@@ -916,13 +1075,35 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
         "tactica": {"estado": tactica_estado, "detalle": tactica_detail},
         "flujo": {"estado": flujo_estado, "detalle": flujo_detail},
         "niveles": {"estado": niveles_estado, "detalle": niveles_detail},
+        "tendencia": q.get("tendencia"),
+        "detalle_tendencia": q.get("detalle_tendencia"),
+        "proyeccion_7h": {
+            "compra": q.get("pred_compra"),
+            "venta": q.get("pred_venta"),
+            "compra_str": q.get("pred_compra_str"),
+            "venta_str": q.get("pred_venta_str"),
+        },
+        "ventanas": {k: cambios.get(k) for k in ("5m", "15m", "30m", "1h", "3h", "7h")},
         "metricas": {
-            "momentum_pct": round(momentum, 3), "aceleracion_pct": round(acceleration,3),
-            "volatilidad_pct": round(volatility,3), "spread_pct": round(spread_pct,3),
-            "spread_promedio": round(avg_spread,2), "liquidez": liquidez,
-            "soporte": round(support,2), "resistencia": round(resistance,2),
-            "mediana": round(median,2), "percentil20": round(p20,2), "percentil80": round(p80,2),
-            "posicion_rango": round(range_pos,1), "muestras": len(arr),
+            "momentum_pct": round(score, 3),
+            "momentum_5m_pct": round(c5, 3) if c5 is not None else None,
+            "momentum_15m_pct": round(c15, 3) if c15 is not None else None,
+            "momentum_30m_pct": round(c30, 3) if c30 is not None else None,
+            "momentum_1h_pct": round(c1h, 3) if c1h is not None else None,
+            "momentum_3h_pct": round(c3h, 3) if c3h is not None else None,
+            "volatilidad_pct": round(vol, 4),
+            "umbral_adaptativo_pct": round(threshold, 4),
+            "spread_pct": round(spread_pct, 3),
+            "spread_promedio": round(avg_spread, 2),
+            "spread_cambio_pct": round(spread_change_pct, 2),
+            "liquidez": liquidez,
+            "soporte": round(support, 2),
+            "resistencia": round(resistance, 2),
+            "mediana": round(median, 2),
+            "posicion_rango": round(range_pos, 1),
+            "rango_pct": round((range_size / current_mid * 100.0) if current_mid else 0.0, 3),
+            "muestras": len(arr),
+            "calidad_datos": quality,
         },
     }
 
@@ -932,7 +1113,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
 # ==========================================
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔮 Análisis P2P y Protección Quant", callback_data="cmd_prediccion")],
+        [InlineKeyboardButton("🔮 Análisis P2P y Proyección 7H", callback_data="cmd_prediccion")],
         [InlineKeyboardButton("💎 Muestra los plans VIP y PREMIUM", callback_data="cmd_suscribir")],
         [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
         [InlineKeyboardButton("🏦 Configurar Filtro de Bancos", callback_data="cmd_bancos")],
@@ -956,45 +1137,53 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
     c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
-
-    if banco == "GENERAL" and c_real > 0 and v_real > 0:
-        tasas = await asyncio.to_thread(obtener_tasas_bcv_oficiales)
-        await asyncio.to_thread(guardar_muestra_db, c_real, v_real, liquidez, "GENERAL")
-        await asyncio.to_thread(
-            guardar_mercado_actual, c_real, v_real, liquidez,
-            tasas["usd"], tasas["eur"], tasas["source"]
-        )
-
     datos = await asyncio.to_thread(motor_quant_inteligente, c_real, v_real, liquidez, banco)
-    hora_actual = datetime.now(VET).strftime("%I:%M %p")
-    hora_objetivo = (datetime.now(VET) + timedelta(hours=7)).strftime("%I:%M %p")
 
-    spread_actual = v_real - c_real if c_real and v_real else 0
-    if spread_actual > 15:
-        analisis = "📈 *Spread Amplio:* Alta volatilidad."
-    elif 0 < spread_actual < 8:
-        analisis = "📉 *Spread Estrecho:* Mercado comprimido."
-    else:
-        analisis = "⚖️ *Spread Estable:* Liquidez normal."
+    ahora = datetime.now(VET)
+    objetivo = ahora + timedelta(hours=7)
+    spread_actual = v_real - c_real if c_real and v_real else 0.0
+    spread_pct = (spread_actual / c_real * 100.0) if c_real else 0.0
+    analisis = _clasificar_spread(spread_actual, c_real)
+
+    cambios = datos.get("cambios", {})
+    def fmt_change(key):
+        val = cambios.get(key)
+        if val is None:
+            return "n/d"
+        return f"{val:+.2f}%"
 
     texto = (
         f"🦜 *VENBOT PREDICCIONES // TENDENCIA P2P*\n"
         f"🏦 *Filtro Banco:* `{banco}`\n"
         f"──────────────────────────────\n"
-        f"⏱ *Sincronización:* `{hora_actual}` ➔ `{hora_objetivo}`\n\n"
-        f"📊 *PRECIOS VWAP ACTUALES*\n"
+        f"⏱ *Ventana de proyección:* `{ahora.strftime('%I:%M %p')}` ➔ `{objetivo.strftime('%I:%M %p')}`\n\n"
+        f"📊 *PRECIOS P2P ACTUALES (VWAP)*\n"
         f"• Comprar USDT: `{c_real:.2f} Bs`\n"
         f"• Vender USDT: `{v_real:.2f} Bs`\n"
-        f"• Spread: `{spread_actual:.2f} Bs`\n\n"
+        f"• Spread: `{spread_actual:.2f} Bs` · `{spread_pct:.2f}%`\n\n"
         f"🔍 *DIAGNÓSTICO DE MERCADO*\n"
         f"• {analisis}\n"
         f"• Liquidez: `{datos['estado_comunidad']}`\n"
         f"• Muestras: `{datos['muestras']}`\n"
-        f"• Canal: `{datos['piso_str']}` / `{datos['techo_str']}`\n\n"
-        f"🔮 *PROYECCIÓN CUÁNTICA (7H)*\n"
+        f"• Canal 7H: `{datos['piso_str']}` / `{datos['techo_str']}`\n"
+        f"• Volatilidad reciente: `{datos['volatilidad_pct']:.3f}%`\n\n"
+        f"📈 *MOMENTUM MULTI-TEMPORAL*\n"
+        f"• 5 min: `{fmt_change('5m')}`\n"
+        f"• 15 min: `{fmt_change('15m')}`\n"
+        f"• 30 min: `{fmt_change('30m')}`\n"
+        f"• 1 hora: `{fmt_change('1h')}`\n"
+        f"• 3 horas: `{fmt_change('3h')}`\n\n"
+        f"🧭 *NIVELES 7H*\n"
+        f"• Soporte: `{datos.get('soporte_7h', datos['piso_str'])}`\n"
+        f"• Resistencia: `{datos.get('resistencia_7h', datos['techo_str'])}`\n"
+        f"• Posición del rango: `{datos.get('posicion_rango_7h', 50):.1f}%`\n\n"
+        f"🔮 *PROYECCIÓN CUANTITATIVA (7H)*\n"
         f"• Compra estimada: `{datos['pred_compra_str']}`\n"
         f"• Venta estimada: `{datos['pred_venta_str']}`\n"
-        f"• Estado: `{datos['tendencia']}`"
+        f"• Tendencia: `{datos['tendencia']}`\n"
+        f"• Calidad de señal: `{datos['confianza']}%`\n"
+        f"• Lectura: {datos.get('detalle_tendencia', '')}\n\n"
+        f"⚠️ _La proyección es estadística y sirve como referencia; no garantiza el precio futuro._"
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
@@ -1255,25 +1444,30 @@ def obtener_history(period: str = Query("1d", pattern="^(1d|7d|30d)$")):
         for c, v, l, f in filas
     ]
 
+    # Añadir la lectura actual real al final si es más reciente que el histórico.
+    # Así el gráfico, las tarjetas y el análisis parten de la misma serie.
+    mercado = obtener_mercado_actual_db() or {}
+    mc = float(mercado.get("compra", 0) or 0)
+    mv = float(mercado.get("venta", 0) or 0)
+    mf = mercado.get("fecha")
+    if mc > 0 and mv > 0 and mf:
+        live_ts = VET.localize(mf).isoformat() if mf.tzinfo is None else mf.astimezone(VET).isoformat()
+        if not puntos or live_ts > puntos[-1]["timestamp"]:
+            puntos.append({
+                "compra": round(mc, 2),
+                "venta": round(mv, 2),
+                "liquidez": int(mercado.get("liquidez", 0) or 0),
+                "timestamp": live_ts,
+            })
+
     # Reducir carga del navegador en 30D.
     max_points = 800
     if len(puntos) > max_points:
+        last_point = puntos[-1]
         step = max(1, len(puntos) // max_points)
         puntos = puntos[::step]
-        if filas:
-            ultimo = filas[-1]
-            last_point = {
-                "compra": round(float(ultimo[0]), 2),
-                "venta": round(float(ultimo[1]), 2),
-                "liquidez": int(ultimo[2] or 0),
-                "timestamp": (
-                    VET.localize(ultimo[3]).isoformat()
-                    if ultimo[3].tzinfo is None
-                    else ultimo[3].astimezone(VET).isoformat()
-                ),
-            }
-            if not puntos or puntos[-1]["timestamp"] != last_point["timestamp"]:
-                puntos.append(last_point)
+        if not puntos or puntos[-1]["timestamp"] != last_point["timestamp"]:
+            puntos.append(last_point)
 
     return {"ok": True, "period": period, "count": len(puntos), "data": puntos}
 
