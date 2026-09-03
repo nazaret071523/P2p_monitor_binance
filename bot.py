@@ -51,6 +51,7 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
+P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
@@ -77,6 +78,8 @@ ULTIMO_BCV_VALIDO = {
 ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 CONFIGURACION_BANCOS = {}
 telegram_app = None
+_P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
+_P2P_BANK_AD_CACHE = {}
 collector_task = None
 
 # Cachés cortas para que el monitor y la IA no repitan consultas pesadas a Supabase
@@ -546,20 +549,133 @@ def _binance_fetch_raw(trade_type, rows=P2P_SCAN_ADS):
 
     raise RuntimeError(f"No se pudieron obtener anuncios P2P para {trade_type}")
 
+def _normalizar_texto(texto):
+    import unicodedata
+    valor = unicodedata.normalize("NFKD", str(texto or ""))
+    return "".join(ch for ch in valor if not unicodedata.combining(ch)).lower().strip()
+
+
+def _obtener_metodos_pago_ves():
+    """Obtiene dinámicamente los identifiers de métodos P2P para VES.
+
+    Binance documenta que los identifiers deben salir de trade-methods y no
+    deben asumirse/hardcodearse. Se cachean brevemente para evitar consultas
+    innecesarias al endpoint público.
+    """
+    now = time.monotonic()
+    cached = _P2P_BANK_METHOD_CACHE
+    if cached.get("methods") and now < cached.get("expires", 0):
+        return cached["methods"]
+
+    url = "https://www.binance.com/bapi/c2c/v1/public/c2c/agent/trade-methods"
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.binance.com",
+        "Referer": "https://www.binance.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/139 Safari/537.36",
+    }
+    r = HTTP.get(url, params={"fiat": "VES"}, headers=headers, timeout=8)
+    r.raise_for_status()
+    body = r.json()
+    data = body.get("data") if isinstance(body, dict) else body
+    if isinstance(data, dict):
+        for key in ("tradeMethods", "methods", "list", "items", "data"):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
+    if not isinstance(data, list):
+        data = []
+
+    methods = {}
+    for method in data:
+        if not isinstance(method, dict):
+            continue
+        identifier = str(method.get("identifier") or method.get("tradeMethodIdentifier") or "").strip()
+        name = str(method.get("tradeMethodName") or method.get("name") or "").strip()
+        if identifier:
+            methods[identifier] = name
+    if not methods:
+        raise RuntimeError("Binance trade-methods VES no devolvió identifiers")
+
+    cached["methods"] = methods
+    cached["expires"] = now + P2P_BANK_REFRESH_SECONDS
+    logger.info("Binance métodos P2P VES: %s", ", ".join(f"{k}={v}" for k, v in methods.items()))
+    return methods
+
+
+def _resolver_metodo_banco(banco):
+    """Relaciona el banco con el identifier REAL devuelto por Binance."""
+    aliases = {
+        "MERCANTIL": ("mercantil",),
+        "PROVINCIAL": ("provincial", "bbva provincial", "bbva"),
+        "BNC": ("bnc", "banco nacional de credito"),
+    }.get(banco, ())
+    if not aliases:
+        return None
+    methods = _obtener_metodos_pago_ves()
+    normalized_aliases = tuple(_normalizar_texto(x) for x in aliases)
+
+    # Primero por nombre visible.
+    for identifier, name in methods.items():
+        haystack = _normalizar_texto(f"{name} {identifier}")
+        if any(alias in haystack for alias in normalized_aliases):
+            logger.info("Binance método %s -> identifier %s (%s)", banco, identifier, name or "sin nombre")
+            return identifier
+    return None
+
+
+def _binance_fetch_bank_specific(trade_type, banco):
+    """Consulta directamente los anuncios del banco mediante su identifier."""
+    cache_key = (trade_type, banco)
+    now = time.monotonic()
+    cached = _P2P_BANK_AD_CACHE.get(cache_key)
+    if cached and now < cached[0]:
+        return cached[1]
+
+    try:
+        identifier = _resolver_metodo_banco(banco)
+    except Exception as e:
+        logger.warning("No se pudieron resolver métodos VES para %s: %s", banco, e)
+        return []
+    if not identifier:
+        logger.warning("Binance no devolvió identifier para %s", banco)
+        return []
+
+    url = "https://www.binance.com/bapi/c2c/v1/public/c2c/agent/ad-list"
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.binance.com",
+        "Referer": "https://www.binance.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/139 Safari/537.36",
+    }
+    try:
+        r = HTTP.get(url, params={
+            "fiat": "VES", "asset": "USDT", "tradeType": trade_type,
+            "limit": 20, "order": "price", "tradeMethodIdentifiers": identifier,
+        }, headers=headers, timeout=8)
+        r.raise_for_status()
+        data = _extraer_ads_binance(r.json())
+        _P2P_BANK_AD_CACHE[cache_key] = (now + P2P_BANK_REFRESH_SECONDS, data)
+        logger.info("Binance P2P %s %s (%s): %s anuncios", banco, trade_type, identifier, len(data))
+        return data
+    except Exception as e:
+        logger.warning("Binance P2P %s %s falló: %s", banco, trade_type, e)
+        return []
+
+
 def _ad_contiene_banco(item, banco_filtro):
     if banco_filtro == "GENERAL":
         return True
     try:
-        blob = json.dumps(item, ensure_ascii=False).lower()
+        blob = _normalizar_texto(json.dumps(item, ensure_ascii=False))
     except Exception:
-        blob = str(item).lower()
+        blob = _normalizar_texto(str(item))
     aliases = {
         "MERCANTIL": ("mercantil",),
         "PROVINCIAL": ("provincial", "bbva provincial", "bbva"),
-        "BNC": ("bnc", "banco nacional de credito", "banco nacional de crédito"),
+        "BNC": ("bnc", "banco nacional de credito"),
     }
-    return any(alias in blob for alias in aliases.get(banco_filtro, (banco_filtro.lower(),)))
-
+    return any(_normalizar_texto(alias) in blob for alias in aliases.get(banco_filtro, (banco_filtro.lower(),)))
 
 def _anuncio_no_verificado(item):
     """Excluye comerciantes Pro/Verificados de forma defensiva."""
@@ -620,34 +736,28 @@ def _binance_search(trade_type, banco_filtro="GENERAL"):
             unique.append(item)
     return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
 
-def _seleccionar_anuncios_por_banco(raw, trade_type, banco_filtro):
-    """Selecciona anuncios elegibles sin dejar GENERAL sin datos.
+def _filtrar_anuncios_elegibles(raw, trade_type):
+    return [
+        x for x in (raw or [])
+        if _anuncio_no_verificado(x) and _anuncio_cumple_monto(x, trade_type)
+    ]
 
-    GENERAL = combinación de Mercantil + Provincial + BNC. Si Binance no
-    expone el nombre del banco dentro del payload de algún anuncio, usamos
-    como respaldo los anuncios elegibles por monto/verificación para no
-    romper el monitor general. Los filtros individuales siguen siendo
-    estrictos y nunca reciben datos de GENERAL.
+
+def _seleccionar_anuncios_por_banco(raw, trade_type, banco_filtro, bank_raw=None):
+    """Selecciona anuncios por banco usando identifiers reales de Binance.
+
+    Para bancos individuales, bank_raw ya viene filtrado por el endpoint
+    ad-list con el identifier oficial del método de pago. GENERAL se construye
+    exclusivamente como la unión de los tres bancos, 10 anuncios elegibles
+    por banco y dirección.
     """
     if banco_filtro == "GENERAL":
         result = []
+        bank_raw = bank_raw or {}
         for banco in ("MERCANTIL", "PROVINCIAL", "BNC"):
-            elegibles = [
-                x for x in raw
-                if _anuncio_no_verificado(x)
-                and _anuncio_cumple_monto(x, trade_type)
-                and _ad_contiene_banco(x, banco)
-            ]
+            source = bank_raw.get(banco) or []
+            elegibles = _filtrar_anuncios_elegibles(source, trade_type)
             result.extend(elegibles[:10])
-
-        # Si el payload de Binance no trae el nombre del banco, no debemos
-        # dejar GENERAL en cero: usar la misma muestra P2P bancaria, pero sin
-        # inventar precios ni mezclar comerciantes verificados.
-        if not result:
-            result = [
-                x for x in raw
-                if _anuncio_no_verificado(x) and _anuncio_cumple_monto(x, trade_type)
-            ][:30]
 
         seen = set()
         unique = []
@@ -660,15 +770,12 @@ def _seleccionar_anuncios_por_banco(raw, trade_type, banco_filtro):
         logger.info("P2P selección GENERAL %s: %s anuncios elegibles", trade_type, len(unique[:30]))
         return unique[:30]
 
-    elegibles = [
-        x for x in raw
-        if _anuncio_no_verificado(x)
-        and _anuncio_cumple_monto(x, trade_type)
-        and _ad_contiene_banco(x, banco_filtro)
-    ]
+    source = bank_raw.get(banco_filtro) if isinstance(bank_raw, dict) else None
+    if source is None:
+        source = raw or []
+    elegibles = _filtrar_anuncios_elegibles(source, trade_type)
     logger.info("P2P selección %s %s: %s anuncios elegibles", banco_filtro, trade_type, len(elegibles[:10]))
     return elegibles[:10]
-
 
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
     """Lee Binance P2P en vivo. Comprar=SELL y Vender=BUY."""
@@ -1444,15 +1551,23 @@ async def tarea_recoleccion_automatica():
         try:
             # Una sola captura amplia por dirección. De ella salen GENERAL y los
             # tres bancos, evitando 4-8 consultas redundantes por ciclo.
-            with ThreadPoolExecutor(max_workers=2) as ex:
+            with ThreadPoolExecutor(max_workers=4) as ex:
                 f_sell = ex.submit(_binance_fetch_raw, "SELL", P2P_SCAN_ADS)
                 f_buy = ex.submit(_binance_fetch_raw, "BUY", P2P_SCAN_ADS)
-                raw_sell = await asyncio.to_thread(f_sell.result, 18)
-                raw_buy = await asyncio.to_thread(f_buy.result, 18)
+                f_bank_sell = ex.submit(lambda: {b: _binance_fetch_bank_specific("SELL", b) for b in ("MERCANTIL", "PROVINCIAL", "BNC")})
+                f_bank_buy = ex.submit(lambda: {b: _binance_fetch_bank_specific("BUY", b) for b in ("MERCANTIL", "PROVINCIAL", "BNC")})
+                raw_sell = await asyncio.to_thread(f_sell.result, 20)
+                raw_buy = await asyncio.to_thread(f_buy.result, 20)
+                bank_sell = await asyncio.to_thread(f_bank_sell.result, 20)
+                bank_buy = await asyncio.to_thread(f_bank_buy.result, 20)
 
             def calcular_desde_raw(banco):
-                sell = _seleccionar_anuncios_por_banco(raw_sell, "SELL", banco)
-                buy = _seleccionar_anuncios_por_banco(raw_buy, "BUY", banco)
+                if banco == "GENERAL":
+                    sell = _seleccionar_anuncios_por_banco(raw_sell, "SELL", banco, bank_sell)
+                    buy = _seleccionar_anuncios_por_banco(raw_buy, "BUY", banco, bank_buy)
+                else:
+                    sell = _seleccionar_anuncios_por_banco(raw_sell, "SELL", banco, bank_sell)
+                    buy = _seleccionar_anuncios_por_banco(raw_buy, "BUY", banco, bank_buy)
                 c = calcular_vwap_con_filtro(sell)
                 v = calcular_vwap_con_filtro(buy)
                 return c, v, len(sell) + len(buy)
