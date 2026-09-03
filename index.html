@@ -94,7 +94,7 @@
             <h2 class="text-xl md:text-2xl font-black text-white mt-1">USDT / VES</h2>
           </div>
           <div class="flex items-center gap-2 text-[10px] text-slate-500">
-            <span>Valores en vivo</span>
+            <span>Valores en vivo · actualización automática</span>
             <i class="fa-regular fa-circle-question text-slate-400"></i>
           </div>
         </div>
@@ -210,7 +210,7 @@
             <div>
               <div class="flex items-center gap-2">
                 <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI · Binance P2P</h3>
-                <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Exclusivo P2P</span>
+                <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Mercado + preguntas generales</span>
               </div>
               <p class="text-[11px] text-slate-400 mt-0.5">Copiloto conversacional con datos reales del mercado P2P de Binance (USDT/VES).</p>
             </div>
@@ -654,7 +654,7 @@
           m2:['VENTA EST. 7H', a.proyeccion_7h?.venta ? `${money(a.proyeccion_7h.venta)} Bs` : 'n/d'],
           m3:['TENDENCIA', a.tendencia || '--'],
           m4:['CALIDAD SEÑAL', `${a.proyeccion_7h?.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado: ${money(a.proyeccion_7h?.rango_mid_min)} – ${money(a.proyeccion_7h?.rango_mid_max)} Bs.`
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado: ${money(a.proyeccion_7h?.rango_mid_min)} – ${money(a.proyeccion_7h?.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
@@ -826,21 +826,21 @@
         return;
       }
       await Promise.allSettled([loadPrices(), loadHistory('5m'), loadAnalysis()]);
-      setInterval(loadPrices, 15000);
+      setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
 
       // El precio se actualiza rápido, pero el histórico no necesita viajar al
       // navegador cada 15s para todas las temporalidades. Se adapta la frecuencia
       // al marco seleccionado para reducir tráfico y trabajo de Chart.js.
       setInterval(() => {
-        const interval = ({'5m':30000,'15m':60000,'30m':90000,'1h':120000,'1d':180000})[marketState.period] || 60000;
+        const interval = ({'5m':30000,'15m':45000,'30m':60000,'1h':90000,'1d':150000})[marketState.period] || 60000;
         const now = Date.now();
         if (!window.__venbotLastHistory || now - window.__venbotLastHistory >= interval) {
           window.__venbotLastHistory = now;
           loadHistory(marketState.period);
         }
       }, 5000);
-      setInterval(loadAnalysis, 30000);
+      setInterval(loadAnalysis, 15000);
     }
 
     document.addEventListener('DOMContentLoaded', bootVenbot);
