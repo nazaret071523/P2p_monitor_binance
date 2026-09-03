@@ -423,7 +423,7 @@
       checkLocalAlert();
 
       if (marketState.sell > 0) {
-        document.getElementById('chart-current').textContent = `${money(marketState.sell)} Bs`;
+        document.getElementById('chart-current').textContent = marketState.buy > 0 && marketState.sell > 0 ? `${money((marketState.buy + marketState.sell) / 2)} Bs` : '--,-- Bs';
       }
     }
 
@@ -511,15 +511,35 @@
       const canvas = document.getElementById('marketChart');
       if (!canvas) return;
       const candles = buildCandles(marketState.history, marketState.period);
-      const mids = marketState.history.map(x => (Number(x.compra)+Number(x.venta))/2).filter(Number.isFinite);
-      const current = Number(marketState.sell || 0);
+      const mids = marketState.history
+        .map(x => (Number(x.compra)+Number(x.venta))/2)
+        .filter(v => Number.isFinite(v) && v > 0);
+      const currentMid = marketState.buy > 0 && marketState.sell > 0
+        ? (marketState.buy + marketState.sell) / 2
+        : (mids.length ? mids[mids.length - 1] : 0);
 
-      document.getElementById('chart-low').textContent = mids.length ? `${money(Math.min(...mids))} Bs` : '--,-- Bs';
-      document.getElementById('chart-high').textContent = mids.length ? `${money(Math.max(...mids))} Bs` : '--,-- Bs';
-      document.getElementById('chart-current').textContent = current > 0 ? `${money(current)} Bs` : (mids.length ? `${money(mids[mids.length-1])} Bs` : '--,-- Bs');
+      const allValues = currentMid > 0 ? [...mids, currentMid] : mids;
+      document.getElementById('chart-low').textContent = allValues.length ? `${money(Math.min(...allValues))} Bs` : '--,-- Bs';
+      document.getElementById('chart-high').textContent = allValues.length ? `${money(Math.max(...allValues))} Bs` : '--,-- Bs';
+      document.getElementById('chart-current').textContent = currentMid > 0 ? `${money(currentMid)} Bs` : '--,-- Bs';
 
       if (marketChart) marketChart.destroy();
       if (!candles.length) return;
+
+      // Si la lectura actual todavía no pertenece al último bucket, se añade
+      // como una vela de un solo punto para que el gráfico nunca quede atrás.
+      const bucketMs = candleBucketMs(marketState.period);
+      const liveTime = marketState.timestamp ? new Date(marketState.timestamp).getTime() : Date.now();
+      if (currentMid > 0 && Number.isFinite(liveTime)) {
+        const key = Math.floor(liveTime / bucketMs) * bucketMs;
+        const last = candles[candles.length - 1];
+        if (!last || key > last.x) candles.push({ x:key, o:currentMid, h:currentMid, l:currentMid, c:currentMid });
+        else if (key === last.x) {
+          last.h = Math.max(last.h, currentMid);
+          last.l = Math.min(last.l, currentMid);
+          last.c = currentMid;
+        }
+      }
 
       marketChart = new Chart(canvas.getContext('2d'), {
         type: 'candlestick',
@@ -546,6 +566,7 @@
         }
       });
     }
+
 
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
@@ -587,30 +608,31 @@
       const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
       if (!a || !a.metricas) return;
       const m = a.metricas;
+      const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
       const views = {
         '1': {
           title:'Proyección Operativa Binance P2P',
           m1:['SEÑAL P2P', a.tactica?.estado || '--'],
-          m2:['IMPULSO', `${m.momentum_pct >= 0 ? '+' : ''}${pct(m.momentum_pct)}%`],
-          m3:['COSTO SPREAD', `${pct(m.spread_pct)}%`],
+          m2:['15 MIN', fmtWindow(m.momentum_15m_pct)],
+          m3:['1 HORA', fmtWindow(m.momentum_1h_pct)],
           m4:['VOLATILIDAD', `${pct(m.volatilidad_pct)}%`],
-          text:a.tactica?.detalle || 'Esperando análisis.'
+          text:`${a.tactica?.detalle || 'Esperando análisis.'} Calidad de datos: ${m.calidad_datos ?? 0}%.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
           m1:['ESTADO DE FLUJO', a.flujo?.estado || '--'],
           m2:['LIQUIDEZ', String(m.liquidez ?? 0)],
           m3:['SPREAD MEDIO', `${money(m.spread_promedio)} Bs`],
-          m4:['CAMBIO SPREAD', `${m.spread_promedio ? (m.spread_pct - (m.spread_promedio / (marketState.buy || 1) * 100)).toFixed(2) : '0.00'}%`],
+          m4:['CAMBIO SPREAD', `${m.spread_cambio_pct >= 0 ? '+' : ''}${pct(m.spread_cambio_pct)}%`],
           text:a.flujo?.detalle || 'Esperando análisis.'
         },
         '3': {
           title:'Niveles y Rango Binance P2P',
           m1:['ZONA ACTUAL', a.niveles?.estado || '--'],
           m2:['SOPORTE', `${money(m.soporte)} Bs`],
-          m3:['MEDIANA', `${money(m.mediana)} Bs`],
+          m3:['ACTUAL', `${money((marketState.buy + marketState.sell) / 2)} Bs`],
           m4:['RESISTENCIA', `${money(m.resistencia)} Bs`],
-          text:a.niveles?.detalle || 'Esperando análisis.'
+          text:`${a.niveles?.detalle || 'Esperando análisis.'} Posición en rango: ${pct(m.posicion_rango)}%.`
         }
       }[mode] || null;
       if (!views) return;
@@ -621,6 +643,7 @@
         document.getElementById(ids[1]).textContent=views[['m1','m2','m3','m4'][i]][1];
       });
     }
+
 
     function handleLoginClick() { alert('Redirigiendo al panel de inicio de sesión de la plataforma.'); }
     function handleAIClick() { document.getElementById('aiChatModal').classList.remove('hidden'); }
@@ -668,15 +691,29 @@
       })[ch]);
     }
 
+    function markdownToSafeHTML(text) {
+      let s = escapeHTML(String(text || ''));
+      s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-2 mb-1">$1</h4>');
+      s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
+      s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
+      s = s.replace(/^[-*] (.+)$/gm, '<div class="ml-2">• $1</div>');
+      s = s.replace(/^(\d+)\. (.+)$/gm, '<div class="ml-2">$1. $2</div>');
+      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300">$1</code>');
+      s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+      return s.replace(/\n/g, '<br>');
+    }
+
     function appendAIMessage(role, text) {
       const chat = document.getElementById('ai-chat-messages');
-      const safe = escapeHTML(text).replace(/\n/g, '<br>');
+      const safe = role === 'user' ? escapeHTML(text).replace(/\n/g, '<br>') : markdownToSafeHTML(text);
       const user = role === 'user';
       chat.insertAdjacentHTML('beforeend', user
         ? `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${safe}</div></div>`
         : `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">${safe}</div></div>`);
       chat.scrollTop = chat.scrollHeight;
     }
+
 
     async function sendAIMessage() {
       const input = document.getElementById('ai-user-input');
