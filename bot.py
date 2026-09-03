@@ -49,7 +49,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
-COLLECT_INTERVAL_SECONDS = max(10, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
+COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
+P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
@@ -473,12 +474,12 @@ def _extraer_ads_binance(body):
     return []
 
 
-def _binance_fetch_raw(trade_type, rows=20):
-    """Consulta el MGS C2C Agent API público actual de Binance.
+def _binance_fetch_raw(trade_type, rows=P2P_SCAN_ADS):
+    """Obtiene un universo amplio de anuncios P2P sin inventar paginación.
 
-    Primero se intenta con el filtro BANK documentado. Si Binance devuelve vacío,
-    se reintenta sin filtro de método de pago y el banco se filtra localmente.
-    Esto evita perder anuncios cuando el identificador del método bancario cambia.
+    El Agent API público limita `limit` a 20. Para alcanzar 100 anuncios usamos
+    el endpoint público C2C legacy con páginas de 20 y las combinamos. Si ese
+    endpoint falla, volvemos al Agent API de 20 anuncios.
     """
     headers = {
         "Accept": "application/json, text/plain, */*",
@@ -486,50 +487,64 @@ def _binance_fetch_raw(trade_type, rows=20):
         "Referer": "https://www.binance.com/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/139 Safari/537.36",
     }
-    agent_url = "https://www.binance.com/bapi/c2c/v1/public/c2c/agent/ad-list"
-    limit = min(max(int(rows), 1), 20)
-    last_error = None
+    rows = min(max(int(rows), 20), 100)
+    fallback_agent = "https://www.binance.com/bapi/c2c/v1/public/c2c/agent/ad-list"
+    legacy_url = "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
 
-    # 1) Método BANK documentado por Binance.
-    attempts = [
-        {"fiat": "VES", "asset": "USDT", "tradeType": trade_type,
-         "limit": limit, "order": "price", "tradeMethodIdentifiers": "BANK"},
-        # 2) Sin filtro de método: filtramos Mercantil/Provincial/BNC localmente.
-        {"fiat": "VES", "asset": "USDT", "tradeType": trade_type,
-         "limit": limit, "order": "price"},
-    ]
+    # 1) Fuente amplia: 5 páginas x 20 = hasta 100 anuncios por dirección.
+    page_count = (rows + 19) // 20
+    def fetch_page(page):
+        payload = {
+            "asset": "USDT", "fiat": "VES", "page": page, "rows": 20,
+            "tradeType": trade_type, "payTypes": ["BANK"],
+            "publisherType": None, "merchantCheck": False,
+            "proMerchantAds": False, "shieldMerchantAds": False,
+            "countries": [],
+        }
+        r = HTTP.post(legacy_url, json=payload, headers=headers, timeout=8)
+        r.raise_for_status()
+        data = _extraer_ads_binance(r.json())
+        logger.info("Binance C2C página %s %s: %s anuncios", page, trade_type, len(data))
+        return data
 
-    for params in attempts:
-        try:
-            r = HTTP.get(agent_url, params=params, headers=headers, timeout=12)
-            r.raise_for_status()
-            data = _extraer_ads_binance(r.json())
-            if data:
-                logger.info("Binance ad-list %s: %s anuncios recibidos", trade_type, len(data))
-                return data
-            last_error = RuntimeError("ad-list respondió sin anuncios")
-        except Exception as e:
-            last_error = e
-            logger.warning("Binance ad-list %s falló con params %s: %s", trade_type, params, e)
-
-    # Fallback histórico del sitio web; se evita el endpoint obsoleto.
-    fallback = "https://www.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    payload = {
-        "asset": "USDT", "fiat": "VES", "page": 1, "rows": limit,
-        "tradeType": trade_type, "payTypes": ["BANK"], "publisherType": None,
-        "merchantCheck": False, "proMerchantAds": False, "shieldMerchantAds": False,
-        "countries": [],
-    }
     try:
-        r = HTTP.post(fallback, json=payload, headers=headers, timeout=12)
+        with ThreadPoolExecutor(max_workers=min(page_count, 5)) as ex:
+            pages = list(ex.map(fetch_page, range(1, page_count + 1)))
+        combined = []
+        seen = set()
+        for page_data in pages:
+            for item in page_data:
+                adv = item.get("adv") or {}
+                key = str(adv.get("advNo") or item.get("advNo") or id(item))
+                if key not in seen:
+                    seen.add(key)
+                    combined.append(item)
+                if len(combined) >= rows:
+                    break
+            if len(combined) >= rows:
+                break
+        if combined:
+            logger.info("Binance P2P %s: %s anuncios combinados (objetivo %s)", trade_type, len(combined), rows)
+            return combined
+    except Exception as e:
+        logger.warning("Binance C2C paginado %s falló: %s", trade_type, e)
+
+    # 2) Respaldo Agent API actual, limitado a 20 por contrato.
+    try:
+        params = {
+            "fiat": "VES", "asset": "USDT", "tradeType": trade_type,
+            "limit": 20, "order": "price", "tradeMethodIdentifiers": "BANK",
+        }
+        r = HTTP.get(fallback_agent, params=params, headers=headers, timeout=8)
         r.raise_for_status()
         data = _extraer_ads_binance(r.json())
         if data:
-            logger.info("Binance fallback adv/search %s: %s anuncios recibidos", trade_type, len(data))
+            logger.info("Binance Agent %s: %s anuncios recibidos", trade_type, len(data))
             return data
-        raise RuntimeError("fallback adv/search respondió sin anuncios")
-    except Exception as fallback_error:
-        raise RuntimeError(f"ad-list: {last_error}; fallback adv/search: {fallback_error}")
+    except Exception as e:
+        logger.warning("Binance Agent %s falló: %s", trade_type, e)
+
+    raise RuntimeError(f"No se pudieron obtener anuncios P2P para {trade_type}")
 
 def _ad_contiene_banco(item, banco_filtro):
     if banco_filtro == "GENERAL":
@@ -605,35 +620,64 @@ def _binance_search(trade_type, banco_filtro="GENERAL"):
             unique.append(item)
     return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
 
+def _seleccionar_anuncios_por_banco(raw, trade_type, banco_filtro):
+    bancos = ["MERCANTIL", "PROVINCIAL", "BNC"] if banco_filtro == "GENERAL" else [banco_filtro]
+    result = []
+    for banco in bancos:
+        elegibles = [
+            x for x in raw
+            if _anuncio_no_verificado(x)
+            and _anuncio_cumple_monto(x, trade_type)
+            and _ad_contiene_banco(x, banco)
+        ]
+        result.extend(elegibles[:10])
+    seen = set()
+    unique = []
+    for item in result:
+        adv = item.get("adv") or {}
+        key = str(adv.get("advNo") or item.get("advNo") or id(item))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique[:30] if banco_filtro == "GENERAL" else unique[:10]
+
+
 def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
-    """Lee Binance P2P en vivo. Comprar=SELL y Vender=BUY.
-    Las dos patas se consultan en paralelo para minimizar latencia.
-    """
+    """Lee Binance P2P en vivo. Comprar=SELL y Vender=BUY."""
     global ULTIMO_REGISTRO_VALIDO
     try:
         with ThreadPoolExecutor(max_workers=2) as ex:
-            f_sell = ex.submit(_binance_search, "SELL", banco_filtro)
-            f_buy = ex.submit(_binance_search, "BUY", banco_filtro)
-            anuncios_compra_usuario = f_sell.result(timeout=9)
-            anuncios_venta_usuario = f_buy.result(timeout=9)
+            f_sell = ex.submit(_binance_fetch_raw, "SELL", P2P_SCAN_ADS)
+            f_buy = ex.submit(_binance_fetch_raw, "BUY", P2P_SCAN_ADS)
+            raw_sell = f_sell.result(timeout=18)
+            raw_buy = f_buy.result(timeout=18)
 
+        anuncios_compra_usuario = _seleccionar_anuncios_por_banco(raw_sell, "SELL", banco_filtro)
+        anuncios_venta_usuario = _seleccionar_anuncios_por_banco(raw_buy, "BUY", banco_filtro)
         compra = calcular_vwap_con_filtro(anuncios_compra_usuario)
         venta = calcular_vwap_con_filtro(anuncios_venta_usuario)
         if compra > 0 and venta > 0:
             liquidez = len(anuncios_compra_usuario) + len(anuncios_venta_usuario)
             ULTIMO_REGISTRO_VALIDO = {"compra": compra, "venta": venta, "timestamp": datetime.now(VET)}
+            logger.info("P2P %s listo: %s anuncios SELL + %s BUY", banco_filtro, len(anuncios_compra_usuario), len(anuncios_venta_usuario))
             return round(compra, 2), round(venta, 2), liquidez
     except Exception as e:
         logger.warning("Binance P2P no disponible para %s: %s", banco_filtro, e)
 
     if banco_filtro == "GENERAL":
         db = obtener_mercado_actual_db()
-        if db and db["compra"] > 0 and db["venta"] > 0:
-            return round(db["compra"], 2), round(db["venta"], 2), int(db["liquidez"])
-    if ULTIMO_REGISTRO_VALIDO["compra"] > 0 and ULTIMO_REGISTRO_VALIDO["venta"] > 0:
+    else:
+        filas = obtener_estadisticas_db(limit=1, banco=banco_filtro)
+        db = None
+        if filas:
+            c, v, l, f = filas[0]
+            db = {"compra": c, "venta": v, "liquidez": l}
+    if db and db["compra"] > 0 and db["venta"] > 0:
+        return round(float(db["compra"]), 2), round(float(db["venta"]), 2), int(db.get("liquidez", 0) or 0)
+    # Never leak GENERAL into a selected bank. A bank failure must remain bank-specific.
+    if banco_filtro == "GENERAL" and ULTIMO_REGISTRO_VALIDO["compra"] > 0 and ULTIMO_REGISTRO_VALIDO["venta"] > 0:
         return round(ULTIMO_REGISTRO_VALIDO["compra"], 2), round(ULTIMO_REGISTRO_VALIDO["venta"], 2), 0
     return 0.0, 0.0, 0
-
 
 def recolectar_mercado_general():
     compra, venta, liquidez = obtener_precios_binance_p2p("GENERAL")
@@ -1006,6 +1050,16 @@ def generar_imagen_grafica_cuantica(filas, banco):
     return buf
 
 
+def obtener_ultimo_mercado_banco(banco):
+    if banco == "GENERAL":
+        return obtener_mercado_actual_db() or {}
+    filas = obtener_estadisticas_db(limit=1, banco=banco)
+    if not filas:
+        return {}
+    c, v, l, f = filas[0]
+    return {"compra": float(c or 0), "venta": float(v or 0), "liquidez": int(l or 0), "fecha": f}
+
+
 def calcular_analisis_monitor(banco_filtro="GENERAL"):
     """Diagnóstico único y compartido por monitor web, IA y Telegram."""
     cache_key = banco_filtro or "GENERAL"
@@ -1013,7 +1067,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
     if cached and time.monotonic() < cached[0]:
         return cached[1]
 
-    mercado = obtener_mercado_actual_db() or {}
+    mercado = obtener_ultimo_mercado_banco(banco_filtro)
     compra = float(mercado.get("compra", 0) or 0)
     venta = float(mercado.get("venta", 0) or 0)
     liquidez = int(mercado.get("liquidez", 0) or 0)
@@ -1353,22 +1407,36 @@ async def tarea_recoleccion_automatica():
     global ULTIMO_ESTADO_TENDENCIA
     while True:
         try:
-            mercado = await asyncio.to_thread(recolectar_mercado_general)
+            # Una sola captura amplia por dirección. De ella salen GENERAL y los
+            # tres bancos, evitando 4-8 consultas redundantes por ciclo.
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_sell = ex.submit(_binance_fetch_raw, "SELL", P2P_SCAN_ADS)
+                f_buy = ex.submit(_binance_fetch_raw, "BUY", P2P_SCAN_ADS)
+                raw_sell = await asyncio.to_thread(f_sell.result, 18)
+                raw_buy = await asyncio.to_thread(f_buy.result, 18)
 
-            # Bancos separados en paralelo para no serializar seis consultas HTTP.
-            resultados_bancos = await asyncio.gather(*[
-                asyncio.to_thread(obtener_precios_binance_p2p, banco)
-                for banco in ("MERCANTIL", "PROVINCIAL", "BNC")
-            ])
-            for banco, (c, v, l) in zip(("MERCANTIL", "PROVINCIAL", "BNC"), resultados_bancos):
+            def calcular_desde_raw(banco):
+                sell = _seleccionar_anuncios_por_banco(raw_sell, "SELL", banco)
+                buy = _seleccionar_anuncios_por_banco(raw_buy, "BUY", banco)
+                c = calcular_vwap_con_filtro(sell)
+                v = calcular_vwap_con_filtro(buy)
+                return c, v, len(sell) + len(buy)
+
+            mercado = None
+            resultados = {}
+            for banco in ("GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"):
+                c, v, l = calcular_desde_raw(banco)
+                resultados[banco] = (c, v, l)
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
+                if banco == "GENERAL":
+                    tasas = await asyncio.to_thread(obtener_tasas_bcv_oficiales)
+                    now = datetime.now(VET)
+                    await asyncio.to_thread(guardar_mercado_actual, c, v, l, tasas["usd"], tasas["eur"], tasas["source"])
+                    mercado = {"compra": c, "venta": v, "liquidez": l, "bcv": tasas["usd"], "eur": tasas["eur"], "fuente_bcv": tasas["source"], "timestamp": now}
 
-            if mercado["compra"] > 0 and mercado["venta"] > 0:
-                datos = await asyncio.to_thread(
-                    motor_quant_inteligente,
-                    mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL"
-                )
+            if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
+                datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
                 tendencia = datos["tendencia"]
                 manip = datos.get("manipulacion") or {}
                 debe_alertar_tendencia = tendencia != ULTIMO_ESTADO_TENDENCIA
@@ -1378,22 +1446,11 @@ async def tarea_recoleccion_automatica():
                     tipo = "🚨 ALERTA DE MOVIMIENTO ANÓMALO" if manip.get("activa") else "🚨 ALERTA PROACTIVA DE MERCADO P2P"
                     motivos = "; ".join(manip.get("motivos", [])[:3])
                     extra = f"\n• Anomalía: `{motivos}`" if motivos else ""
-                    await telegram_app.bot.send_message(
-                        chat_id=TELEGRAM_ALERT_CHAT_ID,
-                        text=(
-                            f"{tipo}\n"
-                            f"• Tendencia: `{tendencia}`\n"
-                            f"• Comprar USDT: `{mercado['compra']:.2f} Bs`\n"
-                            f"• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra +
-                            "\n• La anomalía es una señal estadística y no prueba manipulación intencional."
-                        ),
-                        parse_mode="Markdown",
-                    )
+                    await telegram_app.bot.send_message(chat_id=TELEGRAM_ALERT_CHAT_ID, text=(f"{tipo}\n• Tendencia: `{tendencia}`\n• Comprar USDT: `{mercado['compra']:.2f} Bs`\n• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra + "\n• La anomalía es una señal estadística y no prueba manipulación intencional."), parse_mode="Markdown")
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.exception("Error en tarea autónoma: %s", e)
-
         await asyncio.sleep(COLLECT_INTERVAL_SECONDS)
 
 
@@ -1446,49 +1503,39 @@ def _mercado_desactualizado(mercado):
 
 @app.get("/api/precios")
 def obtener_precios_api(refresh: bool = Query(False)):
-    """Entrega la última lectura real; si supera 5 s, fuerza una lectura P2P.
-    Nunca fabrica precios. El frontend puede consultar cada pocos segundos sin
-    multiplicar llamadas a Binance gracias a esta caché ultracorta.
+    """Entrega la última captura real persistida. El recolector mantiene el
+    mercado actualizado; solo se fuerza una captura si no existe o está vieja.
     """
-    now_mono = time.monotonic()
-    cached = LIVE_CACHE.get("value")
-    if cached and not refresh and now_mono < LIVE_CACHE.get("expires", 0):
-        return cached
-
     with LIVE_LOCK:
-        now_mono = time.monotonic()
-        cached = LIVE_CACHE.get("value")
-        if cached and not refresh and now_mono < LIVE_CACHE.get("expires", 0):
-            return cached
-        nuevo = recolectar_mercado_general()
         mercado = obtener_mercado_actual_db() or {}
-        if nuevo.get("compra", 0) > 0 and nuevo.get("venta", 0) > 0:
-            compra = float(nuevo["compra"]); venta = float(nuevo["venta"])
-            liquidez = int(nuevo.get("liquidez", 0))
-            bcv = float(nuevo.get("bcv", 0) or 0); eur = float(nuevo.get("eur", 0) or 0)
-            fecha = nuevo.get("timestamp") or datetime.now(VET)
-            source = nuevo.get("fuente_bcv", "sin_datos")
-        elif mercado:
-            compra = float(mercado.get("compra",0)); venta = float(mercado.get("venta",0))
-            liquidez = int(mercado.get("liquidez",0)); bcv = float(mercado.get("bcv",0)); eur = float(mercado.get("eur",0))
-            fecha = mercado.get("fecha") or datetime.now(VET); source = mercado.get("fuente_bcv", "DB")
-        else:
+        stale = _mercado_desactualizado(mercado)
+        if (not mercado or stale) and refresh:
+            try:
+                recolectar_mercado_general()
+                mercado = obtener_mercado_actual_db() or mercado
+            except Exception as e:
+                logger.warning("Refresh P2P manual falló: %s", e)
+        if not mercado:
             return {"ok": False, "error": "Todavía no existe una lectura real."}
-
-        if fecha and fecha.tzinfo is None:
+        fecha = mercado.get("fecha") or datetime.now(VET)
+        if fecha.tzinfo is None:
             fecha = VET.localize(fecha)
-        age = max(0.0, (datetime.now(VET) - fecha.astimezone(VET)).total_seconds()) if fecha else 9999.0
+        age = max(0.0, (datetime.now(VET) - fecha.astimezone(VET)).total_seconds())
+        compra = float(mercado.get("compra", 0) or 0)
+        venta = float(mercado.get("venta", 0) or 0)
         spread = round(venta - compra, 2)
         result = {
-            "ok": compra > 0 and venta > 0, "compra": round(compra,2), "venta": round(venta,2),
-            "buy": round(compra,2), "sell": round(venta,2), "spread": spread,
-            "spread_pct": round((spread/compra)*100,2) if compra else 0.0,
-            "bcv": round(bcv,2), "eur": round(eur,2), "liquidez": liquidez,
-            "fuente_bcv": source, "timestamp": fecha.astimezone(VET).isoformat() if fecha else datetime.now(VET).isoformat(),
-            "age_seconds": round(age,1), "stale": age > MARKET_MAX_AGE_SECONDS, "source": "Binance P2P live" if age <= MARKET_MAX_AGE_SECONDS else "última lectura real"
+            "ok": compra > 0 and venta > 0, "compra": round(compra, 2), "venta": round(venta, 2),
+            "buy": round(compra, 2), "sell": round(venta, 2), "spread": spread,
+            "spread_pct": round((spread/compra)*100, 2) if compra else 0.0,
+            "bcv": round(float(mercado.get("bcv", 0) or 0), 2), "eur": round(float(mercado.get("eur", 0) or 0), 2),
+            "liquidez": int(mercado.get("liquidez", 0) or 0), "fuente_bcv": mercado.get("fuente_bcv") or "DB",
+            "timestamp": fecha.astimezone(VET).isoformat(), "age_seconds": round(age, 1),
+            "stale": age > MARKET_MAX_AGE_SECONDS,
+            "source": "Binance P2P live" if age <= MARKET_MAX_AGE_SECONDS else "última lectura real",
         }
         LIVE_CACHE["value"] = result
-        LIVE_CACHE["expires"] = time.monotonic() + 5.0
+        LIVE_CACHE["expires"] = time.monotonic() + 2.0
         return result
 
 
