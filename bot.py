@@ -48,7 +48,9 @@ TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
 COLLECT_INTERVAL_SECONDS = int(os.getenv("COLLECT_INTERVAL_SECONDS", "60"))
 MARKET_MAX_AGE_SECONDS = int(os.getenv("MARKET_MAX_AGE_SECONDS", "90"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 
 # Orígenes separados por coma. Si no se configura, se permite cualquier origen
 # sin credenciales, suficiente para un monitor público.
@@ -814,6 +816,117 @@ def generar_imagen_grafica_cuantica(filas, banco):
     return buf
 
 
+def calcular_analisis_monitor(banco_filtro="GENERAL"):
+    """Motor único para el bloque analítico y el contexto de la IA."""
+    mercado = obtener_mercado_actual_db() or {}
+    compra = float(mercado.get("compra", 0) or 0)
+    venta = float(mercado.get("venta", 0) or 0)
+    liquidez = int(mercado.get("liquidez", 0) or 0)
+    spread = (venta - compra) if compra > 0 and venta > 0 else 0.0
+    spread_pct = (spread / compra * 100) if compra > 0 else 0.0
+
+    filas = obtener_estadisticas_db(limit=300, banco=banco_filtro)
+    mids = []
+    spreads = []
+    for c, v, l, f in filas:
+        c = float(c or 0); v = float(v or 0)
+        if c > 0 and v > 0:
+            mids.append((c + v) / 2)
+            spreads.append(v - c)
+
+    if not mids:
+        return {
+            "ok": False, "banco": banco_filtro, "tactica": {"estado": "⚪ ESPERA / SIN DATOS", "detalle": "Aún no hay suficiente histórico válido."},
+            "flujo": {"estado": "⚪ SIN DATOS", "detalle": "Sin lectura suficiente de liquidez y flujo."},
+            "niveles": {"estado": "⚪ SIN DATOS", "detalle": "Sin rango histórico suficiente."},
+            "metricas": {"momentum_pct": 0, "volatilidad_pct": 0, "spread_pct": round(spread_pct,2), "liquidez": liquidez, "soporte": 0, "resistencia": 0, "mediana": 0, "posicion_rango": 0},
+        }
+
+    arr = np.array(mids, dtype=float)
+    recent = arr[-min(48, len(arr)):]
+    last_mid = float((compra + venta) / 2) if compra > 0 and venta > 0 else float(arr[-1])
+    def pct_change(a, b):
+        return ((b-a)/a*100) if a else 0.0
+
+    momentum = pct_change(float(recent[0]), float(recent[-1])) if len(recent) > 1 else 0.0
+    short_n = min(12, len(arr))
+    prev_n = min(12, max(0, len(arr)-short_n))
+    short_move = pct_change(float(arr[-short_n]), float(arr[-1])) if short_n > 1 else 0.0
+    acceleration = 0.0
+    if prev_n > 1:
+        prev_move = pct_change(float(arr[-short_n-prev_n]), float(arr[-short_n])) if len(arr) >= short_n + prev_n else 0.0
+        acceleration = short_move - prev_move
+
+    returns = np.diff(arr) / arr[:-1] * 100 if len(arr) > 1 else np.array([0.0])
+    volatility = float(np.std(returns[-min(48, len(returns)):])) if len(returns) else 0.0
+    p20, median, p80 = [float(x) for x in np.percentile(arr, [20,50,80])]
+    support = float(np.min(recent))
+    resistance = float(np.max(recent))
+    range_size = resistance - support
+    range_pos = ((last_mid-support)/range_size*100) if range_size > 0 else 50.0
+    avg_spread = float(np.mean(spreads[-min(48,len(spreads)):])) if spreads else spread
+    spread_change = spread - avg_spread
+
+    # Táctica: combina dirección de corto plazo + coste de ejecución.
+    if compra > 0 and venta > 0:
+        if spread_pct >= 2.0:
+            tactica_estado = "🟠 EJECUCIÓN COSTOSA"
+            tactica_detail = f"El spread está en {spread_pct:.2f}%; el coste de entrada/salida está elevado."
+        elif momentum > 0.35 and acceleration >= -0.15:
+            tactica_estado = "🟢 MOMENTO FAVORABLE"
+            tactica_detail = f"El precio medio avanza {momentum:.2f}% en la ventana reciente y mantiene impulso."
+        elif momentum < -0.35:
+            tactica_estado = "🟡 DEFENSIVA"
+            tactica_detail = f"El precio medio cae {abs(momentum):.2f}% en la ventana reciente; conviene proteger ejecución."
+        else:
+            tactica_estado = "⚪ ESPERA / RANGO"
+            tactica_detail = f"Movimiento corto de {momentum:+.2f}% con señal mixta; el mercado está relativamente lateral."
+    else:
+        tactica_estado = "⚪ ESPERA / SIN DATOS"
+        tactica_detail = "Esperando una lectura P2P válida."
+
+    # Flujo: liquidez + expansión/contracción del spread.
+    if liquidez >= 15 and spread_change > 0.5:
+        flujo_estado = "⚡ FLUJO EXPANSIVO"
+        flujo_detail = "La actividad es alta y el spread está por encima de su media reciente."
+    elif liquidez > 0 and (liquidez < 8 or spread_change < -0.5):
+        flujo_estado = "🟡 FLUJO CONTRAÍDO"
+        flujo_detail = "La actividad o el diferencial reciente sugieren un mercado más comprimido."
+    elif liquidez > 0:
+        flujo_estado = "🟢 FLUJO NORMAL"
+        flujo_detail = "La actividad observada está dentro de un rango operativo normal."
+    else:
+        flujo_estado = "⚪ SIN DATOS"
+        flujo_detail = "No hay lectura actual de liquidez."
+
+    # Niveles: percentiles + posición en rango reciente.
+    if range_pos >= 80:
+        niveles_estado = "🎯 CERCA DE RESISTENCIA"
+        niveles_detail = f"El precio está en el {range_pos:.0f}% del rango reciente; resistencia ~ {resistance:.2f} Bs."
+    elif range_pos <= 20:
+        niveles_estado = "🛡️ CERCA DE SOPORTE"
+        niveles_detail = f"El precio está en el {range_pos:.0f}% del rango reciente; soporte ~ {support:.2f} Bs."
+    else:
+        niveles_estado = "⚖️ ZONA MEDIA"
+        niveles_detail = f"El precio ocupa el {range_pos:.0f}% del rango reciente, entre soporte y resistencia."
+
+    return {
+        "ok": True,
+        "banco": banco_filtro,
+        "tactica": {"estado": tactica_estado, "detalle": tactica_detail},
+        "flujo": {"estado": flujo_estado, "detalle": flujo_detail},
+        "niveles": {"estado": niveles_estado, "detalle": niveles_detail},
+        "metricas": {
+            "momentum_pct": round(momentum, 3), "aceleracion_pct": round(acceleration,3),
+            "volatilidad_pct": round(volatility,3), "spread_pct": round(spread_pct,3),
+            "spread_promedio": round(avg_spread,2), "liquidez": liquidez,
+            "soporte": round(support,2), "resistencia": round(resistance,2),
+            "mediana": round(median,2), "percentil20": round(p20,2), "percentil80": round(p80,2),
+            "posicion_rango": round(range_pos,1), "muestras": len(arr),
+        },
+    }
+
+
 # ==========================================
 # TELEGRAM
 # ==========================================
@@ -1037,8 +1150,8 @@ def health():
         "status": "ok",
         "database": bool(mercado) if DATABASE_URL else False,
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
-        "ai_configured": bool(GEMINI_API_KEY and genai),
-        "ai_model": GEMINI_MODEL if GEMINI_API_KEY else None,
+        "ai_configured": bool((GEMINI_API_KEY and genai) or OPENROUTER_API_KEY),
+        "ai_model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else None),
         "timestamp": datetime.now(VET).isoformat(),
     }
 
@@ -1116,6 +1229,11 @@ def obtener_precios_market_alias():
     return obtener_precios_api(False)
 
 
+@app.get("/api/analysis")
+def obtener_analysis_api():
+    return calcular_analisis_monitor("GENERAL")
+
+
 @app.get("/api/history")
 def obtener_history(period: str = Query("1d", pattern="^(1d|7d|30d)$")):
     horas = {"1d": 24, "7d": 24 * 7, "30d": 24 * 30}[period]
@@ -1160,52 +1278,82 @@ def obtener_history(period: str = Query("1d", pattern="^(1d|7d|30d)$")):
     return {"ok": True, "period": period, "count": len(puntos), "data": puntos}
 
 
-VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional intelectual en español integrado en un monitor P2P de Binance USDT/VES. Puedes responder preguntas generales y preguntas sobre trading/P2P. Cuando hables del mercado usa exclusivamente el contexto real que recibes. Nunca inventes precios, tasas, liquidez, noticias ni datos. Distingue claramente entre dato observado, cálculo, estimación e interpretación. Regla semántica obligatoria: Comprar USDT = anuncios SELL de Binance (el usuario compra USDT); Vender USDT = anuncios BUY (el usuario vende USDT). Mantén continuidad conversacional usando el historial. Sé natural, claro, razonado y útil; no prometas ganancias ni certeza financiera. Si no tienes un dato actual, dilo."""
+VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional avanzado en español. Eres el copiloto del usuario: puedes conversar sobre temas generales, explicar conceptos, ayudar con cálculos, planificación y razonamiento, y también analizar el mercado P2P USDT/VES cuando el usuario lo pida. Cuando hables del mercado, usa exclusivamente los datos reales del contexto de Venbot. Nunca inventes precios, tasas, liquidez, noticias o hechos actuales. Distingue dato observado, cálculo, estimación e interpretación. Regla semántica obligatoria: Comprar USDT = anuncios SELL de Binance (el usuario compra USDT); Vender USDT = anuncios BUY (el usuario vende USDT). Mantén continuidad con el historial. Responde de forma natural, útil y con suficiente profundidad; no te limites a respuestas de una línea. Si una pregunta no es de mercado, contéstala normalmente. No prometas ganancias ni certeza financiera."""
 
 
 def _serializar_contexto_mercado():
     mercado = obtener_mercado_actual_db() or {}
-    filas = obtener_estadisticas_db(limit=60, banco="GENERAL")
+    analisis = calcular_analisis_monitor("GENERAL")
+    filas = obtener_estadisticas_db(limit=120, banco="GENERAL")
     hist = []
     for c, v, l, f in filas:
         hist.append({"compra": round(float(c),2), "venta": round(float(v),2), "liquidez": int(l or 0), "fecha": f.isoformat() if f else None})
     compra = float(mercado.get("compra",0) or 0); venta = float(mercado.get("venta",0) or 0)
     spread = venta-compra if compra and venta else 0
-    return {"mercado_actual": {"comprar_usdt_sell": compra, "vender_usdt_buy": venta, "spread": round(spread,2), "spread_pct": round(spread/compra*100,2) if compra else 0, "liquidez": int(mercado.get("liquidez",0) or 0), "bcv_usd": mercado.get("bcv",0), "euro": mercado.get("eur",0), "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None}, "historial_general": hist[-60:]}
+    return {
+        "mercado_actual": {"comprar_usdt_sell": compra, "vender_usdt_buy": venta, "spread": round(spread,2), "spread_pct": round(spread/compra*100,2) if compra else 0, "liquidez": int(mercado.get("liquidez",0) or 0), "bcv_usd": mercado.get("bcv",0), "euro": mercado.get("eur",0), "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None},
+        "analisis_cuantitativo": analisis,
+        "historial_general": hist[-120:]
+    }
+
+
+def _respuesta_gemini(prompt, model):
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=0.55, max_output_tokens=1600),
+    )
+    return getattr(response, "text", None)
+
+
+def _respuesta_openrouter(prompt):
+    if not OPENROUTER_API_KEY:
+        return None
+    try:
+        r = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json", "HTTP-Referer": RENDER_EXTERNAL_URL or "https://p2p-monitor-binance.onrender.com", "X-Title": "Venbot"},
+            json={"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": VENBOT_AI_SYSTEM}, {"role": "user", "content": prompt}], "temperature": 0.55, "max_tokens": 1600},
+            timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+        return (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or None
+    except Exception as e:
+        logger.warning("OpenRouter fallback falló: %s", e)
+        return None
 
 
 def generar_respuesta_ia(mensaje, historial):
-    if not GEMINI_API_KEY or genai is None:
+    if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
         return "La IA conversacional todavía no está configurada en el servidor."
     import json
     contexto = _serializar_contexto_mercado()
     prev = []
-    for h in (historial or [])[-12:]:
+    for h in (historial or [])[-20:]:
         role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
-        content = str(h.get("content", h.get("text", "")))[:3000]
+        content = str(h.get("content", h.get("text", "")))[:5000]
         if content:
             prev.append({"role": role, "content": content})
-    prompt = "CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) + "\n\nHISTORIAL:\n" + json.dumps(prev, ensure_ascii=False) + "\n\nPREGUNTA ACTUAL:\n" + mensaje
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=0.45, max_output_tokens=900),
-        )
-        text = getattr(response, "text", None)
-        if text:
-            return text.strip()
-    except Exception as e:
-        logger.warning("Gemini %s falló: %s", GEMINI_MODEL, e)
-        if GEMINI_MODEL != "gemini-2.5-flash":
+    prompt = "CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) + "\n\nHISTORIAL CONVERSACIONAL:\n" + json.dumps(prev, ensure_ascii=False) + "\n\nPREGUNTA ACTUAL:\n" + mensaje
+
+    if GEMINI_API_KEY and genai is not None:
+        modelos = [GEMINI_MODEL]
+        for fallback in ("gemini-3.7-flash", "gemini-2.5-flash"):
+            if fallback not in modelos:
+                modelos.append(fallback)
+        for model in modelos:
             try:
-                client = genai.Client(api_key=GEMINI_API_KEY)
-                response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=0.45, max_output_tokens=900))
-                text = getattr(response, "text", None)
-                if text: return text.strip()
-            except Exception as e2:
-                logger.warning("Gemini fallback falló: %s", e2)
+                text = _respuesta_gemini(prompt, model)
+                if text:
+                    return text.strip()
+            except Exception as e:
+                logger.warning("Gemini %s falló: %s", model, e)
+
+    text = _respuesta_openrouter(prompt)
+    if text:
+        return text
     return "No pude generar una respuesta en este momento. Intenta de nuevo en unos segundos."
 
 
@@ -1218,7 +1366,7 @@ class AIChatRequest(BaseModel):
 async def ai_chat(payload: AIChatRequest):
     mensaje = payload.message.strip()
     respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history)
-    return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else "not_configured"}
+    return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else "not_configured")}
 
 
 @app.post("/webhook")
