@@ -2,6 +2,7 @@ import os
 import io
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -73,6 +74,16 @@ ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
 CONFIGURACION_BANCOS = {}
 telegram_app = None
 collector_task = None
+
+# Cachés cortas para que el monitor y la IA no repitan consultas pesadas a Supabase
+# mientras el usuario está navegando. Los datos siguen siendo reales; solo se
+# reutiliza durante unos segundos la misma lectura.
+_ANALYSIS_CACHE = {}
+_HISTORY_CACHE = {}
+_AI_CONTEXT_CACHE = {"value": None, "expires": 0.0}
+_CACHE_TTL_ANALYSIS = 8.0
+_CACHE_TTL_HISTORY = 10.0
+_CACHE_TTL_AI = 8.0
 
 
 # ==========================================
@@ -747,8 +758,12 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
 
     # Incorporar la lectura actual al final para que Telegram y el monitor no
     # trabajen con una muestra histórica que quedó 1 minuto atrás.
-    if not series or now >= series[-1][0]:
+    if not series or now >= max(x[0] for x in series):
         series.append((now, mid_actual, compra, venta))
+
+    # La consulta SQL llega DESC. El motor temporal necesita SIEMPRE orden
+    # cronológico para que 5m/15m/1h/3h/7h comparen contra el punto correcto.
+    series.sort(key=lambda x: x[0])
 
     fechas = [x[0] for x in series]
     mids = np.array([x[1] for x in series], dtype=float)
@@ -960,11 +975,12 @@ def generar_imagen_grafica_cuantica(filas, banco):
 
 
 def calcular_analisis_monitor(banco_filtro="GENERAL"):
-    """Diagnóstico único y compartido por monitor web, IA y Telegram.
+    """Diagnóstico único y compartido por monitor web, IA y Telegram."""
+    cache_key = banco_filtro or "GENERAL"
+    cached = _ANALYSIS_CACHE.get(cache_key)
+    if cached and time.monotonic() < cached[0]:
+        return cached[1]
 
-    Usa la misma serie P2P real y las mismas reglas que el motor de Telegram.
-    Las ventanas se calculan por tiempo, no por cantidad fija de muestras.
-    """
     mercado = obtener_mercado_actual_db() or {}
     compra = float(mercado.get("compra", 0) or 0)
     venta = float(mercado.get("venta", 0) or 0)
@@ -1010,10 +1026,17 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
 
     now = datetime.now(VET)
     current_mid = (compra + venta) / 2.0
-    if not mids or (fechas and now >= (fechas[-1].astimezone(VET) if getattr(fechas[-1], 'tzinfo', None) else VET.localize(fechas[-1]))):
+    if not fechas or now >= max((f.astimezone(VET) if getattr(f, 'tzinfo', None) else VET.localize(f)) for f in fechas):
         mids.append(current_mid)
         spreads.append(venta - compra)
         fechas.append(now)
+
+    # Igual que en el motor de Telegram: trabajar siempre en orden temporal.
+    ordered = sorted(zip(fechas, mids, spreads), key=lambda x: x[0])
+    if ordered:
+        fechas = [x[0] for x in ordered]
+        mids = [x[1] for x in ordered]
+        spreads = [x[2] for x in ordered]
 
     arr = np.asarray(mids, dtype=float)
     recent = arr[-min(len(arr), 420):]
@@ -1084,7 +1107,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
     continuity = min(1.0, len(arr) / 420.0)
     quality = int(round(100 * (0.55 * continuity + 0.45 * agreement))) if available else 0
 
-    return {
+    result = {
         "ok": True,
         "banco": banco_filtro,
         "tactica": {"estado": tactica_estado, "detalle": tactica_detail},
@@ -1121,6 +1144,8 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
             "calidad_datos": quality,
         },
     }
+    _ANALYSIS_CACHE[cache_key] = (time.monotonic() + _CACHE_TTL_ANALYSIS, result)
+    return result
 
 
 # ==========================================
@@ -1165,7 +1190,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         val = cambios.get(key)
         if val is None:
             return "n/d"
-        return f"{val:+.2f}%"
+        return f"{val:+.3f}%"
 
     texto = (
         f"🦜 *VENBOT PREDICCIONES // TENDENCIA P2P*\n"
@@ -1180,7 +1205,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• {analisis}\n"
         f"• Liquidez: `{datos['estado_comunidad']}`\n"
         f"• Muestras: `{datos['muestras']}`\n"
-        f"• Canal 7H: `{datos['piso_str']}` / `{datos['techo_str']}`\n"
+        f"• Canal 7H: `{datos.get('soporte_7h', datos['piso_str'])}` / `{datos.get('resistencia_7h', datos['techo_str'])}`\n"
         f"• Volatilidad reciente: `{datos['volatilidad_pct']:.3f}%`\n\n"
         f"📈 *MOMENTUM MULTI-TEMPORAL*\n"
         f"• 5 min: `{fmt_change('5m')}`\n"
@@ -1446,6 +1471,10 @@ def obtener_history(period: str = Query("1m", pattern="^(1m|5m|15m|30m|1h|1d)$")
     adapta para que cada botón tenga suficientes velas sin cargar miles de
     puntos innecesarios en el navegador.
     """
+    cached = _HISTORY_CACHE.get(period)
+    if cached and time.monotonic() < cached[0]:
+        return cached[1]
+
     configuracion = {
         "1m": (6, 5000),
         "5m": (24, 5000),
@@ -1497,7 +1526,10 @@ def obtener_history(period: str = Query("1m", pattern="^(1m|5m|15m|30m|1h|1d)$")
                 "timestamp": live_ts,
             })
 
-    return {"ok": True, "period": period, "count": len(puntos), "data": puntos}
+    puntos.sort(key=lambda x: x["timestamp"])
+    result = {"ok": True, "period": period, "count": len(puntos), "data": puntos}
+    _HISTORY_CACHE[period] = (time.monotonic() + _CACHE_TTL_HISTORY, result)
+    return result
 
 
 VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional avanzado en español. Eres el copiloto del usuario: puedes conversar sobre temas generales, explicar conceptos, ayudar con cálculos, planificación y razonamiento, y también analizar el mercado P2P USDT/VES cuando el usuario lo pida.
@@ -1510,24 +1542,31 @@ REGLAS ESTRICTAS PARA MERCADO:
 5) Si los datos son insuficientes por falta de histórico, dilo claramente y usa solo lo que sí está observado.
 6) Para preguntas de mercado, responde primero con una lectura breve y después con los números relevantes del contexto. No contradigas el bloque analítico de Venbot.
 
-Mantén continuidad con el historial. Responde de forma natural, útil y con suficiente profundidad. Si una pregunta no es de mercado, contéstala normalmente. No prometas ganancias ni certeza financiera."""
+Mantén continuidad con el historial. Para consultas de mercado, responde de forma compacta: conclusión primero, luego 3-5 razones o métricas y una recomendación claramente marcada como táctica, sin repetir todo el contexto. Evita respuestas largas o repetitivas y no cortes una frase a mitad. Si una pregunta no es de mercado, contéstala normalmente. No prometas ganancias ni certeza financiera."""
 
 
 def _serializar_contexto_mercado():
+    cached = _AI_CONTEXT_CACHE.get("value")
+    if cached and time.monotonic() < _AI_CONTEXT_CACHE.get("expires", 0):
+        return cached
+
     mercado = obtener_mercado_actual_db() or {}
     analisis = calcular_analisis_monitor("GENERAL")
-    filas = obtener_estadisticas_db(limit=240, banco="GENERAL")
+    filas = obtener_estadisticas_db(limit=120, banco="GENERAL")
     hist = []
     for c, v, l, f in filas:
         hist.append({"compra": round(float(c),2), "venta": round(float(v),2), "liquidez": int(l or 0), "fecha": f.isoformat() if f else None})
     compra = float(mercado.get("compra",0) or 0); venta = float(mercado.get("venta",0) or 0)
     spread = venta-compra if compra and venta else 0
-    return {
+    result = {
         "mercado_actual": {"comprar_usdt_sell": compra, "vender_usdt_buy": venta, "spread": round(spread,2), "spread_pct": round(spread/compra*100,2) if compra else 0, "liquidez": int(mercado.get("liquidez",0) or 0), "bcv_usd": mercado.get("bcv",0), "euro": mercado.get("eur",0), "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None},
         "analisis_cuantitativo": analisis,
-        "historial_general": hist[-240:],
+        "historial_general": hist[-120:],
         "regla_temporal": "Las variaciones 5m/15m/30m/1h/3h/7h se calculan contra datos con timestamp real; n/d significa insuficiencia de histórico o un hueco demasiado grande."
     }
+    _AI_CONTEXT_CACHE["value"] = result
+    _AI_CONTEXT_CACHE["expires"] = time.monotonic() + _CACHE_TTL_AI
+    return result
 
 
 def _respuesta_gemini(prompt, model, temperature=0.35):
@@ -1535,7 +1574,7 @@ def _respuesta_gemini(prompt, model, temperature=0.35):
     response = client.models.generate_content(
         model=model,
         contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=temperature, max_output_tokens=1600),
+        config=types.GenerateContentConfig(system_instruction=VENBOT_AI_SYSTEM, temperature=temperature, max_output_tokens=1100),
     )
     return getattr(response, "text", None)
 
@@ -1547,7 +1586,7 @@ def _respuesta_openrouter(prompt):
         r = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json", "HTTP-Referer": RENDER_EXTERNAL_URL or "https://p2p-monitor-binance.onrender.com", "X-Title": "Venbot"},
-            json={"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": VENBOT_AI_SYSTEM}, {"role": "user", "content": prompt}], "temperature": 0.55, "max_tokens": 1600},
+            json={"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": VENBOT_AI_SYSTEM}, {"role": "user", "content": prompt}], "temperature": 0.45, "max_tokens": 1100},
             timeout=30,
         )
         r.raise_for_status()
@@ -1562,7 +1601,12 @@ def generar_respuesta_ia(mensaje, historial):
     if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
         return "La IA conversacional todavía no está configurada en el servidor."
     import json
-    contexto = _serializar_contexto_mercado()
+    market_query = any(k in mensaje.lower() for k in (
+        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado",
+        "spread", "liquidez", "momentum", "soporte", "resistencia",
+        "proyeccion", "proyección", "tendencia", "bcv"
+    ))
+    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general", "nota": "La consulta no requiere datos de mercado P2P."}
     prev = []
     for h in (historial or [])[-20:]:
         role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
@@ -1570,12 +1614,7 @@ def generar_respuesta_ia(mensaje, historial):
         if content:
             prev.append({"role": role, "content": content})
     prompt = "CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) + "\n\nHISTORIAL CONVERSACIONAL:\n" + json.dumps(prev, ensure_ascii=False) + "\n\nPREGUNTA ACTUAL:\n" + mensaje
-    market_query = any(k in mensaje.lower() for k in (
-        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado",
-        "spread", "liquidez", "momentum", "soporte", "resistencia",
-        "proyeccion", "proyección", "tendencia", "bcv"
-    ))
-    ai_temperature = 0.22 if market_query else 0.55
+    ai_temperature = 0.18 if market_query else 0.45
 
     if GEMINI_API_KEY and genai is not None:
         modelos = [GEMINI_MODEL]
