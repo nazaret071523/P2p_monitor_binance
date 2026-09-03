@@ -75,7 +75,12 @@ ULTIMO_BCV_VALIDO = {
     "timestamp": None,
     "source": "sin_datos",
 }
-ULTIMO_ESTADO_TENDENCIA = "🛡️ ZONA DE PROTECCIÓN ESTABLE"
+ULTIMO_ESTADO_TENDENCIA = None
+TENDENCIA_CANDIDATA = None
+TENDENCIA_CANDIDATA_CONTEO = 0
+ULTIMA_ALERTA_TENDENCIA_TS = 0.0
+TELEGRAM_TREND_CONFIRMATIONS = max(2, int(os.getenv("TELEGRAM_TREND_CONFIRMATIONS", "3")))
+TELEGRAM_TREND_COOLDOWN_SECONDS = max(60, int(os.getenv("TELEGRAM_TREND_COOLDOWN_SECONDS", "900")))
 CONFIGURACION_BANCOS = {}
 telegram_app = None
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
@@ -1590,14 +1595,33 @@ async def tarea_recoleccion_automatica():
                 datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
                 tendencia = datos["tendencia"]
                 manip = datos.get("manipulacion") or {}
-                debe_alertar_tendencia = tendencia != ULTIMO_ESTADO_TENDENCIA
-                if TELEGRAM_ALERT_CHAT_ID and telegram_app and (debe_alertar_tendencia or manip.get("activa")):
+
+                # Histeresis/confirmación: un cambio de tendencia debe repetirse en
+                # varias capturas antes de avisar. Así se evita RANGO↔ALCISTA cada ciclo.
+                global TENDENCIA_CANDIDATA, TENDENCIA_CANDIDATA_CONTEO, ULTIMA_ALERTA_TENDENCIA_TS, ULTIMO_ESTADO_TENDENCIA
+                if tendencia != TENDENCIA_CANDIDATA:
+                    TENDENCIA_CANDIDATA = tendencia
+                    TENDENCIA_CANDIDATA_CONTEO = 1
+                else:
+                    TENDENCIA_CANDIDATA_CONTEO += 1
+
+                ahora_mono = time.monotonic()
+                tendencia_confirmada = (
+                    TENDENCIA_CANDIDATA_CONTEO >= TELEGRAM_TREND_CONFIRMATIONS
+                    and tendencia != ULTIMO_ESTADO_TENDENCIA
+                )
+                cooldown_ok = (ahora_mono - ULTIMA_ALERTA_TENDENCIA_TS) >= TELEGRAM_TREND_COOLDOWN_SECONDS
+                debe_alertar_tendencia = tendencia_confirmada and cooldown_ok
+                debe_alertar_anomalia = bool(manip.get("activa"))
+
+                if TELEGRAM_ALERT_CHAT_ID and telegram_app and (debe_alertar_tendencia or debe_alertar_anomalia):
                     if debe_alertar_tendencia:
                         ULTIMO_ESTADO_TENDENCIA = tendencia
-                    tipo = "🚨 ALERTA DE MOVIMIENTO ANÓMALO" if manip.get("activa") else "🚨 ALERTA PROACTIVA DE MERCADO P2P"
+                        ULTIMA_ALERTA_TENDENCIA_TS = ahora_mono
+                    tipo = "🚨 ALERTA DE MOVIMIENTO ANÓMALO" if debe_alertar_anomalia else "🚨 ALERTA PROACTIVA DE MERCADO P2P"
                     motivos = "; ".join(manip.get("motivos", [])[:3])
                     extra = f"\n• Anomalía: `{motivos}`" if motivos else ""
-                    await telegram_app.bot.send_message(chat_id=TELEGRAM_ALERT_CHAT_ID, text=(f"{tipo}\n• Tendencia: `{tendencia}`\n• Comprar USDT: `{mercado['compra']:.2f} Bs`\n• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra + "\n• La anomalía es una señal estadística y no prueba manipulación intencional."), parse_mode="Markdown")
+                    await telegram_app.bot.send_message(chat_id=TELEGRAM_ALERT_CHAT_ID, text=(f"{tipo}\n• Tendencia: `{tendencia}`\n• Comprar USDT: `{mercado['compra']:.2f} Bs`\n• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra + "\n• El cambio de tendencia requiere confirmación y cooldown para evitar falsas oscilaciones." if not debe_alertar_anomalia else f"{tipo}\n• Tendencia: `{tendencia}`\n• Comprar USDT: `{mercado['compra']:.2f} Bs`\n• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra + "\n• La anomalía es una señal estadística y no prueba manipulación intencional."), parse_mode="Markdown")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -1778,6 +1802,26 @@ REGLAS ESTRICTAS PARA MERCADO:
 Mantén continuidad real con el historial y responde de forma natural y fluida. Si la consulta NO es de mercado, eres un asistente general completo: responde cualquier tema permitido sin intentar llevar la conversación a P2P. Para consultas de mercado, usa exactamente el mismo motor cuantitativo que alimenta monitor y Telegram: conclusión primero, luego 3-5 métricas y una recomendación táctica. Si te preguntan por una predicción a 7H, usa proyeccion_7h y explica que es un escenario estadístico central con rango estimado, no certeza. Evita repetir todo el contexto y no cortes una frase a mitad. No prometas ganancias ni certeza financiera."""
 
 
+def _obtener_contexto_bancos_ia():
+    """Lee la última muestra REAL persistida de cada banco, sin lanzar consultas nuevas a Binance."""
+    bancos = {}
+    for banco in ("MERCANTIL", "PROVINCIAL", "BNC"):
+        filas = obtener_estadisticas_db(limit=1, banco=banco)
+        if not filas:
+            bancos[banco] = {"disponible": False}
+            continue
+        c, v, l, f = filas[0]
+        bancos[banco] = {
+            "disponible": True,
+            "comprar_usdt_sell": round(float(c or 0), 2),
+            "vender_usdt_buy": round(float(v or 0), 2),
+            "spread": round(float(v or 0) - float(c or 0), 2),
+            "liquidez_anuncios": int(l or 0),
+            "timestamp": f.isoformat() if f else None,
+        }
+    return bancos
+
+
 def _serializar_contexto_mercado():
     cached = _AI_CONTEXT_CACHE.get("value")
     if cached and time.monotonic() < _AI_CONTEXT_CACHE.get("expires", 0):
@@ -1793,6 +1837,7 @@ def _serializar_contexto_mercado():
     spread = venta-compra if compra and venta else 0
     result = {
         "mercado_actual": {"comprar_usdt_sell": compra, "vender_usdt_buy": venta, "spread": round(spread,2), "spread_pct": round(spread/compra*100,2) if compra else 0, "liquidez": int(mercado.get("liquidez",0) or 0), "bcv_usd": mercado.get("bcv",0), "euro": mercado.get("eur",0), "timestamp": mercado.get("fecha").isoformat() if mercado.get("fecha") else None},
+        "bancos": _obtener_contexto_bancos_ia(),
         "analisis_cuantitativo": analisis,
         "historial_general": hist[-120:],
         "regla_temporal": "Las variaciones 5m/15m/30m/1h/3h/7h se calculan contra datos con timestamp real; n/d significa insuficiencia de histórico o un hueco demasiado grande."
@@ -1802,16 +1847,16 @@ def _serializar_contexto_mercado():
     return result
 
 
-def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35):
+def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_instruction=None, max_output_tokens=900, timeout=9):
     """Ruta REST recomendada por Google para Gemini Interactions API."""
     if not GEMINI_API_KEY:
         return None
     url = "https://generativelanguage.googleapis.com/v1beta/interactions"
     payload = {
         "model": model,
-        "system_instruction": VENBOT_AI_SYSTEM,
+        "system_instruction": system_instruction or VENBOT_AI_SYSTEM,
         "input": prompt,
-        "generation_config": {"max_output_tokens": 900},
+        "generation_config": {"max_output_tokens": max_output_tokens},
         "store": False,
     }
     try:
@@ -1819,7 +1864,7 @@ def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35):
             url,
             headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
             json=payload,
-            timeout=20,
+            timeout=timeout,
         )
         if not r.ok:
             logger.warning("Gemini Interactions REST %s HTTP %s: %s", model, r.status_code, r.text[:500])
@@ -1933,41 +1978,53 @@ def _respuesta_openrouter(prompt, temperature=0.45):
         return None
 
 def generar_respuesta_ia(mensaje, historial):
+    """IA conversacional rápida: evita cadenas largas de fallbacks y entrega contexto bancario real."""
+    texto = (mensaje or "").strip()
+    low = texto.lower()
     if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
-        return "La IA no tiene proveedor configurado en Render. Añade GEMINI_API_KEY o OPENROUTER_API_KEY."
-    market_query = any(k in mensaje.lower() for k in (
+        return "La IA no tiene proveedor configurado en Render."
+
+    # Consultas triviales no necesitan una llamada al modelo.
+    if low in {"hola", "hola!", "hola.", "buenas", "buenas!", "hey", "hey!"}:
+        return "Hola 👋 Soy Venbot AI. Puedo analizar el mercado P2P de USDT/VES, bancos, tendencia, liquidez y proyección de 7 horas, además de responder preguntas generales."
+    if any(k in low for k in ("qué puedes hacer", "que puedes hacer", "para qué sirves", "para que sirves")) and len(low) < 100:
+        return "Puedo explicar temas, responder preguntas y, sobre todo, analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenario estadístico a 7 horas."
+
+    market_query = any(k in low for k in (
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
         "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
-        "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas"
+        "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
+        "mercantil", "provincial", "bnc", "banco"
     ))
     contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
     prev = []
-    for h in (historial or [])[-12:]:
+    for h in (historial or [])[-8:]:
         role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
-        content = str(h.get("content", h.get("text", "")))[:2500]
+        content = str(h.get("content", h.get("text", "")))[:1800]
         if content: prev.append({"role": role, "content": content})
     prompt = ("CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) +
-              "\n\nHISTORIAL:\n" + json.dumps(prev, ensure_ascii=False) +
-              "\n\nPREGUNTA ACTUAL:\n" + mensaje)
-    temperature = 0.15 if market_query else 0.55
+              "\n\nHISTORIAL RECIENTE:\n" + json.dumps(prev, ensure_ascii=False) +
+              "\n\nPREGUNTA ACTUAL:\n" + texto)
 
+    if market_query:
+        system = VENBOT_AI_SYSTEM + "\n\nPara preguntas por bancos: compara explícitamente los campos bancos.*. Comprar USDT usa comprar_usdt_sell (SELL); vender USDT usa vender_usdt_buy (BUY). Indica el banco ganador y su precio cuando existan datos disponibles. No digas que faltan tasas bancarias si están presentes en CONTEXTO REAL DE VENBOT."
+        max_tokens = 600
+        temperature = 0.15
+    else:
+        system = VENBOT_AI_SYSTEM + "\n\nPara preguntas generales responde de forma concisa: normalmente 1-3 párrafos. No conviertas una pregunta sencilla en un ensayo."
+        max_tokens = 450
+        temperature = 0.35
+
+    # Una sola ruta primaria rápida. Los fallbacks anteriores multiplicaban la latencia.
     if GEMINI_API_KEY:
-        modelos = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
-        if GEMINI_MODEL and GEMINI_MODEL not in modelos:
-            modelos.insert(0, GEMINI_MODEL)
-        for model in modelos:
-            text = _respuesta_gemini_interactions_rest(prompt, model, temperature)
-            if text: return text
-            text = _respuesta_gemini_interactions_sdk(prompt, model, temperature)
-            if text: return text
-            # Fallback adicional para cuentas/modelos que aún expongan generateContent.
-            text = _respuesta_gemini_rest(prompt, model, temperature)
-            if text: return text
-            text = _respuesta_gemini_sdk(prompt, model, temperature)
-            if text: return text
-    text = _respuesta_openrouter(prompt, temperature)
-    if text: return text
-    return "La IA no pudo completar la respuesta. Revisa en Render que GEMINI_API_KEY sea válida y que el servicio tenga salida HTTPS."
+        text = _respuesta_gemini_interactions_rest(prompt, GEMINI_MODEL, temperature, system_instruction=system, max_output_tokens=max_tokens, timeout=9)
+        if text:
+            return text
+    if OPENROUTER_API_KEY:
+        text = _respuesta_openrouter(prompt, temperature)
+        if text:
+            return text
+    return "La IA no pudo responder ahora. El servicio P2P sigue funcionando; vuelve a intentarlo en unos segundos."
 
 
 class AIChatRequest(BaseModel):
