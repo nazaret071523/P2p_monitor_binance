@@ -2085,8 +2085,18 @@ def _money_ia(x):
 
 def _pregunta_comparacion_bancos(low):
     bank_terms = sum(1 for x in ("mercantil", "provincial", "bnc") if x in low)
-    compare_terms = any(x in low for x in ("mejor banco", "mejor", "compara", "comparar", "cuál banco", "cual banco", "qué banco", "que banco"))
-    return bank_terms >= 2 or (bank_terms >= 1 and compare_terms)
+    compare_terms = any(x in low for x in (
+        "mejor banco", "mejor", "compara", "comparar", "cuál banco", "cual banco",
+        "qué banco", "que banco", "mejor opción", "mejor opcion", "más conveniente", "mas conveniente"
+    ))
+    # También debe detectar preguntas genéricas como:
+    # “¿Cuál es el mejor banco para comprar USDT?” sin mencionar el nombre
+    # de ningún banco. Las tasas se resuelven siempre desde el contexto P2P real.
+    generic_bank_compare = (
+        "banco" in low and compare_terms and
+        any(x in low for x in ("comprar", "compra", "vender", "venta", "usdt", "precio"))
+    )
+    return bank_terms >= 2 or (bank_terms >= 1 and compare_terms) or generic_bank_compare
 
 
 def _respuesta_comparacion_bancos(contexto):
@@ -2101,8 +2111,8 @@ def _respuesta_comparacion_bancos(contexto):
     mejor_compra = min(rows, key=lambda x: x[1])
     mejor_venta = max(rows, key=lambda x: x[2])
     lines = ["Comparación actual de bancos (datos P2P reales de Venbot):"]
-    lines.append(f"• Comprar USDT: {mejor_compra[0].title()} es el mejor precio a {_money_ia(mejor_compra[1])} Bs/USDT (menor precio).")
-    lines.append(f"• Vender USDT: {mejor_venta[0].title()} es el mejor precio a {_money_ia(mejor_venta[2])} Bs/USDT (mayor precio).")
+    lines.append(f"• Mejor para Comprar USDT: {mejor_compra[0].title()} — {_money_ia(mejor_compra[1])} Bs/USDT (menor precio).")
+    lines.append(f"• Mejor para Vender USDT: {mejor_venta[0].title()} — {_money_ia(mejor_venta[2])} Bs/USDT (mayor precio).")
     for nombre, compra, venta in rows:
         lines.append(f"• {nombre}: comprar {_money_ia(compra)} · vender {_money_ia(venta)} Bs.")
     return "\n".join(lines)
@@ -2160,6 +2170,7 @@ def generar_respuesta_ia(mensaje, historial):
         logger.info("AI CHAT: contexto P2P obtenido | bancos=%s | has_analysis=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("analisis_cuantitativo")))
         # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
         if _pregunta_comparacion_bancos(low):
+            logger.info("AI CHAT: comparación bancaria determinística")
             return _respuesta_comparacion_bancos(contexto)
         banco_directo = _respuesta_banco_individual(contexto, low)
         if banco_directo and any(x in low for x in ("cuánto", "cuanto", "está", "esta", "precio", "cotiza", "vale")):
