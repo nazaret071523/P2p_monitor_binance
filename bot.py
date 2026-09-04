@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -1913,7 +1913,7 @@ def _serializar_contexto_mercado():
     return result
 
 
-def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_instruction=None, max_output_tokens=900, timeout=9):
+def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_instruction=None, max_output_tokens=900, timeout=7, tools=None):
     """Ruta REST recomendada por Google para Gemini Interactions API."""
     if not GEMINI_API_KEY:
         return None
@@ -1924,6 +1924,7 @@ def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_
         "input": prompt,
         "generation_config": {"max_output_tokens": max_output_tokens},
         "store": False,
+        **({"tools": tools} if tools else {}),
     }
     try:
         r = requests.post(
@@ -2172,6 +2173,167 @@ def _respuesta_7h_local(contexto):
             f"Cobertura histórica {cobertura:.1f} h. No es una garantía de precio futuro.")
 
 
+
+def _pregunta_manipulacion(low):
+    return any(x in low for x in (
+        "manipulacion", "manipulación", "manipulado", "manipulada",
+        "movimiento anomalo", "movimiento anómalo", "anomalía", "anomalia",
+        "pump", "dump", "movimiento raro", "movimiento extraño", "movimiento extrano",
+        "mercado manipulado", "mercado raro"
+    ))
+
+
+def _respuesta_manipulacion(contexto):
+    a = contexto.get("analisis_cuantitativo") or {}
+    m = a.get("manipulacion") or {"activa": False, "nivel": "normal", "score": 0, "motivos": []}
+    if m.get("activa"):
+        nivel = str(m.get("nivel", "vigilancia")).upper()
+        motivos = "; ".join(m.get("motivos") or [])
+        return (f"🚨 Venbot detecta una anomalía estadística de nivel {nivel}. "
+                f"Señales observadas: {motivos or 'movimiento fuera de lo habitual'}. "
+                "Esto puede indicar un movimiento anormal, pero no demuestra por sí solo manipulación intencional.")
+    return ("🟢 No detecto una anomalía estadística activa en la lectura actual del P2P. "
+            "El movimiento observado está dentro de los patrones recientes de Venbot. "
+            "Esto no significa que sea imposible una manipulación; solo que el detector no encuentra señales suficientes ahora mismo.")
+
+
+def _respuesta_momento_banco(contexto, low):
+    bancos = contexto.get("bancos") or {}
+    nombre = None
+    for n in ("MERCANTIL", "PROVINCIAL", "BNC"):
+        if n.lower() in low:
+            nombre = n
+            break
+    if not nombre:
+        return None
+    b = bancos.get(nombre) or {}
+    if not b.get("disponible"):
+        return f"No tengo una lectura reciente disponible de {nombre.title()} para evaluar el momento."
+    compra = float(b.get("comprar_usdt_sell", 0) or 0)
+    venta = float(b.get("vender_usdt_buy", 0) or 0)
+    p = (contexto.get("analisis_cuantitativo") or {}).get("proyeccion_7h") or {}
+    tendencia = (contexto.get("analisis_cuantitativo") or {}).get("tendencia") or "sin datos"
+    calidad = p.get("calidad", 0)
+    direccion = "comprar" if any(x in low for x in ("comprar", "compra")) else "vender" if any(x in low for x in ("vender", "venta")) else None
+    if direccion == "comprar":
+        ranking = sorted(((n, float((bancos.get(n) or {}).get("comprar_usdt_sell", 0) or 0)) for n in bancos), key=lambda x: x[1] if x[1] > 0 else 1e99)
+        mejor = ranking[0] if ranking and ranking[0][1] > 0 else (nombre, compra)
+        return (f"Ahora mismo {nombre.title()} marca {_money_ia(compra)} Bs/USDT para comprar. "
+                f"Es {'el mejor precio observado entre los bancos disponibles' if mejor[0] == nombre else 'una alternativa, pero no el precio más bajo observado'}. "
+                f"La señal general de Venbot es {tendencia} con calidad {calidad}%. "
+                "Si buscas entrar, el precio actual es favorable solo en relación con las cotizaciones observadas; no garantiza que el mercado no siga bajando.")
+    if direccion == "vender":
+        ranking = sorted(((n, float((bancos.get(n) or {}).get("vender_usdt_buy", 0) or 0)) for n in bancos), key=lambda x: x[1], reverse=True)
+        mejor = ranking[0] if ranking and ranking[0][1] > 0 else (nombre, venta)
+        return (f"Ahora mismo {nombre.title()} marca {_money_ia(venta)} Bs/USDT para vender. "
+                f"Es {'el mejor precio observado entre los bancos disponibles' if mejor[0] == nombre else 'una alternativa, pero no el precio más alto observado'}. "
+                f"La señal general de Venbot es {tendencia} con calidad {calidad}%. "
+                "La lectura es informativa y no garantiza el precio siguiente.")
+    return f"Ahora mismo {nombre.title()} está en {_money_ia(compra)} Bs para comprar y {_money_ia(venta)} Bs para vender."
+
+
+def _ai_necesita_busqueda_web(low):
+    return any(x in low for x in (
+        "hoy", "ahora", "actualmente", "últimas noticias", "ultimas noticias", "noticias",
+        "último", "ultimo", "última", "ultima", "reciente", "recientes", "2026",
+        "esta semana", "este mes", "precio actual", "qué pasó", "que paso", "quién es", "quien es"
+    ))
+
+
+def _preparar_prompt_ia(mensaje, historial, contexto):
+    prev = []
+    for h in (historial or [])[-8:]:
+        role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
+        content = str(h.get("content", h.get("text", "")))[:1800]
+        if content:
+            prev.append({"role": role, "content": content})
+    return ("CONTEXTO REAL DE VENBOT:\n" + json.dumps(contexto, ensure_ascii=False, default=str) +
+            "\n\nHISTORIAL RECIENTE:\n" + json.dumps(prev, ensure_ascii=False) +
+            "\n\nPREGUNTA ACTUAL:\n" + mensaje)
+
+
+def _stream_event(text=None, done=False):
+    payload = {"done": bool(done)}
+    if text is not None:
+        payload["text"] = text
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+
+def _generador_ai_stream(mensaje, historial):
+    """SSE: respuestas locales salen inmediatamente; Gemini llega por fragmentos."""
+    t0 = time.monotonic()
+    texto = (mensaje or "").strip()
+    low = texto.lower()
+    market_query = any(k in low for k in (
+        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
+        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
+        "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
+        "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía"
+    ))
+    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
+    if market_query:
+        if _pregunta_manipulacion(low):
+            yield _stream_event(_respuesta_manipulacion(contexto)); yield _stream_event(done=True); return
+        if _pregunta_comparacion_bancos(low):
+            yield _stream_event(_respuesta_comparacion_bancos(contexto, _tipo_comparacion_bancos(low))); yield _stream_event(done=True); return
+        natural_bank = _respuesta_momento_banco(contexto, low)
+        if natural_bank and any(x in low for x in ("momento", "conviene", "conviene comprar", "buen momento", "vale la pena", "recomiendas", "recomienda")):
+            yield _stream_event(natural_bank); yield _stream_event(done=True); return
+        if any(x in low for x in ("próximas 7 horas", "proximas 7 horas", "7 horas", "proyección 7h", "proyeccion 7h", "predicción 7h", "prediccion 7h")):
+            yield _stream_event(_respuesta_7h_local(contexto)); yield _stream_event(done=True); return
+        if any(x in low for x in ("precio actual", "precio de usdt", "cuánto está usdt", "cuanto esta usdt", "cotización actual", "cotizacion actual")):
+            yield _stream_event(_respuesta_local_mercado(contexto)); yield _stream_event(done=True); return
+    prompt = _preparar_prompt_ia(texto, historial, contexto)
+    if GEMINI_API_KEY:
+        system = VENBOT_AI_SYSTEM
+        if market_query:
+            system += "\n\nPara mercado, usa el contexto real y responde de forma natural, directa y humana. No recites todo el contexto."
+        else:
+            system += "\n\nHabla como un asistente humano y útil: natural, claro, contextual y sin frases robóticas. Responde directamente antes de ampliar."
+        tools = [{"type": "google_search"}] if (not market_query and _ai_necesita_busqueda_web(low)) else None
+        payload = {
+            "model": GEMINI_MODEL, "system_instruction": system, "input": prompt,
+            "generation_config": {"max_output_tokens": 600 if market_query else 450}, "store": False,
+            "stream": True,
+        }
+        if tools: payload["tools"] = tools
+        try:
+            r = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/interactions",
+                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json", "Accept": "text/event-stream"},
+                json=payload, timeout=(3, 18), stream=True,
+            )
+            if r.ok:
+                got = False
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if raw == "[DONE]":
+                        continue
+                    try: ev = json.loads(raw)
+                    except Exception: continue
+                    if ev.get("event_type") == "step.delta":
+                        delta = ev.get("delta") or {}
+                        if delta.get("type") == "text" and delta.get("text"):
+                            got = True
+                            yield _stream_event(str(delta["text"]))
+                if got:
+                    yield _stream_event(done=True); return
+            else:
+                logger.warning("Gemini stream HTTP %s: %s", r.status_code, r.text[:300])
+        except Exception as e:
+            logger.warning("Gemini stream falló: %s", e)
+    if market_query:
+        yield _stream_event(_respuesta_local_mercado(contexto))
+    elif OPENROUTER_API_KEY:
+        text = _respuesta_openrouter(prompt, 0.35)
+        yield _stream_event(text or "No pude generar una respuesta ahora.")
+    else:
+        yield _stream_event("No pude responder en este momento. Intenta de nuevo en unos segundos.")
+    yield _stream_event(done=True)
+
+
 def generar_respuesta_ia(mensaje, historial):
     """IA híbrida: Gemini explica; Venbot aporta datos reales y fallback local inmediato."""
     t0 = time.monotonic()
@@ -2199,6 +2361,12 @@ def generar_respuesta_ia(mensaje, historial):
     if market_query:
         logger.info("AI CHAT: contexto P2P obtenido | bancos=%s | has_analysis=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("analisis_cuantitativo")))
         # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
+        if _pregunta_manipulacion(low):
+            logger.info("AI CHAT: detector de anomalías determinístico")
+            return _respuesta_manipulacion(contexto)
+        natural_bank = _respuesta_momento_banco(contexto, low)
+        if natural_bank and any(x in low for x in ("momento", "conviene", "buen momento", "vale la pena", "recomiendas", "recomienda")):
+            return natural_bank
         if _pregunta_comparacion_bancos(low):
             logger.info("AI CHAT: comparación bancaria determinística")
             return _respuesta_comparacion_bancos(contexto, _tipo_comparacion_bancos(low))
@@ -2252,6 +2420,11 @@ def generar_respuesta_ia(mensaje, historial):
 class AIChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=6000)
     history: list[dict] = Field(default_factory=list)
+
+
+@app.post("/api/ai/chat/stream")
+async def ai_chat_stream(payload: AIChatRequest):
+    return StreamingResponse(_generador_ai_stream(payload.message.strip(), payload.history), media_type="text/event-stream", headers={"Cache-Control":"no-cache", "Connection":"keep-alive", "X-Accel-Buffering":"no"})
 
 
 @app.get("/api/ai/health")
