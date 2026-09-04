@@ -2099,22 +2099,52 @@ def _pregunta_comparacion_bancos(low):
     return bank_terms >= 2 or (bank_terms >= 1 and compare_terms) or generic_bank_compare
 
 
-def _respuesta_comparacion_bancos(contexto):
+def _tipo_comparacion_bancos(low):
+    """Determina si la pregunta pide compra, venta o ambas."""
+    compra = any(x in low for x in ("comprar usdt", "comprar", "compra usdt", "compra"))
+    venta = any(x in low for x in ("vender usdt", "vender", "venta usdt", "venta"))
+    if compra and not venta:
+        return "compra"
+    if venta and not compra:
+        return "venta"
+    return "ambas"
+
+
+def _respuesta_comparacion_bancos(contexto, tipo="ambas"):
     bancos = contexto.get("bancos") or {}
     rows = []
     for nombre in ("MERCANTIL", "PROVINCIAL", "BNC"):
         b = bancos.get(nombre) or {}
-        if b.get("disponible") and float(b.get("comprar_usdt_sell", 0) or 0) > 0 and float(b.get("vender_usdt_buy", 0) or 0) > 0:
-            rows.append((nombre, float(b["comprar_usdt_sell"]), float(b["vender_usdt_buy"])))
-    if len(rows) < 1:
+        try:
+            compra = float(b.get("comprar_usdt_sell", 0) or 0)
+            venta = float(b.get("vender_usdt_buy", 0) or 0)
+        except Exception:
+            continue
+        if b.get("disponible") and compra > 0 and venta > 0:
+            rows.append((nombre, compra, venta))
+    if not rows:
         return "No hay lecturas bancarias reales disponibles en este momento."
+
     mejor_compra = min(rows, key=lambda x: x[1])
     mejor_venta = max(rows, key=lambda x: x[2])
     lines = ["Comparación actual de bancos (datos P2P reales de Venbot):"]
-    lines.append(f"• Mejor para Comprar USDT: {mejor_compra[0].title()} — {_money_ia(mejor_compra[1])} Bs/USDT (menor precio).")
-    lines.append(f"• Mejor para Vender USDT: {mejor_venta[0].title()} — {_money_ia(mejor_venta[2])} Bs/USDT (mayor precio).")
-    for nombre, compra, venta in rows:
-        lines.append(f"• {nombre}: comprar {_money_ia(compra)} · vender {_money_ia(venta)} Bs.")
+
+    if tipo in ("compra", "ambas"):
+        lines.append(f"• Mejor para Comprar USDT: {mejor_compra[0].title()} — {_money_ia(mejor_compra[1])} Bs/USDT (menor precio).")
+    if tipo in ("venta", "ambas"):
+        lines.append(f"• Mejor para Vender USDT: {mejor_venta[0].title()} — {_money_ia(mejor_venta[2])} Bs/USDT (mayor precio).")
+
+    # En una pregunta específica, mostramos las tres alternativas pero solo en la
+    # dirección solicitada; así evitamos mezclar compra con venta.
+    if tipo == "compra":
+        for nombre, compra, _venta in rows:
+            lines.append(f"• {nombre}: comprar {_money_ia(compra)} Bs/USDT.")
+    elif tipo == "venta":
+        for nombre, _compra, venta in rows:
+            lines.append(f"• {nombre}: vender {_money_ia(venta)} Bs/USDT.")
+    else:
+        for nombre, compra, venta in rows:
+            lines.append(f"• {nombre}: comprar {_money_ia(compra)} · vender {_money_ia(venta)} Bs.")
     return "\n".join(lines)
 
 
@@ -2171,7 +2201,7 @@ def generar_respuesta_ia(mensaje, historial):
         # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
         if _pregunta_comparacion_bancos(low):
             logger.info("AI CHAT: comparación bancaria determinística")
-            return _respuesta_comparacion_bancos(contexto)
+            return _respuesta_comparacion_bancos(contexto, _tipo_comparacion_bancos(low))
         banco_directo = _respuesta_banco_individual(contexto, low)
         if banco_directo and any(x in low for x in ("cuánto", "cuanto", "está", "esta", "precio", "cotiza", "vale")):
             return banco_directo
