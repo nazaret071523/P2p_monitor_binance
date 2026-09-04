@@ -46,6 +46,29 @@
       border-color: rgba(52, 211, 153, 0.4);
       color: #6ee7b7;
     }
+
+    /* v14: tema claro y paneles auxiliares; conserva la estructura del monitor. */
+    html.light body{background:#f3f6fb;color:#0f172a}
+    html.light .glass-card{background:rgba(255,255,255,.92);border-color:rgba(15,23,42,.10)}
+    html.light .bottom-nav{background:rgba(255,255,255,.94);border-top-color:rgba(15,23,42,.10)}
+    html.light .bg-\[\#0b0f17\]{background:#fff!important}
+    html.light .bg-\[\#070a11\]{background:#f3f6fb!important}
+    html.light .bg-slate-950{background:#fff!important}
+    html.light .bg-slate-900\/90{background:rgba(241,245,249,.96)!important}
+    html.light .bg-slate-900\/60{background:rgba(226,232,240,.82)!important}
+    html.light .text-white{color:#0f172a!important}
+    html.light .text-slate-100{color:#0f172a!important}
+    html.light .text-slate-200{color:#1e293b!important}
+    html.light .text-slate-300{color:#334155!important}
+    html.light .text-slate-400{color:#475569!important}
+    html.light .text-slate-500{color:#64748b!important}
+    html.light .border-slate-800{border-color:#cbd5e1!important}
+    html.light .border-slate-700{border-color:#cbd5e1!important}
+    html.light .ad-slot{background:rgba(226,232,240,.55)}
+    .v14-menu-backdrop{background:rgba(2,6,23,.60);backdrop-filter:blur(4px)}
+    html.light .v14-menu-panel{background:#fff;color:#0f172a;border-color:#cbd5e1}
+    html.light .v14-menu-panel .menu-link{color:#334155}
+    html.light .v14-menu-panel .menu-link:hover{background:#f1f5f9}
   </style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
@@ -66,9 +89,12 @@
             <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
           </div>
         </div>
-        <button type="button" onclick="handleLoginClick()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
-          <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
-        </button>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button type="button" onclick="openInfoMenu()" aria-label="Abrir menú" class="focus-ring bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs w-10 h-10 rounded-xl shadow-lg transition flex items-center justify-center"><i class="fa-solid fa-bars"></i></button>
+          <button type="button" onclick="handleLoginClick()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
+            <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -80,8 +106,16 @@
           </span>
           <span class="text-slate-700">•</span>
           <span>Fuente: <strong class="text-slate-300">Binance P2P y BCV Oficial</strong></span>
+          <button type="button" onclick="openInfoMenu()" class="focus-ring inline-flex items-center gap-1.5 text-[10px] font-bold text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2 py-1 rounded-lg" title="Usuarios conectados"><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span id="online-count">--</span> en línea</button>
         </div>
         <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
+      </div>
+    </div>
+
+    <div class="w-full px-4 pt-2">
+      <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="banner-top">
+        <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
+        <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario</div>
       </div>
     </div>
 
@@ -299,6 +333,26 @@
       </div>
     </nav>
   </div>
+
+    <!-- Menú informativo y legal -->
+    <div id="infoMenu" class="hidden fixed inset-0 z-[80] v14-menu-backdrop p-4" onclick="if(event.target===this) closeInfoMenu()">
+      <div class="v14-menu-panel bg-slate-950 border border-slate-800 w-full max-w-sm ml-auto rounded-2xl shadow-2xl overflow-hidden fade-up">
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+          <div><h3 class="font-extrabold text-sm text-emerald-400">Menú Venbot</h3><p class="text-[10px] text-slate-500 mt-1">Información, ayuda y preferencias</p></div>
+          <button type="button" onclick="closeInfoMenu()" class="focus-ring text-slate-400 hover:text-white w-9 h-9 rounded-lg"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-2 space-y-1">
+          <button type="button" onclick="toggleTheme(); closeInfoMenu()" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold flex items-center gap-3"><i id="theme-menu-icon" class="fa-solid fa-sun text-amber-300 w-5"></i><span id="theme-menu-label">Cambiar a tema claro</span></button>
+          <div class="px-3 py-2 text-[9px] uppercase tracking-[.16em] font-black text-slate-500">Ayuda y legal</div>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open(API_BASE_URL + '/legal/privacy', '_blank'); return false;"><i class="fa-solid fa-shield-halved text-emerald-400 w-5 mr-2"></i>Política de privacidad</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open(API_BASE_URL + '/legal/terms', '_blank'); return false;"><i class="fa-solid fa-file-contract text-sky-400 w-5 mr-2"></i>Términos de uso</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open(API_BASE_URL + '/blog', '_blank'); return false;"><i class="fa-solid fa-newspaper text-amber-300 w-5 mr-2"></i>Blog Venbot</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open(API_BASE_URL + '/tutorial', '_blank'); return false;"><i class="fa-solid fa-circle-play text-rose-400 w-5 mr-2"></i>Tutorial de la app</a>
+          <button type="button" onclick="alert('Usuarios activos: ' + (document.getElementById('online-count')?.textContent || '--'))" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold"><i class="fa-solid fa-users text-sky-400 w-5 mr-2"></i>Usuarios en línea: <span id="menu-online-count">--</span></button>
+        </div>
+        <div class="p-3 border-t border-slate-800 text-[9px] text-slate-500 leading-relaxed">Venbot no solicita claves de Binance ni custodia fondos. Los análisis son informativos.</div>
+      </div>
+    </div>
 
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
@@ -683,6 +737,39 @@
     }
 
 
+    function openInfoMenu() {
+      document.getElementById('infoMenu').classList.remove('hidden');
+      document.getElementById('menu-online-count').textContent = document.getElementById('online-count')?.textContent || '--';
+    }
+    function closeInfoMenu() { document.getElementById('infoMenu').classList.add('hidden'); }
+    function applyTheme(theme) {
+      const light = theme === 'light';
+      document.documentElement.classList.toggle('light', light);
+      document.documentElement.classList.toggle('dark', !light);
+      localStorage.setItem('venbot-theme', light ? 'light' : 'dark');
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', light ? '#f3f6fb' : '#070a11');
+      const label = document.getElementById('theme-menu-label');
+      const icon = document.getElementById('theme-menu-icon');
+      if (label) label.textContent = light ? 'Cambiar a tema oscuro' : 'Cambiar a tema claro';
+      if (icon) icon.className = light ? 'fa-solid fa-moon text-indigo-400 w-5' : 'fa-solid fa-sun text-amber-300 w-5';
+    }
+    function toggleTheme() { applyTheme(document.documentElement.classList.contains('light') ? 'dark' : 'light'); }
+    function initTheme() { applyTheme(localStorage.getItem('venbot-theme') || 'dark'); }
+    function getOnlineSessionId() {
+      let id = localStorage.getItem('venbot-online-session');
+      if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : 'vb-' + Date.now() + '-' + Math.random().toString(36).slice(2)); localStorage.setItem('venbot-online-session', id); }
+      return id;
+    }
+    async function refreshOnlineCount() {
+      try {
+        const sid = getOnlineSessionId();
+        const r = await fetch(`${API_BASE_URL}/api/online/heartbeat`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session_id:sid})});
+        const d = await r.json();
+        const n = Number(d.online || 0);
+        document.getElementById('online-count').textContent = n;
+        document.getElementById('menu-online-count').textContent = n;
+      } catch(e) {}
+    }
     function handleLoginClick() { alert('Redirigiendo al panel de inicio de sesión de la plataforma.'); }
     function handleAIClick() { document.getElementById('aiChatModal').classList.remove('hidden'); }
     function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
@@ -820,6 +907,7 @@
     }
 
     async function bootVenbot() {
+      initTheme();
       if (!API_BASE_URL || API_BASE_URL.includes('TU-SERVICIO')) {
         setSyncState(false, 'configura URL Render');
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
@@ -828,6 +916,8 @@
       await Promise.allSettled([loadPrices(), loadHistory('5m'), loadAnalysis()]);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
+      refreshOnlineCount();
+      setInterval(refreshOnlineCount, 30000);
 
       // El precio se actualiza rápido, pero el histórico no necesita viajar al
       // navegador cada 15s para todas las temporalidades. Se adapta la frecuencia
