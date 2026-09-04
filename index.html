@@ -26,6 +26,10 @@
     .fade-up{animation:fadeUp .22s ease-out}
     @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
     @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.fade-up{animation:none}}
+    .voice-active{box-shadow:0 0 0 2px rgba(248,113,113,.35),0 0 18px rgba(248,113,113,.15)}
+    .voice-listening{animation:pulseVoice 1.15s ease-in-out infinite}
+    @keyframes pulseVoice{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+
     .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
     .ad-label{letter-spacing:.12em}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
@@ -358,14 +362,22 @@
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
         <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI</h3><p class="text-[10px] text-emerald-400 font-semibold">Copiloto conversacional · mercado + preguntas generales</p></div></div>
-        <button type="button" onclick="closeAIChatModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"><i class="fa-solid fa-xmark text-sm"></i></button>
+        <div class="flex items-center gap-1.5">
+          <button id="ai-voice-toggle" type="button" onclick="toggleAIVoice()" class="focus-ring w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition" title="Activar/desactivar voz"><i class="fa-solid fa-volume-high text-xs"></i></button>
+          <button id="ai-voice-stop" type="button" onclick="stopAIVoice()" class="focus-ring w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition" title="Detener voz"><i class="fa-solid fa-stop text-xs"></i></button>
+          <button type="button" onclick="closeAIChatModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"><i class="fa-solid fa-xmark text-sm"></i></button>
+        </div>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
         <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con cualquier tema y, cuando preguntes por el mercado, usaré el mismo motor P2P del monitor y Telegram.</div></div>
       </div>
-      <div class="p-3 bg-slate-900/90 border-t border-slate-800 flex items-center gap-2">
-        <input id="ai-user-input" type="text" placeholder="Escribe cualquier pregunta o consulta sobre el mercado..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
-        <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1"><i class="fa-solid fa-paper-plane"></i></button>
+      <div class="p-3 bg-slate-900/90 border-t border-slate-800 space-y-2">
+        <div class="flex items-center gap-2">
+          <button id="ai-mic-btn" type="button" onclick="toggleAIListening()" class="focus-ring w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition" title="Hablar con Venbot"><i class="fa-solid fa-microphone"></i></button>
+          <input id="ai-user-input" type="text" placeholder="Escribe o habla con Venbot..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
+          <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
+        <div id="ai-voice-status" class="text-[9px] text-slate-500 text-center">Voz apagada · puedes activarla con el altavoz</div>
       </div>
     </div>
   </div>
@@ -840,6 +852,48 @@
     }
 
 
+    let aiVoiceEnabled = localStorage.getItem('venbot_voice_enabled') === '1';
+    let aiRecognition = null;
+    let aiListening = false;
+    let aiSpeechToken = 0;
+
+    function getAIStatusEl(){ return document.getElementById('ai-voice-status'); }
+    function updateAIVoiceUI(){
+      const toggle=document.getElementById('ai-voice-toggle'); const mic=document.getElementById('ai-mic-btn'); const status=getAIStatusEl();
+      if(toggle){ toggle.innerHTML=aiVoiceEnabled ? '<i class="fa-solid fa-volume-high text-xs text-emerald-400"></i>' : '<i class="fa-solid fa-volume-xmark text-xs"></i>'; toggle.title=aiVoiceEnabled?'Silenciar respuestas de Venbot':'Activar voz de Venbot'; }
+      if(status) status.textContent = aiListening ? '🔴 Escuchando… habla ahora' : (aiVoiceEnabled ? 'Voz activa · respuestas de Venbot se reproducen automáticamente' : 'Voz apagada · puedes activarla con el altavoz');
+      if(mic) mic.classList.toggle('voice-active', aiListening);
+      if(mic) mic.classList.toggle('voice-listening', aiListening);
+    }
+    function toggleAIVoice(){ aiVoiceEnabled=!aiVoiceEnabled; localStorage.setItem('venbot_voice_enabled', aiVoiceEnabled?'1':'0'); if(!aiVoiceEnabled) stopAIVoice(); updateAIVoiceUI(); }
+    function stopAIVoice(){ aiSpeechToken++; try{ window.speechSynthesis?.cancel(); }catch(e){} }
+    function speakAIResponse(text){
+      if(!aiVoiceEnabled || !('speechSynthesis' in window)) return;
+      const clean=String(text||'').replace(/https?:\/\/\S+/g,'').replace(/[*_`#]/g,'').replace(/\s+/g,' ').trim();
+      if(!clean) return;
+      const token=++aiSpeechToken; stopAIVoice();
+      const u=new SpeechSynthesisUtterance(clean);
+      u.lang='es-VE'; u.rate=0.92; u.pitch=0.82; u.volume=1;
+      const voices=window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+      const preferred=voices.find(v=>/^es(-VE|-US|-MX|-ES)?$/i.test(v.lang)) || voices.find(v=>/^es/i.test(v.lang));
+      if(preferred) u.voice=preferred;
+      u.onend=()=>{ if(token===aiSpeechToken) updateAIVoiceUI(); };
+      try{ window.speechSynthesis.speak(u); }catch(e){}
+    }
+    function toggleAIListening(){
+      if(aiListening){ aiRecognition?.stop(); return; }
+      const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+      if(!SR){ if(getAIStatusEl()) getAIStatusEl().textContent='Tu navegador no admite dictado por voz. Puedes escribir la pregunta.'; return; }
+      aiRecognition=new SR(); aiRecognition.lang='es-VE'; aiRecognition.interimResults=true; aiRecognition.continuous=false;
+      aiRecognition.onstart=()=>{ aiListening=true; updateAIVoiceUI(); };
+      aiRecognition.onresult=(e)=>{ let finalText=''; for(let i=e.resultIndex;i<e.results.length;i++){ if(e.results[i].isFinal) finalText+=e.results[i][0].transcript; else finalText+=e.results[i][0].transcript; } const input=document.getElementById('ai-user-input'); if(input) input.value=finalText.trim(); };
+      aiRecognition.onerror=(e)=>{ aiListening=false; updateAIVoiceUI(); if(getAIStatusEl()) getAIStatusEl().textContent='No pude captar la voz ('+e.error+'). Intenta otra vez o escribe.'; };
+      aiRecognition.onend=()=>{ aiListening=false; updateAIVoiceUI(); };
+      try{ aiRecognition.start(); }catch(e){ aiListening=false; updateAIVoiceUI(); }
+    }
+    updateAIVoiceUI();
+    if('speechSynthesis' in window) window.speechSynthesis.onvoiceschanged=updateAIVoiceUI;
+
     async function sendAIMessage() {
       if (aiRequestRunning) return;
       const input = document.getElementById('ai-user-input');
@@ -864,6 +918,7 @@
         const answer = data.answer || 'No recibí una respuesta válida.';
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
+        speakAIResponse(answer);
       } catch (error) {
         console.error('Venbot AI:', error);
         document.getElementById(typingId)?.remove();
