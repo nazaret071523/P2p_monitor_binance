@@ -626,7 +626,7 @@
           const text = `${label} ${money(value)}`;
           const w = ctx.measureText(text).width + padX * 2;
           const h = 22;
-          const bx = chartArea.left + 6;
+          const bx = chartArea.right - w - 6;
           const by = Math.max(chartArea.top + 3, Math.min(y - h / 2, chartArea.bottom - h - 3));
           ctx.fillStyle = 'rgba(7,10,17,.88)';
           ctx.strokeStyle = color;
@@ -668,27 +668,6 @@
         candles = [{ x:key, o:currentMid, h:currentMid, l:currentMid, c:currentMid }];
       }
 
-      // Mínimo/máximo se calculan con los extremos reales de las velas del período.
-      // Actual es siempre la lectura viva independiente del histórico. Así no
-      // confundimos una lectura actual con un extremo del período ni inventamos
-      // diferencias artificiales cuando el precio realmente coincide.
-      const candleExtremes = candles.filter(c => Number.isFinite(c.l) && Number.isFinite(c.h));
-      let low = candleExtremes.length ? Math.min(...candleExtremes.map(c => Number(c.l))) : (mids.length ? Math.min(...mids) : 0);
-      let high = candleExtremes.length ? Math.max(...candleExtremes.map(c => Number(c.h))) : (mids.length ? Math.max(...mids) : 0);
-      let lowTs = 0, highTs = 0;
-      if (candleExtremes.length) {
-        const lowC = candleExtremes.find(c => Number(c.l) === low);
-        const highC = candleExtremes.find(c => Number(c.h) === high);
-        lowTs = lowC ? Number(lowC.x) : 0;
-        highTs = highC ? Number(highC.x) : 0;
-      }
-      document.getElementById('chart-low').textContent = low > 0 ? `${money(low)} Bs` : '--,-- Bs';
-      document.getElementById('chart-high').textContent = high > 0 ? `${money(high)} Bs` : '--,-- Bs';
-      document.getElementById('chart-current').textContent = currentMid > 0 ? `${money(currentMid)} Bs` : '--,-- Bs';
-      document.getElementById('chart-low-time').textContent = lowTs ? formatChartTime(lowTs) : '--';
-      document.getElementById('chart-high-time').textContent = highTs ? formatChartTime(highTs) : '--';
-      document.getElementById('chart-current-time').textContent = liveTime ? formatChartTime(liveTime) : '--';
-
       if (!candles.length) {
         if (marketChart) {
           marketChart.data.datasets[0].data = [];
@@ -710,6 +689,26 @@
           last.c = currentMid;
         }
       }
+
+      // Mínimo/máximo se calculan DESPUÉS de incorporar la vela viva.
+      // Así los extremos nunca quedan un ciclo atrás y Actual puede coincidir
+      // legítimamente con Mínimo o Máximo cuando el mercado realmente está allí.
+      const candleExtremes = candles.filter(c => Number.isFinite(c.l) && Number.isFinite(c.h));
+      let low = candleExtremes.length ? Math.min(...candleExtremes.map(c => Number(c.l))) : (mids.length ? Math.min(...mids) : 0);
+      let high = candleExtremes.length ? Math.max(...candleExtremes.map(c => Number(c.h))) : (mids.length ? Math.max(...mids) : 0);
+      let lowTs = 0, highTs = 0;
+      if (candleExtremes.length) {
+        const lowC = candleExtremes.find(c => Number(c.l) === low);
+        const highC = candleExtremes.find(c => Number(c.h) === high);
+        lowTs = lowC ? Number(lowC.x) : 0;
+        highTs = highC ? Number(highC.x) : 0;
+      }
+      document.getElementById('chart-low').textContent = low > 0 ? `${money(low)} Bs` : '--,-- Bs';
+      document.getElementById('chart-high').textContent = high > 0 ? `${money(high)} Bs` : '--,-- Bs';
+      document.getElementById('chart-current').textContent = currentMid > 0 ? `${money(currentMid)} Bs` : '--,-- Bs';
+      document.getElementById('chart-low-time').textContent = lowTs ? formatChartTime(lowTs) : '--';
+      document.getElementById('chart-high-time').textContent = highTs ? formatChartTime(highTs) : '--';
+      document.getElementById('chart-current-time').textContent = liveTime ? formatChartTime(liveTime) : '--';
 
       // Reutilizar la instancia de Chart.js evita destruir/recrear el canvas cada
       // 15 segundos, algo especialmente costoso en móvil.
@@ -985,17 +984,42 @@
       aiConversation.push({ role: 'user', content: text });
       const typingId = 'ai-typing-' + Date.now();
       const chat = document.getElementById('ai-chat-messages');
-      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
+      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
       chat.scrollTop = chat.scrollHeight;
       try {
         const controller = new AbortController();
-        const aiTimer = setTimeout(() => controller.abort(), 40000);
-        const response = await fetch(API_AI_CHAT, { method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json'}, body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }), signal: controller.signal });
+        const aiTimer = setTimeout(() => controller.abort(), 30000);
+        const response = await fetch(`${API_BASE_URL}/api/ai/chat/stream`, {
+          method: 'POST', headers: {'Content-Type':'application/json','Accept':'text/event-stream'},
+          body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }), signal: controller.signal
+        });
         clearTimeout(aiTimer);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
+        if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '', answer = '';
+        const body = document.getElementById(`${typingId}-body`);
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, {stream:true});
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+          for (const event of events) {
+            const line = event.split('\n').find(x => x.startsWith('data:'));
+            if (!line) continue;
+            try {
+              const payload = JSON.parse(line.slice(5).trim());
+              if (payload.text) {
+                answer += payload.text;
+                if (body) { body.classList.remove('text-slate-400'); body.classList.add('text-slate-200'); body.innerHTML = markdownToSafeHTML(answer); }
+                chat.scrollTop = chat.scrollHeight;
+              }
+            } catch(e) {}
+          }
+        }
         document.getElementById(typingId)?.remove();
-        const answer = data.answer || 'No recibí una respuesta válida.';
+        if (!answer.trim()) answer = 'No recibí una respuesta válida.';
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
         speakAIResponse(answer);
