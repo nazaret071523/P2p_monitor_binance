@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -86,6 +87,12 @@ telegram_app = None
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
 _P2P_BANK_AD_CACHE = {}
 collector_task = None
+
+# Sesiones activas: solo se conserva un identificador efímero enviado por el cliente
+# y su último heartbeat. No se guardan IP, correo ni otros datos personales.
+ONLINE_SESSIONS = {}
+ONLINE_LOCK = threading.Lock()
+ONLINE_TTL_SECONDS = max(45, int(os.getenv("ONLINE_TTL_SECONDS", "90")))
 
 # Cachés cortas para que el monitor y la IA no repitan consultas pesadas a Supabase
 # mientras el usuario está navegando. Los datos siguen siendo reales; solo se
@@ -1666,6 +1673,58 @@ def health():
     }
 
 
+def _limpiar_sesiones_online():
+    ahora = time.monotonic()
+    with ONLINE_LOCK:
+        vencidas = [sid for sid, ts in ONLINE_SESSIONS.items() if ahora - ts > ONLINE_TTL_SECONDS]
+        for sid in vencidas:
+            ONLINE_SESSIONS.pop(sid, None)
+        return len(ONLINE_SESSIONS)
+
+
+class OnlineHeartbeat(BaseModel):
+    session_id: str = Field(min_length=16, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@app.post("/api/online/heartbeat")
+def online_heartbeat(payload: OnlineHeartbeat):
+    with ONLINE_LOCK:
+        ONLINE_SESSIONS[payload.session_id] = time.monotonic()
+    return {"ok": True, "online": _limpiar_sesiones_online()}
+
+
+@app.get("/api/online")
+def online_count():
+    return {"ok": True, "online": _limpiar_sesiones_online(), "ttl_seconds": ONLINE_TTL_SECONDS}
+
+
+LEGAL_PAGE_STYLE = """
+body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#070a11;color:#e2e8f0;margin:0;padding:32px;line-height:1.6}
+main{max-width:850px;margin:auto;background:#0f172a;border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:28px}
+h1,h2{color:#6ee7b7} a{color:#38bdf8} .muted{color:#94a3b8;font-size:.9rem}
+"""
+
+def _legal_html(title, body):
+    return HTMLResponse(f"<!doctype html><html lang='es'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{title} · Venbot</title><style>{LEGAL_PAGE_STYLE}</style></head><body><main><p class='muted'><a href='/'>← Venbot</a></p>{body}<hr><p class='muted'>Venbot · Mercado P2P USDT/VES · Última actualización: septiembre de 2026</p></main></body></html>")
+
+
+@app.get("/legal/privacy", response_class=HTMLResponse)
+def legal_privacy():
+    return _legal_html("Política de privacidad", """<h1>Política de privacidad</h1><p>Venbot utiliza datos necesarios para mostrar información del mercado P2P, operar funciones solicitadas por el usuario y mejorar la seguridad y funcionamiento del servicio.</p><h2>Datos</h2><p>La aplicación puede procesar identificadores técnicos de sesión para mostrar una cantidad aproximada de usuarios conectados. Este contador utiliza identificadores efímeros y no necesita almacenar la dirección IP.</p><p>Si se habilitan cuentas, alertas, suscripciones o servicios de terceros, se informará al usuario sobre los datos y finalidades correspondientes.</p><h2>Servicios de terceros</h2><p>Venbot puede utilizar Binance P2P, fuentes oficiales del BCV, servicios de alojamiento, analítica y proveedores publicitarios. Estos servicios pueden tratar datos conforme a sus propias políticas.</p><h2>Publicidad</h2><p>La versión gratuita puede mostrar publicidad mediante proveedores como Google AdMob. Las preferencias de anuncios y las solicitudes de consentimiento se gestionarán según la normativa aplicable.</p><h2>Contacto</h2><p>Para solicitudes relacionadas con privacidad, utiliza el canal oficial de soporte publicado dentro de la aplicación.</p>""")
+
+@app.get("/legal/terms", response_class=HTMLResponse)
+def legal_terms():
+    return _legal_html("Términos de uso", """<h1>Términos de uso</h1><p>Venbot es una herramienta informativa para consultar precios P2P, referencias oficiales y análisis estadístico.</p><h2>Sin asesoramiento financiero</h2><p>La información mostrada no constituye asesoramiento financiero, oferta de compra o venta ni garantía de resultados. El usuario toma sus propias decisiones y debe verificar las condiciones de cada anuncio antes de operar.</p><h2>Sin custodia</h2><p>Venbot no custodia fondos ni ejecuta operaciones P2P en nombre del usuario.</p><h2>Disponibilidad</h2><p>Los precios, anuncios y fuentes externas pueden cambiar, quedar temporalmente sin servicio o contener retrasos. El servicio puede usar la última lectura real disponible cuando una fuente externa no responde.</p>""")
+
+@app.get("/blog", response_class=HTMLResponse)
+def blog_page():
+    return _legal_html("Blog", """<h1>Blog Venbot</h1><h2>Cómo leer el mercado P2P</h2><p>Aprende a interpretar compra, venta, spread, liquidez, tendencia y niveles del mercado USDT/VES.</p><h2>Guía de seguridad P2P</h2><p>Verifica siempre el nombre del comerciante, método de pago, límites del anuncio y condiciones antes de liberar fondos.</p><h2>Próximamente</h2><p>Publicaremos artículos sobre gestión de riesgo, lectura de gráficos y uso responsable de herramientas de análisis.</p>""")
+
+@app.get("/tutorial", response_class=HTMLResponse)
+def tutorial_page():
+    return _legal_html("Tutorial Venbot", """<h1>Tutorial de Venbot</h1><h2>1. Mercado</h2><p>Consulta Comprar USDT y Vender USDT, el spread y las tasas oficiales.</p><h2>2. Gráfico</h2><p>Selecciona 5m, 15m, 30m, 1h o 1D para estudiar la evolución histórica disponible.</p><h2>3. Análisis</h2><p>Revisa tendencia, flujo, niveles y el escenario estadístico de 7 horas.</p><h2>4. Chat IA</h2><p>Puedes hacer preguntas generales o pedir una lectura del mercado. En preguntas P2P, Venbot proporciona a la IA el contexto real disponible.</p><h2>5. Alertas</h2><p>Configura una alerta local para recibir una notificación cuando el precio objetivo se alcance en este navegador.</p>""")
+
+
 def _mercado_desactualizado(mercado):
     if not mercado or not mercado.get("fecha"):
         return True
@@ -1977,18 +2036,51 @@ def _respuesta_openrouter(prompt, temperature=0.45):
         logger.warning("OpenRouter fallback falló: %s", e)
         return None
 
+def _respuesta_local_mercado(contexto):
+    """Fallback determinista: responde con datos reales de Venbot sin fingir que Gemini respondió."""
+    m = contexto.get("mercado_actual") or {}
+    bancos = contexto.get("bancos") or {}
+    a = contexto.get("analisis_cuantitativo") or {}
+    def money(x):
+        try: return f"{float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception: return "n/d"
+    compra = m.get("comprar_usdt_sell")
+    venta = m.get("vender_usdt_buy")
+    lines = [f"Lectura Venbot (respuesta local de respaldo): Compra USDT {money(compra)} Bs · Venta USDT {money(venta)} Bs."]
+    if a:
+        tendencia = a.get("tendencia") or a.get("estado_tendencia") or "n/d"
+        calidad = a.get("proyeccion_7h", {}).get("calidad", a.get("calidad_datos", "n/d")) if isinstance(a.get("proyeccion_7h"), dict) else a.get("calidad_datos", "n/d")
+        p7 = a.get("proyeccion_7h") if isinstance(a.get("proyeccion_7h"), dict) else {}
+        lines.append(f"Tendencia: {tendencia}. Calidad de señal: {calidad}%.")
+        if p7:
+            lines.append(f"Escenario 7H: compra {money(p7.get('pred_compra'))} Bs · venta {money(p7.get('pred_venta'))} Bs · rango midpoint {money(p7.get('rango_mid_min'))}–{money(p7.get('rango_mid_max'))} Bs.")
+            lines.append(f"Soporte: {money(p7.get('soporte_7h'))} Bs · Resistencia: {money(p7.get('resistencia_7h'))} Bs.")
+    disponibles=[]
+    for nombre in ("MERCANTIL","PROVINCIAL","BNC"):
+        b=bancos.get(nombre) or {}
+        if b.get("disponible"):
+            disponibles.append(f"{nombre.title()}: comprar {money(b.get('comprar_usdt_sell'))} · vender {money(b.get('vender_usdt_buy'))} Bs")
+    if disponibles: lines.append("Bancos: " + " | ".join(disponibles) + ".")
+    lines.append("Nota: este respaldo usa la última lectura real persistida; no es una respuesta generada por Gemini.")
+    return "\n".join(lines)
+
+
 def generar_respuesta_ia(mensaje, historial):
-    """IA conversacional rápida: evita cadenas largas de fallbacks y entrega contexto bancario real."""
+    """IA híbrida: Gemini explica; Venbot aporta datos reales y fallback local inmediato."""
+    t0 = time.monotonic()
     texto = (mensaje or "").strip()
     low = texto.lower()
+    logger.info("AI CHAT: pregunta recibida | chars=%s", len(texto))
     if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
+        logger.warning("AI CHAT: sin proveedor configurado")
         return "La IA no tiene proveedor configurado en Render."
 
-    # Consultas triviales no necesitan una llamada al modelo.
     if low in {"hola", "hola!", "hola.", "buenas", "buenas!", "hey", "hey!"}:
+        logger.info("AI CHAT: respuesta local inmediata | elapsed=%.2fs", time.monotonic()-t0)
         return "Hola 👋 Soy Venbot AI. Puedo analizar el mercado P2P de USDT/VES, bancos, tendencia, liquidez y proyección de 7 horas, además de responder preguntas generales."
     if any(k in low for k in ("qué puedes hacer", "que puedes hacer", "para qué sirves", "para que sirves")) and len(low) < 100:
-        return "Puedo explicar temas, responder preguntas y, sobre todo, analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenario estadístico a 7 horas."
+        logger.info("AI CHAT: respuesta local de capacidades | elapsed=%.2fs", time.monotonic()-t0)
+        return "Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenario estadístico a 7 horas."
 
     market_query = any(k in low for k in (
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
@@ -1997,6 +2089,8 @@ def generar_respuesta_ia(mensaje, historial):
         "mercantil", "provincial", "bnc", "banco"
     ))
     contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
+    if market_query:
+        logger.info("AI CHAT: contexto P2P obtenido | bancos=%s | has_analysis=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("analisis_cuantitativo")))
     prev = []
     for h in (historial or [])[-8:]:
         role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
@@ -2008,24 +2102,34 @@ def generar_respuesta_ia(mensaje, historial):
 
     if market_query:
         system = VENBOT_AI_SYSTEM + "\n\nPara preguntas por bancos: compara explícitamente los campos bancos.*. Comprar USDT usa comprar_usdt_sell (SELL); vender USDT usa vender_usdt_buy (BUY). Indica el banco ganador y su precio cuando existan datos disponibles. No digas que faltan tasas bancarias si están presentes en CONTEXTO REAL DE VENBOT."
-        max_tokens = 600
-        temperature = 0.15
+        max_tokens, temperature = 600, 0.15
     else:
         system = VENBOT_AI_SYSTEM + "\n\nPara preguntas generales responde de forma concisa: normalmente 1-3 párrafos. No conviertas una pregunta sencilla en un ensayo."
-        max_tokens = 450
-        temperature = 0.35
+        max_tokens, temperature = 450, 0.35
 
-    # Una sola ruta primaria rápida. Los fallbacks anteriores multiplicaban la latencia.
     if GEMINI_API_KEY:
+        logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s", GEMINI_MODEL, market_query)
+        gt0 = time.monotonic()
         text = _respuesta_gemini_interactions_rest(prompt, GEMINI_MODEL, temperature, system_instruction=system, max_output_tokens=max_tokens, timeout=9)
         if text:
+            logger.info("AI CHAT: Gemini respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
             return text
+        logger.warning("AI CHAT: Gemini no respondió | elapsed=%.2fs", time.monotonic()-gt0)
+
+    # Fallback útil e inmediato para mercado: nunca deja al usuario sin los datos reales.
+    if market_query:
+        logger.info("AI CHAT: fallback local P2P | total_elapsed=%.2fs", time.monotonic()-t0)
+        return _respuesta_local_mercado(contexto)
+
     if OPENROUTER_API_KEY:
+        logger.info("AI CHAT: OpenRouter fallback iniciado")
         text = _respuesta_openrouter(prompt, temperature)
         if text:
+            logger.info("AI CHAT: OpenRouter respondió | total_elapsed=%.2fs", time.monotonic()-t0)
             return text
-    return "La IA no pudo responder ahora. El servicio P2P sigue funcionando; vuelve a intentarlo en unos segundos."
 
+    logger.warning("AI CHAT: sin respuesta de proveedor | total_elapsed=%.2fs", time.monotonic()-t0)
+    return "La IA no pudo responder ahora. El servicio P2P sigue funcionando; vuelve a intentarlo en unos segundos."
 
 class AIChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=6000)
@@ -2039,8 +2143,11 @@ def ai_health():
 
 @app.post("/api/ai/chat")
 async def ai_chat(payload: AIChatRequest):
+    t0 = time.monotonic()
     mensaje = payload.message.strip()
+    logger.info("AI CHAT: endpoint recibido")
     respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history)
+    logger.info("AI CHAT: respuesta enviada | elapsed=%.2fs | chars=%s", time.monotonic()-t0, len(respuesta or ""))
     return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else "not_configured")}
 
 
