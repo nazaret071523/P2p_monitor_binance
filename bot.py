@@ -1363,6 +1363,13 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
             "rango_mid_max": q.get("forecast_high_mid"),
             "delta_pct": q.get("delta_7h_pct"),
             "calidad": q.get("confianza"),
+            "cobertura_horas": q.get("cobertura_horas", 0.0),
+            "soporte_7h": q.get("soporte_7h"),
+            "resistencia_7h": q.get("resistencia_7h"),
+            "mediana_7h": q.get("mediana_7h"),
+            "posicion_rango_7h": q.get("posicion_rango_7h"),
+            "muestras": q.get("muestras", 0),
+            "regression_r2": q.get("regression_r2", 0.0),
         },
         "ventanas": {k: cambios.get(k) for k in ("5m", "15m", "30m", "1h", "3h", "7h")},
         "metricas": {
@@ -2036,50 +2043,6 @@ def _respuesta_openrouter(prompt, temperature=0.45):
         logger.warning("OpenRouter fallback falló: %s", e)
         return None
 
-def _es_respuesta_gemini_truncada(texto):
-    """Detecta respuestas que Gemini cortó antes de completar la idea."""
-    if not texto or len(texto.strip()) < 24:
-        return True
-    t = texto.strip()
-    if t.endswith(("(", "[", "{", ":", "·", "-", "/")):
-        return True
-    # Cortes muy típicos vistos en respuestas bancarias: nombre + número incompleto.
-    import re
-    if re.search(r"\b(?:BNC|Mercantil|Provincial)\s*\(\s*[0-9]{1,3}[.,]?[0-9]{0,1}$", t, re.I):
-        return True
-    if t.count("(") > t.count(")") or t.count("[") > t.count("]") or t.count("{") > t.count("}"):
-        return True
-    return False
-
-
-def _respuesta_comparacion_bancos(contexto):
-    """Respuesta 100% determinista para comparar bancos, sin delegar el ganador a Gemini."""
-    bancos = contexto.get("bancos") or {}
-    def money(x):
-        try: return f"{float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        except Exception: return "n/d"
-    rows=[]
-    for nombre in ("MERCANTIL","PROVINCIAL","BNC"):
-        b=bancos.get(nombre) or {}
-        if b.get("disponible"):
-            rows.append((nombre, float(b.get("comprar_usdt_sell") or 0), float(b.get("vender_usdt_buy") or 0)))
-    if not rows:
-        return _respuesta_local_mercado(contexto)
-    # Comprar USDT = merchant vende USDT (SELL): mejor es el menor precio.
-    # Vender USDT = merchant compra USDT (BUY): mejor es el mayor precio.
-    best_buy=min(rows, key=lambda x:x[1])
-    best_sell=max(rows, key=lambda x:x[2])
-    lines=[
-        "Comparación actual de bancos (datos P2P reales de Venbot):",
-        f"• Comprar USDT: {best_buy[0].title()} es el mejor precio a {money(best_buy[1])} Bs/USDT (menor precio).",
-        f"• Vender USDT: {best_sell[0].title()} es el mejor precio a {money(best_sell[2])} Bs/USDT (mayor precio).",
-        "• Mercantil: comprar " + money(next(x[1] for x in rows if x[0]=='MERCANTIL')) + " · vender " + money(next(x[2] for x in rows if x[0]=='MERCANTIL')) + " Bs.",
-        "• Provincial: comprar " + money(next(x[1] for x in rows if x[0]=='PROVINCIAL')) + " · vender " + money(next(x[2] for x in rows if x[0]=='PROVINCIAL')) + " Bs.",
-        "• BNC: comprar " + money(next(x[1] for x in rows if x[0]=='BNC')) + " · vender " + money(next(x[2] for x in rows if x[0]=='BNC')) + " Bs.",
-    ]
-    return "\n".join(lines)
-
-
 def _respuesta_local_mercado(contexto):
     """Fallback determinista: responde con datos reales de Venbot sin fingir que Gemini respondió."""
     m = contexto.get("mercado_actual") or {}
@@ -2096,12 +2059,13 @@ def _respuesta_local_mercado(contexto):
         calidad = a.get("proyeccion_7h", {}).get("calidad", a.get("calidad_datos", "n/d")) if isinstance(a.get("proyeccion_7h"), dict) else a.get("calidad_datos", "n/d")
         p7 = a.get("proyeccion_7h") if isinstance(a.get("proyeccion_7h"), dict) else {}
         lines.append(f"Tendencia: {tendencia}. Calidad de señal: {calidad}%.")
-        cobertura = float(p7.get("cobertura_horas") or a.get("cobertura_horas") or 0) if isinstance(p7, dict) else 0
-        if p7 and p7.get("pred_compra") and p7.get("pred_venta") and cobertura >= 4.9:
-            lines.append(f"Escenario 7H: compra {money(p7.get('pred_compra'))} Bs · venta {money(p7.get('pred_venta'))} Bs · rango midpoint {money(p7.get('rango_mid_min'))}–{money(p7.get('rango_mid_max'))} Bs.")
-            lines.append(f"Soporte: {money(p7.get('soporte_7h'))} Bs · Resistencia: {money(p7.get('resistencia_7h'))} Bs · cobertura histórica: {cobertura:.1f} h.")
-        else:
-            lines.append(f"Escenario 7H: todavía no hay histórico suficiente para una proyección confiable (cobertura {cobertura:.1f} h).")
+        if p7:
+            cobertura = float(p7.get("cobertura_horas", 0) or 0)
+            if cobertura >= 4.9:
+                lines.append(f"Escenario 7H: compra {money(p7.get('compra'))} Bs · venta {money(p7.get('venta'))} Bs · rango midpoint {money(p7.get('rango_mid_min'))}–{money(p7.get('rango_mid_max'))} Bs · cobertura {cobertura:.1f} h.")
+                lines.append(f"Soporte: {money(p7.get('soporte_7h'))} Bs · Resistencia: {money(p7.get('resistencia_7h'))} Bs.")
+            else:
+                lines.append(f"Escenario 7H: histórico insuficiente para una proyección confiable (cobertura {cobertura:.1f} h).")
     disponibles=[]
     for nombre in ("MERCANTIL","PROVINCIAL","BNC"):
         b=bancos.get(nombre) or {}
@@ -2110,6 +2074,62 @@ def _respuesta_local_mercado(contexto):
     if disponibles: lines.append("Bancos: " + " | ".join(disponibles) + ".")
     lines.append("Nota: este respaldo usa la última lectura real persistida; no es una respuesta generada por Gemini.")
     return "\n".join(lines)
+
+
+def _money_ia(x):
+    try:
+        return f"{float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "n/d"
+
+
+def _pregunta_comparacion_bancos(low):
+    bank_terms = sum(1 for x in ("mercantil", "provincial", "bnc") if x in low)
+    compare_terms = any(x in low for x in ("mejor banco", "mejor", "compara", "comparar", "cuál banco", "cual banco", "qué banco", "que banco"))
+    return bank_terms >= 2 or (bank_terms >= 1 and compare_terms)
+
+
+def _respuesta_comparacion_bancos(contexto):
+    bancos = contexto.get("bancos") or {}
+    rows = []
+    for nombre in ("MERCANTIL", "PROVINCIAL", "BNC"):
+        b = bancos.get(nombre) or {}
+        if b.get("disponible") and float(b.get("comprar_usdt_sell", 0) or 0) > 0 and float(b.get("vender_usdt_buy", 0) or 0) > 0:
+            rows.append((nombre, float(b["comprar_usdt_sell"]), float(b["vender_usdt_buy"])))
+    if len(rows) < 1:
+        return "No hay lecturas bancarias reales disponibles en este momento."
+    mejor_compra = min(rows, key=lambda x: x[1])
+    mejor_venta = max(rows, key=lambda x: x[2])
+    lines = ["Comparación actual de bancos (datos P2P reales de Venbot):"]
+    lines.append(f"• Comprar USDT: {mejor_compra[0].title()} es el mejor precio a {_money_ia(mejor_compra[1])} Bs/USDT (menor precio).")
+    lines.append(f"• Vender USDT: {mejor_venta[0].title()} es el mejor precio a {_money_ia(mejor_venta[2])} Bs/USDT (mayor precio).")
+    for nombre, compra, venta in rows:
+        lines.append(f"• {nombre}: comprar {_money_ia(compra)} · vender {_money_ia(venta)} Bs.")
+    return "\n".join(lines)
+
+
+def _respuesta_banco_individual(contexto, low):
+    bancos = contexto.get("bancos") or {}
+    for nombre in ("MERCANTIL", "PROVINCIAL", "BNC"):
+        if nombre.lower() in low:
+            b = bancos.get(nombre) or {}
+            if b.get("disponible"):
+                return f"{nombre.title()} ahora: Comprar USDT {_money_ia(b.get('comprar_usdt_sell'))} Bs · Vender USDT {_money_ia(b.get('vender_usdt_buy'))} Bs. Datos P2P reales persistidos de Venbot."
+    return None
+
+
+def _respuesta_7h_local(contexto):
+    a = contexto.get("analisis_cuantitativo") or {}
+    p = a.get("proyeccion_7h") or {}
+    cobertura = float(p.get("cobertura_horas", 0) or 0)
+    tendencia = a.get("tendencia") or "⚪ SIN DATOS"
+    calidad = p.get("calidad", 0)
+    if cobertura < 4.9:
+        return f"Para las próximas 7 horas, la señal actual es {tendencia}, pero Venbot solo tiene {cobertura:.1f} h de cobertura histórica; todavía no es suficiente para una proyección 7H confiable."
+    return (f"Escenario estadístico 7H: {tendencia}. Calidad de señal {calidad}%. "
+            f"Compra estimada {_money_ia(p.get('compra'))} Bs · venta estimada {_money_ia(p.get('venta'))} Bs. "
+            f"Rango midpoint {_money_ia(p.get('rango_mid_min'))}–{_money_ia(p.get('rango_mid_max'))} Bs. "
+            f"Cobertura histórica {cobertura:.1f} h. No es una garantía de precio futuro.")
 
 
 def generar_respuesta_ia(mensaje, historial):
@@ -2138,10 +2158,16 @@ def generar_respuesta_ia(mensaje, historial):
     contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
     if market_query:
         logger.info("AI CHAT: contexto P2P obtenido | bancos=%s | has_analysis=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("analisis_cuantitativo")))
-        bank_compare = len([b for b in ("mercantil","provincial","bnc") if b in low]) >= 2 and any(k in low for k in ("compara", "comparar", "mejor", "cuál", "cual", "banco"))
-        if bank_compare:
-            logger.info("AI CHAT: comparación bancaria determinista")
+        # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
+        if _pregunta_comparacion_bancos(low):
             return _respuesta_comparacion_bancos(contexto)
+        banco_directo = _respuesta_banco_individual(contexto, low)
+        if banco_directo and any(x in low for x in ("cuánto", "cuanto", "está", "esta", "precio", "cotiza", "vale")):
+            return banco_directo
+        if any(x in low for x in ("precio actual", "precio de usdt", "cuánto está usdt", "cuanto esta usdt", "cotización actual", "cotizacion actual")):
+            return _respuesta_local_mercado(contexto)
+        if any(x in low for x in ("próximas 7 horas", "proximas 7 horas", "7 horas", "proyección 7h", "proyeccion 7h", "predicción 7h", "prediccion 7h")):
+            return _respuesta_7h_local(contexto)
     prev = []
     for h in (historial or [])[-8:]:
         role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
@@ -2164,10 +2190,7 @@ def generar_respuesta_ia(mensaje, historial):
         text = _respuesta_gemini_interactions_rest(prompt, GEMINI_MODEL, temperature, system_instruction=system, max_output_tokens=max_tokens, timeout=9)
         if text:
             logger.info("AI CHAT: Gemini respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
-            if _es_respuesta_gemini_truncada(text):
-                logger.warning("AI CHAT: respuesta Gemini descartada por posible truncamiento | chars=%s", len(text))
-            else:
-                return text
+            return text
         logger.warning("AI CHAT: Gemini no respondió | elapsed=%.2fs", time.monotonic()-gt0)
 
     # Fallback útil e inmediato para mercado: nunca deja al usuario sin los datos reales.
