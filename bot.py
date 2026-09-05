@@ -2256,7 +2256,7 @@ def _stream_event(text=None, done=False):
     payload = {"done": bool(done)}
     if text is not None:
         payload["text"] = text
-    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+    return "data: " + json.dumps(payload, ensure_ascii=True) + "\n\n"
 
 
 def _generador_ai_stream(mensaje, historial):
@@ -2290,10 +2290,17 @@ def _generador_ai_stream(mensaje, historial):
             system += "\n\nPara mercado, usa el contexto real y responde de forma natural, directa y humana. No recites todo el contexto."
         else:
             system += "\n\nHabla como un asistente humano y útil: natural, claro, contextual y sin frases robóticas. Responde directamente antes de ampliar."
-        tools = [{"type": "google_search"}] if (not market_query and _ai_necesita_busqueda_web(low)) else None
+        # Toda consulta GENERAL tiene acceso a Google Search. Gemini decide si
+        # realmente necesita buscar; así Venbot puede responder tanto conocimiento
+        # general como preguntas actuales sin depender de una lista rígida de palabras.
+        tools = None if market_query else [{"type": "google_search"}]
         payload = {
             "model": GEMINI_MODEL, "system_instruction": system, "input": prompt,
-            "generation_config": {"max_output_tokens": 600 if market_query else 450}, "store": False,
+            "generation_config": {
+                "temperature": 0.15 if market_query else 0.35,
+                "max_output_tokens": 600 if market_query else 450,
+            },
+            "store": False,
             "stream": True,
         }
         if tools: payload["tools"] = tools
@@ -2324,6 +2331,28 @@ def _generador_ai_stream(mensaje, historial):
                 logger.warning("Gemini stream HTTP %s: %s", r.status_code, r.text[:300])
         except Exception as e:
             logger.warning("Gemini stream falló: %s", e)
+
+        # Si el stream no entrega texto (por ejemplo, una incidencia temporal del
+        # stream o una respuesta con herramientas), reintentamos la misma pregunta
+        # por Interactions normal. Para consultas generales mantenemos Google Search
+        # habilitado en este segundo intento.
+        try:
+            fallback_tools = None if market_query else [{"type": "google_search"}]
+            fallback_text = _respuesta_gemini_interactions_rest(
+                prompt, GEMINI_MODEL,
+                temperature=0.15 if market_query else 0.35,
+                system_instruction=system,
+                max_output_tokens=600 if market_query else 450,
+                timeout=9,
+                tools=fallback_tools,
+            )
+            if fallback_text:
+                yield _stream_event(fallback_text)
+                yield _stream_event(done=True)
+                return
+        except Exception as e:
+            logger.warning("Gemini fallback no-stream falló: %s", e)
+
     if market_query:
         yield _stream_event(_respuesta_local_mercado(contexto))
     elif OPENROUTER_API_KEY:
@@ -2394,9 +2423,13 @@ def generar_respuesta_ia(mensaje, historial):
         max_tokens, temperature = 450, 0.35
 
     if GEMINI_API_KEY:
-        logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s", GEMINI_MODEL, market_query)
+        logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s | google_search=%s", GEMINI_MODEL, market_query, not market_query)
         gt0 = time.monotonic()
-        text = _respuesta_gemini_interactions_rest(prompt, GEMINI_MODEL, temperature, system_instruction=system, max_output_tokens=max_tokens, timeout=9)
+        tools = None if market_query else [{"type": "google_search"}]
+        text = _respuesta_gemini_interactions_rest(
+            prompt, GEMINI_MODEL, temperature,
+            system_instruction=system, max_output_tokens=max_tokens, timeout=9, tools=tools
+        )
         if text:
             logger.info("AI CHAT: Gemini respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
             return text
