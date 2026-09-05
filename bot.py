@@ -28,7 +28,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -58,6 +58,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
+
+# Fundación de producto: los pagos son externos y se habilitan por política de mercado.
+DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "VE").strip().upper() or "VE"
+BETA_PREMIUM_ACCESS = os.getenv("BETA_PREMIUM_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
+BETA_VIP_ACCESS = os.getenv("BETA_VIP_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
+EXTERNAL_BILLING_URL = os.getenv("EXTERNAL_BILLING_URL", "").strip()
+PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "").strip()
 
 # Orígenes separados por coma. Si no se configura, se permite cualquier origen
 # sin credenciales, suficiente para un monitor público.
@@ -165,6 +172,66 @@ def inicializar_db():
                         creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         actualizado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_users (
+                        id BIGSERIAL PRIMARY KEY,
+                        external_user_id TEXT UNIQUE NOT NULL,
+                        country_code TEXT NOT NULL DEFAULT 'VE',
+                        plan_code TEXT NOT NULL DEFAULT 'FREE',
+                        status TEXT NOT NULL DEFAULT 'active',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        deleted_at TIMESTAMPTZ
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_consents (
+                        id BIGSERIAL PRIMARY KEY,
+                        external_user_id TEXT NOT NULL,
+                        consent_type TEXT NOT NULL,
+                        version TEXT NOT NULL,
+                        granted BOOLEAN NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(external_user_id, consent_type, version)
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_billing_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        external_user_id TEXT NOT NULL,
+                        country_code TEXT NOT NULL,
+                        plan_code TEXT NOT NULL,
+                        provider TEXT,
+                        external_reference TEXT,
+                        event_type TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        payload JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_feature_flags (
+                        feature_key TEXT PRIMARY KEY,
+                        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                        min_plan TEXT NOT NULL DEFAULT 'FREE',
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_usage_daily (
+                        external_user_id TEXT NOT NULL,
+                        usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                        ai_requests INTEGER NOT NULL DEFAULT 0,
+                        alert_count INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(external_user_id, usage_date)
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_venbot_billing_user ON venbot_billing_events(external_user_id, created_at DESC);
                 """)
         logger.info("Base de datos inicializada correctamente.")
     except Exception as e:
@@ -1644,6 +1711,69 @@ async def tarea_recoleccion_automatica():
 
 
 # ==========================================
+# FUNDACIÓN DE PRODUCTO / PLANES / PERMISOS
+# ==========================================
+PLAN_ORDER = {"FREE": 0, "PREMIUM": 1, "VIP": 2}
+PLAN_LIMITS = {
+    "FREE": {"ai_daily": 5, "alerts": 2, "history_days": 1},
+    "PREMIUM": {"ai_daily": 30, "alerts": 10, "history_days": 30},
+    "VIP": {"ai_daily": 100, "alerts": 50, "history_days": 365},
+}
+FEATURE_MIN_PLAN = {
+    "monitor": "FREE", "p2p": "FREE", "bcv": "FREE", "calculator": "FREE",
+    "basic_analysis": "FREE", "telegram": "PREMIUM", "advanced_analysis": "PREMIUM",
+    "advanced_alerts": "PREMIUM", "prediction_bot": "VIP", "spot": "VIP",
+}
+
+# Política de cobro: la aplicación no procesa tarjetas ni pagos dentro del cliente.
+# El backend solo prepara la integración; la habilitación final depende del país y
+# de las reglas de distribución aplicables en la tienda.
+BILLING_POLICY = {
+    "VE": {"external_checkout": True, "provider": "external_web", "note": "Checkout externo sujeto a la normativa aplicable."},
+    "US": {"external_checkout": True, "provider": "external_web", "note": "Usar solo bajo el programa/política aplicable de Google Play."},
+    "DEFAULT": {"external_checkout": False, "provider": None, "note": "No habilitar checkout externo desde la app hasta verificar la política local."},
+}
+
+def _plan_efectivo(plan):
+    plan = (plan or "FREE").upper()
+    return plan if plan in PLAN_ORDER else "FREE"
+
+def _billing_policy(country):
+    return BILLING_POLICY.get((country or DEFAULT_COUNTRY_CODE).upper(), BILLING_POLICY["DEFAULT"])
+
+def _foundation_user(external_user_id, country_code=None):
+    if not DATABASE_URL:
+        return {"external_user_id": external_user_id, "country_code": country_code or DEFAULT_COUNTRY_CODE, "plan_code": "FREE", "status": "active"}
+    country = (country_code or DEFAULT_COUNTRY_CODE).upper()[:8]
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""\n                INSERT INTO venbot_users(external_user_id, country_code) VALUES (%s,%s)\n                ON CONFLICT (external_user_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP, country_code=COALESCE(NULLIF(EXCLUDED.country_code,''), venbot_users.country_code)\n                RETURNING external_user_id,country_code,plan_code,status,created_at,updated_at,deleted_at\n            """, (external_user_id, country))
+            row=cur.fetchone()
+    return dict(zip(["external_user_id","country_code","plan_code","status","created_at","updated_at","deleted_at"], row))
+
+def _foundation_entitlements(user):
+    plan = _plan_efectivo(user.get("plan_code"))
+    limits = dict(PLAN_LIMITS[plan])
+    features = {k: PLAN_ORDER[plan] >= PLAN_ORDER[v] for k,v in FEATURE_MIN_PLAN.items()}
+    return {"plan": plan, "limits": limits, "features": features}
+
+def _country_from_request(request):
+    return (request.headers.get("X-Venbot-Country") or DEFAULT_COUNTRY_CODE).strip().upper()[:8]
+
+class FoundationBootstrapRequest(BaseModel):
+    external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    country_code: str = Field(default="VE", min_length=2, max_length=8)
+
+class ConsentRequest(BaseModel):
+    external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    consent_type: str = Field(min_length=2, max_length=50)
+    version: str = Field(min_length=1, max_length=30)
+    granted: bool
+
+class AccountDeleteRequest(BaseModel):
+    external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+
+# ==========================================
 # FASTAPI
 # ==========================================
 app = FastAPI(title="Venbot API", version="2.0")
@@ -1677,6 +1807,52 @@ def health():
         "ai_configured": bool((GEMINI_API_KEY and genai) or OPENROUTER_API_KEY),
         "ai_model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else None),
         "timestamp": datetime.now(VET).isoformat(),
+    }
+
+@app.post("/api/foundation/bootstrap")
+def foundation_bootstrap(payload: FoundationBootstrapRequest):
+    user = _foundation_user(payload.external_user_id, payload.country_code)
+    ent = _foundation_entitlements(user)
+    policy = _billing_policy(user.get("country_code"))
+    return {
+        "ok": True,
+        "user": {"external_user_id": user["external_user_id"], "country_code": user["country_code"], "status": user["status"]},
+        "entitlements": ent,
+        "billing": {"external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
+        "legal": {"privacy_url": "/legal/privacy", "terms_url": "/legal/terms"},
+    }
+
+@app.post("/api/foundation/consent")
+def foundation_consent(payload: ConsentRequest):
+    if not DATABASE_URL:
+        return {"ok": False, "error": "database_not_configured"}
+    _foundation_user(payload.external_user_id)
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO venbot_consents(external_user_id,consent_type,version,granted) VALUES (%s,%s,%s,%s) ON CONFLICT (external_user_id,consent_type,version) DO UPDATE SET granted=EXCLUDED.granted,created_at=CURRENT_TIMESTAMP""", (payload.external_user_id,payload.consent_type,payload.version,payload.granted))
+    return {"ok": True}
+
+@app.post("/api/account/delete")
+def account_delete(payload: AccountDeleteRequest):
+    if not DATABASE_URL:
+        return {"ok": False, "error": "database_not_configured"}
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE venbot_users SET status='deleted', deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s", (payload.external_user_id,))
+            cur.execute("DELETE FROM venbot_consents WHERE external_user_id=%s", (payload.external_user_id,))
+    return {"ok": True, "status": "deleted"}
+
+@app.get("/api/foundation/config")
+def foundation_config(request: Request):
+    country = _country_from_request(request)
+    policy = _billing_policy(country)
+    return {
+        "ok": True,
+        "country_code": country,
+        "plans": PLAN_LIMITS,
+        "features": FEATURE_MIN_PLAN,
+        "billing": {"external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
+        "beta": {"premium_access": BETA_PREMIUM_ACCESS, "vip_access": BETA_VIP_ACCESS},
     }
 
 
@@ -1717,7 +1893,8 @@ def _legal_html(title, body):
 
 @app.get("/legal/privacy", response_class=HTMLResponse)
 def legal_privacy():
-    return _legal_html("Política de privacidad", """<h1>Política de privacidad</h1><p>Venbot utiliza datos necesarios para mostrar información del mercado P2P, operar funciones solicitadas por el usuario y mejorar la seguridad y funcionamiento del servicio.</p><h2>Datos</h2><p>La aplicación puede procesar identificadores técnicos de sesión para mostrar una cantidad aproximada de usuarios conectados. Este contador utiliza identificadores efímeros y no necesita almacenar la dirección IP.</p><p>Si se habilitan cuentas, alertas, suscripciones o servicios de terceros, se informará al usuario sobre los datos y finalidades correspondientes.</p><h2>Servicios de terceros</h2><p>Venbot puede utilizar Binance P2P, fuentes oficiales del BCV, servicios de alojamiento, analítica y proveedores publicitarios. Estos servicios pueden tratar datos conforme a sus propias políticas.</p><h2>Publicidad</h2><p>La versión gratuita puede mostrar publicidad mediante proveedores como Google AdMob. Las preferencias de anuncios y las solicitudes de consentimiento se gestionarán según la normativa aplicable.</p><h2>Contacto</h2><p>Para solicitudes relacionadas con privacidad, utiliza el canal oficial de soporte publicado dentro de la aplicación.</p>""")
+    contact = PRIVACY_CONTACT_EMAIL or "el canal oficial de soporte publicado dentro de la aplicación"
+    return _legal_html("Política de privacidad", f"""<h1>Política de privacidad</h1><p>Venbot procesa únicamente los datos necesarios para operar las funciones que el usuario solicite, mantener la seguridad, medir el funcionamiento del servicio y, cuando corresponda, administrar una cuenta, alertas, suscripciones o publicidad.</p><h2>Datos que podemos procesar</h2><ul><li>Identificadores técnicos o de sesión necesarios para el funcionamiento y el contador aproximado de usuarios conectados.</li><li>Datos de cuenta que el usuario proporcione voluntariamente cuando se habiliten cuentas.</li><li>Preferencias de funciones, alertas y plan.</li><li>Datos técnicos necesarios para prevenir abuso, errores y problemas de seguridad.</li></ul><h2>Proveedores externos</h2><p>Venbot puede utilizar Binance P2P, fuentes oficiales del BCV, alojamiento, bases de datos, proveedores de IA, analítica y publicidad. Cada proveedor puede procesar datos conforme a sus propias condiciones y políticas.</p><h2>Publicidad y consentimiento</h2><p>La versión gratuita podrá mostrar publicidad. Cuando la normativa lo requiera, Venbot solicitará el consentimiento correspondiente antes de utilizar tecnologías publicitarias que lo necesiten. Las preferencias podrán cambiarse mediante los mecanismos disponibles en la aplicación.</p><h2>Suscripciones y pagos</h2><p>Los planes Premium y VIP están diseñados para utilizar un checkout externo cuando la normativa y las reglas de distribución aplicables lo permitan. Venbot no almacena números completos de tarjetas ni credenciales de pago.</p><h2>Conservación y eliminación</h2><p>Conservaremos los datos durante el tiempo necesario para prestar el servicio, cumplir obligaciones legales, resolver disputas y proteger el sistema. Cuando exista una cuenta, el usuario podrá solicitar su eliminación mediante el mecanismo de eliminación de cuenta disponible en el servicio.</p><h2>Contacto</h2><p>Contacto de privacidad: {contact}</p>""")
 
 @app.get("/legal/terms", response_class=HTMLResponse)
 def legal_terms():
