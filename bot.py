@@ -21,6 +21,7 @@ except Exception:
 import pytz
 import psycopg2
 import requests
+from requests.adapters import HTTPAdapter
 import numpy as np
 import xgboost as xgb
 import matplotlib
@@ -58,6 +59,14 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
+
+# Market Data Layer Spot (solo datos públicos, sin API key).
+SPOT_BASE_URL = os.getenv("SPOT_BASE_URL", "https://data-api.binance.vision").strip().rstrip("/")
+SPOT_SYMBOLS = tuple(dict.fromkeys(
+    x.strip().upper() for x in os.getenv("SPOT_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if x.strip()
+)) or ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+SPOT_REFRESH_SECONDS = max(10, int(os.getenv("SPOT_REFRESH_SECONDS", "20")))
+SPOT_REQUEST_TIMEOUT = max(3, int(os.getenv("SPOT_REQUEST_TIMEOUT", "8")))
 
 # Fundación de producto: los pagos son externos y se habilitan por política de mercado.
 DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "VE").strip().upper() or "VE"
@@ -112,6 +121,9 @@ _CACHE_TTL_HISTORY = 10.0
 _CACHE_TTL_AI = 5.0
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
+SPOT_CACHE = {"value": {}, "expires": 0.0}
+SPOT_LOCK = threading.Lock()
+_LAST_SPOT_COLLECTION_TS = 0.0
 
 
 # ==========================================
@@ -226,6 +238,22 @@ def inicializar_db():
                         alert_count INTEGER NOT NULL DEFAULT 0,
                         PRIMARY KEY(external_user_id, usage_date)
                     );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS spot_market_snapshots (
+                        id BIGSERIAL PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        price DOUBLE PRECISION NOT NULL,
+                        bid DOUBLE PRECISION,
+                        ask DOUBLE PRECISION,
+                        change_24h_pct DOUBLE PRECISION,
+                        quote_volume_24h DOUBLE PRECISION,
+                        fecha TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_spot_market_symbol_fecha
+                    ON spot_market_snapshots(symbol, fecha DESC);
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
@@ -361,6 +389,11 @@ HTTP.headers.update({
     "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://render.com)",
     "Accept": "application/json,text/plain,*/*",
 })
+# El recolector P2P hace varias lecturas en paralelo. Un pool mayor evita
+# descartar conexiones reutilizables bajo carga sin aumentar el número de consultas.
+_HTTP_ADAPTER = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=1, pool_block=False)
+HTTP.mount("https://", _HTTP_ADAPTER)
+HTTP.mount("http://", _HTTP_ADAPTER)
 
 
 def _float_positivo(value):
@@ -369,6 +402,173 @@ def _float_positivo(value):
         return x if x > 0 else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+# ==========================================
+# MARKET DATA LAYER: BINANCE SPOT
+# ==========================================
+def _normalizar_spot_symbol(symbol):
+    sym = str(symbol or "").strip().upper()
+    if not sym or len(sym) > 24 or not sym.isalnum():
+        raise ValueError("Símbolo Spot inválido")
+    return sym
+
+
+def obtener_spot_binance(symbol):
+    """Obtiene una lectura pública Spot desde Binance Market Data Only.
+
+    No usa credenciales ni endpoints de cuenta/trading. Devuelve None si la
+    fuente no responde para que el resto de Venbot continúe funcionando.
+    """
+    sym = _normalizar_spot_symbol(symbol)
+    try:
+        r = HTTP.get(
+            f"{SPOT_BASE_URL}/api/v3/ticker/24hr",
+            params={"symbol": sym},
+            timeout=SPOT_REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        data = r.json()
+        price = _float_positivo(data.get("lastPrice"))
+        if price <= 0:
+            return None
+        bid = _float_positivo(data.get("bidPrice"))
+        ask = _float_positivo(data.get("askPrice"))
+        try:
+            change_pct = float(data.get("priceChangePercent") or 0.0)
+        except Exception:
+            change_pct = 0.0
+        try:
+            quote_volume = float(data.get("quoteVolume") or 0.0)
+        except Exception:
+            quote_volume = 0.0
+        return {
+            "symbol": sym,
+            "price": price,
+            "bid": bid,
+            "ask": ask,
+            "spread": max(0.0, ask - bid) if bid and ask else 0.0,
+            "change_24h_pct": change_pct,
+            "quote_volume_24h": quote_volume,
+            "timestamp": datetime.now(VET),
+            "source": "Binance Spot public market data",
+        }
+    except Exception as e:
+        logger.warning("Binance Spot %s no disponible: %s", sym, e)
+        return None
+
+
+def guardar_spot_snapshot_db(item):
+    if not DATABASE_URL or not item or not item.get("price"):
+        return False
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO spot_market_snapshots
+                    (symbol, price, bid, ask, change_24h_pct, quote_volume_24h, fecha)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        item["symbol"], float(item["price"]), float(item.get("bid") or 0),
+                        float(item.get("ask") or 0), float(item.get("change_24h_pct") or 0),
+                        float(item.get("quote_volume_24h") or 0), item.get("timestamp") or datetime.now(VET),
+                    ),
+                )
+        return True
+    except Exception as e:
+        logger.warning("No se pudo guardar Spot %s: %s", item.get("symbol"), e)
+        return False
+
+
+def obtener_spot_snapshot_db(symbol):
+    if not DATABASE_URL:
+        return None
+    sym = _normalizar_spot_symbol(symbol)
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT symbol, price, bid, ask, change_24h_pct, quote_volume_24h, fecha
+                       FROM spot_market_snapshots WHERE symbol=%s ORDER BY fecha DESC LIMIT 1""",
+                    (sym,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "symbol": row[0], "price": float(row[1]), "bid": float(row[2] or 0),
+            "ask": float(row[3] or 0), "change_24h_pct": float(row[4] or 0),
+            "quote_volume_24h": float(row[5] or 0), "timestamp": row[6],
+            "source": "última lectura Spot real persistida",
+        }
+    except Exception as e:
+        logger.warning("No se pudo leer Spot %s: %s", sym, e)
+        return None
+
+
+def recolectar_spot(symbols=None, persist=True):
+    symbols = tuple(symbols or SPOT_SYMBOLS)
+    results = {}
+    # Pocos símbolos por defecto; paralelizar reduce latencia sin abrir un pool enorme.
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(symbols)))) as ex:
+        futures = {sym: ex.submit(obtener_spot_binance, sym) for sym in symbols}
+        for sym, fut in futures.items():
+            try:
+                item = fut.result(timeout=SPOT_REQUEST_TIMEOUT + 2)
+            except Exception:
+                item = None
+            if item is None:
+                item = obtener_spot_snapshot_db(sym)
+            if item:
+                results[sym] = item
+                if persist and item.get("source") == "Binance Spot public market data":
+                    guardar_spot_snapshot_db(item)
+    with SPOT_LOCK:
+        SPOT_CACHE["value"] = results
+        SPOT_CACHE["expires"] = time.monotonic() + min(10.0, SPOT_REFRESH_SECONDS / 2.0)
+    return results
+
+
+def obtener_spot_klines(symbol, interval="5m", limit=170):
+    sym = _normalizar_spot_symbol(symbol)
+    allowed = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
+    if interval not in allowed:
+        raise ValueError("Intervalo Spot no permitido")
+    limit = max(10, min(500, int(limit)))
+    r = HTTP.get(
+        f"{SPOT_BASE_URL}/api/v3/klines",
+        params={"symbol": sym, "interval": interval, "limit": limit},
+        timeout=SPOT_REQUEST_TIMEOUT,
+    )
+    r.raise_for_status()
+    out = []
+    for k in r.json():
+        if not isinstance(k, list) or len(k) < 7:
+            continue
+        out.append({
+            "x": int(k[0]), "o": float(k[1]), "h": float(k[2]),
+            "l": float(k[3]), "c": float(k[4]), "volume": float(k[5]),
+            "close_time": int(k[6]),
+        })
+    return out
+
+
+def _spot_context_for_quant():
+    with SPOT_LOCK:
+        cached = dict(SPOT_CACHE.get("value") or {})
+    if not cached:
+        cached = recolectar_spot(persist=False)
+    return {
+        sym: {
+            "price": round(float(v.get("price") or 0), 8),
+            "change_24h_pct": round(float(v.get("change_24h_pct") or 0), 3),
+            "bid": round(float(v.get("bid") or 0), 8),
+            "ask": round(float(v.get("ask") or 0), 8),
+        }
+        for sym, v in cached.items() if v
+    }
 
 
 # ==========================================
@@ -999,7 +1199,36 @@ def detectar_manipulacion_mercado(mids, spreads, actual_mid, actual_spread):
         return {"activa": False, "nivel": "normal", "score": 0, "motivos": []}
 
 
-def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL"):
+class QuantEngineV2:
+    """Capa modular sobre el motor P2P existente.
+
+    Mantiene el motor estadístico probado como fuente de verdad y añade contexto
+    Spot de forma separada. No fuerza causalidad P2P↔Spot: solo prepara métricas
+    observables para futuros modelos/ensembles y backtesting.
+    """
+    name = "venbot-quant-v2"
+
+    def analyze(self, actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL", include_spot=True):
+        base = motor_quant_inteligente(
+            actual_compra, actual_venta, liquidez_actual, banco_filtro, _from_v2=True
+        )
+        spot = _spot_context_for_quant() if include_spot else {}
+        return {
+            "engine": self.name,
+            "p2p": base,
+            "spot": spot,
+            "ensemble": {
+                "status": "foundation_ready",
+                "models": ["statistical_p2p"],
+                "note": "Spot se incorpora como contexto observable; aún no se usa como causalidad ni señal predictiva automática.",
+            },
+        }
+
+
+QUANT_ENGINE_V2 = QuantEngineV2()
+
+
+def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL", _from_v2=False):
     """Motor cuantitativo único usado por Telegram, monitor y contexto de Venbot AI.
 
     Trabaja con timestamps reales. La salida de 7H es un escenario estadístico central,
@@ -1182,6 +1411,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "posicion_rango_7h": round(range_position_7h, 1), "rango_pct": round(rango_pct, 3),
         "max_delta_pct": round(max_delta_pct, 3), "delta_7h_pct": round(delta_pct, 3),
         "regression_r2": round(regression_r2, 3), "cobertura_horas": round(cobertura_horas, 2),
+        "manipulacion": manipulacion,
     }
 
 
@@ -1672,6 +1902,16 @@ async def tarea_recoleccion_automatica():
                     await asyncio.to_thread(guardar_mercado_actual, c, v, l, tasas["usd"], tasas["eur"], tasas["source"])
                     mercado = {"compra": c, "venta": v, "liquidez": l, "bcv": tasas["usd"], "eur": tasas["eur"], "fuente_bcv": tasas["source"], "timestamp": now}
 
+            global _LAST_SPOT_COLLECTION_TS
+            if time.monotonic() - _LAST_SPOT_COLLECTION_TS >= SPOT_REFRESH_SECONDS:
+                try:
+                    spot_now = await asyncio.to_thread(recolectar_spot, SPOT_SYMBOLS, True)
+                    if spot_now:
+                        logger.info("Spot listo: %s", ", ".join(f"{k}={v['price']:.4f}" for k,v in spot_now.items()))
+                    _LAST_SPOT_COLLECTION_TS = time.monotonic()
+                except Exception as e:
+                    logger.warning("Ciclo Spot falló sin afectar P2P: %s", e)
+
             if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
                 datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
                 tendencia = datos["tendencia"]
@@ -1794,6 +2034,8 @@ def read_root():
         "service": "Venbot",
         "api": "/api/precios",
         "history": "/api/history?period=1d",
+        "spot": "/api/spot",
+        "quant_v2": "/api/quant/v2",
     }
 
 
@@ -1806,6 +2048,8 @@ def health():
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
         "ai_configured": bool((GEMINI_API_KEY and genai) or OPENROUTER_API_KEY),
         "ai_model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else None),
+        "spot": {"enabled": True, "symbols": list(SPOT_SYMBOLS), "source": "Binance public market data"},
+        "quant_engine": QUANT_ENGINE_V2.name,
         "timestamp": datetime.now(VET).isoformat(),
     }
 
@@ -1960,6 +2204,57 @@ def obtener_precios_api(refresh: bool = Query(False)):
 @app.get("/api/market")
 def obtener_precios_market_alias():
     return obtener_precios_api(False)
+
+
+@app.get("/api/spot")
+def obtener_spot_api(symbol: Optional[str] = Query(None), refresh: bool = Query(False)):
+    requested = [_normalizar_spot_symbol(symbol)] if symbol else list(SPOT_SYMBOLS)
+    with SPOT_LOCK:
+        cached = dict(SPOT_CACHE.get("value") or {})
+        valid_cache = time.monotonic() < float(SPOT_CACHE.get("expires") or 0)
+    if refresh or not valid_cache or any(sym not in cached for sym in requested):
+        cached = recolectar_spot(requested, persist=bool(DATABASE_URL))
+    data = {sym: cached.get(sym) or obtener_spot_snapshot_db(sym) for sym in requested}
+    clean = {}
+    for sym, item in data.items():
+        if not item:
+            continue
+        ts = item.get("timestamp")
+        clean[sym] = {
+            "symbol": sym, "price": round(float(item.get("price") or 0), 8),
+            "bid": round(float(item.get("bid") or 0), 8), "ask": round(float(item.get("ask") or 0), 8),
+            "change_24h_pct": round(float(item.get("change_24h_pct") or 0), 3),
+            "quote_volume_24h": round(float(item.get("quote_volume_24h") or 0), 2),
+            "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else ts,
+            "source": item.get("source"),
+        }
+    return {"ok": bool(clean), "symbols": clean, "configured_symbols": list(SPOT_SYMBOLS)}
+
+
+@app.get("/api/spot/history")
+def obtener_spot_history(
+    symbol: str = Query("BTCUSDT"),
+    interval: str = Query("5m", pattern="^(1m|5m|15m|30m|1h|4h|1d)$"),
+    limit: int = Query(170, ge=10, le=500),
+):
+    try:
+        candles = obtener_spot_klines(symbol, interval, limit)
+        return {"ok": True, "symbol": _normalizar_spot_symbol(symbol), "interval": interval, "count": len(candles), "candles": candles, "source": "Binance Spot public klines"}
+    except Exception as e:
+        logger.warning("Spot history falló: %s", e)
+        return {"ok": False, "symbol": str(symbol).upper(), "interval": interval, "count": 0, "candles": [], "error": "Fuente Spot temporalmente no disponible"}
+
+
+@app.get("/api/quant/v2")
+def obtener_quant_v2_api(include_spot: bool = Query(True)):
+    mercado = obtener_mercado_actual_db() or {}
+    compra = float(mercado.get("compra", 0) or 0)
+    venta = float(mercado.get("venta", 0) or 0)
+    liq = int(mercado.get("liquidez", 0) or 0)
+    if compra <= 0 or venta <= 0:
+        return {"ok": False, "error": "Sin lectura P2P válida"}
+    result = QUANT_ENGINE_V2.analyze(compra, venta, liq, "GENERAL", include_spot)
+    return {"ok": True, **result}
 
 
 @app.get("/api/analysis")
