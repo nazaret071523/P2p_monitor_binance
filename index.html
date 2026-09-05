@@ -851,6 +851,20 @@
       if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : 'vb-' + Date.now() + '-' + Math.random().toString(36).slice(2)); localStorage.setItem('venbot-online-session', id); }
       return id;
     }
+    async function bootstrapVenbotFoundation() {
+      try {
+        const sid = getOnlineSessionId();
+        const country = (localStorage.getItem('venbot-country') || 'VE').toUpperCase();
+        const r = await fetch(`${API_BASE_URL}/api/foundation/bootstrap`, {
+          method:'POST', headers:{'Content-Type':'application/json','X-Venbot-Country':country},
+          body:JSON.stringify({external_user_id:sid, country_code:country})
+        });
+        if (!r.ok) return;
+        const d = await r.json();
+        window.venbotEntitlements = d.entitlements || null;
+        window.venbotBilling = d.billing || null;
+      } catch(e) {}
+    }
     async function refreshOnlineCount() {
       try {
         const sid = getOnlineSessionId();
@@ -1090,6 +1104,7 @@
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
+      bootstrapVenbotFoundation();
       setInterval(refreshOnlineCount, 30000);
 
       // El precio se actualiza rápido, pero el histórico no necesita viajar al
