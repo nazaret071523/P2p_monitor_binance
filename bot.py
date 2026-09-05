@@ -1199,6 +1199,101 @@ def detectar_manipulacion_mercado(mids, spreads, actual_mid, actual_spread):
         return {"activa": False, "nivel": "normal", "score": 0, "motivos": []}
 
 
+def clasificar_regimen_quant(returns, drift_h, rango_pct, regression_r2):
+    """Clasifica el régimen observable sin convertirlo en una predicción garantizada."""
+    try:
+        arr = np.asarray(returns, dtype=float)
+        vol = float(np.std(arr)) if len(arr) else 0.0
+        typical = float(np.median(np.abs(arr))) if len(arr) else 0.0
+        trend_strength = abs(float(drift_h))
+        noise_floor = max(0.008, typical * 1.2, vol * 0.8)
+        if trend_strength > noise_floor * 1.8 and regression_r2 >= 0.35:
+            regime = "ALCISTA" if drift_h > 0 else "BAJISTA"
+            return {"regimen": regime, "fuerza": round(min(1.0, trend_strength / max(noise_floor * 4.0, 1e-9)), 3), "volatilidad": round(vol, 5)}
+        if rango_pct >= 0.55 and trend_strength <= noise_floor * 1.2:
+            return {"regimen": "RANGO", "fuerza": round(min(1.0, rango_pct / 2.0), 3), "volatilidad": round(vol, 5)}
+        return {"regimen": "TRANSICION", "fuerza": round(min(1.0, trend_strength / max(noise_floor * 3.0, 1e-9)), 3), "volatilidad": round(vol, 5)}
+    except Exception:
+        return {"regimen": "TRANSICION", "fuerza": 0.0, "volatilidad": 0.0}
+
+
+def niveles_dinamicos_quant(recent, mid_actual, volatilidad_pct):
+    """Niveles robustos: extremos + cuantiles, para evitar que un solo outlier domine."""
+    try:
+        arr = np.asarray(recent, dtype=float)
+        if len(arr) < 5:
+            return {"soporte": float(mid_actual), "resistencia": float(mid_actual), "p25": float(mid_actual), "p75": float(mid_actual)}
+        p10, p25, p75, p90 = [float(x) for x in np.percentile(arr, [10, 25, 75, 90])]
+        margen = max(mid_actual * 0.0005, mid_actual * float(volatilidad_pct or 0) / 100.0 * 1.5)
+        soporte = min(p25, mid_actual - margen) if mid_actual > p25 else p10
+        resistencia = max(p75, mid_actual + margen) if mid_actual < p75 else p90
+        if soporte >= resistencia:
+            soporte, resistencia = p10, p90
+        return {"soporte": round(soporte, 2), "resistencia": round(resistencia, 2), "p25": round(p25, 2), "p75": round(p75, 2)}
+    except Exception:
+        return {"soporte": round(float(mid_actual), 2), "resistencia": round(float(mid_actual), 2), "p25": round(float(mid_actual), 2), "p75": round(float(mid_actual), 2)}
+
+
+def backtest_quant_7h(banco_filtro="GENERAL", max_evaluaciones=24):
+    """Backtest conservador sobre muestras históricas disponibles.
+
+    Evalúa la dirección de 7H usando momentum 1h/3h en puntos históricos y no
+    reutiliza información posterior al origen. Si no existe suficiente historial,
+    devuelve estado insuficiente en lugar de inventar resultados.
+    """
+    try:
+        filas = obtener_estadisticas_db(limit=2500, banco=banco_filtro)
+        series = []
+        for c, v, _, fecha in filas:
+            try:
+                if not fecha or float(c) <= 0 or float(v) <= 0:
+                    continue
+                dt = fecha.astimezone(VET) if getattr(fecha, "tzinfo", None) else VET.localize(fecha)
+                series.append((dt, (float(c)+float(v))/2.0))
+            except Exception:
+                continue
+        series.sort(key=lambda x: x[0])
+        if len(series) < 80:
+            return {"status":"insufficient_history", "evaluations":0, "message":"Se necesitan más muestras históricas para medir el motor sin sesgo."}
+        rows = []
+        # Orígenes espaciados; cada uno requiere al menos 3h previas y 7h posteriores.
+        for i in range(20, len(series)-1):
+            if len(rows) >= int(max_evaluaciones):
+                break
+            origin_t, origin_mid = series[i]
+            target_t = origin_t + timedelta(hours=7)
+            future = next(((j, x) for j, x in enumerate(series[i+1:], start=i+1) if x[0] >= target_t), None)
+            if future is None:
+                continue
+            hist = [x for x in series[:i+1] if x[0] >= origin_t - timedelta(hours=7)]
+            if len(hist) < 12:
+                continue
+            def point(h):
+                target = origin_t - timedelta(hours=h)
+                candidates=[x for x in hist if abs((x[0]-target).total_seconds()) <= max(900, h*3600*0.35)]
+                if not candidates: return None
+                return min(candidates, key=lambda x: abs((x[0]-target).total_seconds()))[1]
+            p1, p3 = point(1.0), point(3.0)
+            if p1 is None or p3 is None:
+                continue
+            c1 = (origin_mid-p1)/p1*100.0
+            c3 = (origin_mid-p3)/p3*100.0
+            signal = c1*0.45 + c3*0.55
+            pred_dir = 1 if signal > 0.01 else (-1 if signal < -0.01 else 0)
+            actual_mid = future[1][1]
+            actual_dir = 1 if actual_mid > origin_mid*(1+0.0001) else (-1 if actual_mid < origin_mid*(1-0.0001) else 0)
+            rows.append({"origin":origin_t.isoformat(), "pred_dir":pred_dir, "actual_dir":actual_dir, "signal_pct":round(signal,4), "actual_change_pct":round((actual_mid-origin_mid)/origin_mid*100,4)})
+        if not rows:
+            return {"status":"insufficient_history", "evaluations":0, "message":"No hubo ventanas completas de 7H con datos suficientes."}
+        decisive=[r for r in rows if r["pred_dir"] != 0 and r["actual_dir"] != 0]
+        hits=sum(1 for r in decisive if r["pred_dir"] == r["actual_dir"])
+        mae=float(np.mean([abs(r["actual_change_pct"]) for r in decisive])) if decisive else 0.0
+        return {"status":"ok", "evaluations":len(rows), "decisive":len(decisive), "direction_accuracy_pct":round(hits/len(decisive)*100,2) if decisive else None, "mean_abs_move_pct":round(mae,4), "recent":rows[-10:]}
+    except Exception as e:
+        logger.warning("Backtest Quant 7H falló: %s", e)
+        return {"status":"error", "evaluations":0, "message":"Backtest temporalmente no disponible"}
+
+
 class QuantEngineV2:
     """Capa modular sobre el motor P2P existente.
 
@@ -1218,9 +1313,11 @@ class QuantEngineV2:
             "p2p": base,
             "spot": spot,
             "ensemble": {
-                "status": "foundation_ready",
-                "models": ["statistical_p2p"],
-                "note": "Spot se incorpora como contexto observable; aún no se usa como causalidad ni señal predictiva automática.",
+                "status": "regime_ready",
+                "models": ["statistical_p2p", "regime_detector", "dynamic_levels"],
+                "regime": base.get("regimen"),
+                "dynamic_levels": base.get("niveles_dinamicos"),
+                "note": "Spot se incorpora como contexto observable; no se asume causalidad P2P↔Spot.",
             },
         }
 
@@ -1388,6 +1485,8 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     confianza = max(15, min(92, confianza)) if len(series) >= 3 else 0
 
     manipulacion = detectar_manipulacion_mercado(mids, spreads, mid_actual, spread_actual)
+    regimen = clasificar_regimen_quant(returns, drift_h, rango_pct, regression_r2)
+    niveles_dinamicos = niveles_dinamicos_quant(recent, mid_actual, volatilidad)
 
     liquidez = int(liquidez_actual)
     if liquidez >= 40:
@@ -1411,6 +1510,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "posicion_rango_7h": round(range_position_7h, 1), "rango_pct": round(rango_pct, 3),
         "max_delta_pct": round(max_delta_pct, 3), "delta_7h_pct": round(delta_pct, 3),
         "regression_r2": round(regression_r2, 3), "cobertura_horas": round(cobertura_horas, 2),
+        "regimen": regimen, "niveles_dinamicos": niveles_dinamicos,
         "manipulacion": manipulacion,
     }
 
@@ -2036,6 +2136,7 @@ def read_root():
         "history": "/api/history?period=1d",
         "spot": "/api/spot",
         "quant_v2": "/api/quant/v2",
+        "quant_backtest": "/api/quant/backtest",
     }
 
 
@@ -2255,6 +2356,14 @@ def obtener_quant_v2_api(include_spot: bool = Query(True)):
         return {"ok": False, "error": "Sin lectura P2P válida"}
     result = QUANT_ENGINE_V2.analyze(compra, venta, liq, "GENERAL", include_spot)
     return {"ok": True, **result}
+
+
+@app.get("/api/quant/backtest")
+def obtener_quant_backtest(banco: str = Query("GENERAL"), max_evaluaciones: int = Query(24, ge=8, le=100)):
+    banco = (banco or "GENERAL").upper().strip()
+    if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
+        banco = "GENERAL"
+    return {"ok": True, "bank": banco, "backtest_7h": backtest_quant_7h(banco, max_evaluaciones)}
 
 
 @app.get("/api/analysis")
