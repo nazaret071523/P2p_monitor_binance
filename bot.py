@@ -63,7 +63,7 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 # Market Data Layer Spot (solo datos públicos, sin API key).
 SPOT_BASE_URL = os.getenv("SPOT_BASE_URL", "https://data-api.binance.vision").strip().rstrip("/")
 SPOT_SYMBOLS = tuple(dict.fromkeys(
-    x.strip().upper() for x in os.getenv("SPOT_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if x.strip()
+    x.strip().upper() for x in os.getenv("SPOT_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT,SUIUSDT,AAVEUSDT,UNIUSDT,KSMUSDT,ZECUSDT,XRPUSDT").split(",") if x.strip()
 )) or ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 SPOT_REFRESH_SECONDS = max(10, int(os.getenv("SPOT_REFRESH_SECONDS", "20")))
 SPOT_REQUEST_TIMEOUT = max(3, int(os.getenv("SPOT_REQUEST_TIMEOUT", "8")))
@@ -1234,96 +1234,202 @@ def niveles_dinamicos_quant(recent, mid_actual, volatilidad_pct):
         return {"soporte": round(float(mid_actual), 2), "resistencia": round(float(mid_actual), 2), "p25": round(float(mid_actual), 2), "p75": round(float(mid_actual), 2)}
 
 
-def backtest_quant_7h(banco_filtro="GENERAL", max_evaluaciones=24):
-    """Backtest conservador sobre muestras históricas disponibles.
+def backtest_quant_7h(banco_filtro="GENERAL", max_evaluaciones=24, spacing_minutes=60):
+    """Backtest 7H con separación temporal entre orígenes.
 
-    Evalúa la dirección de 7H usando momentum 1h/3h en puntos históricos y no
-    reutiliza información posterior al origen. Si no existe suficiente historial,
-    devuelve estado insuficiente en lugar de inventar resultados.
+    La predicción de cada origen usa únicamente datos disponibles hasta ese
+    instante. Los orígenes se seleccionan desde el tramo más reciente que ya
+    tiene 7H de futuro observado y se separan por ``spacing_minutes`` para
+    evitar la concentración artificial de evaluaciones consecutivas.
+
+    Nota metodológica: con una separación menor a 7H, las ventanas futuras
+    todavía se solapan. Por eso el resultado se etiqueta como ``temporally_spaced``
+    y no como muestras estadísticamente independientes en sentido estricto.
     """
     try:
-        filas = obtener_estadisticas_db(limit=2500, banco=banco_filtro)
+        max_evaluaciones = max(1, min(int(max_evaluaciones), 100))
+        spacing_minutes = max(15, min(int(spacing_minutes), 24 * 60))
+        spacing = timedelta(minutes=spacing_minutes)
+        prehistory = timedelta(hours=3)
+        future_horizon = timedelta(hours=7)
+
+        # 30k muestras cubren de sobra ~48H con el colector P2P de 10s y
+        # dejan margen para que el backtest pueda seleccionar orígenes separados.
+        filas = obtener_estadisticas_db(limit=30000, banco=banco_filtro)
         series = []
         for c, v, _, fecha in filas:
             try:
                 if not fecha or float(c) <= 0 or float(v) <= 0:
                     continue
                 dt = fecha.astimezone(VET) if getattr(fecha, "tzinfo", None) else VET.localize(fecha)
-                series.append((dt, (float(c)+float(v))/2.0))
+                series.append((dt, (float(c) + float(v)) / 2.0))
             except Exception:
                 continue
+
         series.sort(key=lambda x: x[0])
         if len(series) < 80:
-            return {"status":"insufficient_history", "evaluations":0, "message":"Se necesitan más muestras históricas para medir el motor sin sesgo."}
+            return {
+                "status": "insufficient_history",
+                "evaluations": 0,
+                "spacing_minutes": spacing_minutes,
+                "message": "Se necesitan más muestras históricas para medir el motor sin sesgo.",
+            }
+
+        # Solo son elegibles los orígenes que tienen al menos 3H de historia
+        # y una observación real 7H después.
+        eligible = []
+        first_allowed = series[0][0] + prehistory
+        last_allowed = series[-1][0] - future_horizon
+        for i, (origin_t, _) in enumerate(series):
+            if origin_t < first_allowed or origin_t > last_allowed:
+                continue
+            eligible.append(i)
+
+        if not eligible:
+            return {
+                "status": "insufficient_history",
+                "evaluations": 0,
+                "spacing_minutes": spacing_minutes,
+                "message": "No hubo ventanas completas de 7H con 3H de historia previa.",
+            }
+
+        # Seleccionar desde el final hacia atrás. Así las evaluaciones son
+        # recientes y están separadas temporalmente en lugar de ser puntos
+        # consecutivos del mismo movimiento.
+        selected_indices = []
+        cursor = eligible[-1]
+        while cursor is not None and len(selected_indices) < max_evaluaciones:
+            selected_indices.append(cursor)
+            cursor = next(
+                (
+                    j for j in reversed(eligible)
+                    if series[j][0] <= series[cursor][0] - spacing
+                ),
+                None,
+            )
+        selected_indices.reverse()
+
         rows = []
-        # Orígenes espaciados; cada uno requiere al menos 3h previas y 7h posteriores.
-        for i in range(20, len(series)-1):
-            if len(rows) >= int(max_evaluaciones):
-                break
+        for i in selected_indices:
             origin_t, origin_mid = series[i]
-            target_t = origin_t + timedelta(hours=7)
-            future = next(((j, x) for j, x in enumerate(series[i+1:], start=i+1) if x[0] >= target_t), None)
+            target_t = origin_t + future_horizon
+
+            # Primera muestra disponible en o después del horizonte de 7H.
+            future = next(
+                (
+                    (j, x) for j, x in enumerate(series[i + 1:], start=i + 1)
+                    if x[0] >= target_t
+                ),
+                None,
+            )
             if future is None:
                 continue
-            hist = [x for x in series[:i+1] if x[0] >= origin_t - timedelta(hours=7)]
+
+            # La historia termina exactamente en el origen: no hay leakage.
+            hist = [
+                x for x in series[: i + 1]
+                if x[0] >= origin_t - prehistory
+            ]
             if len(hist) < 12:
                 continue
-            def point(h):
-                target = origin_t - timedelta(hours=h)
-                candidates=[x for x in hist if abs((x[0]-target).total_seconds()) <= max(900, h*3600*0.35)]
-                if not candidates: return None
-                return min(candidates, key=lambda x: abs((x[0]-target).total_seconds()))[1]
+
+            def point(hours):
+                target = origin_t - timedelta(hours=hours)
+                candidates = [
+                    x for x in hist
+                    if abs((x[0] - target).total_seconds())
+                    <= max(900, hours * 3600 * 0.35)
+                ]
+                if not candidates:
+                    return None
+                return min(
+                    candidates,
+                    key=lambda x: abs((x[0] - target).total_seconds())
+                )[1]
+
             p1, p3 = point(1.0), point(3.0)
             if p1 is None or p3 is None:
                 continue
-            c1 = (origin_mid-p1)/p1*100.0
-            c3 = (origin_mid-p3)/p3*100.0
-            signal = c1*0.45 + c3*0.55
+
+            c1 = (origin_mid - p1) / p1 * 100.0
+            c3 = (origin_mid - p3) / p3 * 100.0
+            signal = c1 * 0.45 + c3 * 0.55
             pred_dir = 1 if signal > 0.01 else (-1 if signal < -0.01 else 0)
+
             actual_mid = future[1][1]
-            actual_dir = 1 if actual_mid > origin_mid*(1+0.0001) else (-1 if actual_mid < origin_mid*(1-0.0001) else 0)
-            rows.append({"origin":origin_t.isoformat(), "pred_dir":pred_dir, "actual_dir":actual_dir, "signal_pct":round(signal,4), "actual_change_pct":round((actual_mid-origin_mid)/origin_mid*100,4)})
+            actual_change = (actual_mid - origin_mid) / origin_mid * 100.0
+            actual_dir = (
+                1 if actual_mid > origin_mid * (1 + 0.0001)
+                else (-1 if actual_mid < origin_mid * (1 - 0.0001) else 0)
+            )
+
+            # Error de magnitud de señal: compara el movimiento que el
+            # momentum sugería con el movimiento observado a 7H. No se presenta
+            # como un forecast de precio completo; es una métrica de calibración.
+            signal_error = abs(actual_change - signal)
+
+            rows.append({
+                "origin": origin_t.isoformat(),
+                "target": future[1][0].isoformat(),
+                "pred_dir": pred_dir,
+                "actual_dir": actual_dir,
+                "signal_pct": round(signal, 4),
+                "actual_change_pct": round(actual_change, 4),
+                "signal_error_pct": round(signal_error, 4),
+            })
+
         if not rows:
-            return {"status":"insufficient_history", "evaluations":0, "message":"No hubo ventanas completas de 7H con datos suficientes."}
-        decisive=[r for r in rows if r["pred_dir"] != 0 and r["actual_dir"] != 0]
-        hits=sum(1 for r in decisive if r["pred_dir"] == r["actual_dir"])
-        mae=float(np.mean([abs(r["actual_change_pct"]) for r in decisive])) if decisive else 0.0
-        return {"status":"ok", "evaluations":len(rows), "decisive":len(decisive), "direction_accuracy_pct":round(hits/len(decisive)*100,2) if decisive else None, "mean_abs_move_pct":round(mae,4), "recent":rows[-10:]}
+            return {
+                "status": "insufficient_history",
+                "evaluations": 0,
+                "spacing_minutes": spacing_minutes,
+                "message": "No hubo ventanas completas de 7H con datos suficientes.",
+            }
+
+        decisive = [
+            r for r in rows
+            if r["pred_dir"] != 0 and r["actual_dir"] != 0
+        ]
+        hits = sum(
+            1 for r in decisive
+            if r["pred_dir"] == r["actual_dir"]
+        )
+        mean_abs_move = (
+            float(np.mean([abs(r["actual_change_pct"]) for r in decisive]))
+            if decisive else 0.0
+        )
+        mean_abs_signal_error = (
+            float(np.mean([r["signal_error_pct"] for r in decisive]))
+            if decisive else 0.0
+        )
+
+        coverage_hours = (
+            (series[-1][0] - series[0][0]).total_seconds() / 3600.0
+        )
+
+        return {
+            "status": "ok",
+            "evaluation_mode": "temporally_spaced",
+            "spacing_minutes": spacing_minutes,
+            "future_horizon_hours": 7,
+            "history_coverage_hours": round(coverage_hours, 2),
+            "evaluations": len(rows),
+            "decisive": len(decisive),
+            "direction_accuracy_pct": round(
+                hits / len(decisive) * 100, 2
+            ) if decisive else None,
+            "mean_abs_move_pct": round(mean_abs_move, 4),
+            "mean_abs_signal_error_pct": round(mean_abs_signal_error, 4),
+            "future_windows_overlap": spacing_minutes < 420,
+            "recent": rows[-10:],
+        }
     except Exception as e:
         logger.warning("Backtest Quant 7H falló: %s", e)
-        return {"status":"error", "evaluations":0, "message":"Backtest temporalmente no disponible"}
-
-
-class QuantEngineV2:
-    """Capa modular sobre el motor P2P existente.
-
-    Mantiene el motor estadístico probado como fuente de verdad y añade contexto
-    Spot de forma separada. No fuerza causalidad P2P↔Spot: solo prepara métricas
-    observables para futuros modelos/ensembles y backtesting.
-    """
-    name = "venbot-quant-v2"
-
-    def analyze(self, actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL", include_spot=True):
-        base = motor_quant_inteligente(
-            actual_compra, actual_venta, liquidez_actual, banco_filtro, _from_v2=True
-        )
-        spot = _spot_context_for_quant() if include_spot else {}
         return {
-            "engine": self.name,
-            "p2p": base,
-            "spot": spot,
-            "ensemble": {
-                "status": "regime_ready",
-                "models": ["statistical_p2p", "regime_detector", "dynamic_levels"],
-                "regime": base.get("regimen"),
-                "dynamic_levels": base.get("niveles_dinamicos"),
-                "note": "Spot se incorpora como contexto observable; no se asume causalidad P2P↔Spot.",
-            },
+            "status": "error",
+            "evaluations": 0,
+            "message": "Backtest temporalmente no disponible",
         }
-
-
-QUANT_ENGINE_V2 = QuantEngineV2()
-
 
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL", _from_v2=False):
     """Motor cuantitativo único usado por Telegram, monitor y contexto de Venbot AI.
@@ -2359,11 +2465,23 @@ def obtener_quant_v2_api(include_spot: bool = Query(True)):
 
 
 @app.get("/api/quant/backtest")
-def obtener_quant_backtest(banco: str = Query("GENERAL"), max_evaluaciones: int = Query(24, ge=8, le=100)):
+def obtener_quant_backtest(
+    banco: str = Query("GENERAL"),
+    max_evaluaciones: int = Query(24, ge=1, le=100),
+    spacing_minutes: int = Query(60, ge=15, le=1440),
+):
     banco = (banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         banco = "GENERAL"
-    return {"ok": True, "bank": banco, "backtest_7h": backtest_quant_7h(banco, max_evaluaciones)}
+    return {
+        "ok": True,
+        "bank": banco,
+        "backtest_7h": backtest_quant_7h(
+            banco,
+            max_evaluaciones,
+            spacing_minutes,
+        ),
+    }
 
 
 @app.get("/api/analysis")
