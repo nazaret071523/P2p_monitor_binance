@@ -12,6 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
 
@@ -77,6 +78,11 @@ DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "VE").strip().upper() o
 BETA_PREMIUM_ACCESS = os.getenv("BETA_PREMIUM_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 BETA_VIP_ACCESS = os.getenv("BETA_VIP_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 EXTERNAL_BILLING_URL = os.getenv("EXTERNAL_BILLING_URL", "").strip()
+BILLING_WEBHOOK_SECRET = os.getenv("BILLING_WEBHOOK_SECRET", "").strip()
+PREMIUM_PRICE_LABEL = os.getenv("PREMIUM_PRICE_LABEL", "").strip()
+VIP_PRICE_LABEL = os.getenv("VIP_PRICE_LABEL", "").strip()
+PREMIUM_DURATION_DAYS = max(1, int(os.getenv("PREMIUM_DURATION_DAYS", "30")))
+VIP_DURATION_DAYS = max(1, int(os.getenv("VIP_DURATION_DAYS", "30")))
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "").strip()
 
 # Orígenes separados por coma. Si no se configura, se permite cualquier origen
@@ -344,6 +350,8 @@ def inicializar_db():
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_billing_user ON venbot_billing_events(external_user_id, created_at DESC);
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_venbot_billing_reference
+                    ON venbot_billing_events(external_reference, event_type) WHERE external_reference IS NOT NULL;
                 """)
         logger.info("Base de datos inicializada correctamente.")
     except Exception as e:
@@ -2102,7 +2110,7 @@ async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
         exp = account.get("plan_expires_at")
         exp_text = exp.astimezone(VET).strftime("%d/%m/%Y") if exp else "No definido"
-        texto = f"👤 *Mi cuenta Venbot*\n\n🔐 Usuario: `{account.get('username')}`\n💎 Plan: *{_plan_efectivo(account.get('plan_code'))}*\n📅 Vencimiento: `{exp_text}`\n\nUsa /credenciales para generar tus credenciales de acceso a la interfaz."
+        texto = f"👤 *Mi cuenta Venbot*\n\n🔐 Usuario: `{account.get('username')}`\n💎 Plan: *{_plan_vigente(account.get('plan_code'), account.get('plan_expires_at'))}*\n📅 Vencimiento: `{exp_text}`\n\nUsa /credenciales para generar tus credenciales de acceso a la interfaz."
         if update.callback_query and update.callback_query.message:
             await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔐 Generar credenciales", callback_data="cmd_credenciales")],[InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]]))
         else:
@@ -2247,16 +2255,58 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 
+async def _plan_catalogo_para_telegram(chat_id: int):
+    account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
+    return account
+
+def _checkout_url_for_plan(plan_code: str, chat_id: int) -> Optional[str]:
+    if not EXTERNAL_BILLING_URL:
+        return None
+    plan = _plan_efectivo(plan_code)
+    if plan not in {"PREMIUM", "VIP"}:
+        return None
+    params = urlencode({"plan": plan, "telegram_chat_id": str(chat_id), "source": "telegram"})
+    return EXTERNAL_BILLING_URL + ("&" if "?" in EXTERNAL_BILLING_URL else "?") + params
+
 async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
-    texto = "💎 *Planes VIP y Premium Disponibles*\nAcceso prioritario a funciones avanzadas."
-    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     chat_id = update.effective_chat.id
-    if update.callback_query and update.callback_query.message:
-        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    account = await _plan_catalogo_para_telegram(chat_id)
+    country = DEFAULT_COUNTRY_CODE
+    policy = _billing_policy(country)
+    premium_price = PREMIUM_PRICE_LABEL or "Precio en checkout"
+    vip_price = VIP_PRICE_LABEL or "Precio en checkout"
+    texto = (
+        "💎 *PLANES VENBOT*\n\n"
+        "🆓 *FREE*\n"
+        "• Monitor P2P y BCV\n• Calculadora y análisis básico\n• 5 consultas IA/día\n• 2 alertas\n\n"
+        f"⭐ *PREMIUM* — `{premium_price}`\n"
+        "• Todo FREE\n• IA avanzada\n• 30 consultas IA/día\n• Hasta 10 alertas\n• Historial 30 días\n\n"
+        f"👑 *VIP* — `{vip_price}`\n"
+        "• Todo PREMIUM\n• Spot y funciones Quant\n• Predicción avanzada\n• 100 consultas IA/día\n• Hasta 50 alertas\n• Historial 365 días\n\n"
+        f"🔐 Cuenta: `{account.get('username')}`\n"
+        f"📍 Mercado de cuenta: `{country}`\n\n"
+    )
+    if policy.get("external_checkout") and EXTERNAL_BILLING_URL:
+        texto += "El pago se realiza en el checkout externo habilitado para Venbot. La activación se confirma automáticamente cuando el proveedor informa el pago."
+        botones = [
+            [InlineKeyboardButton("⭐ Comprar PREMIUM", url=_checkout_url_for_plan("PREMIUM", chat_id))],
+            [InlineKeyboardButton("👑 Comprar VIP", url=_checkout_url_for_plan("VIP", chat_id))],
+            [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],
+            [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")],
+        ]
     else:
-        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+        texto += "El checkout externo todavía no está configurado. Tu cuenta ya está preparada para activación de planes cuando se conecte el proveedor de pagos."
+        botones = [
+            [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],
+            [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")],
+        ]
+    markup = InlineKeyboardMarkup(botones)
+    if update.callback_query and update.callback_query.message:
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=markup)
 
 
 async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2422,6 +2472,22 @@ def _plan_efectivo(plan):
     plan = (plan or "FREE").upper()
     return plan if plan in PLAN_ORDER else "FREE"
 
+def _plan_vigente(plan, expires_at=None):
+    plan = _plan_efectivo(plan)
+    if plan == "FREE" or not expires_at:
+        return plan
+    try:
+        exp = expires_at
+        if isinstance(exp, str):
+            exp = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = VET.localize(exp)
+        if exp <= datetime.now(VET):
+            return "FREE"
+    except Exception:
+        return plan
+    return plan
+
 def _billing_policy(country):
     return BILLING_POLICY.get((country or DEFAULT_COUNTRY_CODE).upper(), BILLING_POLICY["DEFAULT"])
 
@@ -2514,7 +2580,7 @@ def _create_session(external_user_id: str):
     return token, expires
 
 def _foundation_entitlements(user):
-    plan = _plan_efectivo(user.get("plan_code"))
+    plan = _plan_vigente(user.get("plan_code"), user.get("plan_expires_at"))
     limits = dict(PLAN_LIMITS[plan])
     features = {k: PLAN_ORDER[plan] >= PLAN_ORDER[v] for k,v in FEATURE_MIN_PLAN.items()}
     return {"plan": plan, "limits": limits, "features": features}
@@ -2545,6 +2611,18 @@ class ConsentRequest(BaseModel):
 
 class AccountDeleteRequest(BaseModel):
     external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+
+class BillingWebhookRequest(BaseModel):
+    external_user_id: Optional[str] = Field(default=None, min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    telegram_chat_id: Optional[int] = None
+    username: Optional[str] = Field(default=None, min_length=6, max_length=40)
+    plan_code: str = Field(min_length=4, max_length=12)
+    event_type: str = Field(min_length=4, max_length=40)
+    external_reference: str = Field(min_length=3, max_length=160)
+    provider: str = Field(default="external_web", min_length=2, max_length=60)
+    country_code: str = Field(default="VE", min_length=2, max_length=8)
+    duration_days: Optional[int] = Field(default=None, ge=1, le=3660)
+    payload: Optional[dict] = None
 
 class AlertRuleCreateRequest(BaseModel):
     external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
@@ -2587,6 +2665,8 @@ def read_root():
         "spot": "/api/spot",
         "quant_v2": "/api/quant/v2",
         "quant_backtest": "/api/quant/backtest",
+        "plans": "/api/plans",
+        "billing_webhook": "/api/billing/webhook",
         "smart_alerts": "/api/alerts/smart",
     }
 
@@ -2693,7 +2773,7 @@ def alert_rules_list(external_user_id: str = Query(..., min_length=16, max_lengt
     user = _foundation_user(external_user_id)
     rules = _alert_rules_for_user(external_user_id)
     limit = int(_foundation_entitlements(user)["limits"]["alerts"])
-    return {"ok": True, "plan": _plan_efectivo(user.get("plan_code")), "limit": limit, "count": len(rules), "rules": rules}
+    return {"ok": True, "plan": _plan_vigente(user.get("plan_code"), user.get("plan_expires_at")), "limit": limit, "count": len(rules), "rules": rules}
 
 @app.post("/api/alerts/rules")
 def alert_rule_create(payload: AlertRuleCreateRequest):
@@ -2776,14 +2856,14 @@ def auth_login(payload: LoginRequest):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
     token, expires = _create_session(row[0])
     user = dict(zip(["external_user_id","username","password_hash","country_code","plan_code","status","plan_expires_at"], row))
-    return {"ok": True, "session_token": token, "expires_at": expires.isoformat(), "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_efectivo(user["plan_code"]), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
+    return {"ok": True, "session_token": token, "expires_at": expires.isoformat(), "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_vigente(user["plan_code"], user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
 
 @app.post("/api/auth/me")
 def auth_me(payload: SessionRequest):
     user = _account_from_session(payload.session_token)
     if not user:
         raise HTTPException(status_code=401, detail="session_expired")
-    return {"ok": True, "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_efectivo(user["plan_code"]), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
+    return {"ok": True, "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_vigente(user["plan_code"], user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
 
 @app.post("/api/auth/logout")
 def auth_logout(payload: SessionRequest):
@@ -2812,7 +2892,7 @@ def foundation_bootstrap(payload: FoundationBootstrapRequest, request: Request):
     policy = _billing_policy(user.get("country_code"))
     return {
         "ok": True,
-        "user": {"external_user_id": user["external_user_id"], "username": user.get("username"), "country_code": user["country_code"], "plan": _plan_efectivo(user.get("plan_code")), "status": user["status"], "plan_expires_at": user.get("plan_expires_at").isoformat() if user.get("plan_expires_at") else None},
+        "user": {"external_user_id": user["external_user_id"], "username": user.get("username"), "country_code": user["country_code"], "plan": _plan_vigente(user.get("plan_code"), user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user.get("plan_expires_at").isoformat() if user.get("plan_expires_at") else None},
         "authenticated": bool(authenticated),
         "entitlements": ent,
         "billing": {"external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
@@ -2850,6 +2930,88 @@ def account_delete(payload: AccountDeleteRequest):
             cur.execute("DELETE FROM venbot_consents WHERE external_user_id=%s", (payload.external_user_id,))
             cur.execute("UPDATE venbot_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE external_user_id=%s AND revoked_at IS NULL", (payload.external_user_id,))
     return {"ok": True, "status": "deleted"}
+
+def _billing_duration_days(plan_code: str, requested: Optional[int] = None) -> int:
+    if requested:
+        return int(requested)
+    return PREMIUM_DURATION_DAYS if plan_code == "PREMIUM" else VIP_DURATION_DAYS
+
+def _billing_activate_account(payload: BillingWebhookRequest):
+    plan = _plan_efectivo(payload.plan_code)
+    if plan not in {"PREMIUM", "VIP"}:
+        raise HTTPException(status_code=400, detail="plan_code debe ser PREMIUM o VIP")
+    event = payload.event_type.lower().strip()
+    if event not in {"payment_succeeded", "subscription_renewed", "subscription_cancelled", "payment_failed"}:
+        raise HTTPException(status_code=400, detail="event_type no soportado")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="database_not_configured")
+    duration = _billing_duration_days(plan, payload.duration_days)
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            # Resolve account from stable identifiers. Telegram is the commercial identity.
+            if payload.external_user_id:
+                cur.execute("SELECT external_user_id,username,telegram_chat_id,plan_code,plan_expires_at,status FROM venbot_users WHERE external_user_id=%s LIMIT 1", (payload.external_user_id,))
+            elif payload.telegram_chat_id is not None:
+                cur.execute("SELECT external_user_id,username,telegram_chat_id,plan_code,plan_expires_at,status FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (int(payload.telegram_chat_id),))
+            elif payload.username:
+                cur.execute("SELECT external_user_id,username,telegram_chat_id,plan_code,plan_expires_at,status FROM venbot_users WHERE username=%s LIMIT 1", (payload.username.strip(),))
+            else:
+                raise HTTPException(status_code=400, detail="Falta identificador de cuenta")
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Cuenta Venbot no encontrada")
+            external_id, username, tg_id, current_plan, current_exp, status = row
+            cur.execute("SELECT 1 FROM venbot_billing_events WHERE external_reference=%s AND event_type=%s LIMIT 1", (payload.external_reference, event))
+            if cur.fetchone():
+                return {"ok": True, "idempotent": True, "external_user_id": external_id, "plan": _plan_vigente(current_plan, current_exp), "plan_expires_at": current_exp.isoformat() if current_exp else None}
+            new_plan = plan
+            new_exp = current_exp
+            if event in {"payment_succeeded", "subscription_renewed"}:
+                base = current_exp if current_exp and current_exp > datetime.now(VET) else datetime.now(VET)
+                new_exp = base + timedelta(days=duration)
+                cur.execute("UPDATE venbot_users SET plan_code=%s,status='active',plan_expires_at=%s,updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s", (plan, new_exp, external_id))
+            elif event == "subscription_cancelled":
+                # Cancellation stops future renewal but preserves the already-paid period.
+                cur.execute("UPDATE venbot_users SET updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s", (external_id,))
+                new_plan = current_plan
+                new_exp = current_exp
+            elif event == "payment_failed":
+                cur.execute("UPDATE venbot_users SET updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s", (external_id,))
+            cur.execute("INSERT INTO venbot_billing_events(external_user_id,country_code,plan_code,provider,external_reference,event_type,status,payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", (external_id, payload.country_code.upper(), plan, payload.provider, payload.external_reference, event, "processed", json.dumps(payload.payload or {})))
+    return {"ok": True, "idempotent": False, "external_user_id": external_id, "username": username, "telegram_chat_id": tg_id, "plan": _plan_efectivo(new_plan), "plan_expires_at": new_exp.isoformat() if new_exp else None}
+
+@app.get("/api/plans")
+def api_plans(request: Request):
+    country = _country_from_request(request)
+    policy = _billing_policy(country)
+    return {
+        "ok": True,
+        "country_code": country,
+        "plans": {
+            "FREE": {"price_label": "Gratis", "duration_days": None, "limits": PLAN_LIMITS["FREE"]},
+            "PREMIUM": {"price_label": PREMIUM_PRICE_LABEL or "Consultar checkout", "duration_days": PREMIUM_DURATION_DAYS, "limits": PLAN_LIMITS["PREMIUM"]},
+            "VIP": {"price_label": VIP_PRICE_LABEL or "Consultar checkout", "duration_days": VIP_DURATION_DAYS, "limits": PLAN_LIMITS["VIP"]},
+        },
+        "billing": {"channel": "telegram", "external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
+    }
+
+@app.post("/api/billing/webhook")
+def billing_webhook(payload: BillingWebhookRequest, request: Request):
+    if not BILLING_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="billing_webhook_not_configured")
+    supplied = request.headers.get("X-Venbot-Billing-Secret", "")
+    if not supplied or not secrets.compare_digest(supplied, BILLING_WEBHOOK_SECRET):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    result = _billing_activate_account(payload)
+    tg_id = result.get("telegram_chat_id")
+    if tg_id and telegram_app and result.get("idempotent") is False:
+        try:
+            if payload.event_type in {"payment_succeeded", "subscription_renewed"}:
+                exp = result.get("plan_expires_at") or "sin fecha"
+                asyncio.create_task(telegram_app.bot.send_message(chat_id=int(tg_id), text=f"✅ *Venbot: plan activado*\n\n💎 Plan: *{result['plan']}*\n📅 Válido hasta: `{exp}`\n\nUsa /cuenta para consultar tu cuenta y /credenciales para obtener acceso a la interfaz.", parse_mode="Markdown"))
+        except Exception:
+            logger.exception("No se pudo notificar activación por Telegram")
+    return result
 
 @app.get("/api/foundation/config")
 def foundation_config(request: Request):
@@ -3765,6 +3927,7 @@ async def startup_event():
         telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
         telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
         telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
+        telegram_app.add_handler(CommandHandler("planes", cmd_suscribir))
         telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
         await telegram_app.initialize()
