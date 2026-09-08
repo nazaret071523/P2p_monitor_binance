@@ -352,6 +352,26 @@
   </div>
 
     <!-- Menú informativo y legal -->
+    <div id="loginModal" class="fixed inset-0 z-[90] bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4" onclick="if(event.target===this) closeLoginModal()">
+      <div class="glass-card w-full max-w-sm rounded-2xl border border-emerald-500/30 p-5 shadow-2xl space-y-4 fade-up">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-user-lock"></i></div><div><h3 class="font-extrabold text-sm text-white">Entrar en Venbot</h3><p class="text-[10px] text-slate-400">Usa las credenciales entregadas por Telegram.</p></div></div>
+          <button type="button" onclick="closeLoginModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="space-y-3">
+          <div><label class="block text-xs font-semibold text-slate-300 mb-1">Usuario</label><input id="login-username" autocomplete="username" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm font-bold text-white" placeholder="VEN-XXXXXXXX"></div>
+          <div><label class="block text-xs font-semibold text-slate-300 mb-1">Contraseña</label><input id="login-password" type="password" autocomplete="current-password" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-white" placeholder="Tu contraseña"></div>
+          <div id="login-status" class="text-[11px] hidden rounded-xl border p-3"></div>
+        </div>
+        <button type="button" onclick="submitLogin()" id="login-submit" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm px-4 py-3 rounded-xl transition">Iniciar sesión</button>
+        <div id="logged-account-box" class="hidden space-y-2 text-xs text-slate-300 bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+          <div class="font-bold text-white">Cuenta activa</div><div>Usuario: <span id="logged-account-user" class="font-mono text-emerald-300"></span></div><div>Plan: <span id="logged-account-plan" class="font-bold text-emerald-300"></span></div><div>Vence: <span id="logged-account-exp" class="font-mono"></span></div>
+          <button type="button" onclick="logoutVenbot()" class="mt-1 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-2 rounded-xl">Cerrar sesión</button>
+        </div>
+        <p class="text-[10px] leading-relaxed text-slate-500">¿No tienes credenciales? El bot oficial de Venbot las genera mediante <code>/credenciales</code> en Telegram.</p>
+      </div>
+    </div>
+
     <div id="infoMenu" class="hidden fixed inset-0 z-[80] v14-menu-backdrop p-4" onclick="if(event.target===this) closeInfoMenu()">
       <div class="v14-menu-panel bg-slate-950 border border-slate-800 w-full max-w-sm ml-auto rounded-2xl shadow-2xl overflow-hidden fade-up">
         <div class="p-4 border-b border-slate-800 flex items-center justify-between">
@@ -851,24 +871,55 @@
     function toggleTheme() { applyTheme(document.documentElement.classList.contains('light') ? 'dark' : 'light'); }
     function initTheme() { applyTheme(localStorage.getItem('venbot-theme') || 'dark'); }
     function getOnlineSessionId() {
+      const accountId = localStorage.getItem('venbot-account-id');
+      if (accountId) return accountId;
       let id = localStorage.getItem('venbot-online-session');
       if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : 'vb-' + Date.now() + '-' + Math.random().toString(36).slice(2)); localStorage.setItem('venbot-online-session', id); }
       return id;
     }
+    function getAuthToken() { return localStorage.getItem('venbot-session-token') || ''; }
+    function showLoginStatus(message, ok=false) {
+      const el=document.getElementById('login-status'); if(!el) return;
+      el.textContent=message; el.classList.remove('hidden','border-rose-500/30','text-rose-300','bg-rose-500/10','border-emerald-500/30','text-emerald-300','bg-emerald-500/10');
+      el.classList.add(ok?'border-emerald-500/30':'border-rose-500/30',ok?'text-emerald-300':'text-rose-300',ok?'bg-emerald-500/10':'bg-rose-500/10');
+    }
+    function updateLoginButton() {
+      const logged=!!localStorage.getItem('venbot-session-token'); const b=document.querySelector('button[onclick="handleLoginClick()"]');
+      if(b){ const span=b.querySelector('span.hidden'); if(span) span.textContent=logged?'Cuenta':'Iniciar sesión'; const sm=b.querySelector('span.sm\:hidden'); if(sm) sm.textContent=logged?'Cuenta':'Entrar'; }
+    }
+    function renderAccountModal(user) {
+      document.getElementById('login-username').value=user?.username||''; document.getElementById('login-password').value='';
+      document.getElementById('logged-account-box').classList.toggle('hidden',!user);
+      document.querySelector('#loginModal #login-submit').classList.toggle('hidden',!!user);
+      if(user){ document.getElementById('logged-account-user').textContent=user.username||'--'; document.getElementById('logged-account-plan').textContent=user.plan||'FREE'; document.getElementById('logged-account-exp').textContent=user.plan_expires_at?new Date(user.plan_expires_at).toLocaleDateString('es-VE'):'No definido'; }
+    }
+    async function validateExistingSession() {
+      const token=getAuthToken(); if(!token) return null;
+      try { const r=await fetch(`${API_BASE_URL}/api/auth/me`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})});
+        if(!r.ok) throw new Error('expired'); const d=await r.json(); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotEntitlements=d.entitlements||null; window.venbotUser=d.user; updateLoginButton(); return d.user;
+      } catch(e){ localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); updateLoginButton(); return null; }
+    }
+    async function submitLogin() {
+      const username=document.getElementById('login-username').value.trim(); const password=document.getElementById('login-password').value;
+      if(!username||!password){showLoginStatus('Introduce usuario y contraseña.');return;}
+      const btn=document.getElementById('login-submit'); btn.disabled=true; btn.textContent='Verificando...';
+      try { const r=await fetch(`${API_BASE_URL}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})}); const d=await r.json();
+        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); renderAccountModal(d.user); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
+      } catch(e){ showLoginStatus(e.message||'Credenciales inválidas.'); } finally { btn.disabled=false; btn.textContent='Iniciar sesión'; }
+    }
+    async function logoutVenbot(){ const token=getAuthToken(); try{ if(token) await fetch(`${API_BASE_URL}/api/auth/logout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})}); }catch(e){} localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); window.venbotUser=null; updateLoginButton(); renderAccountModal(null); closeLoginModal(); location.reload(); }
     async function bootstrapVenbotFoundation() {
       try {
-        const sid = getOnlineSessionId();
+        const sid = getOnlineSessionId(); const token=getAuthToken();
         const country = (localStorage.getItem('venbot-country') || 'VE').toUpperCase();
-        const r = await fetch(`${API_BASE_URL}/api/foundation/bootstrap`, {
-          method:'POST', headers:{'Content-Type':'application/json','X-Venbot-Country':country},
-          body:JSON.stringify({external_user_id:sid, country_code:country})
-        });
-        if (!r.ok) return;
-        const d = await r.json();
-        window.venbotEntitlements = d.entitlements || null;
-        window.venbotBilling = d.billing || null;
+        const headers={'Content-Type':'application/json','X-Venbot-Country':country}; if(token) headers['X-Venbot-Session']=token;
+        const r = await fetch(`${API_BASE_URL}/api/foundation/bootstrap`, {method:'POST', headers, body:JSON.stringify({external_user_id:sid, country_code:country})});
+        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton();
       } catch(e) {}
     }
+    function openLoginModal(){ document.getElementById('loginModal').classList.remove('hidden'); const token=getAuthToken(); if(token&&window.venbotUser) renderAccountModal(window.venbotUser); else { renderAccountModal(null); document.getElementById('login-username').focus(); } }
+    function closeLoginModal(){ document.getElementById('loginModal').classList.add('hidden'); }
+    function handleLoginClick(){ openLoginModal(); }
     async function refreshOnlineCount() {
       try {
         const sid = getOnlineSessionId();
@@ -879,7 +930,6 @@
         document.getElementById('menu-online-count').textContent = n;
       } catch(e) {}
     }
-    function handleLoginClick() { alert('Redirigiendo al panel de inicio de sesión de la plataforma.'); }
     function handleAIClick() { document.getElementById('aiChatModal').classList.remove('hidden'); }
     function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
     function openAlertsModal() {
@@ -1152,6 +1202,8 @@
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
+      updateLoginButton();
+      await validateExistingSession();
       bootstrapVenbotFoundation();
       setInterval(refreshOnlineCount, 30000);
 
