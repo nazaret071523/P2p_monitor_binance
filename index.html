@@ -403,14 +403,18 @@
       </div>
 
       <div class="space-y-3 text-xs">
-        <div><label class="block font-semibold text-slate-300 mb-1">Tipo de Operación P2P</label><select id="alert-type" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200"><option value="sell">Cuando el precio de Venta P2P supere...</option><option value="buy">Cuando el precio de Compra P2P baje de...</option></select></div>
-        <div><label class="block font-semibold text-slate-300 mb-1">Precio Objetivo (Bs)</label><input id="alert-target-price" type="number" step="0.01" placeholder="Ej. 950.00" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-bold text-white"></div>
-        <div><label class="block font-semibold text-slate-300 mb-1">Enviar notificación a:</label><input id="alert-contact" type="text" placeholder="@TuUsuarioTelegram o correo" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white"></div>
-        <div id="alert-status-msg" class="text-[10px] text-emerald-400 font-semibold hidden">✓ Alerta guardada en este navegador.</div>
+        <div><label class="block font-semibold text-slate-300 mb-1">Banco</label><select id="alert-bank" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200"><option value="GENERAL">GENERAL · 3 bancos</option><option value="MERCANTIL">Mercantil</option><option value="PROVINCIAL">Provincial</option><option value="BNC">BNC</option></select></div>
+        <div><label class="block font-semibold text-slate-300 mb-1">Tipo de Operación P2P</label><select id="alert-type" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200"><option value="sell">Vender USDT cuando supere...</option><option value="buy">Comprar USDT cuando baje de...</option></select></div>
+        <div><label class="block font-semibold text-slate-300 mb-1">Precio Objetivo (Bs)</label><input id="alert-target-price" type="number" step="0.01" placeholder="Ej. 970.00" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-bold text-white"></div>
+        <div><label class="block font-semibold text-slate-300 mb-1">ID de chat de Telegram</label><input id="alert-contact" type="number" placeholder="Ej. 123456789" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white"><p class="text-[9px] text-slate-500 mt-1">En Telegram escribe <b>/miid</b> al bot Venbot para obtener tu ID.</p></div>
+        <div class="rounded-xl bg-slate-950/70 border border-slate-800 p-2.5 text-[9px] text-slate-400">Las alertas se guardan en Venbot y se ejecutan desde el servidor. No dependen de que tengas esta página abierta.</div>
+        <div id="alert-limit-msg" class="text-[10px] text-slate-400"></div>
+        <div id="alert-status-msg" class="text-[10px] text-emerald-400 font-semibold hidden"></div>
+        <div id="alert-rules-list" class="space-y-2 max-h-32 overflow-y-auto"></div>
       </div>
 
       <div class="flex items-center justify-end gap-2 pt-2">
-        <button type="button" onclick="closeAlertsModal()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold px-4 py-2 rounded-xl transition">Cancelar</button>
+        <button type="button" onclick="closeAlertsModal()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold px-4 py-2 rounded-xl transition">Cerrar</button>
         <button type="button" onclick="saveAlertConfig()" class="focus-ring bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition">Guardar alerta</button>
       </div>
     </div>
@@ -886,6 +890,7 @@
         document.getElementById('alert-contact').value = saved.contact || '';
       }
       document.getElementById('alertsModal').classList.remove('hidden');
+      loadPersonalAlerts();
     }
     function closeAlertsModal() { document.getElementById('alertsModal').classList.add('hidden'); }
 
@@ -1060,20 +1065,63 @@
       }
     }
 
-    function saveAlertConfig() {
-      const config = {
-        type: document.getElementById('alert-type').value,
-        target: Number(document.getElementById('alert-target-price').value || 0),
-        contact: document.getElementById('alert-contact').value.trim(),
-        triggered: false
-      };
-      localStorage.setItem('venbot-alert', JSON.stringify(config));
+    async function loadPersonalAlerts() {
+      const sid = getOnlineSessionId();
+      const list = document.getElementById('alert-rules-list');
+      const limitMsg = document.getElementById('alert-limit-msg');
+      if (!list) return;
+      try {
+        const r = await fetch(`${API_BASE_URL}/api/alerts/rules?external_user_id=${encodeURIComponent(sid)}`);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'No se pudieron cargar las alertas');
+        limitMsg.textContent = `Plan ${d.plan}: ${d.count}/${d.limit} alertas utilizadas.`;
+        list.innerHTML = '';
+        (d.rules || []).forEach(rule => {
+          const op = rule.direction === 'above' ? 'Vender ≥' : 'Comprar ≤';
+          const price = Number(rule.target_value || 0).toFixed(2);
+          const row = document.createElement('div');
+          row.className = 'flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900/70 p-2';
+          row.innerHTML = `<div class="min-w-0"><div class="text-[10px] text-white font-bold">${rule.banco} · ${op} ${price} Bs</div><div class="text-[8px] text-slate-500">${rule.enabled ? 'Activa' : 'Pausada'} · cooldown ${Math.round(Number(rule.cooldown_seconds || 1800)/60)} min</div></div><button type="button" class="text-[9px] text-red-300 hover:text-red-200" onclick="deletePersonalAlert(${rule.id})">Eliminar</button>`;
+          list.appendChild(row);
+        });
+      } catch (e) {
+        limitMsg.textContent = 'No se pudieron cargar las alertas del servidor.';
+      }
+    }
+
+    async function saveAlertConfig() {
+      const target = Number(document.getElementById('alert-target-price').value || 0);
+      const contact = document.getElementById('alert-contact').value.trim();
+      const type = document.getElementById('alert-type').value;
+      const banco = document.getElementById('alert-bank').value;
       const msg = document.getElementById('alert-status-msg');
-      msg.classList.remove('hidden');
-      setTimeout(() => {
-        msg.classList.add('hidden');
-        closeAlertsModal();
-      }, 1200);
+      if (!target || target <= 0) { msg.textContent = '⚠️ Indica un precio objetivo válido.'; msg.className='text-[10px] text-amber-300 font-semibold'; msg.classList.remove('hidden'); return; }
+      if (!/^[-]?\d+$/.test(contact)) { msg.textContent = '⚠️ Necesitas un ID numérico de Telegram. Usa /miid en Venbot.'; msg.className='text-[10px] text-amber-300 font-semibold'; msg.classList.remove('hidden'); return; }
+      try {
+        const r = await fetch(`${API_BASE_URL}/api/alerts/rules`, {
+          method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'},
+          body: JSON.stringify({ external_user_id:getOnlineSessionId(), banco, target_value:target, direction:type === 'sell' ? 'above' : 'below', telegram_chat_id:Number(contact), cooldown_seconds:1800 })
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'No se pudo guardar');
+        msg.textContent = '✓ Alerta guardada en el servidor.'; msg.className='text-[10px] text-emerald-400 font-semibold'; msg.classList.remove('hidden');
+        document.getElementById('alert-target-price').value='';
+        await loadPersonalAlerts();
+        setTimeout(() => msg.classList.add('hidden'), 1800);
+      } catch (e) {
+        msg.textContent = `⚠️ ${e.message}`; msg.className='text-[10px] text-amber-300 font-semibold'; msg.classList.remove('hidden');
+      }
+    }
+
+    async function deletePersonalAlert(id) {
+      try {
+        const sid = getOnlineSessionId();
+        const r = await fetch(`${API_BASE_URL}/api/alerts/rules/${id}?external_user_id=${encodeURIComponent(sid)}`, {method:'DELETE'});
+        if (!r.ok) { const d=await r.json().catch(()=>({})); throw new Error(d.detail || 'No se pudo eliminar'); }
+        await loadPersonalAlerts();
+      } catch (e) {
+        alert(`VENBOT: ${e.message}`);
+      }
     }
 
     function checkLocalAlert() {
