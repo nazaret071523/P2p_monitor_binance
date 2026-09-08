@@ -277,9 +277,13 @@ def inicializar_db():
                         direction TEXT,
                         enabled BOOLEAN NOT NULL DEFAULT TRUE,
                         cooldown_seconds INTEGER NOT NULL DEFAULT 1800,
+                        telegram_chat_id BIGINT,
+                        last_triggered_at TIMESTAMPTZ,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );
+                    ALTER TABLE venbot_alert_rules ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT;
+                    ALTER TABLE venbot_alert_rules ADD COLUMN IF NOT EXISTS last_triggered_at TIMESTAMPTZ;
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_alert_rules_user_enabled
@@ -2057,6 +2061,10 @@ def obtener_teclado_menu():
     ])
 
 
+async def cmd_miid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message:
+        await update.message.reply_text(f"🆔 Tu ID de chat de Telegram es: {update.effective_chat.id}\nÚsalo en Venbot para recibir tus alertas personales.")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "🦜 *VENBOT PREDICCIONES - SISTEMA DE PROTECCIÓN*\nSelecciona una opción del menú táctico:"
     if update.callback_query:
@@ -2277,6 +2285,12 @@ async def tarea_recoleccion_automatica():
                         except Exception as e:
                             logger.warning("No se pudo enviar alerta inteligente a Telegram: %s", e)
 
+                # Alertas personales: cada regla usa el último dato persistido de su banco.
+                try:
+                    await _evaluar_alertas_personales()
+                except Exception as e:
+                    logger.warning("Evaluación de alertas personales falló sin afectar P2P: %s", e)
+
                 # Histeresis/confirmación: un cambio de tendencia debe repetirse en
                 # varias capturas antes de avisar. Así se evita RANGO↔ALCISTA cada ciclo.
                 global TENDENCIA_CANDIDATA, TENDENCIA_CANDIDATA_CONTEO, ULTIMA_ALERTA_TENDENCIA_TS, ULTIMO_ESTADO_TENDENCIA
@@ -2373,6 +2387,23 @@ class ConsentRequest(BaseModel):
 class AccountDeleteRequest(BaseModel):
     external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
 
+class AlertRuleCreateRequest(BaseModel):
+    external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    banco: str = Field(default="GENERAL", min_length=3, max_length=12)
+    target_value: float = Field(gt=0)
+    direction: str = Field(default="above", min_length=3, max_length=10)
+    telegram_chat_id: Optional[int] = None
+    cooldown_seconds: int = Field(default=1800, ge=300, le=86400)
+
+class AlertRuleUpdateRequest(BaseModel):
+    external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    banco: Optional[str] = Field(default=None, min_length=3, max_length=12)
+    target_value: Optional[float] = Field(default=None, gt=0)
+    direction: Optional[str] = Field(default=None, min_length=3, max_length=10)
+    telegram_chat_id: Optional[int] = None
+    cooldown_seconds: Optional[int] = Field(default=None, ge=300, le=86400)
+    enabled: Optional[bool] = None
+
 # ==========================================
 # FASTAPI
 # ==========================================
@@ -2415,6 +2446,145 @@ def health():
         "smart_alerts": {"enabled": SMART_ALERTS_ENABLED, "cooldown_seconds": SMART_ALERT_COOLDOWN_SECONDS},
         "timestamp": datetime.now(VET).isoformat(),
     }
+
+def _validar_alerta_banco(banco):
+    banco = (banco or "GENERAL").upper().strip()
+    if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
+        raise HTTPException(status_code=400, detail="Banco no soportado")
+    return banco
+
+def _validar_direccion_alerta(direction):
+    direction = (direction or "above").lower().strip()
+    if direction not in {"above", "below"}:
+        raise HTTPException(status_code=400, detail="direction debe ser above o below")
+    return direction
+
+def _alert_rules_for_user(external_user_id, include_disabled=True):
+    if not DATABASE_URL:
+        return []
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            sql = """SELECT id, external_user_id, banco, rule_type, target_value, direction, enabled, cooldown_seconds, telegram_chat_id, last_triggered_at, created_at, updated_at
+                     FROM venbot_alert_rules WHERE external_user_id=%s"""
+            if not include_disabled:
+                sql += " AND enabled=TRUE"
+            sql += " ORDER BY created_at DESC"
+            cur.execute(sql, (external_user_id,))
+            rows = cur.fetchall()
+    keys = ["id","external_user_id","banco","rule_type","target_value","direction","enabled","cooldown_seconds","telegram_chat_id","last_triggered_at","created_at","updated_at"]
+    return [dict(zip(keys, r)) for r in rows]
+
+def _alert_rule_count(external_user_id):
+    if not DATABASE_URL:
+        return 0
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM venbot_alert_rules WHERE external_user_id=%s", (external_user_id,))
+            return int(cur.fetchone()[0] or 0)
+
+async def _evaluar_alertas_personales():
+    if not DATABASE_URL or not telegram_app:
+        return 0
+    ahora = datetime.now(VET)
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, external_user_id, banco, target_value, direction, cooldown_seconds, telegram_chat_id, last_triggered_at
+                          FROM venbot_alert_rules WHERE enabled=TRUE AND telegram_chat_id IS NOT NULL
+                          ORDER BY id ASC""")
+            rules = cur.fetchall()
+    disparadas = 0
+    for rid, external_user_id, banco, target, direction, cooldown, chat_id, last_triggered in rules:
+        mercado = obtener_ultimo_mercado_banco(str(banco).upper())
+        compra = float(mercado.get("compra") or 0)
+        venta = float(mercado.get("venta") or 0)
+        if compra <= 0 or venta <= 0:
+            continue
+        precio = venta if direction == "above" else compra
+        hit = precio >= float(target) if direction == "above" else precio <= float(target)
+        if not hit:
+            continue
+        if last_triggered:
+            try:
+                lt = last_triggered if last_triggered.tzinfo else last_triggered.replace(tzinfo=VET)
+                if (ahora - lt).total_seconds() < int(cooldown or 1800):
+                    continue
+            except Exception:
+                pass
+        try:
+            await telegram_app.bot.send_message(
+                chat_id=int(chat_id),
+                text=(f"🔔 VENBOT · Alerta personal\n"
+                      f"• Banco: {banco}\n"
+                      f"• Condición: {'Vender USDT' if direction == 'above' else 'Comprar USDT'} {'≥' if direction == 'above' else '≤'} {float(target):.2f} Bs\n"
+                      f"• Precio actual: {precio:.2f} Bs\n"
+                      f"• Comprar USDT: {compra:.2f} Bs\n"
+                      f"• Vender USDT: {venta:.2f} Bs\n"
+                      f"• Señal informativa; no garantiza un resultado futuro."))
+            with obtener_conexion() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE venbot_alert_rules SET last_triggered_at=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (ahora, rid))
+            disparadas += 1
+            logger.info("Alerta personal disparada: rule=%s user=%s banco=%s", rid, external_user_id, banco)
+        except Exception as e:
+            logger.warning("No se pudo disparar alerta personal %s: %s", rid, e)
+    return disparadas
+
+@app.get("/api/alerts/rules")
+def alert_rules_list(external_user_id: str = Query(..., min_length=16, max_length=120)):
+    user = _foundation_user(external_user_id)
+    rules = _alert_rules_for_user(external_user_id)
+    limit = int(_foundation_entitlements(user)["limits"]["alerts"])
+    return {"ok": True, "plan": _plan_efectivo(user.get("plan_code")), "limit": limit, "count": len(rules), "rules": rules}
+
+@app.post("/api/alerts/rules")
+def alert_rule_create(payload: AlertRuleCreateRequest):
+    user = _foundation_user(payload.external_user_id)
+    limit = int(_foundation_entitlements(user)["limits"]["alerts"])
+    if _alert_rule_count(payload.external_user_id) >= limit:
+        raise HTTPException(status_code=403, detail=f"Límite de alertas alcanzado para {_plan_efectivo(user.get('plan_code'))}: {limit}")
+    banco = _validar_alerta_banco(payload.banco)
+    direction = _validar_direccion_alerta(payload.direction)
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="database_not_configured")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO venbot_alert_rules(external_user_id,banco,rule_type,target_value,direction,enabled,cooldown_seconds,telegram_chat_id)
+                           VALUES(%s,%s,'price_target',%s,%s,TRUE,%s,%s)
+                           RETURNING id""", (payload.external_user_id,banco,payload.target_value,direction,payload.cooldown_seconds,payload.telegram_chat_id))
+            rid = int(cur.fetchone()[0])
+    return {"ok": True, "id": rid, "rules": _alert_rules_for_user(payload.external_user_id)}
+
+@app.patch("/api/alerts/rules/{rule_id}")
+def alert_rule_update(rule_id: int, payload: AlertRuleUpdateRequest):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="database_not_configured")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM venbot_alert_rules WHERE id=%s AND external_user_id=%s", (rule_id,payload.external_user_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Alerta no encontrada")
+            fields=[]; vals=[]
+            if payload.banco is not None: fields.append("banco=%s"); vals.append(_validar_alerta_banco(payload.banco))
+            if payload.target_value is not None: fields.append("target_value=%s"); vals.append(payload.target_value)
+            if payload.direction is not None: fields.append("direction=%s"); vals.append(_validar_direccion_alerta(payload.direction))
+            if payload.telegram_chat_id is not None: fields.append("telegram_chat_id=%s"); vals.append(payload.telegram_chat_id)
+            if payload.cooldown_seconds is not None: fields.append("cooldown_seconds=%s"); vals.append(payload.cooldown_seconds)
+            if payload.enabled is not None: fields.append("enabled=%s"); vals.append(payload.enabled)
+            fields.append("updated_at=CURRENT_TIMESTAMP")
+            vals.append(rule_id); vals.append(payload.external_user_id)
+            cur.execute(f"UPDATE venbot_alert_rules SET {', '.join(fields)} WHERE id=%s AND external_user_id=%s", tuple(vals))
+    return {"ok": True, "rules": _alert_rules_for_user(payload.external_user_id)}
+
+@app.delete("/api/alerts/rules/{rule_id}")
+def alert_rule_delete(rule_id: int, external_user_id: str = Query(..., min_length=16, max_length=120)):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="database_not_configured")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM venbot_alert_rules WHERE id=%s AND external_user_id=%s", (rule_id,external_user_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Alerta no encontrada")
+    return {"ok": True, "rules": _alert_rules_for_user(external_user_id)}
 
 @app.get("/api/alerts/smart")
 def smart_alerts(limit: int = Query(50, ge=1, le=200), banco: str = Query("GENERAL")):
@@ -3374,6 +3544,7 @@ async def startup_event():
     if TELEGRAM_BOT_TOKEN:
         telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
         telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CommandHandler("miid", cmd_miid))
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
