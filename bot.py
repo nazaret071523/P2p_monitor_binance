@@ -98,6 +98,13 @@ TENDENCIA_CANDIDATA_CONTEO = 0
 ULTIMA_ALERTA_TENDENCIA_TS = 0.0
 TELEGRAM_TREND_CONFIRMATIONS = max(2, int(os.getenv("TELEGRAM_TREND_CONFIRMATIONS", "3")))
 TELEGRAM_TREND_COOLDOWN_SECONDS = max(60, int(os.getenv("TELEGRAM_TREND_COOLDOWN_SECONDS", "900")))
+# Motor de Alertas Inteligentes v1: detecta eventos estadísticos y los persiste
+# para que no dependan de la memoria del proceso ni se repitan en cada ciclo.
+SMART_ALERTS_ENABLED = os.getenv("SMART_ALERTS_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+SMART_ALERT_COOLDOWN_SECONDS = max(120, int(os.getenv("SMART_ALERT_COOLDOWN_SECONDS", "1800")))
+SMART_ALERT_HIGH_SPREAD_PCT = max(0.50, float(os.getenv("SMART_ALERT_HIGH_SPREAD_PCT", "1.50")))
+SMART_ALERT_FAST_MOVE_5M_PCT = max(0.10, float(os.getenv("SMART_ALERT_FAST_MOVE_5M_PCT", "0.35")))
+SMART_ALERT_BREAKOUT_BUFFER_PCT = max(0.01, float(os.getenv("SMART_ALERT_BREAKOUT_BUFFER_PCT", "0.05")))
 CONFIGURACION_BANCOS = {}
 telegram_app = None
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
@@ -240,6 +247,45 @@ def inicializar_db():
                     );
                 """)
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_alert_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        event_type TEXT NOT NULL,
+                        banco TEXT NOT NULL DEFAULT 'GENERAL',
+                        severity TEXT NOT NULL DEFAULT 'info',
+                        title TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        signature TEXT NOT NULL,
+                        payload JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_venbot_alert_events_created
+                    ON venbot_alert_events(created_at DESC);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_venbot_alert_events_signature_created
+                    ON venbot_alert_events(signature, created_at DESC);
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_alert_rules (
+                        id BIGSERIAL PRIMARY KEY,
+                        external_user_id TEXT NOT NULL,
+                        banco TEXT NOT NULL DEFAULT 'GENERAL',
+                        rule_type TEXT NOT NULL,
+                        target_value DOUBLE PRECISION NOT NULL,
+                        direction TEXT,
+                        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                        cooldown_seconds INTEGER NOT NULL DEFAULT 1800,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_venbot_alert_rules_user_enabled
+                    ON venbot_alert_rules(external_user_id, enabled);
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS spot_market_snapshots (
                         id BIGSERIAL PRIMARY KEY,
                         symbol TEXT NOT NULL,
@@ -264,6 +310,104 @@ def inicializar_db():
         logger.info("Base de datos inicializada correctamente.")
     except Exception as e:
         logger.exception("Error inicializando DB: %s", e)
+
+
+def registrar_evento_alerta(event_type, banco, severity, title, message, signature, payload=None, cooldown_seconds=None):
+    """Persiste una alerta solo si no existe el mismo evento dentro del cooldown."""
+    if not DATABASE_URL:
+        return False
+    cooldown = int(cooldown_seconds or SMART_ALERT_COOLDOWN_SECONDS)
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 1 FROM venbot_alert_events
+                    WHERE signature=%s AND created_at >= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')
+                    LIMIT 1
+                """, (signature, cooldown))
+                if cur.fetchone():
+                    return False
+                cur.execute("""
+                    INSERT INTO venbot_alert_events
+                    (event_type,banco,severity,title,message,signature,payload)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                """, (event_type,banco,severity,title,message,signature,json.dumps(payload or {}, ensure_ascii=False)))
+        return True
+    except Exception as e:
+        logger.warning("No se pudo persistir alerta inteligente: %s", e)
+        return False
+
+
+def obtener_eventos_alerta(limit=50, banco="GENERAL"):
+    if not DATABASE_URL:
+        return []
+    limit = max(1, min(int(limit), 200))
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                if banco == "GENERAL":
+                    cur.execute("""
+                        SELECT id,event_type,banco,severity,title,message,payload,created_at
+                        FROM venbot_alert_events ORDER BY created_at DESC LIMIT %s
+                    """, (limit,))
+                else:
+                    cur.execute("""
+                        SELECT id,event_type,banco,severity,title,message,payload,created_at
+                        FROM venbot_alert_events WHERE banco=%s ORDER BY created_at DESC LIMIT %s
+                    """, (banco, limit))
+                rows = cur.fetchall()
+        out=[]
+        for r in rows:
+            out.append({"id":r[0],"event_type":r[1],"banco":r[2],"severity":r[3],"title":r[4],"message":r[5],"payload":r[6] or {},"created_at":r[7].astimezone(VET).isoformat() if getattr(r[7], "tzinfo", None) else str(r[7])})
+        return out
+    except Exception as e:
+        logger.warning("No se pudieron leer alertas: %s", e)
+        return []
+
+
+def evaluar_alertas_inteligentes(mercado, datos, banco="GENERAL"):
+    """Genera eventos estadísticos conservadores. No modifica el motor Quant ni sus predicciones."""
+    if not SMART_ALERTS_ENABLED or not mercado or not datos:
+        return []
+    compra=float(mercado.get("compra") or 0)
+    venta=float(mercado.get("venta") or 0)
+    if compra <= 0 or venta <= 0:
+        return []
+    spread_pct=float(datos.get("spread_pct") or 0)
+    cambios=datos.get("cambios") or {}
+    tendencia=str(datos.get("tendencia") or "")
+    niveles=datos.get("niveles_dinamicos") or {}
+    soporte=float(niveles.get("soporte") or datos.get("soporte_7h") or 0)
+    resistencia=float(niveles.get("resistencia") or datos.get("resistencia_7h") or 0)
+    mid=(compra+venta)/2.0
+    events=[]
+
+    if spread_pct >= SMART_ALERT_HIGH_SPREAD_PCT:
+        sig=f"spread_high:{banco}"
+        msg=f"Spread elevado en {banco}: {spread_pct:.2f}% (Comprar {compra:.2f} Bs / Vender {venta:.2f} Bs)."
+        if registrar_evento_alerta("spread_high", banco, "warning", "Spread elevado", msg, sig):
+            events.append(("warning", "⚠️ SPREAD ELEVADO", msg))
+
+    move5=cambios.get("5m")
+    if move5 is not None and abs(float(move5)) >= SMART_ALERT_FAST_MOVE_5M_PCT:
+        direction="alcista" if float(move5)>0 else "bajista"
+        sig=f"fast_move_5m:{banco}:{direction}"
+        msg=f"Movimiento rápido de 5m: {float(move5):+.3f}% ({direction}). Comprar {compra:.2f} Bs / Vender {venta:.2f} Bs."
+        if registrar_evento_alerta("fast_move_5m", banco, "warning", "Movimiento rápido", msg, sig):
+            events.append(("warning", "🚨 MOVIMIENTO RÁPIDO", msg))
+
+    if soporte > 0 and mid < soporte * (1.0 - SMART_ALERT_BREAKOUT_BUFFER_PCT/100.0):
+        sig=f"break_support:{banco}"
+        msg=f"El midpoint {mid:.2f} Bs está por debajo del soporte dinámico {soporte:.2f} Bs."
+        if registrar_evento_alerta("break_support", banco, "critical", "Ruptura de soporte", msg, sig):
+            events.append(("critical", "🔻 RUPTURA DE SOPORTE", msg))
+    elif resistencia > 0 and mid > resistencia * (1.0 + SMART_ALERT_BREAKOUT_BUFFER_PCT/100.0):
+        sig=f"break_resistance:{banco}"
+        msg=f"El midpoint {mid:.2f} Bs está por encima de la resistencia dinámica {resistencia:.2f} Bs."
+        if registrar_evento_alerta("break_resistance", banco, "critical", "Ruptura de resistencia", msg, sig):
+            events.append(("critical", "🔺 RUPTURA DE RESISTENCIA", msg))
+
+    return events
 
 
 def guardar_muestra_db(compra, venta, liquidez_score=0, banco="GENERAL", fecha=None):
@@ -2122,6 +2266,16 @@ async def tarea_recoleccion_automatica():
                 datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
                 tendencia = datos["tendencia"]
                 manip = datos.get("manipulacion") or {}
+                nuevos_eventos = await asyncio.to_thread(evaluar_alertas_inteligentes, mercado, datos, "GENERAL")
+                if nuevos_eventos and TELEGRAM_ALERT_CHAT_ID and telegram_app:
+                    for severity, titulo, msg in nuevos_eventos:
+                        try:
+                            await telegram_app.bot.send_message(
+                                chat_id=TELEGRAM_ALERT_CHAT_ID,
+                                text=f"{titulo}\n• {msg}\n• Señal estadística; no garantiza un resultado futuro.",
+                            )
+                        except Exception as e:
+                            logger.warning("No se pudo enviar alerta inteligente a Telegram: %s", e)
 
                 # Histeresis/confirmación: un cambio de tendencia debe repetirse en
                 # varias capturas antes de avisar. Así se evita RANGO↔ALCISTA cada ciclo.
@@ -2243,6 +2397,7 @@ def read_root():
         "spot": "/api/spot",
         "quant_v2": "/api/quant/v2",
         "quant_backtest": "/api/quant/backtest",
+        "smart_alerts": "/api/alerts/smart",
     }
 
 
@@ -2257,8 +2412,28 @@ def health():
         "ai_model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else None),
         "spot": {"enabled": True, "symbols": list(SPOT_SYMBOLS), "source": "Binance public market data"},
         "quant_engine": QUANT_ENGINE_V2.name,
+        "smart_alerts": {"enabled": SMART_ALERTS_ENABLED, "cooldown_seconds": SMART_ALERT_COOLDOWN_SECONDS},
         "timestamp": datetime.now(VET).isoformat(),
     }
+
+@app.get("/api/alerts/smart")
+def smart_alerts(limit: int = Query(50, ge=1, le=200), banco: str = Query("GENERAL")):
+    banco = (banco or "GENERAL").upper()
+    if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
+        raise HTTPException(status_code=400, detail="Banco no soportado")
+    return {"ok": True, "enabled": SMART_ALERTS_ENABLED, "cooldown_seconds": SMART_ALERT_COOLDOWN_SECONDS, "events": obtener_eventos_alerta(limit, banco)}
+
+
+@app.post("/api/alerts/smart/evaluate")
+def smart_alerts_evaluate():
+    """Evalúa una vez el mercado actual; útil para dashboard y pruebas sin esperar al collector."""
+    mercado = obtener_mercado_actual_db() or {}
+    if not mercado:
+        return {"ok": False, "error": "Sin mercado real disponible"}
+    datos = motor_quant_inteligente(float(mercado.get("compra") or 0), float(mercado.get("venta") or 0), int(mercado.get("liquidez") or 0), "GENERAL")
+    eventos = evaluar_alertas_inteligentes(mercado, datos, "GENERAL")
+    return {"ok": True, "events_created": len(eventos), "events": obtener_eventos_alerta(20, "GENERAL"), "timestamp": datetime.now(VET).isoformat()}
+
 
 @app.post("/api/foundation/bootstrap")
 def foundation_bootstrap(payload: FoundationBootstrapRequest):
