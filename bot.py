@@ -5,6 +5,10 @@ import logging
 import time
 import json
 import threading
+import secrets
+import hashlib
+import base64
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Optional
@@ -204,6 +208,36 @@ def inicializar_db():
                         deleted_at TIMESTAMPTZ
                     );
                 """)
+                cur.execute("""
+                    ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS username TEXT;
+                    ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+                    ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT;
+                    ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ;
+                """)
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_venbot_users_username
+                    ON venbot_users(username) WHERE username IS NOT NULL;
+                """)
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_venbot_users_telegram
+                    ON venbot_users(telegram_chat_id) WHERE telegram_chat_id IS NOT NULL;
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_sessions (
+                        id BIGSERIAL PRIMARY KEY,
+                        external_user_id TEXT NOT NULL,
+                        token_hash TEXT UNIQUE NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TIMESTAMPTZ NOT NULL,
+                        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        revoked_at TIMESTAMPTZ
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_venbot_sessions_user
+                    ON venbot_sessions(external_user_id, expires_at DESC);
+                """)
+
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_consents (
                         id BIGSERIAL PRIMARY KEY,
@@ -2055,10 +2089,42 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔮 Análisis P2P y Proyección 7H", callback_data="cmd_prediccion")],
-        [InlineKeyboardButton("💎 Muestra los plans VIP y PREMIUM", callback_data="cmd_suscribir")],
+        [InlineKeyboardButton("💎 Muestra los planes VIP y PREMIUM", callback_data="cmd_suscribir")],
+        [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("🔐 Mis credenciales", callback_data="cmd_credenciales")],
         [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
         [InlineKeyboardButton("🏦 Configurar Filtro de Bancos", callback_data="cmd_bancos")],
     ])
+
+
+async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    try:
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
+        exp = account.get("plan_expires_at")
+        exp_text = exp.astimezone(VET).strftime("%d/%m/%Y") if exp else "No definido"
+        texto = f"👤 *Mi cuenta Venbot*\n\n🔐 Usuario: `{account.get('username')}`\n💎 Plan: *{_plan_efectivo(account.get('plan_code'))}*\n📅 Vencimiento: `{exp_text}`\n\nUsa /credenciales para generar tus credenciales de acceso a la interfaz."
+        if update.callback_query and update.callback_query.message:
+            await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔐 Generar credenciales", callback_data="cmd_credenciales")],[InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]]))
+        else:
+            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔐 Generar credenciales", callback_data="cmd_credenciales")]]))
+    except Exception:
+        logger.exception("Error en /cuenta")
+        await update.message.reply_text("⚠️ No pude consultar tu cuenta ahora. Intenta nuevamente.")
+
+async def cmd_credenciales(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    try:
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
+        credentials = await asyncio.to_thread(_set_new_password, account["external_user_id"])
+        texto = f"🔐 *Credenciales Venbot*\n\nUsuario: `{credentials['username']}`\nContraseña: `{credentials['password']}`\n\n⚠️ Guarda estas credenciales. La contraseña se entrega por Telegram y se almacena en Venbot únicamente como hash.\n\nEn la interfaz pulsa *Entrar* para iniciar sesión."
+        teclado = InlineKeyboardMarkup([[InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],[InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]])
+        if update.callback_query and update.callback_query.message:
+            await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=teclado)
+        else:
+            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=teclado)
+    except Exception:
+        logger.exception("Error en /credenciales")
+        await update.message.reply_text("⚠️ No pude generar tus credenciales ahora. Intenta nuevamente.")
 
 
 async def cmd_miid(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2201,6 +2267,10 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if data == "cmd_prediccion":
         await cmd_prediccion(update, context)
+    elif data == "cmd_cuenta":
+        await cmd_cuenta(update, context)
+    elif data == "cmd_credenciales":
+        await cmd_credenciales(update, context)
     elif data == "cmd_grafica":
         await cmd_grafica(update, context)
     elif data == "cmd_bancos":
@@ -2365,6 +2435,84 @@ def _foundation_user(external_user_id, country_code=None):
             row=cur.fetchone()
     return dict(zip(["external_user_id","country_code","plan_code","status","created_at","updated_at","deleted_at"], row))
 
+AUTH_SESSION_DAYS = max(1, int(os.getenv("AUTH_SESSION_DAYS", "30")))
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 210_000)
+    return "pbkdf2_sha256$210000$%s$%s" % (base64.urlsafe_b64encode(salt).decode(), base64.urlsafe_b64encode(digest).decode())
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, rounds, salt_b64, digest_b64 = stored.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        salt = base64.urlsafe_b64decode(salt_b64.encode())
+        expected = base64.urlsafe_b64decode(digest_b64.encode())
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(rounds))
+        return secrets.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+def _new_venbot_credentials() -> tuple[str, str]:
+    return "VEN-" + secrets.token_hex(4).upper(), secrets.token_urlsafe(9)
+
+def _create_or_get_telegram_account(chat_id: int, country_code: str = "VE"):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="database_not_configured")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT external_user_id,username,plan_code,status,plan_expires_at FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (int(chat_id),))
+            row = cur.fetchone()
+            if row:
+                return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), None
+            external_id = str(uuid.uuid4())
+            username = None
+            for _ in range(8):
+                candidate = "VEN-" + secrets.token_hex(4).upper()
+                cur.execute("SELECT 1 FROM venbot_users WHERE username=%s", (candidate,))
+                if not cur.fetchone():
+                    username = candidate
+                    break
+            if not username:
+                raise RuntimeError("No se pudo generar username Venbot")
+            cur.execute("""INSERT INTO venbot_users(external_user_id,country_code,username,telegram_chat_id) VALUES (%s,%s,%s,%s) RETURNING external_user_id,username,plan_code,status,plan_expires_at""", (external_id, (country_code or DEFAULT_COUNTRY_CODE).upper()[:8], username, int(chat_id)))
+            row = cur.fetchone()
+    return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), None
+
+def _set_new_password(external_user_id: str):
+    password = secrets.token_urlsafe(10)
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE venbot_users SET password_hash=%s,updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s RETURNING username,plan_code,status,plan_expires_at", (_hash_password(password), external_user_id))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="account_not_found")
+    return {"username": row[0], "plan_code": row[1], "status": row[2], "plan_expires_at": row[3], "password": password}
+
+def _account_from_session(token: str):
+    if not token or not DATABASE_URL:
+        return None
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT u.external_user_id,u.username,u.country_code,u.plan_code,u.status,u.plan_expires_at,s.expires_at FROM venbot_sessions s JOIN venbot_users u ON u.external_user_id=s.external_user_id WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>CURRENT_TIMESTAMP AND u.status='active' LIMIT 1""", (token_hash,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            cur.execute("UPDATE venbot_sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=%s", (token_hash,))
+    return dict(zip(["external_user_id","username","country_code","plan_code","status","plan_expires_at","session_expires_at"], row))
+
+def _create_session(external_user_id: str):
+    token = secrets.token_urlsafe(48)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires = datetime.now(VET) + timedelta(days=AUTH_SESSION_DAYS)
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO venbot_sessions(external_user_id,token_hash,expires_at) VALUES (%s,%s,%s)", (external_user_id, token_hash, expires))
+            cur.execute("DELETE FROM venbot_sessions WHERE external_user_id=%s AND (revoked_at IS NOT NULL OR expires_at<=CURRENT_TIMESTAMP)", (external_user_id,))
+    return token, expires
+
 def _foundation_entitlements(user):
     plan = _plan_efectivo(user.get("plan_code"))
     limits = dict(PLAN_LIMITS[plan])
@@ -2376,6 +2524,17 @@ def _country_from_request(request):
 
 class FoundationBootstrapRequest(BaseModel):
     external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    country_code: str = Field(default="VE", min_length=2, max_length=8)
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=6, max_length=40)
+    password: str = Field(min_length=8, max_length=200)
+
+class SessionRequest(BaseModel):
+    session_token: str = Field(min_length=20, max_length=200)
+
+class TelegramAccountRequest(BaseModel):
+    telegram_chat_id: int
     country_code: str = Field(default="VE", min_length=2, max_length=8)
 
 class ConsentRequest(BaseModel):
@@ -2605,8 +2764,61 @@ def smart_alerts_evaluate():
     return {"ok": True, "events_created": len(eventos), "events": obtener_eventos_alerta(20, "GENERAL"), "timestamp": datetime.now(VET).isoformat()}
 
 
+@app.post("/api/auth/login")
+def auth_login(payload: LoginRequest):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="database_not_configured")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT external_user_id,username,password_hash,country_code,plan_code,status,plan_expires_at FROM venbot_users WHERE username=%s LIMIT 1", (payload.username.strip(),))
+            row = cur.fetchone()
+    if not row or not row[2] or not _verify_password(payload.password, row[2]) or row[5] != "active":
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    token, expires = _create_session(row[0])
+    user = dict(zip(["external_user_id","username","password_hash","country_code","plan_code","status","plan_expires_at"], row))
+    return {"ok": True, "session_token": token, "expires_at": expires.isoformat(), "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_efectivo(user["plan_code"]), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
+
+@app.post("/api/auth/me")
+def auth_me(payload: SessionRequest):
+    user = _account_from_session(payload.session_token)
+    if not user:
+        raise HTTPException(status_code=401, detail="session_expired")
+    return {"ok": True, "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_efectivo(user["plan_code"]), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
+
+@app.post("/api/auth/logout")
+def auth_logout(payload: SessionRequest):
+    if DATABASE_URL:
+        token_hash = hashlib.sha256(payload.session_token.encode("utf-8")).hexdigest()
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE venbot_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE token_hash=%s", (token_hash,))
+    return {"ok": True}
+
+@app.post("/api/auth/telegram-account")
+def auth_telegram_account(payload: TelegramAccountRequest):
+    account, _ = _create_or_get_telegram_account(payload.telegram_chat_id, payload.country_code)
+    credentials = _set_new_password(account["external_user_id"])
+    return {"ok": True, "account": {"external_user_id": account["external_user_id"], "username": credentials["username"], "plan": _plan_efectivo(credentials["plan_code"]), "status": credentials["status"], "plan_expires_at": credentials["plan_expires_at"].isoformat() if credentials["plan_expires_at"] else None}, "password": credentials["password"]}
+
 @app.post("/api/foundation/bootstrap")
-def foundation_bootstrap(payload: FoundationBootstrapRequest):
+def foundation_bootstrap(payload: FoundationBootstrapRequest, request: Request):
+    session_token = request.headers.get("X-Venbot-Session", "").strip()
+    authenticated = _account_from_session(session_token) if session_token else None
+    if authenticated:
+        user = authenticated
+    else:
+        user = _foundation_user(payload.external_user_id, payload.country_code)
+    ent = _foundation_entitlements(user)
+    policy = _billing_policy(user.get("country_code"))
+    return {
+        "ok": True,
+        "user": {"external_user_id": user["external_user_id"], "username": user.get("username"), "country_code": user["country_code"], "plan": _plan_efectivo(user.get("plan_code")), "status": user["status"], "plan_expires_at": user.get("plan_expires_at").isoformat() if user.get("plan_expires_at") else None},
+        "authenticated": bool(authenticated),
+        "entitlements": ent,
+        "billing": {"external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
+        "legal": {"privacy_url": "/legal/privacy", "terms_url": "/legal/terms"},
+    }
+
     user = _foundation_user(payload.external_user_id, payload.country_code)
     ent = _foundation_entitlements(user)
     policy = _billing_policy(user.get("country_code"))
@@ -2636,6 +2848,7 @@ def account_delete(payload: AccountDeleteRequest):
         with conn.cursor() as cur:
             cur.execute("UPDATE venbot_users SET status='deleted', deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s", (payload.external_user_id,))
             cur.execute("DELETE FROM venbot_consents WHERE external_user_id=%s", (payload.external_user_id,))
+            cur.execute("UPDATE venbot_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE external_user_id=%s AND revoked_at IS NULL", (payload.external_user_id,))
     return {"ok": True, "status": "deleted"}
 
 @app.get("/api/foundation/config")
@@ -3545,6 +3758,8 @@ async def startup_event():
         telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
         telegram_app.add_handler(CommandHandler("start", start))
         telegram_app.add_handler(CommandHandler("miid", cmd_miid))
+        telegram_app.add_handler(CommandHandler("cuenta", cmd_cuenta))
+        telegram_app.add_handler(CommandHandler("credenciales", cmd_credenciales))
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
