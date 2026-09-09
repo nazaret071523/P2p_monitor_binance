@@ -1131,7 +1131,9 @@
       const limitMsg = document.getElementById('alert-limit-msg');
       if (!list) return;
       try {
-        const r = await fetch(`${API_BASE_URL}/api/alerts/rules?external_user_id=${encodeURIComponent(sid)}`);
+        const token = getAuthToken();
+        if (!token) { limitMsg.textContent='Inicia sesión para gestionar alertas personales.'; list.innerHTML=''; return; }
+        const r = await fetch(`${API_BASE_URL}/api/alerts/rules`, {headers:{'X-Venbot-Session':token,'Accept':'application/json'}});
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || 'No se pudieron cargar las alertas');
         limitMsg.textContent = `Plan ${d.plan}: ${d.count}/${d.limit} alertas utilizadas.`;
@@ -1158,8 +1160,10 @@
       if (!target || target <= 0) { msg.textContent = '⚠️ Indica un precio objetivo válido.'; msg.className='text-[10px] text-amber-300 font-semibold'; msg.classList.remove('hidden'); return; }
       if (!/^[-]?\d+$/.test(contact)) { msg.textContent = '⚠️ Necesitas un ID numérico de Telegram. Usa /miid en Venbot.'; msg.className='text-[10px] text-amber-300 font-semibold'; msg.classList.remove('hidden'); return; }
       try {
+        const token=getAuthToken();
+        if(!token) throw new Error('Inicia sesión para crear alertas personales.');
         const r = await fetch(`${API_BASE_URL}/api/alerts/rules`, {
-          method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'},
+          method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-Venbot-Session':token},
           body: JSON.stringify({ external_user_id:getOnlineSessionId(), banco, target_value:target, direction:type === 'sell' ? 'above' : 'below', telegram_chat_id:Number(contact), cooldown_seconds:1800 })
         });
         const d = await r.json();
@@ -1175,8 +1179,8 @@
 
     async function deletePersonalAlert(id) {
       try {
-        const sid = getOnlineSessionId();
-        const r = await fetch(`${API_BASE_URL}/api/alerts/rules/${id}?external_user_id=${encodeURIComponent(sid)}`, {method:'DELETE'});
+        const token=getAuthToken(); if(!token) throw new Error('Inicia sesión para gestionar alertas.');
+        const r = await fetch(`${API_BASE_URL}/api/alerts/rules/${id}`, {method:'DELETE',headers:{'X-Venbot-Session':token,'Accept':'application/json'}});
         if (!r.ok) { const d=await r.json().catch(()=>({})); throw new Error(d.detail || 'No se pudo eliminar'); }
         await loadPersonalAlerts();
       } catch (e) {
