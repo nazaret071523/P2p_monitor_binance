@@ -74,7 +74,10 @@ SPOT_REFRESH_SECONDS = max(10, int(os.getenv("SPOT_REFRESH_SECONDS", "20")))
 SPOT_REQUEST_TIMEOUT = max(3, int(os.getenv("SPOT_REQUEST_TIMEOUT", "8")))
 
 # Fundación de producto: los pagos son externos y se habilitan por política de mercado.
-DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "VE").strip().upper() or "VE"
+DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "VE")
+VENBOT_COMMUNITY_URL = os.getenv("VENBOT_COMMUNITY_URL", "")
+VENBOT_SUPPORT_URL = os.getenv("VENBOT_SUPPORT_URL", "")
+VENBOT_BOT_URL = os.getenv("VENBOT_BOT_URL", "").strip().upper() or "VE"
 BETA_PREMIUM_ACCESS = os.getenv("BETA_PREMIUM_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 BETA_VIP_ACCESS = os.getenv("BETA_VIP_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 EXTERNAL_BILLING_URL = os.getenv("EXTERNAL_BILLING_URL", "").strip()
@@ -3069,6 +3072,33 @@ def _foundation_entitlements(user):
     features = {k: PLAN_ORDER[plan] >= PLAN_ORDER[v] for k,v in FEATURE_MIN_PLAN.items()}
     return {"plan": plan, "limits": limits, "features": features}
 
+def _require_plan_user(request: Request, minimum_plan: str):
+    user = _require_session_user(request)
+    current = _plan_vigente(user.get("plan_code"), user.get("plan_expires_at"))
+    if PLAN_ORDER[current] < PLAN_ORDER[minimum_plan]:
+        raise HTTPException(status_code=403, detail={"error":"plan_required", "required_plan":minimum_plan, "current_plan":current})
+    return user
+
+def _consume_ai_quota(user):
+    plan = _plan_vigente(user.get("plan_code"), user.get("plan_expires_at"))
+    limit = int(PLAN_LIMITS[plan]["ai_daily"])
+    if not DATABASE_URL:
+        return {"allowed": True, "used": 0, "limit": limit, "remaining": limit}
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO venbot_usage_daily(external_user_id,usage_date,ai_requests)
+                VALUES (%s,CURRENT_DATE,1)
+                ON CONFLICT (external_user_id,usage_date) DO UPDATE
+                SET ai_requests = venbot_usage_daily.ai_requests + 1
+                WHERE venbot_usage_daily.ai_requests < %s
+                RETURNING ai_requests
+            """, (user["external_user_id"], limit))
+            row=cur.fetchone()
+    used=int(row[0]) if row else limit
+    allowed=bool(row)
+    return {"allowed":allowed,"used":used,"limit":limit,"remaining":max(0,limit-used)}
+
 def _country_from_request(request):
     return (request.headers.get("X-Venbot-Country") or DEFAULT_COUNTRY_CODE).strip().upper()[:8]
 
@@ -3162,6 +3192,7 @@ def read_root():
         "prediction_signal": "/api/predictions/signal",
         "prediction_performance": "/api/predictions/performance",
         "prediction_recent": "/api/predictions/recent",
+        "community": {"url": VENBOT_COMMUNITY_URL, "support_url": VENBOT_SUPPORT_URL, "bot_url": VENBOT_BOT_URL},
     }
 
 
@@ -3864,7 +3895,8 @@ def obtener_precios_market_alias():
 
 
 @app.get("/api/spot")
-def obtener_spot_api(symbol: Optional[str] = Query(None), refresh: bool = Query(False)):
+def obtener_spot_api(request: Request, symbol: Optional[str] = Query(None), refresh: bool = Query(False)):
+    _require_plan_user(request, "VIP")
     requested = [_normalizar_spot_symbol(symbol)] if symbol else list(SPOT_SYMBOLS)
     with SPOT_LOCK:
         cached = dict(SPOT_CACHE.get("value") or {})
@@ -3890,10 +3922,12 @@ def obtener_spot_api(symbol: Optional[str] = Query(None), refresh: bool = Query(
 
 @app.get("/api/spot/history")
 def obtener_spot_history(
+    request: Request,
     symbol: str = Query("BTCUSDT"),
     interval: str = Query("5m", pattern="^(1m|5m|15m|30m|1h|4h|1d)$"),
     limit: int = Query(170, ge=10, le=500),
 ):
+    _require_plan_user(request, "VIP")
     try:
         candles = obtener_spot_klines(symbol, interval, limit)
         return {"ok": True, "symbol": _normalizar_spot_symbol(symbol), "interval": interval, "count": len(candles), "candles": candles, "source": "Binance Spot public klines"}
@@ -4658,9 +4692,26 @@ class AIChatRequest(BaseModel):
 
 
 @app.post("/api/ai/chat/stream")
-async def ai_chat_stream(payload: AIChatRequest):
+async def ai_chat_stream(payload: AIChatRequest, request: Request):
+    user = _require_session_user(request)
+    quota = _consume_ai_quota(user)
+    if not quota["allowed"]:
+        raise HTTPException(status_code=429, detail={"error":"ai_daily_limit", "limit":quota["limit"], "used":quota["used"]})
     return StreamingResponse(_generador_ai_stream(payload.message.strip(), payload.history), media_type="text/event-stream", headers={"Cache-Control":"no-cache", "Connection":"keep-alive", "X-Accel-Buffering":"no"})
 
+
+@app.get("/api/ai/usage")
+def ai_usage(request: Request):
+    user = _require_session_user(request)
+    plan = _plan_vigente(user.get("plan_code"), user.get("plan_expires_at"))
+    limit = int(PLAN_LIMITS[plan]["ai_daily"])
+    used = 0
+    if DATABASE_URL:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ai_requests FROM venbot_usage_daily WHERE external_user_id=%s AND usage_date=CURRENT_DATE", (user["external_user_id"],))
+                row=cur.fetchone(); used=int(row[0]) if row else 0
+    return {"ok":True,"plan":plan,"used":used,"limit":limit,"remaining":max(0,limit-used)}
 
 @app.get("/api/ai/health")
 def ai_health():
@@ -4668,7 +4719,11 @@ def ai_health():
 
 
 @app.post("/api/ai/chat")
-async def ai_chat(payload: AIChatRequest):
+async def ai_chat(payload: AIChatRequest, request: Request):
+    user = _require_session_user(request)
+    quota = _consume_ai_quota(user)
+    if not quota["allowed"]:
+        raise HTTPException(status_code=429, detail={"error":"ai_daily_limit", "limit":quota["limit"], "used":quota["used"]})
     t0 = time.monotonic()
     mensaje = payload.message.strip()
     logger.info("AI CHAT: endpoint recibido")
