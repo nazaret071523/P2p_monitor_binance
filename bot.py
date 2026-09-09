@@ -98,7 +98,6 @@ PREMIUM_PRICE_VES = float(os.getenv("PREMIUM_PRICE_VES", "0"))
 VIP_PRICE_VES = float(os.getenv("VIP_PRICE_VES", "0"))
 BILLING_ADMIN_TELEGRAM_CHAT_ID = os.getenv("BILLING_ADMIN_TELEGRAM_CHAT_ID", "").strip()
 MANUAL_USDT_PAY_ID = os.getenv("MANUAL_USDT_PAY_ID", "").strip()
-MANUAL_USDT_NETWORK = os.getenv("MANUAL_USDT_NETWORK", "TRC20").strip()
 MANUAL_BS_BANK = os.getenv("MANUAL_BS_BANK", "").strip()
 MANUAL_BS_ACCOUNT = os.getenv("MANUAL_BS_ACCOUNT", "").strip()
 MANUAL_BS_HOLDER = os.getenv("MANUAL_BS_HOLDER", "").strip()
@@ -2649,7 +2648,7 @@ async def _enviar_checkout_telegram(update:Update,context:ContextTypes.DEFAULT_T
             order=await asyncio.to_thread(_create_manual_billing_order,account["external_user_id"],chat_id,plan_code,pay_currency)
             currency=pay_currency.upper()
             if currency=="USDT":
-                instructions=(f"💰 *Pago USDT*\n• Monto: `{order['quoted_amount']:.2f} USDT`\n• Pay ID/correo: `{MANUAL_USDT_PAY_ID or 'Configurar en Render'}`\n• Red: `{MANUAL_USDT_NETWORK or 'Indicar antes de pagar'}`")
+                instructions=(f"💰 *Pago USDT*\n• Monto: `{order['quoted_amount']:.2f} USDT`\n• Pay ID/correo: `{MANUAL_USDT_PAY_ID or 'Configurar en Render'}`\n• Método: *Binance Pay*")
             else:
                 instructions=(f"🇻🇪 *Pago en Bolívares*\n• Monto exacto: `{order['quoted_amount']:.2f} Bs`\n• Banco: `{MANUAL_BS_BANK or 'Configurar en Render'}`\n• Cuenta: `{MANUAL_BS_ACCOUNT or 'Configurar en Render'}`\n• Titular: `{MANUAL_BS_HOLDER or 'Configurar en Render'}`\n• Teléfono: `{MANUAL_BS_PHONE or 'Configurar en Render'}`\n• C.I./RIF: `{MANUAL_BS_ID or 'Configurar en Render'}`")
             texto=(f"🧾 *ORDEN VENBOT*\n\n💎 Plan: *{plan_code}*\n🔖 Orden: `{order['order_id']}`\n\n{instructions}\n\n📸 Después de pagar, pulsa *Enviar comprobante*. Necesito la captura y la referencia para validar manualmente.\n\n⏳ Válida hasta: `{order['expires_at']}`\n\n⚠️ El plan NO se activa hasta que el pago sea revisado y aprobado.")
@@ -3561,8 +3560,15 @@ def _approve_manual_order(order_id, admin_chat_id):
             if not row: raise HTTPException(status_code=404, detail="order_not_found")
             external_id,tg_id,plan,currency,amount,status,reference,proof_file,expires_at=row
             if status == "PAYMENT_PAID": return {"ok":True,"idempotent":True,"order_id":order_id}
-            if expires_at and expires_at <= datetime.now(VET): raise HTTPException(status_code=400, detail="order_expired")
-            cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s", (str(admin_chat_id),order_id))
+            if status != "PAYMENT_PENDING": raise HTTPException(status_code=400, detail="order_not_pending")
+            if not proof_file or not reference:
+                raise HTTPException(status_code=400, detail="proof_and_reference_required")
+            if expires_at and expires_at <= datetime.now(VET):
+                cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_EXPIRED',updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (order_id,))
+                raise HTTPException(status_code=400, detail="order_expired")
+            cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (str(admin_chat_id),order_id))
+            if cur.rowcount != 1:
+                raise HTTPException(status_code=409, detail="order_state_changed")
     activation=BillingWebhookRequest(external_user_id=external_id,telegram_chat_id=tg_id,plan_code=plan,event_type="payment_succeeded",external_reference=order_id,provider="manual",country_code="VE",payload={"pay_currency":currency,"amount":amount,"reference":reference,"proof_file_id":proof_file,"reviewed_by":str(admin_chat_id)})
     result=_billing_activate_account(activation)
     result.update({"order_id":order_id,"pay_currency":currency,"quoted_amount":amount})
