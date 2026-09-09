@@ -1118,20 +1118,8 @@
             } catch(e) {}
           }
         }
-        if (!answer.trim()) {
-          // Segundo intento: endpoint normal de IA. Esto evita que un problema
-          // puntual del SSE deje al usuario sin respuesta.
-          try {
-            const fallback = await fetch(`${API_BASE_URL}/api/ai/chat`, {
-              method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json','X-Venbot-Session':getAuthToken() || ''},
-              body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) })
-            });
-            if (fallback.ok) {
-              const data = await fallback.json();
-              answer = String(data?.answer || '').trim();
-            }
-          } catch (e) { console.warn('Venbot AI fallback:', e); }
-        }
+        // El endpoint SSE ya aplica el fallback del servidor. No repetimos la
+        // consulta contra /api/ai/chat porque eso consumiría otra cuota diaria.
         document.getElementById(typingId)?.remove();
         if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
         appendAIMessage('assistant', answer);
