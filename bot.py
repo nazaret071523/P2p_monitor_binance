@@ -38,7 +38,7 @@ from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 import uvicorn
 
 # ==========================================
@@ -85,6 +85,27 @@ PREMIUM_DURATION_DAYS = max(1, int(os.getenv("PREMIUM_DURATION_DAYS", "30")))
 VIP_DURATION_DAYS = max(1, int(os.getenv("VIP_DURATION_DAYS", "30")))
 PRIVACY_CONTACT_EMAIL = os.getenv("PRIVACY_CONTACT_EMAIL", "").strip()
 
+# Billing manual beta: sin pasarela ni comisión. El usuario paga y el administrador valida.
+BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "manual").strip().lower()
+PABILO_API_KEY = os.getenv("PABILO_API_KEY", "").strip()
+PABILO_USER_BANK_ID = os.getenv("PABILO_USER_BANK_ID", "").strip()
+PABILO_WEBHOOK_SECRET = os.getenv("PABILO_WEBHOOK_SECRET", "").strip()
+PABILO_EXPIRATION_MINUTES = max(5, int(os.getenv("PABILO_EXPIRATION_MINUTES", "60")))
+PABILO_RATE_EXPIRATION_MINUTES = max(1, int(os.getenv("PABILO_RATE_EXPIRATION_MINUTES", "60")))
+PREMIUM_PRICE_USDT = float(os.getenv("PREMIUM_PRICE_USDT", "0"))
+VIP_PRICE_USDT = float(os.getenv("VIP_PRICE_USDT", "0"))
+PREMIUM_PRICE_VES = float(os.getenv("PREMIUM_PRICE_VES", "0"))
+VIP_PRICE_VES = float(os.getenv("VIP_PRICE_VES", "0"))
+BILLING_ADMIN_TELEGRAM_CHAT_ID = os.getenv("BILLING_ADMIN_TELEGRAM_CHAT_ID", "").strip()
+MANUAL_USDT_PAY_ID = os.getenv("MANUAL_USDT_PAY_ID", "").strip()
+MANUAL_USDT_NETWORK = os.getenv("MANUAL_USDT_NETWORK", "TRC20").strip()
+MANUAL_BS_BANK = os.getenv("MANUAL_BS_BANK", "").strip()
+MANUAL_BS_ACCOUNT = os.getenv("MANUAL_BS_ACCOUNT", "").strip()
+MANUAL_BS_HOLDER = os.getenv("MANUAL_BS_HOLDER", "").strip()
+MANUAL_BS_PHONE = os.getenv("MANUAL_BS_PHONE", "").strip()
+MANUAL_BS_ID = os.getenv("MANUAL_BS_ID", "").strip()
+MANUAL_ORDER_EXPIRATION_HOURS = max(1, int(os.getenv("MANUAL_ORDER_EXPIRATION_HOURS", "24")))
+
 # Orígenes separados por coma. Si no se configura, se permite cualquier origen
 # sin credenciales, suficiente para un monitor público.
 ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*").strip()
@@ -115,6 +136,9 @@ SMART_ALERT_COOLDOWN_SECONDS = max(120, int(os.getenv("SMART_ALERT_COOLDOWN_SECO
 SMART_ALERT_HIGH_SPREAD_PCT = max(0.50, float(os.getenv("SMART_ALERT_HIGH_SPREAD_PCT", "1.50")))
 SMART_ALERT_FAST_MOVE_5M_PCT = max(0.10, float(os.getenv("SMART_ALERT_FAST_MOVE_5M_PCT", "0.35")))
 SMART_ALERT_BREAKOUT_BUFFER_PCT = max(0.01, float(os.getenv("SMART_ALERT_BREAKOUT_BUFFER_PCT", "0.05")))
+# Calibración Quant 24H: primera fase de ajuste tras acumular al menos un día de datos.
+QUANT_24H_CALIBRATION_ENABLED = os.getenv("QUANT_24H_CALIBRATION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+QUANT_24H_TREND_WEIGHT_MAX = max(0.0, min(0.25, float(os.getenv("QUANT_24H_TREND_WEIGHT_MAX", "0.12"))))
 CONFIGURACION_BANCOS = {}
 telegram_app = None
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
@@ -348,6 +372,24 @@ def inicializar_db():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_billing_orders (
+                        id BIGSERIAL PRIMARY KEY, order_id TEXT UNIQUE NOT NULL, external_user_id TEXT NOT NULL, telegram_chat_id BIGINT,
+                        plan_code TEXT NOT NULL, base_amount_usdt DOUBLE PRECISION NOT NULL, pay_currency TEXT NOT NULL, provider_currency TEXT NOT NULL,
+                        quoted_amount DOUBLE PRECISION NOT NULL, quote_rate DOUBLE PRECISION, quote_source TEXT, provider TEXT NOT NULL, provider_order_id TEXT,
+                        checkout_url TEXT, status TEXT NOT NULL DEFAULT 'PAYMENT_PENDING', expires_at TIMESTAMPTZ, paid_at TIMESTAMPTZ,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, payload JSONB
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_venbot_billing_orders_provider_id ON venbot_billing_orders(provider, provider_order_id) WHERE provider_order_id IS NOT NULL;
+                    CREATE INDEX IF NOT EXISTS idx_venbot_billing_orders_user_created ON venbot_billing_orders(external_user_id, created_at DESC);
+                    ALTER TABLE venbot_billing_orders ADD COLUMN IF NOT EXISTS proof_file_id TEXT;
+                    ALTER TABLE venbot_billing_orders ADD COLUMN IF NOT EXISTS proof_reference TEXT;
+                    ALTER TABLE venbot_billing_orders ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+                    ALTER TABLE venbot_billing_orders ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+                    ALTER TABLE venbot_billing_orders ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
+                    ALTER TABLE venbot_billing_orders ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+                """)
+
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_billing_user ON venbot_billing_events(external_user_id, created_at DESC);
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_venbot_billing_reference
@@ -1686,6 +1728,45 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     volatilidad = float(np.std(returns)) if len(returns) else 0.0
     abs_typical = float(np.median(np.abs(returns))) if len(returns) else 0.0
 
+    # Primera calibración de 24H: añade una referencia de tendencia de mayor
+    # horizonte sin sustituir el motor de 7H. El peso es pequeño y solo se
+    # activa cuando existe cobertura suficiente, para no sobreajustar un día
+    # de datos. A las 48H esta referencia podrá validarse con el backtest 7H.
+    calibracion_24h = {
+        "activa": False, "cobertura_horas": 0.0, "drift_24h_pct_h": 0.0,
+        "r2_24h": 0.0, "peso_aplicado": 0.0, "motivo": "sin_cobertura_suficiente",
+    }
+    drift_24h = 0.0
+    regression_r2_24h = 0.0
+    cobertura_24h = 0.0
+    if QUANT_24H_CALIBRATION_ENABLED and len(series) >= 12:
+        cutoff_24h = now - timedelta(hours=24)
+        idx24 = [i for i, dt in enumerate(fechas) if dt >= cutoff_24h]
+        if len(idx24) >= 12:
+            r24_dates = [fechas[i] for i in idx24]
+            x24 = np.asarray([(dt - r24_dates[0]).total_seconds()/3600.0 for dt in r24_dates], dtype=float)
+            y24 = np.asarray([mids[i] for i in idx24], dtype=float)
+            cobertura_24h = max(0.0, (r24_dates[-1] - r24_dates[0]).total_seconds()/3600.0)
+            if cobertura_24h >= 12.0 and len(np.unique(x24)) >= 4 and float(np.ptp(x24)) >= 1.0:
+                try:
+                    slope24, _ = np.polyfit(x24, y24, 1)
+                    yhat24 = slope24*x24 + _
+                    ss_res24 = float(np.sum((y24-yhat24)**2))
+                    ss_tot24 = float(np.sum((y24-np.mean(y24))**2))
+                    regression_r2_24h = max(0.0, min(1.0, 1.0 - ss_res24/ss_tot24)) if ss_tot24 > 0 else 0.0
+                    drift_24h = float(slope24 / mid_actual * 100.0) if mid_actual else 0.0
+                    peso24 = min(QUANT_24H_TREND_WEIGHT_MAX, max(0.0, (cobertura_24h-12.0)/12.0) * QUANT_24H_TREND_WEIGHT_MAX)
+                    # Un R² bajo no debe arrastrar la señal de 7H.
+                    peso24 *= min(1.0, regression_r2_24h / 0.35)
+                    calibracion_24h = {
+                        "activa": peso24 > 0.0, "cobertura_horas": round(cobertura_24h, 2),
+                        "drift_24h_pct_h": round(drift_24h, 5), "r2_24h": round(regression_r2_24h, 3),
+                        "peso_aplicado": round(peso24, 4),
+                        "motivo": "tendencia_24h_estable" if peso24 > 0 else "r2_24h_insuficiente",
+                    }
+                except Exception:
+                    pass
+
     # Niveles con la MISMA serie de midpoint que usa el monitor.
     support_7h = float(np.min(recent)) if len(recent) else mid_actual
     resistance_7h = float(np.max(recent)) if len(recent) else mid_actual
@@ -1726,6 +1807,10 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
 
     reg_weight = 0.15 + 0.30 * regression_r2
     drift_h = (1.0 - reg_weight) * momentum_rate_h + reg_weight * regression_rate_h
+    # Ajuste de 24H: solo una corrección pequeña sobre el drift de 7H.
+    peso24 = float(calibracion_24h.get("peso_aplicado", 0.0) or 0.0)
+    if peso24 > 0.0:
+        drift_h = (1.0 - peso24) * drift_h + peso24 * drift_24h
 
     # La mediana aporta una fuerza pequeña de reversión para no extrapolar ruido indefinidamente.
     mean_reversion_pct = ((median_7h - mid_actual) / mid_actual * 100.0) * 0.18 if mid_actual else 0.0
@@ -1777,7 +1862,13 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
             agreement = sum(1 for x in señales if abs(x) <= max(0.03, abs_typical*2)) / len(señales)
     else:
         agreement = 0.0
-    confianza = int(round(100 * (0.32*coverage_score + 0.23*density_score + 0.25*agreement + 0.20*regression_r2)))
+    # La calibración 24H suma estabilidad solo si realmente aporta información;
+    # si contradice fuertemente la señal corta, reducimos confianza en lugar de
+    # forzar una dirección.
+    acuerdo_24h = 1.0
+    if peso24 > 0.0 and drift_h != 0 and drift_24h != 0 and (drift_h > 0) != (drift_24h > 0):
+        acuerdo_24h = 0.45
+    confianza = int(round(100 * (0.30*coverage_score + 0.22*density_score + 0.23*agreement + 0.17*regression_r2 + 0.08*acuerdo_24h)))
     confianza = max(15, min(92, confianza)) if len(series) >= 3 else 0
 
     manipulacion = detectar_manipulacion_mercado(mids, spreads, mid_actual, spread_actual)
@@ -1807,6 +1898,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "max_delta_pct": round(max_delta_pct, 3), "delta_7h_pct": round(delta_pct, 3),
         "regression_r2": round(regression_r2, 3), "cobertura_horas": round(cobertura_horas, 2),
         "regimen": regimen, "niveles_dinamicos": niveles_dinamicos,
+        "calibracion_24h": calibracion_24h,
         "manipulacion": manipulacion,
     }
 
@@ -2256,57 +2348,130 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _plan_catalogo_para_telegram(chat_id: int):
-    account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
-    return account
+    account,_=await asyncio.to_thread(_create_or_get_telegram_account,chat_id,DEFAULT_COUNTRY_CODE); return account
 
-def _checkout_url_for_plan(plan_code: str, chat_id: int) -> Optional[str]:
-    if not EXTERNAL_BILLING_URL:
-        return None
-    plan = _plan_efectivo(plan_code)
-    if plan not in {"PREMIUM", "VIP"}:
-        return None
-    params = urlencode({"plan": plan, "telegram_chat_id": str(chat_id), "source": "telegram"})
-    return EXTERNAL_BILLING_URL + ("&" if "?" in EXTERNAL_BILLING_URL else "?") + params
+async def _crear_checkout_telegram(chat_id:int,plan_code:str,pay_currency:str):
+    account=await _plan_catalogo_para_telegram(chat_id); return await asyncio.to_thread(_create_billing_order,account["external_user_id"],chat_id,plan_code,pay_currency)
 
-async def cmd_suscribir(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-    chat_id = update.effective_chat.id
-    account = await _plan_catalogo_para_telegram(chat_id)
-    country = DEFAULT_COUNTRY_CODE
-    policy = _billing_policy(country)
-    premium_price = PREMIUM_PRICE_LABEL or "Precio en checkout"
-    vip_price = VIP_PRICE_LABEL or "Precio en checkout"
-    texto = (
-        "💎 *PLANES VENBOT*\n\n"
-        "🆓 *FREE*\n"
-        "• Monitor P2P y BCV\n• Calculadora y análisis básico\n• 5 consultas IA/día\n• 2 alertas\n\n"
-        f"⭐ *PREMIUM* — `{premium_price}`\n"
-        "• Todo FREE\n• IA avanzada\n• 30 consultas IA/día\n• Hasta 10 alertas\n• Historial 30 días\n\n"
-        f"👑 *VIP* — `{vip_price}`\n"
-        "• Todo PREMIUM\n• Spot y funciones Quant\n• Predicción avanzada\n• 100 consultas IA/día\n• Hasta 50 alertas\n• Historial 365 días\n\n"
-        f"🔐 Cuenta: `{account.get('username')}`\n"
-        f"📍 Mercado de cuenta: `{country}`\n\n"
-    )
-    if policy.get("external_checkout") and EXTERNAL_BILLING_URL:
-        texto += "El pago se realiza en el checkout externo habilitado para Venbot. La activación se confirma automáticamente cuando el proveedor informa el pago."
-        botones = [
-            [InlineKeyboardButton("⭐ Comprar PREMIUM", url=_checkout_url_for_plan("PREMIUM", chat_id))],
-            [InlineKeyboardButton("👑 Comprar VIP", url=_checkout_url_for_plan("VIP", chat_id))],
-            [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],
-            [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")],
-        ]
+async def _enviar_checkout_telegram(update:Update,context:ContextTypes.DEFAULT_TYPE,plan_code:str,pay_currency:str):
+    chat_id=update.effective_chat.id
+    if update.callback_query: await update.callback_query.answer("Creando orden…")
+    try:
+        account=await _plan_catalogo_para_telegram(chat_id)
+        if BILLING_PROVIDER == "manual":
+            order=await asyncio.to_thread(_create_manual_billing_order,account["external_user_id"],chat_id,plan_code,pay_currency)
+            currency=pay_currency.upper()
+            if currency=="USDT":
+                instructions=(f"💰 *Pago USDT*\n• Monto: `{order['quoted_amount']:.2f} USDT`\n• Pay ID/correo: `{MANUAL_USDT_PAY_ID or 'Configurar en Render'}`\n• Red: `{MANUAL_USDT_NETWORK or 'Indicar antes de pagar'}`")
+            else:
+                instructions=(f"🇻🇪 *Pago en Bolívares*\n• Monto exacto: `{order['quoted_amount']:.2f} Bs`\n• Banco: `{MANUAL_BS_BANK or 'Configurar en Render'}`\n• Cuenta: `{MANUAL_BS_ACCOUNT or 'Configurar en Render'}`\n• Titular: `{MANUAL_BS_HOLDER or 'Configurar en Render'}`\n• Teléfono: `{MANUAL_BS_PHONE or 'Configurar en Render'}`\n• C.I./RIF: `{MANUAL_BS_ID or 'Configurar en Render'}`")
+            texto=(f"🧾 *ORDEN VENBOT*\n\n💎 Plan: *{plan_code}*\n🔖 Orden: `{order['order_id']}`\n\n{instructions}\n\n📸 Después de pagar, pulsa *Enviar comprobante*. Necesito la captura y la referencia para validar manualmente.\n\n⏳ Válida hasta: `{order['expires_at']}`\n\n⚠️ El plan NO se activa hasta que el pago sea revisado y aprobado.")
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton("📸 Enviar comprobante",callback_data=f"proof_{order['order_id']}")],[InlineKeyboardButton("💎 Volver a planes",callback_data="cmd_suscribir")]])
+        else:
+            order=await asyncio.to_thread(_create_billing_order,account["external_user_id"],chat_id,plan_code,pay_currency); mode="USDT" if pay_currency=="USDT" else "Bolívares (Bs)"; amount=f"{order['quoted_amount']:.2f} USDT" if pay_currency=="USDT" else "equivalente en Bs dentro del checkout"
+            texto=(f"🧾 *Orden Venbot {plan_code}*\n\n💰 Modalidad: *{mode}*\n• Precio base: `{order['base_amount_usdt']:.2f} USDT`\n• Cobro: *{amount}*\n• Orden: `{order['order_id']}`\n\nAbre el checkout y completa el pago. Venbot activa el plan únicamente cuando el proveedor confirme el pago automáticamente.")
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Abrir checkout",url=order["checkout_url"])],[InlineKeyboardButton("💎 Volver a planes",callback_data="cmd_suscribir")]])
+    except HTTPException as e:
+        texto=f"⚠️ {e.detail}"; markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Volver a planes",callback_data="cmd_suscribir")]])
+    except Exception:
+        logger.exception("Error creando orden Telegram"); texto="⚠️ No pude crear la orden ahora. Intenta nuevamente en unos minutos."; markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Volver a planes",callback_data="cmd_suscribir")]])
+    if update.callback_query and update.callback_query.message: await update.callback_query.message.edit_text(texto,parse_mode="Markdown",reply_markup=markup)
+    else: await context.bot.send_message(chat_id=chat_id,text=texto,parse_mode="Markdown",reply_markup=markup)
+
+async def recibir_comprobante(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    chat_id=update.effective_chat.id
+    order_id=context.user_data.get("manual_proof_order_id")
+    if not order_id: return
+    account=await _plan_catalogo_para_telegram(chat_id)
+    external_id=account["external_user_id"]
+    if update.message and update.message.photo:
+        file_id=update.message.photo[-1].file_id
+        context.user_data["manual_proof_file_id"]=file_id
+        await update.message.reply_text(f"📸 Captura recibida para `{order_id}`. Ahora envíame *solo la referencia del pago* (texto).",parse_mode="Markdown")
+        return
+    if update.message and update.message.text:
+        reference=update.message.text.strip()
+        if len(reference)<3:
+            await update.message.reply_text("⚠️ La referencia es demasiado corta. Envíame el código de referencia del pago."); return
+        file_id=context.user_data.get("manual_proof_file_id")
+        if not file_id:
+            await update.message.reply_text("Primero envíame la *captura del comprobante* y luego la referencia.",parse_mode="Markdown"); return
+        ok=await asyncio.to_thread(_save_manual_proof,order_id,external_id,file_id,reference)
+        context.user_data.pop("manual_proof_order_id",None); context.user_data.pop("manual_proof_file_id",None)
+        if ok:
+            await update.message.reply_text(f"✅ Comprobante recibido.\n\n🔖 Orden: `{order_id}`\n🧾 Referencia: `{reference}`\n\nTu pago quedó *pendiente de validación manual*. Te avisaré por Telegram cuando sea aprobado.",parse_mode="Markdown")
+            if telegram_app and BILLING_ADMIN_TELEGRAM_CHAT_ID:
+                try:
+                    await telegram_app.bot.send_message(chat_id=int(BILLING_ADMIN_TELEGRAM_CHAT_ID),text=f"🔔 *NUEVO PAGO PENDIENTE*\n\nOrden: `{order_id}`\nUsuario: `{external_id}`\nReferencia: `{reference}`\n\nUsa `/pagos` para revisar y `/aprobar {order_id}` para activar.",parse_mode="Markdown")
+                    await telegram_app.bot.send_photo(chat_id=int(BILLING_ADMIN_TELEGRAM_CHAT_ID),photo=file_id,caption=f"Comprobante {order_id}")
+                except Exception: logger.exception("No se pudo notificar comprobante al admin")
+        else:
+            await update.message.reply_text("⚠️ La orden ya no está disponible para recibir comprobante.")
+
+async def cmd_pagos(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    chat_id=update.effective_chat.id
+    if not _is_billing_admin(chat_id): return
+    rows=await asyncio.to_thread(_pending_manual_orders,30)
+    if not rows:
+        await update.message.reply_text("✅ No hay pagos manuales pendientes."); return
+    lines=["💳 *PAGOS PENDIENTES*\n"]
+    for r in rows:
+        oid,uid,tg,plan,currency,amount,status,ref,submitted,created=r
+        lines.append(f"• `{oid}` · {plan} · {amount:.2f} {currency}\n  Usuario: `{uid}`\n  Ref: `{ref or 'sin referencia'}`\n  Enviado: `{submitted.isoformat() if submitted else 'sin comprobante'}`")
+    lines.append("\nPara aprobar: `/aprobar ID_ORDEN`\nPara rechazar: `/rechazar ID_ORDEN motivo`")
+    await update.message.reply_text("\n".join(lines),parse_mode="Markdown")
+
+async def cmd_aprobar(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    chat_id=update.effective_chat.id
+    if not _is_billing_admin(chat_id): return
+    if not context.args: await update.message.reply_text("Uso: /aprobar VB-..."); return
+    try:
+        result=await asyncio.to_thread(_approve_manual_order,context.args[0].strip(),chat_id)
+        await update.message.reply_text(f"✅ Orden `{result['order_id']}` aprobada. Plan *{result['plan']}* activo hasta `{result['plan_expires_at']}`.",parse_mode="Markdown")
+        tg=result.get("telegram_chat_id")
+        if tg and telegram_app:
+            await telegram_app.bot.send_message(chat_id=int(tg),text=f"🎉 *Pago aprobado*\n\n💎 Plan: *{result['plan']}*\n📅 Válido hasta: `{result['plan_expires_at']}`\n\nTu cuenta ya está activa. Usa /cuenta para consultar tu plan.",parse_mode="Markdown")
+    except HTTPException as e: await update.message.reply_text(f"⚠️ {e.detail}")
+    except Exception: logger.exception("Error aprobando orden"); await update.message.reply_text("⚠️ Error aprobando la orden.")
+
+async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    chat_id=update.effective_chat.id
+    if not _is_billing_admin(chat_id): return
+    if not context.args: await update.message.reply_text("Uso: /rechazar VB-... motivo"); return
+    reason=" ".join(context.args[1:]).strip() or "Pago no validado"
+    try:
+        result=await asyncio.to_thread(_reject_manual_order,context.args[0].strip(),chat_id,reason)
+        await update.message.reply_text(f"↩️ Orden `{result['order_id']}` rechazada.",parse_mode="Markdown")
+        tg=result.get("telegram_chat_id")
+        if tg and telegram_app:
+            await telegram_app.bot.send_message(chat_id=int(tg),text=f"⚠️ *Pago no aprobado*\n\nOrden: `{result['order_id']}`\nMotivo: {reason}\n\nPuedes volver a /planes y generar una nueva orden si deseas intentarlo nuevamente.",parse_mode="Markdown")
+    except HTTPException as e: await update.message.reply_text(f"⚠️ {e.detail}")
+    except Exception: logger.exception("Error rechazando orden"); await update.message.reply_text("⚠️ Error rechazando la orden.")
+
+async def cmd_suscribir(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if update.callback_query: await update.callback_query.answer()
+    chat_id=update.effective_chat.id; account=await _plan_catalogo_para_telegram(chat_id); country=DEFAULT_COUNTRY_CODE; policy=_billing_policy(country)
+    premium_price=f"{PREMIUM_PRICE_USDT:.2f} USDT" if PREMIUM_PRICE_USDT>0 else "Precio no configurado"; vip_price=f"{VIP_PRICE_USDT:.2f} USDT" if VIP_PRICE_USDT>0 else "Precio no configurado"
+    texto=("💎 *PLANES VENBOT*\n\n🆓 *FREE*\n• Monitor P2P y BCV\n• Calculadora y análisis básico\n• 5 consultas IA/día\n• 2 alertas\n\n"+f"⭐ *PREMIUM* — `{premium_price}`\n• Todo FREE\n• IA avanzada\n• 30 consultas IA/día\n• Hasta 10 alertas\n• Historial 30 días\n\n"+f"👑 *VIP* — `{vip_price}`\n• Todo PREMIUM\n• Spot y funciones Quant\n• Predicción avanzada\n• 100 consultas IA/día\n• Hasta 50 alertas\n• Historial 365 días\n\n"+f"🔐 Cuenta: `{account.get('username')}`\n📍 Mercado de cuenta: `{country}`\n\n")
+    if BILLING_PROVIDER == "manual":
+        ready = bool(PREMIUM_PRICE_USDT>0 and VIP_PRICE_USDT>0 and PREMIUM_PRICE_VES>0 and VIP_PRICE_VES>0)
+        if ready:
+            texto+="Puedes pagar en *USDT* o en *Bolívares (Bs)*. El pago se valida manualmente: debes enviar captura + referencia. El plan se activa solo después de mi aprobación."
+            botones=[[InlineKeyboardButton("⭐ PREMIUM · ₮ USDT",callback_data="buy_PREMIUM_USDT"),InlineKeyboardButton("🇻🇪 PREMIUM · Bs",callback_data="buy_PREMIUM_VES")],[InlineKeyboardButton("👑 VIP · ₮ USDT",callback_data="buy_VIP_USDT"),InlineKeyboardButton("🇻🇪 VIP · Bs",callback_data="buy_VIP_VES")],[InlineKeyboardButton("👤 Mi cuenta",callback_data="cmd_cuenta")],[InlineKeyboardButton("⬅️ Volver al menú",callback_data="cmd_menu")]]
+        else:
+            texto+="El pago manual todavía no está configurado. Faltan los precios PREMIUM/VIP en USDT y Bs en Render."
+            botones=[[InlineKeyboardButton("👤 Mi cuenta",callback_data="cmd_cuenta")],[InlineKeyboardButton("⬅️ Volver al menú",callback_data="cmd_menu")]]
     else:
-        texto += "El checkout externo todavía no está configurado. Tu cuenta ya está preparada para activación de planes cuando se conecte el proveedor de pagos."
-        botones = [
-            [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],
-            [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")],
-        ]
-    markup = InlineKeyboardMarkup(botones)
-    if update.callback_query and update.callback_query.message:
-        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=markup)
-    else:
-        await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=markup)
+        ready=policy.get("external_checkout") and BILLING_PROVIDER=="pabilo" and bool(PABILO_API_KEY and PABILO_USER_BANK_ID and PABILO_WEBHOOK_SECRET and RENDER_EXTERNAL_URL and PREMIUM_PRICE_USDT>0 and VIP_PRICE_USDT>0)
+        if ready:
+            texto+="Puedes pagar en *USDT* o en *Bolívares (Bs)*. La activación es automática tras confirmación del proveedor."
+            botones=[[InlineKeyboardButton("⭐ PREMIUM · ₮ USDT",callback_data="buy_PREMIUM_USDT"),InlineKeyboardButton("🇻🇪 PREMIUM · Bs",callback_data="buy_PREMIUM_VES")],[InlineKeyboardButton("👑 VIP · ₮ USDT",callback_data="buy_VIP_USDT"),InlineKeyboardButton("🇻🇪 VIP · Bs",callback_data="buy_VIP_VES")],[InlineKeyboardButton("👤 Mi cuenta",callback_data="cmd_cuenta")],[InlineKeyboardButton("⬅️ Volver al menú",callback_data="cmd_menu")]]
+        else:
+            texto+="El checkout todavía no está listo en producción."
+            botones=[[InlineKeyboardButton("👤 Mi cuenta",callback_data="cmd_cuenta")],[InlineKeyboardButton("⬅️ Volver al menú",callback_data="cmd_menu")]]
+    markup=InlineKeyboardMarkup(botones)
+    if update.callback_query and update.callback_query.message: await update.callback_query.message.edit_text(texto,parse_mode="Markdown",reply_markup=markup)
+    else: await context.bot.send_message(chat_id=chat_id,text=texto,parse_mode="Markdown",reply_markup=markup)
 
 
 async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2327,6 +2492,19 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd_bancos(update, context)
     elif data == "cmd_suscribir":
         await cmd_suscribir(update, context)
+    elif data.startswith("buy_"):
+        try:
+            _, plan, currency = data.split("_", 2)
+            await _enviar_checkout_telegram(update, context, plan, currency)
+        except Exception:
+            logger.exception("Error procesando compra Telegram: %s", data)
+            await query.answer("No se pudo crear la orden", show_alert=True)
+    elif data.startswith("proof_"):
+        order_id=data.replace("proof_", "", 1)
+        context.user_data["manual_proof_order_id"]=order_id
+        context.user_data.pop("manual_proof_file_id",None)
+        await query.answer()
+        await query.message.reply_text(f"📸 *Comprobante para {order_id}*\n\n1. Envíame la captura del pago.\n2. Después envíame el código de referencia en otro mensaje.\n\nNo envíes datos bancarios adicionales ni contraseñas.",parse_mode="Markdown")
     elif data == "cmd_menu":
         await start(update, context)
     elif data.startswith("banco_"):
@@ -2624,6 +2802,10 @@ class BillingWebhookRequest(BaseModel):
     duration_days: Optional[int] = Field(default=None, ge=1, le=3660)
     payload: Optional[dict] = None
 
+class BillingOrderCreateRequest(BaseModel):
+    plan_code: str = Field(min_length=4, max_length=12)
+    pay_currency: str = Field(min_length=3, max_length=8)
+
 class AlertRuleCreateRequest(BaseModel):
     external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
     banco: str = Field(default="GENERAL", min_length=3, max_length=12)
@@ -2667,6 +2849,8 @@ def read_root():
         "quant_backtest": "/api/quant/backtest",
         "plans": "/api/plans",
         "billing_webhook": "/api/billing/webhook",
+        "billing_orders": "/api/billing/orders",
+        "billing_provider": BILLING_PROVIDER,
         "smart_alerts": "/api/alerts/smart",
     }
 
@@ -2931,6 +3115,157 @@ def account_delete(payload: AccountDeleteRequest):
             cur.execute("UPDATE venbot_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE external_user_id=%s AND revoked_at IS NULL", (payload.external_user_id,))
     return {"ok": True, "status": "deleted"}
 
+# ==========================================
+# BILLING ADAPTER v1
+# ==========================================
+class BillingAdapter:
+    name = "base"
+    def create_checkout(self, **kwargs): raise NotImplementedError
+    def get_checkout(self, provider_order_id): raise NotImplementedError
+
+class PabiloBillingAdapter(BillingAdapter):
+    name = "pabilo"
+    base_url = "https://api.pabilo.app"
+    def _headers(self):
+        if not PABILO_API_KEY: raise RuntimeError("PABILO_API_KEY no configurada")
+        return {"Authorization": f"Bearer {PABILO_API_KEY}", "Content-Type": "application/json"}
+    def _webhook_url(self):
+        if not RENDER_EXTERNAL_URL: raise RuntimeError("RENDER_EXTERNAL_URL no configurado")
+        if not PABILO_WEBHOOK_SECRET: raise RuntimeError("PABILO_WEBHOOK_SECRET no configurado")
+        return f"{RENDER_EXTERNAL_URL}/api/billing/webhook/pabilo?{urlencode({'secret': PABILO_WEBHOOK_SECRET})}"
+    def create_checkout(self, *, order_id, plan_code, description, pay_currency, amount_usdt, external_user_id):
+        if not PABILO_USER_BANK_ID: raise RuntimeError("PABILO_USER_BANK_ID no configurado")
+        if pay_currency not in {"USDT", "VES"}: raise RuntimeError("Moneda no soportada")
+        provider_currency = "USDT" if pay_currency == "USDT" else "USD"
+        body = {"amount": round(float(amount_usdt), 2), "currency": provider_currency, "description": description, "user_bank_id": PABILO_USER_BANK_ID, "webhook_url": self._webhook_url(), "expiration_time": PABILO_EXPIRATION_MINUTES, "rate_expiration_time": PABILO_RATE_EXPIRATION_MINUTES}
+        r = requests.post(f"{self.base_url}/v1/paymentlink", headers=self._headers(), json=body, timeout=15)
+        if r.status_code >= 400: raise RuntimeError(f"Pabilo HTTP {r.status_code}: {r.text[:500]}")
+        data=r.json(); provider_id=data.get("id"); url=data.get("url")
+        if not provider_id or not url: raise RuntimeError("Pabilo no devolvió id/url de checkout")
+        rate=data.get("rate_exchange")
+        return {"provider":self.name,"provider_order_id":provider_id,"checkout_url":url,"provider_currency":provider_currency,"quoted_amount":float(data.get("amount") or amount_usdt),"quote_rate":float(rate) if rate is not None else None,"quote_source":"pabilo_rate_exchange" if rate is not None else None,"expires_at":datetime.now(VET)+timedelta(minutes=PABILO_EXPIRATION_MINUTES),"payload":data}
+    def get_checkout(self, provider_order_id):
+        r=requests.get(f"{self.base_url}/paymentlink/{provider_order_id}",headers=self._headers(),timeout=10)
+        if r.status_code>=400: raise RuntimeError(f"Pabilo HTTP {r.status_code}: {r.text[:500]}")
+        return r.json()
+
+def _billing_adapter():
+    if BILLING_PROVIDER == "pabilo": return PabiloBillingAdapter()
+    raise RuntimeError(f"BILLING_PROVIDER no soportado: {BILLING_PROVIDER}")
+
+def _plan_price_usdt(plan_code):
+    plan=_plan_efectivo(plan_code)
+    return PREMIUM_PRICE_USDT if plan=="PREMIUM" else VIP_PRICE_USDT if plan=="VIP" else 0.0
+
+def _billing_order_row(row):
+    keys=["order_id","external_user_id","telegram_chat_id","plan_code","base_amount_usdt","pay_currency","provider_currency","quoted_amount","quote_rate","quote_source","provider","provider_order_id","checkout_url","status","expires_at","paid_at","created_at","updated_at","payload"]
+    out=dict(zip(keys,row))
+    for k in ["expires_at","paid_at","created_at","updated_at"]:
+        if out.get(k): out[k]=out[k].isoformat()
+    return out
+
+def _manual_price(plan_code, currency):
+    if currency == "USDT":
+        return _plan_price_usdt(plan_code)
+    if currency == "VES":
+        plan = _plan_efectivo(plan_code)
+        return PREMIUM_PRICE_VES if plan == "PREMIUM" else VIP_PRICE_VES if plan == "VIP" else 0.0
+    return 0.0
+
+def _create_manual_billing_order(external_user_id, telegram_chat_id, plan_code, pay_currency):
+    plan = _plan_efectivo(plan_code); currency = (pay_currency or "").upper().strip()
+    if plan not in {"PREMIUM", "VIP"}: raise HTTPException(status_code=400, detail="Solo PREMIUM o VIP pueden comprarse")
+    if currency not in {"VES", "USDT"}: raise HTTPException(status_code=400, detail="pay_currency debe ser VES o USDT")
+    amount_usdt = _plan_price_usdt(plan)
+    quoted = _manual_price(plan, currency)
+    if amount_usdt <= 0: raise HTTPException(status_code=503, detail=f"Precio {plan} en USDT no configurado")
+    if quoted <= 0: raise HTTPException(status_code=503, detail=f"Precio {plan} en {currency} no configurado")
+    order_id = "VB-" + datetime.now(VET).strftime("%Y%m%d") + "-" + secrets.token_hex(5).upper()
+    expires = datetime.now(VET) + timedelta(hours=MANUAL_ORDER_EXPIRATION_HOURS)
+    payload = {"mode":"manual", "instructions_version":1}
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO venbot_billing_orders(order_id,external_user_id,telegram_chat_id,plan_code,base_amount_usdt,pay_currency,provider_currency,quoted_amount,quote_rate,quote_source,provider,provider_order_id,checkout_url,status,expires_at,payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'manual',NULL,NULL,'PAYMENT_PENDING',%s,%s)""",
+                        (order_id,external_user_id,telegram_chat_id,plan,amount_usdt,currency,currency,quoted, (quoted/amount_usdt if currency=="VES" else 1.0), "manual_config", expires, json.dumps(payload)))
+    return {"ok":True,"order_id":order_id,"plan_code":plan,"pay_currency":currency,"base_amount_usdt":amount_usdt,"quoted_amount":quoted,"status":"PAYMENT_PENDING","expires_at":expires.isoformat()}
+
+def _create_billing_order(external_user_id, telegram_chat_id, plan_code, pay_currency):
+    if BILLING_PROVIDER == "manual":
+        return _create_manual_billing_order(external_user_id, telegram_chat_id, plan_code, pay_currency)
+    plan=_plan_efectivo(plan_code); currency=(pay_currency or "").upper().strip()
+    if plan not in {"PREMIUM","VIP"}: raise HTTPException(status_code=400,detail="Solo PREMIUM o VIP pueden comprarse")
+    if currency not in {"VES","USDT"}: raise HTTPException(status_code=400,detail="pay_currency debe ser VES o USDT")
+    amount=_plan_price_usdt(plan)
+    if amount<=0: raise HTTPException(status_code=503,detail=f"Precio {plan} no configurado. Define {plan}_PRICE_USDT en Render.")
+    if not DATABASE_URL: raise HTTPException(status_code=503,detail="database_not_configured")
+    order_id="VB-"+datetime.now(VET).strftime("%Y%m%d")+"-"+secrets.token_hex(5).upper()
+    try: checkout=_billing_adapter().create_checkout(order_id=order_id,plan_code=plan,description=f"Venbot {plan} · {order_id}",pay_currency=currency,amount_usdt=amount,external_user_id=external_user_id)
+    except Exception as e: logger.exception("Error creando checkout %s",order_id); raise HTTPException(status_code=502,detail=f"No se pudo crear el checkout: {e}")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO venbot_billing_orders(order_id,external_user_id,telegram_chat_id,plan_code,base_amount_usdt,pay_currency,provider_currency,quoted_amount,quote_rate,quote_source,provider,provider_order_id,checkout_url,status,expires_at,payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PAYMENT_PENDING',%s,%s)""",(order_id,external_user_id,telegram_chat_id,plan,amount,currency,checkout["provider_currency"],checkout["quoted_amount"],checkout.get("quote_rate"),checkout.get("quote_source"),checkout["provider"],checkout["provider_order_id"],checkout["checkout_url"],checkout.get("expires_at"),json.dumps(checkout.get("payload") or {})))
+    return {"ok":True,"order_id":order_id,"plan_code":plan,"pay_currency":currency,"base_amount_usdt":amount,"quoted_amount":checkout["quoted_amount"],"checkout_url":checkout["checkout_url"],"status":"PAYMENT_PENDING","expires_at":checkout.get("expires_at").isoformat() if checkout.get("expires_at") else None}
+
+def _is_billing_admin(chat_id):
+    return bool(BILLING_ADMIN_TELEGRAM_CHAT_ID and str(chat_id) == BILLING_ADMIN_TELEGRAM_CHAT_ID)
+
+def _save_manual_proof(order_id, external_user_id, file_id=None, reference=None):
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE venbot_billing_orders SET proof_file_id=COALESCE(%s,proof_file_id), proof_reference=COALESCE(%s,proof_reference), submitted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP, status='PAYMENT_PENDING' WHERE order_id=%s AND external_user_id=%s AND status IN ('PAYMENT_PENDING','PAYMENT_FAILED') RETURNING order_id""", (file_id, reference, order_id, external_user_id))
+            row=cur.fetchone()
+    return bool(row)
+
+def _pending_manual_orders(limit=20):
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT order_id,external_user_id,telegram_chat_id,plan_code,pay_currency,quoted_amount,status,proof_reference,submitted_at,created_at FROM venbot_billing_orders WHERE provider='manual' AND status='PAYMENT_PENDING' ORDER BY submitted_at DESC NULLS LAST,created_at DESC LIMIT %s""", (limit,))
+            rows=cur.fetchall()
+    return rows
+
+def _approve_manual_order(order_id, admin_chat_id):
+    if not _is_billing_admin(admin_chat_id): raise HTTPException(status_code=403, detail="not_billing_admin")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT external_user_id,telegram_chat_id,plan_code,pay_currency,quoted_amount,status,proof_reference,proof_file_id,expires_at FROM venbot_billing_orders WHERE order_id=%s AND provider='manual' LIMIT 1""", (order_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(status_code=404, detail="order_not_found")
+            external_id,tg_id,plan,currency,amount,status,reference,proof_file,expires_at=row
+            if status == "PAYMENT_PAID": return {"ok":True,"idempotent":True,"order_id":order_id}
+            if expires_at and expires_at <= datetime.now(VET): raise HTTPException(status_code=400, detail="order_expired")
+            cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s", (str(admin_chat_id),order_id))
+    activation=BillingWebhookRequest(external_user_id=external_id,telegram_chat_id=tg_id,plan_code=plan,event_type="payment_succeeded",external_reference=order_id,provider="manual",country_code="VE",payload={"pay_currency":currency,"amount":amount,"reference":reference,"proof_file_id":proof_file,"reviewed_by":str(admin_chat_id)})
+    result=_billing_activate_account(activation)
+    result.update({"order_id":order_id,"pay_currency":currency,"quoted_amount":amount})
+    return result
+
+def _reject_manual_order(order_id, admin_chat_id, reason="Pago no validado"):
+    if not _is_billing_admin(admin_chat_id): raise HTTPException(status_code=403, detail="not_billing_admin")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_FAILED',reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,rejection_reason=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND provider='manual' AND status='PAYMENT_PENDING' RETURNING telegram_chat_id,plan_code", (str(admin_chat_id),reason[:500],order_id))
+            row=cur.fetchone()
+    if not row: raise HTTPException(status_code=404, detail="pending_order_not_found")
+    return {"ok":True,"order_id":order_id,"status":"PAYMENT_FAILED","telegram_chat_id":row[0],"plan_code":row[1]}
+
+def _mark_billing_order_from_pabilo(payload):
+    provider_id=payload.get("payment_link_id") or (payload.get("payment_link") or {}).get("id"); status=str(payload.get("status") or (payload.get("payment_link") or {}).get("status") or "").lower()
+    if not provider_id: raise HTTPException(status_code=400,detail="payment_link_id faltante")
+    normalized={"paid":"PAYMENT_PAID","failed":"PAYMENT_FAILED","expired":"PAYMENT_EXPIRED","cancelled":"PAYMENT_EXPIRED","canceled":"PAYMENT_EXPIRED","active":"PAYMENT_PENDING","pending":"PAYMENT_PENDING"}.get(status,"PAYMENT_PENDING")
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT order_id,external_user_id,telegram_chat_id,plan_code,base_amount_usdt,pay_currency,provider_currency,quoted_amount,status,expires_at FROM venbot_billing_orders WHERE provider=%s AND provider_order_id=%s LIMIT 1",("pabilo",provider_id)); row=cur.fetchone()
+            if not row: raise HTTPException(status_code=404,detail="Orden Venbot no encontrada")
+            order_id,external_id,tg_id,plan,base_amount,pay_currency,provider_currency,quoted_amount,current_status,expires_at=row
+            payment=payload.get("user_bank_payment") or {}; paid_amount=payment.get("amount")
+            if normalized=="PAYMENT_PAID" and paid_amount is not None and abs(float(paid_amount)-float(quoted_amount))>max(0.01,float(quoted_amount)*0.005): logger.error("Pago Pabilo con monto no coincidente: order=%s expected=%s received=%s",order_id,quoted_amount,paid_amount); normalized="PAYMENT_FAILED"
+            cur.execute("UPDATE venbot_billing_orders SET status=%s,paid_at=CASE WHEN %s='PAYMENT_PAID' THEN COALESCE(paid_at,CURRENT_TIMESTAMP) ELSE paid_at END,updated_at=CURRENT_TIMESTAMP,payload=%s WHERE order_id=%s",(normalized,normalized,json.dumps(payload),order_id))
+    if normalized=="PAYMENT_PAID":
+        activation=BillingWebhookRequest(external_user_id=external_id,telegram_chat_id=tg_id,plan_code=plan,event_type="payment_succeeded",external_reference=order_id,provider="pabilo",country_code="VE",payload=payload)
+        return {"ok":True,"order_id":order_id,"status":normalized,"activation":_billing_activate_account(activation)}
+    return {"ok":True,"order_id":order_id,"status":normalized}
+
+
 def _billing_duration_days(plan_code: str, requested: Optional[int] = None) -> int:
     if requested:
         return int(requested)
@@ -2992,8 +3327,68 @@ def api_plans(request: Request):
             "PREMIUM": {"price_label": PREMIUM_PRICE_LABEL or "Consultar checkout", "duration_days": PREMIUM_DURATION_DAYS, "limits": PLAN_LIMITS["PREMIUM"]},
             "VIP": {"price_label": VIP_PRICE_LABEL or "Consultar checkout", "duration_days": VIP_DURATION_DAYS, "limits": PLAN_LIMITS["VIP"]},
         },
-        "billing": {"channel": "telegram", "external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
+        "billing": {"channel": "telegram", "external_checkout_allowed": policy["external_checkout"], "provider": BILLING_PROVIDER, "checkout_url_configured": BILLING_PROVIDER == "manual" or bool(PABILO_API_KEY and PABILO_USER_BANK_ID and PABILO_WEBHOOK_SECRET), "dual_currency": True, "manual_validation": BILLING_PROVIDER == "manual", "prices_configured": bool(PREMIUM_PRICE_USDT > 0 and VIP_PRICE_USDT > 0 and PREMIUM_PRICE_VES > 0 and VIP_PRICE_VES > 0)},
     }
+
+def _require_session_user(request: Request):
+    token=request.headers.get("X-Venbot-Session","").strip(); user=_account_from_session(token)
+    if not user: raise HTTPException(status_code=401,detail="unauthorized")
+    return user
+
+@app.post("/api/billing/orders")
+def billing_create_order(payload:BillingOrderCreateRequest,request:Request):
+    user=_require_session_user(request)
+    if user.get("country_code",DEFAULT_COUNTRY_CODE).upper()!="VE": raise HTTPException(status_code=403,detail="billing_market_not_enabled")
+    if not _billing_policy(user.get("country_code")).get("external_checkout"): raise HTTPException(status_code=403,detail="external_checkout_not_allowed")
+    return _create_billing_order(user["external_user_id"],None,payload.plan_code,payload.pay_currency)
+
+@app.get("/api/billing/orders/{order_id}")
+def billing_get_order(order_id:str,request:Request):
+    user=_require_session_user(request)
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT order_id,external_user_id,telegram_chat_id,plan_code,base_amount_usdt,pay_currency,provider_currency,quoted_amount,quote_rate,quote_source,provider,provider_order_id,checkout_url,status,expires_at,paid_at,created_at,updated_at,payload FROM venbot_billing_orders WHERE order_id=%s AND external_user_id=%s LIMIT 1",(order_id,user["external_user_id"]))
+            row=cur.fetchone()
+    if not row: raise HTTPException(status_code=404,detail="order_not_found")
+    return {"ok":True,"order":_billing_order_row(row)}
+
+@app.get("/api/billing/manual/pending")
+def billing_manual_pending(request: Request):
+    secret=request.headers.get("X-Venbot-Billing-Admin", "")
+    if not BILLING_WEBHOOK_SECRET or not secrets.compare_digest(secret, BILLING_WEBHOOK_SECRET):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    rows=_pending_manual_orders(100)
+    return {"ok":True,"orders":[{"order_id":r[0],"external_user_id":r[1],"telegram_chat_id":r[2],"plan_code":r[3],"pay_currency":r[4],"quoted_amount":r[5],"status":r[6],"proof_reference":r[7],"submitted_at":r[8].isoformat() if r[8] else None,"created_at":r[9].isoformat() if r[9] else None} for r in rows]}
+
+class ManualReviewRequest(BaseModel):
+    order_id: str = Field(min_length=8, max_length=80)
+    action: str = Field(min_length=6, max_length=10)
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+@app.post("/api/billing/manual/review")
+def billing_manual_review(payload: ManualReviewRequest, request: Request):
+    secret=request.headers.get("X-Venbot-Billing-Admin", "")
+    if not BILLING_WEBHOOK_SECRET or not secrets.compare_digest(secret, BILLING_WEBHOOK_SECRET):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    if payload.action.lower()=="approve":
+        return _approve_manual_order(payload.order_id, BILLING_ADMIN_TELEGRAM_CHAT_ID or "api")
+    if payload.action.lower()=="reject":
+        return _reject_manual_order(payload.order_id, BILLING_ADMIN_TELEGRAM_CHAT_ID or "api", payload.reason or "Pago no validado")
+    raise HTTPException(status_code=400, detail="action debe ser approve o reject")
+
+@app.post("/api/billing/webhook/pabilo")
+async def billing_webhook_pabilo(request:Request):
+    if not PABILO_WEBHOOK_SECRET: raise HTTPException(status_code=503,detail="pabilo_webhook_not_configured")
+    supplied=request.query_params.get("secret","")
+    if not supplied or not secrets.compare_digest(supplied,PABILO_WEBHOOK_SECRET): raise HTTPException(status_code=401,detail="unauthorized")
+    payload=await request.json(); result=await asyncio.to_thread(_mark_billing_order_from_pabilo,payload); activation=result.get("activation") if isinstance(result,dict) else None
+    if activation and activation.get("telegram_chat_id") and telegram_app and activation.get("idempotent") is False:
+        try:
+            exp=activation.get("plan_expires_at") or "sin fecha"
+            asyncio.create_task(telegram_app.bot.send_message(chat_id=int(activation["telegram_chat_id"]),text=f"✅ *Venbot: pago confirmado*\n\n💎 Plan: *{activation['plan']}*\n📅 Válido hasta: `{exp}`\n\nTu acceso ya está activo. Usa /cuenta para consultar tu plan.",parse_mode="Markdown"))
+        except Exception: logger.exception("No se pudo notificar pago Pabilo por Telegram")
+    return result
+
 
 @app.post("/api/billing/webhook")
 def billing_webhook(payload: BillingWebhookRequest, request: Request):
@@ -3928,6 +4323,10 @@ async def startup_event():
         telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
         telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
         telegram_app.add_handler(CommandHandler("planes", cmd_suscribir))
+        telegram_app.add_handler(CommandHandler("pagos", cmd_pagos))
+        telegram_app.add_handler(CommandHandler("aprobar", cmd_aprobar))
+        telegram_app.add_handler(CommandHandler("rechazar", cmd_rechazar))
+        telegram_app.add_handler(MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), recibir_comprobante))
         telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
         await telegram_app.initialize()
