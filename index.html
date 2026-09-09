@@ -44,8 +44,6 @@
       border: 1px solid rgba(16, 185, 129, 0.25);
       color: #34d399;
     }
-
-    #ai-chat-messages .leading-relaxed { overflow-wrap:anywhere; word-break:normal; }
     .ai-mode-btn { transition: all 0.2s ease; }
     .ai-mode-btn.active {
       background: rgba(52, 211, 153, 0.15);
@@ -185,30 +183,38 @@
 
       <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
         <div class="flex items-start justify-between gap-3">
-          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
-          <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
+          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USD / EUR / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte en ambos sentidos con P2P, BCV o Euro. Las tasas P2P se actualizan con el mercado.</p></div>
+          <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">En vivo</span>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
-            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USD</label>
+            <label for="calc-direction" class="text-xs font-semibold text-slate-300 block mb-1">Conversión</label>
+            <select id="calc-direction" onchange="handleRateChange()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
+              <option value="to_ves">Moneda → Bolívares</option>
+              <option value="from_ves">Bolívares → Moneda</option>
+            </select>
+          </div>
+          <div>
+            <label for="calc-amount" id="calc-amount-label" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USD</label>
             <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
           </div>
           <div>
-            <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
+            <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Tasa / mercado</label>
             <select id="calc-rate" onchange="handleRateChange()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
-              <option value="sell">Venta P2P (Binance) · En Vivo</option>
-              <option value="buy">Compra P2P (Binance) · En Vivo</option>
-              <option value="bcv">Tasa BCV (Oficial)</option>
-              <option value="euro">Tasa Euro (Oficial BCV)</option>
+              <option value="sell">Vender USDT · P2P</option>
+              <option value="buy">Comprar USDT · P2P</option>
+              <option value="bcv">USD · Tasa BCV</option>
+              <option value="euro">EUR · Tasa oficial BCV</option>
             </select>
           </div>
           <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Resultado estimado</span>
+            <span id="calc-result-label" class="text-[10px] text-slate-400 block">Resultado</span>
             <strong id="calc-result" class="tabular text-lg font-black text-emerald-400 mt-0.5 block">--,-- Bs</strong>
-            <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">--,-- Bs vs. Tasa BCV</span>
+            <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">Selecciona una tasa</span>
           </div>
         </div>
+        <div id="calc-helper" class="text-[10px] text-slate-500 leading-relaxed">Comprar USDT usa el precio de <strong class="text-slate-300">Comprar USDT</strong> de Venbot (anuncios SELL de Binance). Vender USDT usa <strong class="text-slate-300">Vender USDT</strong> (anuncios BUY).</div>
       </section>
 
       <section class="glass-card p-4 rounded-2xl space-y-3">
@@ -799,41 +805,47 @@
     }
 
     function calculateRate() {
-      const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
-      const rateType = document.getElementById('calc-rate').value;
-      const rates = {
-        sell: marketState.sell,
-        buy: marketState.buy,
-        bcv: marketState.bcv,
-        euro: marketState.euro
-      };
+      const amountEl = document.getElementById('calc-amount');
+      const directionEl = document.getElementById('calc-direction');
+      const rateEl = document.getElementById('calc-rate');
+      const amount = Math.max(0, parseFloat(amountEl?.value) || 0);
+      const direction = directionEl?.value || 'to_ves';
+      const rateType = rateEl?.value || 'sell';
+      const rates = { sell: marketState.sell, buy: marketState.buy, bcv: marketState.bcv, euro: marketState.euro };
       const rate = Number(rates[rateType] || 0);
-      const result = amount * rate;
+      const isEuro = rateType === 'euro';
+      const currency = isEuro ? 'EUR' : 'USD';
+      const resultEl = document.getElementById('calc-result');
+      const labelEl = document.getElementById('calc-amount-label');
+      const resultLabelEl = document.getElementById('calc-result-label');
+      const diffEl = document.getElementById('calc-diff');
 
-      document.getElementById('calc-result').innerText = rate > 0
-        ? `${money(result)} Bs`
-        : '--,-- Bs';
+      if (labelEl) labelEl.textContent = direction === 'to_ves' ? `Cantidad de ${currency}` : 'Cantidad de VES';
+      if (resultLabelEl) resultLabelEl.textContent = direction === 'to_ves' ? 'Recibirás aproximadamente' : `Recibirás aproximadamente (${currency})`;
 
-      if (rate > 0 && marketState.bcv > 0) {
-        const diff = amount * (rate - marketState.bcv);
-        const sign = diff > 0 ? '+' : '';
-        document.getElementById('calc-diff').innerText = `${sign}${money(diff)} Bs vs. Tasa BCV`;
+      if (!(rate > 0)) {
+        if (resultEl) resultEl.textContent = direction === 'to_ves' ? '--,-- Bs' : `--,-- ${currency}`;
+        if (diffEl) diffEl.textContent = 'Esperando tasa en vivo';
+        return;
+      }
+
+      const result = direction === 'to_ves' ? amount * rate : amount / rate;
+      if (resultEl) resultEl.textContent = direction === 'to_ves' ? `${money(result)} Bs` : `${money(result)} ${currency}`;
+
+      if (rateType === 'sell' || rateType === 'buy') {
+        if (diffEl && marketState.bcv > 0) {
+          const vesEquivalent = direction === 'to_ves' ? result : amount;
+          const bcvEquivalent = direction === 'to_ves' ? amount * marketState.bcv : amount / marketState.bcv;
+          const diff = direction === 'to_ves' ? vesEquivalent - bcvEquivalent : vesEquivalent - bcvEquivalent;
+          const sign = diff > 0 ? '+' : '';
+          diffEl.textContent = `${sign}${money(diff)} Bs frente a la referencia BCV`;
+        }
       } else {
-        document.getElementById('calc-diff').innerText = 'Esperando tasa en vivo';
+        if (diffEl) diffEl.textContent = isEuro ? 'Tasa oficial Euro/BCV' : 'Tasa oficial BCV';
       }
     }
 
     function handleRateChange() { calculateRate(); }
-
-    async function setChartPeriod(period, btn) {
-      marketState.period = period;
-      document.querySelectorAll('.period-btn').forEach(b => b.setAttribute('aria-selected', 'false'));
-      if (btn) btn.setAttribute('aria-selected', 'true');
-      const labels = { '5m':'5 min', '15m':'15 min', '30m':'30 min', '1h':'1 hora', '1d':'1 día' };
-      document.getElementById('chart-period-label').innerText = labels[period] || period;
-      window.__venbotLastHistory = Date.now();
-      await loadHistory(period);
-    }
 
     function renderAIIndicators() {
       const a = marketState.analysis;
@@ -1009,28 +1021,32 @@
       })[ch]);
     }
 
-
     function repairMojibake(text) {
-      const s = String(text || '');
-      if (!/[ÃÂâðŸ]/.test(s)) return s;
-      try {
-        const bytes = new Uint8Array([...s].map(ch => ch.charCodeAt(0) & 0xff));
-        const repaired = new TextDecoder('utf-8', {fatal:false}).decode(bytes);
-        return repaired.includes('�') ? s : repaired;
-      } catch(e) { return s; }
+      let s=String(text||'');
+      // Corrige respuestas UTF-8 que llegaron interpretadas como Latin-1/Windows-1252.
+      if(/[ÃÂâð]/.test(s)) {
+        try {
+          const fixed=decodeURIComponent(escape(s));
+          if(fixed && fixed!==s && !/[ÃÂ]{2,}/.test(fixed)) s=fixed;
+        } catch(e) {}
+      }
+      return s.replace(/Â/g,'').replace(/â/g,'–').replace(/â/g,'—').replace(/â¢/g,'•').replace(/âª/g,'⚪').replace(/â/g,'✅').replace(/â /g,'⚠️');
     }
 
     function markdownToSafeHTML(text) {
-      let s = escapeHTML(repairMojibake(String(text || '')));
-      s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-2 mb-1">$1</h4>');
-      s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
-      s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
-      s = s.replace(/^[-*] (.+)$/gm, '<div class="ml-2">• $1</div>');
-      s = s.replace(/^(\d+)\. (.+)$/gm, '<div class="ml-2">$1. $2</div>');
+      let raw = repairMojibake(text);
+      let s = escapeHTML(raw);
+      s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-3 mb-1">$1</h4>');
+      s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-3 mb-1">$1</h3>');
+      s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-3 mb-1">$1</h3>');
+      s = s.replace(/^[-*] (.+)$/gm, '<div class="ml-2 my-0.5">• $1</div>');
+      s = s.replace(/^(\d+)\. (.+)$/gm, '<div class="ml-2 my-0.5">$1. $2</div>');
       s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
       s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300">$1</code>');
       s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-      return s.replace(/\n/g, '<br>');
+      s = s.replace(/\n\s*\n/g, '</p><p class="mt-3">');
+      s = s.replace(/\n/g, '<br>');
+      return '<div class="ai-readable"><p>' + s + '</p></div>';
     }
 
     function appendAIMessage(role, text) {
@@ -1061,16 +1077,28 @@
     function stopAIVoice(){ aiSpeechToken++; try{ window.speechSynthesis?.cancel(); }catch(e){} }
     function speakAIResponse(text){
       if(!aiVoiceEnabled || !('speechSynthesis' in window)) return;
-      const clean=String(text||'').replace(/https?:\/\/\S+/g,'').replace(/[*_`#]/g,'').replace(/\s+/g,' ').trim();
+      const clean=repairMojibake(String(text||''))
+        .replace(/https?:\/\/\S+/g,'')
+        .replace(/[*_`#]/g,'')
+        .replace(/\s+/g,' ')
+        .trim();
       if(!clean) return;
-      const token=++aiSpeechToken; stopAIVoice();
-      const u=new SpeechSynthesisUtterance(clean);
-      u.lang='es-VE'; u.rate=0.92; u.pitch=0.82; u.volume=1;
+      stopAIVoice();
+      const token=++aiSpeechToken;
+      const parts=(clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[]).map(x=>x.trim()).filter(Boolean);
       const voices=window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
       const preferred=voices.find(v=>/^es(-VE|-US|-MX|-ES)?$/i.test(v.lang)) || voices.find(v=>/^es/i.test(v.lang));
-      if(preferred) u.voice=preferred;
-      u.onend=()=>{ if(token===aiSpeechToken) updateAIVoiceUI(); };
-      try{ window.speechSynthesis.speak(u); }catch(e){}
+      let i=0;
+      const next=()=>{
+        if(token!==aiSpeechToken || i>=parts.length) { if(token===aiSpeechToken) updateAIVoiceUI(); return; }
+        const u=new SpeechSynthesisUtterance(parts[i++]);
+        u.lang='es-VE'; u.rate=0.82; u.pitch=0.96; u.volume=1;
+        if(preferred) u.voice=preferred;
+        u.onend=()=>{ if(token!==aiSpeechToken) return; setTimeout(next, 280); };
+        u.onerror=()=>{ if(token===aiSpeechToken) setTimeout(next, 250); };
+        try{ window.speechSynthesis.speak(u); }catch(e){}
+      };
+      next();
     }
     function toggleAIListening(){
       if(aiListening){ aiRecognition?.stop(); return; }
@@ -1131,10 +1159,7 @@
             } catch(e) {}
           }
         }
-        // El endpoint SSE ya aplica el fallback del servidor. No repetimos la
-        // consulta contra /api/ai/chat porque eso consumiría otra cuota diaria.
         document.getElementById(typingId)?.remove();
-        answer = repairMojibake(answer);
         if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
