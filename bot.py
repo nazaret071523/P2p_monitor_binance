@@ -3132,7 +3132,7 @@ class BillingWebhookRequest(BaseModel):
     external_user_id: Optional[str] = Field(default=None, min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
     telegram_chat_id: Optional[int] = None
     username: Optional[str] = Field(default=None, min_length=6, max_length=40)
-    plan_code: str = Field(min_length=4, max_length=12)
+    plan_code: str = Field(min_length=3, max_length=12)
     event_type: str = Field(min_length=4, max_length=40)
     external_reference: str = Field(min_length=3, max_length=160)
     provider: str = Field(default="external_web", min_length=2, max_length=60)
@@ -3141,7 +3141,7 @@ class BillingWebhookRequest(BaseModel):
     payload: Optional[dict] = None
 
 class BillingOrderCreateRequest(BaseModel):
-    plan_code: str = Field(min_length=4, max_length=12)
+    plan_code: str = Field(min_length=3, max_length=12)
     pay_currency: str = Field(min_length=3, max_length=8)
 
 class AlertRuleCreateRequest(BaseModel):
