@@ -61,7 +61,7 @@ P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite").strip()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 
@@ -2721,9 +2721,7 @@ async def cmd_aprobar(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if tg and telegram_app:
             await telegram_app.bot.send_message(chat_id=int(tg),text=f"🎉 *Pago aprobado*\n\n💎 Plan: *{result['plan']}*\n📅 Válido hasta: `{result['plan_expires_at']}`\n\nTu cuenta ya está activa. Usa /cuenta para consultar tu plan.",parse_mode="Markdown")
     except HTTPException as e: await update.message.reply_text(f"⚠️ {e.detail}")
-    except Exception as e:
-        logger.exception("Error aprobando orden")
-        await update.message.reply_text(f"⚠️ Error aprobando la orden: `{type(e).__name__}: {str(e)[:240]}`", parse_mode="Markdown")
+    except Exception: logger.exception("Error aprobando orden"); await update.message.reply_text("⚠️ Error aprobando la orden.")
 
 async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     chat_id=update.effective_chat.id
@@ -3132,7 +3130,7 @@ class BillingWebhookRequest(BaseModel):
     external_user_id: Optional[str] = Field(default=None, min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
     telegram_chat_id: Optional[int] = None
     username: Optional[str] = Field(default=None, min_length=6, max_length=40)
-    plan_code: str = Field(min_length=3, max_length=12)
+    plan_code: str = Field(min_length=4, max_length=12)
     event_type: str = Field(min_length=4, max_length=40)
     external_reference: str = Field(min_length=3, max_length=160)
     provider: str = Field(default="external_web", min_length=2, max_length=60)
@@ -3141,7 +3139,7 @@ class BillingWebhookRequest(BaseModel):
     payload: Optional[dict] = None
 
 class BillingOrderCreateRequest(BaseModel):
-    plan_code: str = Field(min_length=3, max_length=12)
+    plan_code: str = Field(min_length=4, max_length=12)
     pay_currency: str = Field(min_length=3, max_length=8)
 
 class AlertRuleCreateRequest(BaseModel):
@@ -3592,33 +3590,16 @@ def _approve_manual_order(order_id, admin_chat_id):
             row=cur.fetchone()
             if not row: raise HTTPException(status_code=404, detail="order_not_found")
             external_id,tg_id,plan,currency,amount,status,reference,proof_file,expires_at=row
-            if status == "PAYMENT_PAID":
-                # Recuperación segura: una aprobación anterior pudo marcar la orden como
-                # PAGADA y fallar antes de completar la activación de la cuenta.
-                cur.execute("SELECT 1 FROM venbot_billing_events WHERE external_reference=%s AND event_type='payment_succeeded' LIMIT 1", (order_id,))
-                activation_done = bool(cur.fetchone())
-                if activation_done:
-                    cur.execute("SELECT plan_code,plan_expires_at FROM venbot_users WHERE external_user_id=%s LIMIT 1", (external_id,))
-                    account_row = cur.fetchone()
-                    return {
-                        "ok": True, "idempotent": True, "order_id": order_id,
-                        "plan": account_row[0] if account_row else plan,
-                        "plan_expires_at": account_row[1].isoformat() if account_row and account_row[1] else None,
-                        "telegram_chat_id": tg_id,
-                    }
-                # La orden está PAYMENT_PAID pero no existe el evento de activación:
-                # permitimos completar la activación de forma idempotente.
-            elif status != "PAYMENT_PENDING":
-                raise HTTPException(status_code=400, detail="order_not_pending")
+            if status == "PAYMENT_PAID": return {"ok":True,"idempotent":True,"order_id":order_id}
+            if status != "PAYMENT_PENDING": raise HTTPException(status_code=400, detail="order_not_pending")
             if not proof_file or not reference:
                 raise HTTPException(status_code=400, detail="proof_and_reference_required")
-            if status == "PAYMENT_PENDING" and expires_at and expires_at <= datetime.now(VET):
+            if expires_at and expires_at <= datetime.now(VET):
                 cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_EXPIRED',updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (order_id,))
                 raise HTTPException(status_code=400, detail="order_expired")
-            if status == "PAYMENT_PENDING":
-                cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (str(admin_chat_id),order_id))
-                if cur.rowcount != 1:
-                    raise HTTPException(status_code=409, detail="order_state_changed")
+            cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (str(admin_chat_id),order_id))
+            if cur.rowcount != 1:
+                raise HTTPException(status_code=409, detail="order_state_changed")
     activation=BillingWebhookRequest(external_user_id=external_id,telegram_chat_id=tg_id,plan_code=plan,event_type="payment_succeeded",external_reference=order_id,provider="manual",country_code="VE",payload={"pay_currency":currency,"amount":amount,"reference":reference,"proof_file_id":proof_file,"reviewed_by":str(admin_chat_id)})
     result=_billing_activate_account(activation)
     result.update({"order_id":order_id,"pay_currency":currency,"quoted_amount":amount})
@@ -4237,6 +4218,68 @@ def _respuesta_gemini_interactions_sdk(prompt, model, temperature=0.35):
         return None
 
 
+def _respuesta_gemini_generate_content(prompt, model, temperature=0.35, max_output_tokens=600, timeout=15):
+    """Gemini standard generateContent: ruta estable y simple para el chat."""
+    if not GEMINI_API_KEY:
+        return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {
+        "systemInstruction": {"parts": [{"text": VENBOT_AI_SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_output_tokens,
+        },
+    }
+    try:
+        r = requests.post(
+            url,
+            headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+            json=payload,
+            timeout=timeout,
+        )
+        if not r.ok:
+            logger.warning("Gemini generateContent %s HTTP %s: %s", model, r.status_code, r.text[:500])
+            return None
+        data = r.json()
+        parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+        text = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict)).strip()
+        return text or None
+    except Exception as e:
+        logger.warning("Gemini generateContent %s falló: %s", model, e)
+        return None
+
+
+def _gemini_stream_rest(prompt, model, temperature=0.35, max_output_tokens=600, timeout=(3, 18)):
+    """Streaming oficial Gemini generateContent, consumido como SSE."""
+    if not GEMINI_API_KEY:
+        return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"
+    payload = {
+        "systemInstruction": {"parts": [{"text": VENBOT_AI_SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_output_tokens,
+        },
+    }
+    try:
+        return requests.post(
+            url,
+            headers={
+                "x-goog-api-key": GEMINI_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            json=payload,
+            timeout=timeout,
+            stream=True,
+        )
+    except Exception as e:
+        logger.warning("Gemini stream REST %s falló al conectar: %s", model, e)
+        return None
+
+
 def _respuesta_gemini_rest(prompt, model, temperature=0.35):
     """Compatibilidad legacy generateContent, útil como último fallback."""
     if not GEMINI_API_KEY:
@@ -4545,47 +4588,45 @@ def _generador_ai_stream(mensaje, historial):
             system += "\n\nPara mercado, usa el contexto real y responde de forma natural, directa y humana. No recites todo el contexto."
         else:
             system += "\n\nHabla como un asistente humano y útil: natural, claro, contextual y sin frases robóticas. Responde directamente antes de ampliar."
-        # Toda consulta GENERAL tiene acceso a Google Search. Gemini decide si
-        # realmente necesita buscar; así Venbot puede responder tanto conocimiento
-        # general como preguntas actuales sin depender de una lista rígida de palabras.
-        tools = None if market_query else [{"type": "google_search"}]
-        payload = {
-            "model": GEMINI_MODEL, "system_instruction": system, "input": prompt,
-            "generation_config": {
-                "temperature": 0.15 if market_query else 0.35,
-                "max_output_tokens": 600 if market_query else 450,
-            },
-            "store": False,
-            "stream": True,
-        }
-        if tools: payload["tools"] = tools
-        try:
-            r = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/interactions",
-                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json", "Accept": "text/event-stream"},
-                json=payload, timeout=(3, 18), stream=True,
-            )
-            if r.ok:
-                got = False
-                for line in r.iter_lines(decode_unicode=True):
-                    if not line or not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        continue
-                    try: ev = json.loads(raw)
-                    except Exception: continue
-                    if ev.get("event_type") == "step.delta":
-                        delta = ev.get("delta") or {}
-                        if delta.get("type") == "text" and delta.get("text"):
+        # El modelo gratuito no depende de Google Search. Las preguntas de mercado
+        # se contestan con el contexto real de Venbot; las generales usan el modelo.
+        stream = _gemini_stream_rest(
+            prompt, GEMINI_MODEL,
+            temperature=0.15 if market_query else 0.35,
+            max_output_tokens=600 if market_query else 450,
+            timeout=(3, 18),
+        )
+        if stream is not None:
+            try:
+                if stream.ok:
+                    got = False
+                    for line in stream.iter_lines(decode_unicode=True):
+                        if not line or not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            continue
+                        try:
+                            ev = json.loads(raw)
+                        except Exception:
+                            continue
+                        parts = (((ev.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+                        text_delta = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict))
+                        if text_delta:
                             got = True
-                            yield _stream_event(str(delta["text"]))
-                if got:
-                    yield _stream_event(done=True); return
-            else:
-                logger.warning("Gemini stream HTTP %s: %s", r.status_code, r.text[:300])
-        except Exception as e:
-            logger.warning("Gemini stream falló: %s", e)
+                            yield _stream_event(text_delta)
+                    if got:
+                        yield _stream_event(done=True)
+                        return
+                else:
+                    logger.warning("Gemini stream generateContent HTTP %s: %s", stream.status_code, stream.text[:300])
+            except Exception as e:
+                logger.warning("Gemini stream consumo falló: %s", e)
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
 
         # Si el stream no entrega texto (por ejemplo, una incidencia temporal del
         # stream o una respuesta con herramientas), reintentamos la misma pregunta
@@ -4678,15 +4719,21 @@ def generar_respuesta_ia(mensaje, historial):
         max_tokens, temperature = 450, 0.35
 
     if GEMINI_API_KEY:
-        logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s | google_search=%s", GEMINI_MODEL, market_query, not market_query)
+        logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s | free_standard_api=true", GEMINI_MODEL, market_query)
         gt0 = time.monotonic()
-        tools = None if market_query else [{"type": "google_search"}]
+        text = _respuesta_gemini_generate_content(prompt, GEMINI_MODEL, temperature, max_tokens, timeout=15)
+        if text:
+            logger.info("AI CHAT: Gemini generateContent respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
+            return text
+        # Compatibilidad: si el modelo/proyecto rechaza generateContent, probamos
+        # Interactions sin herramientas externas. Esto mantiene el chat gratuito
+        # y evita depender de Google Search para responder preguntas generales.
         text = _respuesta_gemini_interactions_rest(
             prompt, GEMINI_MODEL, temperature,
-            system_instruction=system, max_output_tokens=max_tokens, timeout=9, tools=tools
+            system_instruction=system, max_output_tokens=max_tokens, timeout=9, tools=None
         )
         if text:
-            logger.info("AI CHAT: Gemini respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
+            logger.info("AI CHAT: Gemini Interactions respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
             return text
         logger.warning("AI CHAT: Gemini no respondió | elapsed=%.2fs", time.monotonic()-gt0)
 
@@ -4734,7 +4781,15 @@ def ai_usage(request: Request):
 
 @app.get("/api/ai/health")
 def ai_health():
-    return {"configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY), "gemini_configured": bool(GEMINI_API_KEY), "openrouter_configured": bool(OPENROUTER_API_KEY), "preferred_models": ["gemini-3.6-flash", "gemini-3.5-flash-lite"], "api": "Interactions API"}
+    return {
+        "configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY),
+        "gemini_configured": bool(GEMINI_API_KEY),
+        "openrouter_configured": bool(OPENROUTER_API_KEY),
+        "provider": "gemini_free" if GEMINI_API_KEY else ("openrouter" if OPENROUTER_API_KEY else None),
+        "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else None),
+        "preferred_models": ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"],
+        "api": "generateContent + streamGenerateContent",
+    }
 
 
 @app.post("/api/ai/chat")
