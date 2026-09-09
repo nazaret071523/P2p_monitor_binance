@@ -112,7 +112,7 @@
           <span>Fuente: <strong class="text-slate-300">Binance P2P y BCV Oficial</strong></span>
           <button type="button" onclick="openInfoMenu()" class="focus-ring inline-flex items-center gap-1.5 text-[10px] font-bold text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2 py-1 rounded-lg" title="Usuarios conectados"><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span id="online-count">--</span> en línea</button>
         </div>
-        <a href="https://t.me/" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
+        <a id="community-top-link" href="#" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
       </div>
     </div>
 
@@ -301,6 +301,15 @@
         </div>
       </section>
 
+      <section id="sec-spot" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24 border border-purple-500/20">
+        <div class="flex items-start justify-between gap-3">
+          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-chart-line text-purple-400"></i>Mercado Spot</h3><p class="text-[10px] text-slate-500 mt-1">Cotizaciones Spot de Binance para los activos habilitados en Venbot.</p></div>
+          <span id="spot-plan-badge" class="text-[10px] text-purple-300 font-bold bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-lg">VIP</span>
+        </div>
+        <div id="spot-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2"></div>
+        <div id="spot-status" class="text-[10px] text-slate-500">Inicia sesión con un plan VIP para consultar Spot.</div>
+      </section>
+
       <section id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-3">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-lg"><i class="fa-solid fa-bell"></i></div>
@@ -315,7 +324,7 @@
             <div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-lg"><i class="fa-brands fa-telegram"></i></div>
             <div><h3 class="font-bold text-slate-100 text-sm">Comunidad Venbot</h3><p class="text-[11px] text-slate-400">Novedades, alertas y soporte de la aplicación.</p></div>
           </div>
-          <a href="https://t.me/" target="_blank" class="focus-ring bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">Abrir comunidad <i class="fa-solid fa-arrow-right"></i></a>
+          <a id="community-link" href="#" target="_blank" class="focus-ring bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">Abrir comunidad <i class="fa-solid fa-arrow-right"></i></a>
         </article>
 
         <article class="glass-card p-4 rounded-2xl border border-slate-800 text-[11px] text-slate-400 space-y-2">
@@ -528,7 +537,6 @@
 
       calculateRate();
       renderAIIndicators();
-      checkLocalAlert();
 
       if (marketState.sell > 0) {
         document.getElementById('chart-current').textContent = marketState.buy > 0 && marketState.sell > 0 ? `${money((marketState.buy + marketState.sell) / 2)} Bs` : '--,-- Bs';
@@ -773,6 +781,21 @@
 
 
 
+    async function loadSpotMarket() {
+      const grid=document.getElementById('spot-grid'), status=document.getElementById('spot-status');
+      if(!grid || !status) return;
+      const ent=window.venbotEntitlements?.features || {};
+      if(!getAuthToken()){ status.textContent='Inicia sesión con un plan VIP para consultar Spot.'; grid.innerHTML=''; return; }
+      if(!ent.spot){ status.textContent='Mercado Spot disponible en el plan VIP.'; grid.innerHTML='<div class="col-span-full text-xs text-slate-500">Actualiza a VIP desde la sección de planes para desbloquear Spot.</div>'; return; }
+      try {
+        const r=await fetch(`${API_BASE_URL}/api/spot?t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+        const d=await r.json(); if(!r.ok) throw new Error(d.detail?.error||d.detail||'No disponible');
+        const items=Object.values(d.symbols||{});
+        grid.innerHTML=items.map(x=>`<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-2.5"><div class="flex items-center justify-between gap-2"><strong class="text-xs text-slate-200">${x.symbol.replace('USDT','')}</strong><span class="text-[9px] ${Number(x.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${Number(x.change_24h_pct)>=0?'+':''}${Number(x.change_24h_pct).toFixed(2)}%</span></div><div class="text-sm font-black text-purple-300 mt-1">${Number(x.price).toLocaleString('en-US',{maximumFractionDigits:8})}</div><div class="text-[9px] text-slate-500 mt-1">USDT · volumen 24h ${Number(x.quote_volume_24h||0).toLocaleString('en-US',{maximumFractionDigits:0})}</div></div>`).join('');
+        status.textContent=`${items.length} activos Spot · datos Binance · actualización en vivo`;
+      } catch(e) { status.textContent='No se pudo cargar Spot en este momento.'; }
+    }
+
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
       const rateType = document.getElementById('calc-rate').value;
@@ -906,7 +929,7 @@
     async function validateExistingSession() {
       const token=getAuthToken(); if(!token) return null;
       try { const r=await fetch(`${API_BASE_URL}/api/auth/me`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})});
-        if(!r.ok) throw new Error('expired'); const d=await r.json(); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotEntitlements=d.entitlements||null; window.venbotUser=d.user; updateLoginButton(); return d.user;
+        if(!r.ok) throw new Error('expired'); const d=await r.json(); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotEntitlements=d.entitlements||null; window.venbotUser=d.user; updateLoginButton(); loadSpotMarket(); return d.user;
       } catch(e){ localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); updateLoginButton(); return null; }
     }
     async function submitLogin() {
@@ -914,7 +937,7 @@
       if(!username||!password){showLoginStatus('Introduce usuario y contraseña.');return;}
       const btn=document.getElementById('login-submit'); btn.disabled=true; btn.textContent='Verificando...';
       try { const r=await fetch(`${API_BASE_URL}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})}); const d=await r.json();
-        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); renderAccountModal(d.user); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
+        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); renderAccountModal(d.user); loadSpotMarket(); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
       } catch(e){ showLoginStatus(e.message||'Credenciales inválidas.'); } finally { btn.disabled=false; btn.textContent='Iniciar sesión'; }
     }
     async function logoutVenbot(){ const token=getAuthToken(); try{ if(token) await fetch(`${API_BASE_URL}/api/auth/logout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})}); }catch(e){} localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); window.venbotUser=null; updateLoginButton(); renderAccountModal(null); closeLoginModal(); location.reload(); }
@@ -924,9 +947,13 @@
         const country = (localStorage.getItem('venbot-country') || 'VE').toUpperCase();
         const headers={'Content-Type':'application/json','X-Venbot-Country':country}; if(token) headers['X-Venbot-Session']=token;
         const r = await fetch(`${API_BASE_URL}/api/foundation/bootstrap`, {method:'POST', headers, body:JSON.stringify({external_user_id:sid, country_code:country})});
-        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton();
+        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton(); loadSpotMarket();
       } catch(e) {}
     }
+    async function loadCommunityLinks(){
+      try{ const r=await fetch(`${API_BASE_URL}/`); const d=await r.json(); const c=d.community||{}; const top=document.getElementById('community-top-link'), link=document.getElementById('community-link'); if(c.url){top.href=c.url;link.href=c.url;} else {top.removeAttribute('href'); link.removeAttribute('href');} }catch(e){}
+    }
+
     function openLoginModal(){ document.getElementById('loginModal').classList.remove('hidden'); const token=getAuthToken(); if(token&&window.venbotUser) renderAccountModal(window.venbotUser); else { renderAccountModal(null); document.getElementById('login-username').focus(); } }
     function closeLoginModal(){ document.getElementById('loginModal').classList.add('hidden'); }
     function handleLoginClick(){ openLoginModal(); }
@@ -940,15 +967,9 @@
         document.getElementById('menu-online-count').textContent = n;
       } catch(e) {}
     }
-    function handleAIClick() { document.getElementById('aiChatModal').classList.remove('hidden'); }
+    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Inicia sesión para usar Venbot AI. Tu plan FREE incluye 5 consultas al día.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); }
     function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
     function openAlertsModal() {
-      const saved = JSON.parse(localStorage.getItem('venbot-alert') || 'null');
-      if (saved) {
-        document.getElementById('alert-type').value = saved.type || 'sell';
-        document.getElementById('alert-target-price').value = saved.target || '';
-        document.getElementById('alert-contact').value = saved.contact || '';
-      }
       document.getElementById('alertsModal').classList.remove('hidden');
       loadPersonalAlerts();
     }
@@ -1069,7 +1090,7 @@
         const controller = new AbortController();
         const aiTimer = setTimeout(() => controller.abort(), 30000);
         const response = await fetch(`${API_BASE_URL}/api/ai/chat/stream`, {
-          method: 'POST', headers: {'Content-Type':'application/json','Accept':'text/event-stream'},
+          method: 'POST', headers: {'Content-Type':'application/json','Accept':'text/event-stream','X-Venbot-Session':getAuthToken() || ''},
           body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }), signal: controller.signal
         });
         clearTimeout(aiTimer);
@@ -1102,7 +1123,7 @@
           // puntual del SSE deje al usuario sin respuesta.
           try {
             const fallback = await fetch(`${API_BASE_URL}/api/ai/chat`, {
-              method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json'},
+              method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json','X-Venbot-Session':getAuthToken() || ''},
               body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) })
             });
             if (fallback.ok) {
@@ -1164,7 +1185,7 @@
         if(!token) throw new Error('Inicia sesión para crear alertas personales.');
         const r = await fetch(`${API_BASE_URL}/api/alerts/rules`, {
           method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-Venbot-Session':token},
-          body: JSON.stringify({ external_user_id:getOnlineSessionId(), banco, target_value:target, direction:type === 'sell' ? 'above' : 'below', telegram_chat_id:Number(contact), cooldown_seconds:1800 })
+          body: JSON.stringify({ banco, target_value:target, direction:type === 'sell' ? 'above' : 'below', telegram_chat_id:Number(contact), cooldown_seconds:1800 })
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || 'No se pudo guardar');
@@ -1219,6 +1240,8 @@
       updateLoginButton();
       await validateExistingSession();
       bootstrapVenbotFoundation();
+      loadCommunityLinks();
+      loadSpotMarket();
       setInterval(refreshOnlineCount, 30000);
 
       // El precio se actualiza rápido, pero el histórico no necesita viajar al
