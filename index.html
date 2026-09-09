@@ -44,6 +44,8 @@
       border: 1px solid rgba(16, 185, 129, 0.25);
       color: #34d399;
     }
+
+    #ai-chat-messages .leading-relaxed { overflow-wrap:anywhere; word-break:normal; }
     .ai-mode-btn { transition: all 0.2s ease; }
     .ai-mode-btn.active {
       background: rgba(52, 211, 153, 0.15);
@@ -1007,8 +1009,19 @@
       })[ch]);
     }
 
+
+    function repairMojibake(text) {
+      const s = String(text || '');
+      if (!/[ÃÂâðŸ]/.test(s)) return s;
+      try {
+        const bytes = new Uint8Array([...s].map(ch => ch.charCodeAt(0) & 0xff));
+        const repaired = new TextDecoder('utf-8', {fatal:false}).decode(bytes);
+        return repaired.includes('�') ? s : repaired;
+      } catch(e) { return s; }
+    }
+
     function markdownToSafeHTML(text) {
-      let s = escapeHTML(String(text || ''));
+      let s = escapeHTML(repairMojibake(String(text || '')));
       s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-2 mb-1">$1</h4>');
       s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
       s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
@@ -1121,6 +1134,7 @@
         // El endpoint SSE ya aplica el fallback del servidor. No repetimos la
         // consulta contra /api/ai/chat porque eso consumiría otra cuota diaria.
         document.getElementById(typingId)?.remove();
+        answer = repairMojibake(answer);
         if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
