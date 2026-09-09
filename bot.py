@@ -139,6 +139,12 @@ SMART_ALERT_BREAKOUT_BUFFER_PCT = max(0.01, float(os.getenv("SMART_ALERT_BREAKOU
 # Calibración Quant 24H: primera fase de ajuste tras acumular al menos un día de datos.
 QUANT_24H_CALIBRATION_ENABLED = os.getenv("QUANT_24H_CALIBRATION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 QUANT_24H_TREND_WEIGHT_MAX = max(0.0, min(0.25, float(os.getenv("QUANT_24H_TREND_WEIGHT_MAX", "0.12"))))
+# Seguimiento de predicciones: registra una lectura cada pocos minutos y evalúa
+# sus horizontes contra datos P2P reales posteriores. No modifica el motor Quant.
+PREDICTION_TRACKING_ENABLED = os.getenv("PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+PREDICTION_TRACKING_INTERVAL_SECONDS = max(60, int(os.getenv("PREDICTION_TRACKING_INTERVAL_SECONDS", "300")))
+PREDICTION_EVAL_TOLERANCE_MINUTES = max(2, int(os.getenv("PREDICTION_EVAL_TOLERANCE_MINUTES", "20")))
+_LAST_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
 telegram_app = None
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
@@ -354,6 +360,31 @@ def inicializar_db():
                     ON venbot_alert_rules(external_user_id, enabled);
                 """)
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_prediction_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        banco TEXT NOT NULL DEFAULT 'GENERAL',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        actual_compra DOUBLE PRECISION NOT NULL,
+                        actual_venta DOUBLE PRECISION NOT NULL,
+                        actual_mid DOUBLE PRECISION NOT NULL,
+                        pred_compra_1h DOUBLE PRECISION, pred_venta_1h DOUBLE PRECISION,
+                        pred_compra_3h DOUBLE PRECISION, pred_venta_3h DOUBLE PRECISION,
+                        pred_compra_7h DOUBLE PRECISION, pred_venta_7h DOUBLE PRECISION,
+                        pred_compra_24h DOUBLE PRECISION, pred_venta_24h DOUBLE PRECISION,
+                        pred_mid_7h DOUBLE PRECISION, forecast_low_mid DOUBLE PRECISION, forecast_high_mid DOUBLE PRECISION,
+                        tendencia TEXT, regimen TEXT, confidence INTEGER,
+                        support_7h DOUBLE PRECISION, resistance_7h DOUBLE PRECISION, volatility_pct DOUBLE PRECISION,
+                        evaluated_1h_at TIMESTAMPTZ, evaluated_3h_at TIMESTAMPTZ, evaluated_7h_at TIMESTAMPTZ, evaluated_24h_at TIMESTAMPTZ,
+                        actual_mid_1h DOUBLE PRECISION, actual_mid_3h DOUBLE PRECISION, actual_mid_7h DOUBLE PRECISION, actual_mid_24h DOUBLE PRECISION,
+                        error_pct_1h DOUBLE PRECISION, error_pct_3h DOUBLE PRECISION, error_pct_7h DOUBLE PRECISION, error_pct_24h DOUBLE PRECISION,
+                        direction_correct_7h BOOLEAN, payload JSONB
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_bank_created
+                    ON venbot_prediction_events(banco, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_due
+                    ON venbot_prediction_events(created_at DESC, evaluated_7h_at);
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS spot_market_snapshots (
                         id BIGSERIAL PRIMARY KEY,
                         symbol TEXT NOT NULL,
@@ -398,6 +429,196 @@ def inicializar_db():
         logger.info("Base de datos inicializada correctamente.")
     except Exception as e:
         logger.exception("Error inicializando DB: %s", e)
+
+
+def registrar_prediccion_tracking(banco, actual_compra, actual_venta, datos):
+    """Guarda una predicción para poder medirla después contra el mercado real."""
+    if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
+        return False
+    try:
+        mid = (float(actual_compra) + float(actual_venta)) / 2.0
+        # Para 1H/3H/24H usamos el mismo escenario central del motor 7H como
+        # baseline explícito hasta que el tracking tenga modelos específicos.
+        pred_c = float(datos.get("pred_compra", 0) or 0)
+        pred_v = float(datos.get("pred_venta", 0) or 0)
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO venbot_prediction_events
+                    (banco,actual_compra,actual_venta,actual_mid,
+                     pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
+                     pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
+                     pred_mid_7h,forecast_low_mid,forecast_high_mid,tendencia,regimen,
+                     confidence,support_7h,resistance_7h,volatility_pct,payload)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    banco, float(actual_compra), float(actual_venta), mid,
+                    pred_c, pred_v, pred_c, pred_v, pred_c, pred_v, pred_c, pred_v,
+                    float(datos.get("pred_mid", mid) or mid),
+                    float(datos.get("forecast_low_mid", mid) or mid),
+                    float(datos.get("forecast_high_mid", mid) or mid),
+                    datos.get("tendencia"), datos.get("regimen", {}).get("regimen") if isinstance(datos.get("regimen"), dict) else str(datos.get("regimen") or ""),
+                    int(datos.get("confianza", 0) or 0),
+                    float(datos.get("soporte_7h", mid) or mid), float(datos.get("resistencia_7h", mid) or mid),
+                    float(datos.get("volatilidad_pct", 0) or 0),
+                    json.dumps({"calibracion_24h": datos.get("calibracion_24h", {}), "delta_7h_pct": datos.get("delta_7h_pct", 0)}, ensure_ascii=False),
+                ))
+        return True
+    except Exception as e:
+        logger.warning("No se pudo registrar predicción %s: %s", banco, e)
+        return False
+
+
+def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None):
+    """Obtiene la primera muestra real posterior al horizonte; evita usar datos previos."""
+    if not DATABASE_URL:
+        return None
+    tol = int(tolerance_minutes or PREDICTION_EVAL_TOLERANCE_MINUTES)
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT compra, venta, fecha FROM muestras_p2p
+                    WHERE banco=%s
+                      AND fecha >= %s
+                      AND fecha <= %s
+                    ORDER BY fecha ASC LIMIT 1
+                """, (banco, objetivo, objetivo + timedelta(minutes=tol)))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                c, v, f = row
+                return {"compra": float(c), "venta": float(v), "mid": (float(c)+float(v))/2.0, "fecha": f}
+    except Exception as e:
+        logger.warning("No se pudo buscar muestra futura %s: %s", banco, e)
+        return None
+
+
+def evaluar_predicciones_pendientes(limit=100):
+    """Evalúa horizontes vencidos contra muestras posteriores reales."""
+    if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
+        return {"evaluated": 0}
+    horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
+    evaluated = 0
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,banco,created_at,pred_mid_7h,pred_compra_7h,pred_venta_7h,
+                           evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at
+                    FROM venbot_prediction_events
+                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
+                      AND (evaluated_1h_at IS NULL OR evaluated_3h_at IS NULL OR evaluated_7h_at IS NULL OR evaluated_24h_at IS NULL)
+                    ORDER BY created_at ASC LIMIT %s
+                """, (int(limit),))
+                rows = cur.fetchall()
+                for row in rows:
+                    pid,banco,created_at,pred_mid,pred_c,pred_v,*evals = row
+                    updates = {}
+                    for idx,(label,hours) in enumerate(horizons):
+                        if evals[idx] is not None:
+                            continue
+                        objetivo = created_at + timedelta(hours=hours)
+                        if datetime.now(pytz.UTC) < objetivo:
+                            continue
+                        actual = _buscar_muestra_futura(banco, objetivo)
+                        if not actual:
+                            continue
+                        actual_mid = actual["mid"]
+                        # Baseline 7H central para todos los horizontes hasta contar
+                        # con suficiente historial para entrenar horizontes propios.
+                        pred = float(pred_mid or 0)
+                        err = ((actual_mid - pred) / pred * 100.0) if pred else None
+                        updates[f"actual_mid_{label}"] = actual_mid
+                        updates[f"error_pct_{label}"] = err
+                        updates[f"evaluated_{label}_at"] = actual["fecha"]
+                    if "actual_mid_7h" in updates:
+                        pred = float(pred_mid or 0)
+                        actual7 = float(updates["actual_mid_7h"] or 0)
+                        direction_correct = None
+                        # Compara el signo de la predicción contra el movimiento desde el origen.
+                        origin = None
+                        cur.execute("SELECT actual_mid FROM venbot_prediction_events WHERE id=%s", (pid,))
+                        rr = cur.fetchone()
+                        if rr:
+                            origin = float(rr[0] or 0)
+                        if origin and pred:
+                            direction_correct = (pred-origin == 0 and actual7-origin == 0) or ((pred-origin) * (actual7-origin) > 0)
+                        updates["direction_correct_7h"] = direction_correct
+                    if updates:
+                        sets=[]; vals=[]
+                        for key,val in updates.items():
+                            sets.append(f"{key}=%s"); vals.append(val)
+                        vals.append(pid)
+                        cur.execute(f"UPDATE venbot_prediction_events SET {', '.join(sets)} WHERE id=%s", vals)
+                        evaluated += 1
+        return {"evaluated": evaluated}
+    except Exception as e:
+        logger.warning("Evaluación de predicciones falló: %s", e)
+        return {"evaluated": 0, "error": "tracking temporalmente no disponible"}
+
+
+def obtener_prediction_performance(banco="GENERAL", limit=100):
+    """Resumen auditable del tracking ya evaluado; no altera el motor."""
+    if not DATABASE_URL:
+        return {"ok": False, "message": "Sin base de datos"}
+    banco = (banco or "GENERAL").upper().strip()
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,direction_correct_7h,regimen,confidence,created_at
+                    FROM venbot_prediction_events
+                    WHERE banco=%s ORDER BY created_at DESC LIMIT %s
+                """, (banco,int(limit)))
+                rows=cur.fetchall()
+        def stats(idx):
+            vals=[float(r[idx]) for r in rows if r[idx] is not None]
+            if not vals: return {"evaluated":0,"mean_abs_error_pct":None,"median_abs_error_pct":None}
+            return {"evaluated":len(vals),"mean_abs_error_pct":round(float(np.mean(np.abs(vals))),4),"median_abs_error_pct":round(float(np.median(np.abs(vals))),4)}
+        decisive=[bool(r[4]) for r in rows if r[4] is not None]
+        by_reg={}
+        for r in rows:
+            reg=str(r[5] or "SIN_DATOS")
+            if r[4] is not None: by_reg.setdefault(reg,[]).append(bool(r[4]))
+        return {"ok":True,"bank":banco,"tracked":len(rows),
+                "horizons":{"1h":stats(0),"3h":stats(1),"7h":stats(2),"24h":stats(3)},
+                "direction_accuracy_7h_pct":round(sum(decisive)/len(decisive)*100,2) if decisive else None,
+                "by_regime":{"regimen":{k:round(sum(v)/len(v)*100,2) for k,v in by_reg.items()}},
+                "last_prediction_at":rows[0][7].isoformat() if rows else None}
+    except Exception as e:
+        logger.warning("Performance tracking falló: %s", e)
+        return {"ok":False,"message":"Performance temporalmente no disponible"}
+
+
+def evaluar_senal_operativa(datos, actual_compra, actual_venta):
+    """Capa interpretativa conservadora sobre el motor Quant existente."""
+    try:
+        mid=(float(actual_compra)+float(actual_venta))/2.0
+        support=float(datos.get("soporte_7h",mid) or mid)
+        resistance=float(datos.get("resistencia_7h",mid) or mid)
+        pos=float(datos.get("posicion_rango_7h",50) or 50)
+        trend=str(datos.get("tendencia", ""))
+        conf=int(datos.get("confianza",0) or 0)
+        vol=float(datos.get("volatilidad_pct",0) or 0)
+        spread=float(datos.get("spread_pct",0) or 0)
+        if conf < 45:
+            return {"code":"NO_SIGNAL","label":"⚪ SIN SEÑAL SUFICIENTE","reason":"La calidad estadística todavía es insuficiente para una lectura operativa."}
+        if "ALCISTA" in trend and pos < 45:
+            return {"code":"BUY_ZONE","label":"🟢 ZONA FAVORABLE / SESGO ALCISTA","reason":"Momentum alcista con espacio respecto a la parte alta del rango."}
+        if "BAJISTA" in trend and pos > 55:
+            return {"code":"SELL_ZONE","label":"🔴 ZONA DE PRECAUCIÓN / SESGO BAJISTA","reason":"Momentum bajista con precio elevado dentro del rango reciente."}
+        if pos <= 25 and mid <= support * 1.0025:
+            return {"code":"WATCH_BUY","label":"🟡 VIGILAR ZONA DE COMPRA","reason":"Precio cercano al soporte; falta confirmación direccional."}
+        if pos >= 75 and mid >= resistance * 0.9975:
+            return {"code":"WATCH_SELL","label":"🟡 VIGILAR ZONA DE VENTA","reason":"Precio cercano a resistencia; falta confirmación direccional."}
+        if "RANGO" in trend:
+            return {"code":"WAIT","label":"🟡 ESPERAR / NO PERSEGUIR PRECIO","reason":"El modelo identifica un mercado lateral y no confirma ruptura."}
+        if vol > 0.08 or spread > 1.2:
+            return {"code":"CAUTION","label":"🟠 PRECAUCIÓN","reason":"Volatilidad o spread elevados reducen la calidad de una entrada inmediata."}
+        return {"code":"WAIT","label":"🟡 ESPERAR CONFIRMACIÓN","reason":"Las señales no están suficientemente alineadas para una lectura operativa fuerte."}
+    except Exception:
+        return {"code":"NO_SIGNAL","label":"⚪ SIN SEÑAL","reason":"No se pudo calcular la capa operativa."}
 
 
 def registrar_evento_alerta(event_type, banco, severity, title, message, signature, payload=None, cooldown_seconds=None):
@@ -2189,6 +2410,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔮 Análisis P2P y Proyección 7H", callback_data="cmd_prediccion")],
+        [InlineKeyboardButton("🛠 Estado del sistema", callback_data="cmd_estado"), InlineKeyboardButton("📊 Rendimiento", callback_data="cmd_rendimiento")],
         [InlineKeyboardButton("💎 Muestra los planes VIP y PREMIUM", callback_data="cmd_suscribir")],
         [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("🔐 Mis credenciales", callback_data="cmd_credenciales")],
         [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
@@ -2241,6 +2463,68 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
 
 
+async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    try:
+        banco=CONFIGURACION_BANCOS.get(update.effective_chat.id,"GENERAL")
+        perf=await asyncio.to_thread(obtener_prediction_performance,banco,100)
+        h=perf.get("horizons",{})
+        acc=perf.get("direction_accuracy_7h_pct")
+        reg=(perf.get("by_regime",{}).get("regimen",{}) or {})
+        texto=(f"📊 *VENBOT · RENDIMIENTO*\n"
+               f"🏦 Banco: `{banco}`\n\n"
+               f"Predicciones registradas: `{perf.get('tracked',0)}`\n"
+               f"🎯 Dirección correcta 7H: `{acc if acc is not None else 'n/d'}%`\n\n"
+               f"*Error del escenario central 7H medido en cada corte*\n"
+               f"• 1H: `{h.get('1h',{}).get('mean_abs_error_pct') if h.get('1h',{}).get('mean_abs_error_pct') is not None else 'n/d'}%`\n"
+               f"• 3H: `{h.get('3h',{}).get('mean_abs_error_pct') if h.get('3h',{}).get('mean_abs_error_pct') is not None else 'n/d'}%`\n"
+               f"• 7H: `{h.get('7h',{}).get('mean_abs_error_pct') if h.get('7h',{}).get('mean_abs_error_pct') is not None else 'n/d'}%`\n"
+               f"• 24H: `{h.get('24h',{}).get('mean_abs_error_pct') if h.get('24h',{}).get('mean_abs_error_pct') is not None else 'n/d'}%`\n\n"
+               f"*Precisión por régimen*\n"
+               + ("\n".join(f"• {k}: `{v}%`" for k,v in reg.items()) if reg else "• Aún no hay suficientes evaluaciones")
+               + "\n\n⚠️ Métricas descriptivas del historial; no representan garantía de resultados futuros.")
+        keyboard=InlineKeyboardMarkup([[InlineKeyboardButton("🔮 Predicción",callback_data="cmd_prediccion")],[InlineKeyboardButton("🛠 Estado",callback_data="cmd_estado")]])
+        if update.callback_query and update.callback_query.message: await update.callback_query.message.edit_text(texto,parse_mode="Markdown",reply_markup=keyboard)
+        else: await update.message.reply_text(texto,parse_mode="Markdown",reply_markup=keyboard)
+    except Exception:
+        logger.exception("Error en /rendimiento")
+        await update.effective_message.reply_text("⚠️ No pude consultar el rendimiento ahora.")
+
+
+async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    try:
+        banco = CONFIGURACION_BANCOS.get(update.effective_chat.id, "GENERAL")
+        mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+        c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
+        fecha=mercado.get("fecha")
+        if fecha and getattr(fecha,"tzinfo",None): age=max(0,(datetime.now(VET)-fecha.astimezone(VET)).total_seconds())
+        else: age=None
+        q=await asyncio.to_thread(motor_quant_inteligente,c,v,int(mercado.get("liquidez",0) or 0),banco) if c>0 and v>0 else {}
+        perf=await asyncio.to_thread(obtener_prediction_performance,banco,100)
+        cov=float(q.get("cobertura_horas",0) or 0)
+        cal=q.get("calibracion_24h",{}) or {}
+        texto=(f"🦜 *VENBOT · ESTADO DEL SISTEMA*\n\n"
+               f"🏦 Banco: `{banco}`\n"
+               f"🟢 P2P Binance: OK\n🟢 Quant Engine: OK\n🟢 Alertas: OK\n🟢 Billing manual: OK\n"
+               f"🟢 Prediction Tracking: {'OK' if PREDICTION_TRACKING_ENABLED else 'OFF'}\n\n"
+               f"📊 Muestras actuales: `{q.get('muestras',0)}`\n"
+               f"⏱ Cobertura: `{cov:.1f} h`\n"
+               f"🧠 Calibración 24H: `{'ACTIVA' if cal.get('activa') else 'RECOLECTANDO'}`\n"
+               f"📈 Predicciones registradas: `{perf.get('tracked',0)}`\n"
+               f"🎯 Precisión 7H: `{perf.get('direction_accuracy_7h_pct') if perf.get('direction_accuracy_7h_pct') is not None else 'n/d'}%`\n"
+               f"💵 Comprar/Vender: `{c:.2f} / {v:.2f}`\n"
+               f"🔄 Última lectura: `{age:.0f}s`" if age is not None else f"🔄 Última lectura: `n/d`")
+        keyboard=InlineKeyboardMarkup([[InlineKeyboardButton("🔮 Predicción",callback_data="cmd_prediccion")],[InlineKeyboardButton("⬅️ Volver al menú",callback_data="cmd_menu")]])
+        if update.callback_query and update.callback_query.message: await update.callback_query.message.edit_text(texto,parse_mode="Markdown",reply_markup=keyboard)
+        else: await update.message.reply_text(texto,parse_mode="Markdown",reply_markup=keyboard)
+    except Exception:
+        logger.exception("Error en /estado")
+        await update.effective_message.reply_text("⚠️ No pude consultar el estado ahora.")
+
+
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if update.callback_query:
@@ -2262,6 +2546,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     spread_actual = v_real - c_real if c_real and v_real else 0.0
     spread_pct = (spread_actual / c_real * 100.0) if c_real else 0.0
     analisis = _clasificar_spread(spread_actual, c_real)
+    senal_operativa = evaluar_senal_operativa(datos, c_real, v_real)
 
     cambios = datos.get("cambios", {})
     def fmt_change(key):
@@ -2300,6 +2585,8 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Venta estimada: `{datos['pred_venta_str']}`\n"
         f"• Tendencia: `{datos['tendencia']}`\n"
         f"• Calidad de señal: `{datos['confianza']}%`\n"
+        f"• 🎯 Señal operativa: `{senal_operativa['label']}`\n"
+        f"• Lectura operativa: {senal_operativa['reason']}\n"
         f"• Rango estimado midpoint: `{datos.get('forecast_low_mid', 0):.2f} – {datos.get('forecast_high_mid', 0):.2f} Bs`\n"
         f"• Lectura: {datos.get('detalle_tendencia', '')}\n\n"
         f"⚠️ _La proyección es estadística y sirve como referencia; no garantiza el precio futuro._"
@@ -2480,7 +2767,11 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     data = query.data
     chat_id = update.effective_chat.id
-    if data == "cmd_prediccion":
+    if data == "cmd_estado":
+        await cmd_estado(update, context)
+    elif data == "cmd_rendimiento":
+        await cmd_rendimiento(update, context)
+    elif data == "cmd_prediccion":
         await cmd_prediccion(update, context)
     elif data == "cmd_cuenta":
         await cmd_cuenta(update, context)
@@ -2570,6 +2861,18 @@ async def tarea_recoleccion_automatica():
 
             if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
                 datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
+                global _LAST_PREDICTION_TRACKING_TS
+                if PREDICTION_TRACKING_ENABLED:
+                    try:
+                        await asyncio.to_thread(evaluar_predicciones_pendientes, 120)
+                        if time.monotonic() - _LAST_PREDICTION_TRACKING_TS >= PREDICTION_TRACKING_INTERVAL_SECONDS:
+                            for _banco, (_c, _v, _l) in resultados.items():
+                                if _c > 0 and _v > 0:
+                                    _qtrack = await asyncio.to_thread(motor_quant_inteligente, _c, _v, _l, _banco)
+                                    await asyncio.to_thread(registrar_prediccion_tracking, _banco, _c, _v, _qtrack)
+                            _LAST_PREDICTION_TRACKING_TS = time.monotonic()
+                    except Exception as e:
+                        logger.warning("Prediction tracking falló sin afectar P2P: %s", e)
                 tendencia = datos["tendencia"]
                 manip = datos.get("manipulacion") or {}
                 nuevos_eventos = await asyncio.to_thread(evaluar_alertas_inteligentes, mercado, datos, "GENERAL")
@@ -2852,6 +3155,10 @@ def read_root():
         "billing_orders": "/api/billing/orders",
         "billing_provider": BILLING_PROVIDER,
         "smart_alerts": "/api/alerts/smart",
+        "system_status": "/api/estado",
+        "prediction_signal": "/api/predictions/signal",
+        "prediction_performance": "/api/predictions/performance",
+        "prediction_recent": "/api/predictions/recent",
     }
 
 
@@ -2867,6 +3174,7 @@ def health():
         "spot": {"enabled": True, "symbols": list(SPOT_SYMBOLS), "source": "Binance public market data"},
         "quant_engine": QUANT_ENGINE_V2.name,
         "smart_alerts": {"enabled": SMART_ALERTS_ENABLED, "cooldown_seconds": SMART_ALERT_COOLDOWN_SECONDS},
+        "prediction_tracking": {"enabled": PREDICTION_TRACKING_ENABLED, "interval_seconds": PREDICTION_TRACKING_INTERVAL_SECONDS},
         "timestamp": datetime.now(VET).isoformat(),
     }
 
@@ -3599,6 +3907,59 @@ def obtener_quant_backtest(
     }
 
 
+@app.get("/api/predictions/performance")
+def obtener_prediction_performance_api(
+    banco: str = Query("GENERAL"),
+    limit: int = Query(100, ge=10, le=1000),
+):
+    banco=(banco or "GENERAL").upper().strip()
+    if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
+    return obtener_prediction_performance(banco, limit)
+
+
+@app.get("/api/predictions/recent")
+def obtener_prediction_recent_api(
+    banco: str = Query("GENERAL"),
+    limit: int = Query(20, ge=1, le=100),
+):
+    banco=(banco or "GENERAL").upper().strip()
+    if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
+    if not DATABASE_URL: return {"ok":False,"predictions":[]}
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,created_at,actual_compra,actual_venta,pred_compra_7h,pred_venta_7h,tendencia,regimen,confidence,actual_mid_7h,error_pct_7h,direction_correct_7h
+                    FROM venbot_prediction_events WHERE banco=%s ORDER BY created_at DESC LIMIT %s
+                """,(banco,int(limit)))
+                rows=cur.fetchall()
+        return {"ok":True,"bank":banco,"predictions":[{"id":r[0],"created_at":r[1].isoformat(),"actual_compra":r[2],"actual_venta":r[3],"pred_compra_7h":r[4],"pred_venta_7h":r[5],"tendencia":r[6],"regimen":r[7],"confidence":r[8],"actual_mid_7h":r[9],"error_pct_7h":r[10],"direction_correct_7h":r[11]} for r in rows]}
+    except Exception:
+        return {"ok":False,"predictions":[],"message":"Historial de predicciones temporalmente no disponible"}
+
+
+@app.get("/api/predictions/signal")
+def obtener_prediction_signal_api(banco: str = Query("GENERAL")):
+    banco=(banco or "GENERAL").upper().strip()
+    if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
+    mercado=obtener_ultimo_mercado_banco(banco)
+    c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
+    if c<=0 or v<=0: return {"ok":False,"error":"Sin lectura P2P válida"}
+    q=motor_quant_inteligente(c,v,int(mercado.get("liquidez",0) or 0),banco)
+    return {"ok":True,"bank":banco,"signal":evaluar_senal_operativa(q,c,v),"quant":q}
+
+
+@app.get("/api/estado")
+def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
+    banco=(banco or "GENERAL").upper().strip()
+    if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
+    mercado=obtener_ultimo_mercado_banco(banco) or {}
+    c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
+    q=motor_quant_inteligente(c,v,int(mercado.get("liquidez",0) or 0),banco) if c>0 and v>0 else {}
+    perf=obtener_prediction_performance(banco,100)
+    return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf}}
+
+
 @app.get("/api/analysis")
 def obtener_analysis_api():
     return calcular_analisis_monitor("GENERAL")
@@ -4318,6 +4679,8 @@ async def startup_event():
         telegram_app.add_handler(CommandHandler("cuenta", cmd_cuenta))
         telegram_app.add_handler(CommandHandler("credenciales", cmd_credenciales))
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_app.add_handler(CommandHandler("estado", cmd_estado))
+        telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
         telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
         telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
