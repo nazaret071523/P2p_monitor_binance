@@ -2721,7 +2721,9 @@ async def cmd_aprobar(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if tg and telegram_app:
             await telegram_app.bot.send_message(chat_id=int(tg),text=f"🎉 *Pago aprobado*\n\n💎 Plan: *{result['plan']}*\n📅 Válido hasta: `{result['plan_expires_at']}`\n\nTu cuenta ya está activa. Usa /cuenta para consultar tu plan.",parse_mode="Markdown")
     except HTTPException as e: await update.message.reply_text(f"⚠️ {e.detail}")
-    except Exception: logger.exception("Error aprobando orden"); await update.message.reply_text("⚠️ Error aprobando la orden.")
+    except Exception as e:
+        logger.exception("Error aprobando orden")
+        await update.message.reply_text(f"⚠️ Error aprobando la orden: `{type(e).__name__}: {str(e)[:240]}`", parse_mode="Markdown")
 
 async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     chat_id=update.effective_chat.id
@@ -3590,16 +3592,33 @@ def _approve_manual_order(order_id, admin_chat_id):
             row=cur.fetchone()
             if not row: raise HTTPException(status_code=404, detail="order_not_found")
             external_id,tg_id,plan,currency,amount,status,reference,proof_file,expires_at=row
-            if status == "PAYMENT_PAID": return {"ok":True,"idempotent":True,"order_id":order_id}
-            if status != "PAYMENT_PENDING": raise HTTPException(status_code=400, detail="order_not_pending")
+            if status == "PAYMENT_PAID":
+                # Recuperación segura: una aprobación anterior pudo marcar la orden como
+                # PAGADA y fallar antes de completar la activación de la cuenta.
+                cur.execute("SELECT 1 FROM venbot_billing_events WHERE external_reference=%s AND event_type='payment_succeeded' LIMIT 1", (order_id,))
+                activation_done = bool(cur.fetchone())
+                if activation_done:
+                    cur.execute("SELECT plan_code,plan_expires_at FROM venbot_users WHERE external_user_id=%s LIMIT 1", (external_id,))
+                    account_row = cur.fetchone()
+                    return {
+                        "ok": True, "idempotent": True, "order_id": order_id,
+                        "plan": account_row[0] if account_row else plan,
+                        "plan_expires_at": account_row[1].isoformat() if account_row and account_row[1] else None,
+                        "telegram_chat_id": tg_id,
+                    }
+                # La orden está PAYMENT_PAID pero no existe el evento de activación:
+                # permitimos completar la activación de forma idempotente.
+            elif status != "PAYMENT_PENDING":
+                raise HTTPException(status_code=400, detail="order_not_pending")
             if not proof_file or not reference:
                 raise HTTPException(status_code=400, detail="proof_and_reference_required")
-            if expires_at and expires_at <= datetime.now(VET):
+            if status == "PAYMENT_PENDING" and expires_at and expires_at <= datetime.now(VET):
                 cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_EXPIRED',updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (order_id,))
                 raise HTTPException(status_code=400, detail="order_expired")
-            cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (str(admin_chat_id),order_id))
-            if cur.rowcount != 1:
-                raise HTTPException(status_code=409, detail="order_state_changed")
+            if status == "PAYMENT_PENDING":
+                cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (str(admin_chat_id),order_id))
+                if cur.rowcount != 1:
+                    raise HTTPException(status_code=409, detail="order_state_changed")
     activation=BillingWebhookRequest(external_user_id=external_id,telegram_chat_id=tg_id,plan_code=plan,event_type="payment_succeeded",external_reference=order_id,provider="manual",country_code="VE",payload={"pay_currency":currency,"amount":amount,"reference":reference,"proof_file_id":proof_file,"reviewed_by":str(admin_chat_id)})
     result=_billing_activate_account(activation)
     result.update({"order_id":order_id,"pay_currency":currency,"quoted_amount":amount})
