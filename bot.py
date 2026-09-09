@@ -2983,6 +2983,10 @@ def _foundation_user(external_user_id, country_code=None):
     return dict(zip(["external_user_id","country_code","plan_code","status","created_at","updated_at","deleted_at"], row))
 
 AUTH_SESSION_DAYS = max(1, int(os.getenv("AUTH_SESSION_DAYS", "30")))
+AUTH_LOGIN_MAX_ATTEMPTS = max(3, int(os.getenv("AUTH_LOGIN_MAX_ATTEMPTS", "8")))
+AUTH_LOGIN_WINDOW_SECONDS = max(60, int(os.getenv("AUTH_LOGIN_WINDOW_SECONDS", "900")))
+TELEGRAM_ACCOUNT_SETUP_SECRET = os.getenv("TELEGRAM_ACCOUNT_SETUP_SECRET", "").strip()
+_AUTH_LOGIN_ATTEMPTS = {}
 
 def _hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
@@ -3261,17 +3265,19 @@ async def _evaluar_alertas_personales():
     return disparadas
 
 @app.get("/api/alerts/rules")
-def alert_rules_list(external_user_id: str = Query(..., min_length=16, max_length=120)):
-    user = _foundation_user(external_user_id)
+def alert_rules_list(request: Request):
+    user = _require_session_user(request)
+    external_user_id = user["external_user_id"]
     rules = _alert_rules_for_user(external_user_id)
     limit = int(_foundation_entitlements(user)["limits"]["alerts"])
     return {"ok": True, "plan": _plan_vigente(user.get("plan_code"), user.get("plan_expires_at")), "limit": limit, "count": len(rules), "rules": rules}
 
 @app.post("/api/alerts/rules")
-def alert_rule_create(payload: AlertRuleCreateRequest):
-    user = _foundation_user(payload.external_user_id)
+def alert_rule_create(payload: AlertRuleCreateRequest, request: Request):
+    user = _require_session_user(request)
+    external_user_id = user["external_user_id"]
     limit = int(_foundation_entitlements(user)["limits"]["alerts"])
-    if _alert_rule_count(payload.external_user_id) >= limit:
+    if _alert_rule_count(external_user_id) >= limit:
         raise HTTPException(status_code=403, detail=f"Límite de alertas alcanzado para {_plan_efectivo(user.get('plan_code'))}: {limit}")
     banco = _validar_alerta_banco(payload.banco)
     direction = _validar_direccion_alerta(payload.direction)
@@ -3281,17 +3287,19 @@ def alert_rule_create(payload: AlertRuleCreateRequest):
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO venbot_alert_rules(external_user_id,banco,rule_type,target_value,direction,enabled,cooldown_seconds,telegram_chat_id)
                            VALUES(%s,%s,'price_target',%s,%s,TRUE,%s,%s)
-                           RETURNING id""", (payload.external_user_id,banco,payload.target_value,direction,payload.cooldown_seconds,payload.telegram_chat_id))
+                           RETURNING id""", (external_user_id,banco,payload.target_value,direction,payload.cooldown_seconds,payload.telegram_chat_id))
             rid = int(cur.fetchone()[0])
-    return {"ok": True, "id": rid, "rules": _alert_rules_for_user(payload.external_user_id)}
+    return {"ok": True, "id": rid, "rules": _alert_rules_for_user(external_user_id)}
 
 @app.patch("/api/alerts/rules/{rule_id}")
-def alert_rule_update(rule_id: int, payload: AlertRuleUpdateRequest):
+def alert_rule_update(rule_id: int, payload: AlertRuleUpdateRequest, request: Request):
+    user = _require_session_user(request)
+    external_user_id = user["external_user_id"]
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="database_not_configured")
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM venbot_alert_rules WHERE id=%s AND external_user_id=%s", (rule_id,payload.external_user_id))
+            cur.execute("SELECT id FROM venbot_alert_rules WHERE id=%s AND external_user_id=%s", (rule_id,external_user_id))
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Alerta no encontrada")
             fields=[]; vals=[]
@@ -3302,12 +3310,14 @@ def alert_rule_update(rule_id: int, payload: AlertRuleUpdateRequest):
             if payload.cooldown_seconds is not None: fields.append("cooldown_seconds=%s"); vals.append(payload.cooldown_seconds)
             if payload.enabled is not None: fields.append("enabled=%s"); vals.append(payload.enabled)
             fields.append("updated_at=CURRENT_TIMESTAMP")
-            vals.append(rule_id); vals.append(payload.external_user_id)
+            vals.append(rule_id); vals.append(external_user_id)
             cur.execute(f"UPDATE venbot_alert_rules SET {', '.join(fields)} WHERE id=%s AND external_user_id=%s", tuple(vals))
-    return {"ok": True, "rules": _alert_rules_for_user(payload.external_user_id)}
+    return {"ok": True, "rules": _alert_rules_for_user(external_user_id)}
 
 @app.delete("/api/alerts/rules/{rule_id}")
-def alert_rule_delete(rule_id: int, external_user_id: str = Query(..., min_length=16, max_length=120)):
+def alert_rule_delete(rule_id: int, request: Request):
+    user = _require_session_user(request)
+    external_user_id = user["external_user_id"]
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="database_not_configured")
     with obtener_conexion() as conn:
@@ -3337,15 +3347,23 @@ def smart_alerts_evaluate():
 
 
 @app.post("/api/auth/login")
-def auth_login(payload: LoginRequest):
+def auth_login(payload: LoginRequest, request: Request):
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="database_not_configured")
+    now_mono = time.monotonic()
+    client_key = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    bucket = _AUTH_LOGIN_ATTEMPTS.setdefault(client_key, [])
+    bucket[:] = [t for t in bucket if now_mono - t < AUTH_LOGIN_WINDOW_SECONDS]
+    if len(bucket) >= AUTH_LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Demasiados intentos de inicio de sesión. Intenta nuevamente más tarde.")
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT external_user_id,username,password_hash,country_code,plan_code,status,plan_expires_at FROM venbot_users WHERE username=%s LIMIT 1", (payload.username.strip(),))
             row = cur.fetchone()
     if not row or not row[2] or not _verify_password(payload.password, row[2]) or row[5] != "active":
+        bucket.append(now_mono)
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    _AUTH_LOGIN_ATTEMPTS.pop(client_key, None)
     token, expires = _create_session(row[0])
     user = dict(zip(["external_user_id","username","password_hash","country_code","plan_code","status","plan_expires_at"], row))
     return {"ok": True, "session_token": token, "expires_at": expires.isoformat(), "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_vigente(user["plan_code"], user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
@@ -3367,7 +3385,10 @@ def auth_logout(payload: SessionRequest):
     return {"ok": True}
 
 @app.post("/api/auth/telegram-account")
-def auth_telegram_account(payload: TelegramAccountRequest):
+def auth_telegram_account(payload: TelegramAccountRequest, request: Request):
+    supplied = request.headers.get("X-Venbot-Telegram-Setup-Secret", "")
+    if not TELEGRAM_ACCOUNT_SETUP_SECRET or not secrets.compare_digest(supplied, TELEGRAM_ACCOUNT_SETUP_SECRET):
+        raise HTTPException(status_code=401, detail="telegram_account_setup_not_authorized")
     account, _ = _create_or_get_telegram_account(payload.telegram_chat_id, payload.country_code)
     credentials = _set_new_password(account["external_user_id"])
     return {"ok": True, "account": {"external_user_id": account["external_user_id"], "username": credentials["username"], "plan": _plan_efectivo(credentials["plan_code"]), "status": credentials["status"], "plan_expires_at": credentials["plan_expires_at"].isoformat() if credentials["plan_expires_at"] else None}, "password": credentials["password"]}
