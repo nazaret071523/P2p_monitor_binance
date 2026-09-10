@@ -73,9 +73,7 @@
     html.light .v14-menu-panel{background:#fff;color:#0f172a;border-color:#cbd5e1}
     html.light .v14-menu-panel .menu-link{color:#334155}
     html.light .v14-menu-panel .menu-link:hover{background:#f1f5f9}
-  .overflow-wrap-anywhere{overflow-wrap:anywhere;word-break:normal;}
-.ai-chat-copy{font-size:.925rem;line-height:1.75;overflow-wrap:anywhere;word-break:normal;}
-</style>
+  </style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
@@ -229,13 +227,18 @@
           </div>
         </div>
 
-        <div class="flex items-center gap-3 text-[10px] text-slate-400">
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Alcista (Verde)</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Bajista (Roja)</span>
-          <span class="ml-auto flex items-center gap-1.5 text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> En vivo</span>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-slate-400">
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Vela alcista</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Vela bajista</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400"></span> Comprar</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-300"></span> Vender</span>
+          <span class="ml-auto flex items-center gap-1.5 text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Lectura en vivo</span>
         </div>
-        <div class="relative h-80 w-full rounded-xl bg-slate-950/20 border border-slate-900/70 overflow-hidden"><canvas id="marketChart"></canvas></div>
-        <div class="grid grid-cols-3 gap-2 text-[10px]">
+        <div class="relative h-96 w-full rounded-xl bg-slate-950/20 border border-slate-900/70 overflow-hidden"><canvas id="marketChart"></canvas></div>
+        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] leading-relaxed text-slate-500">
+          <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i> Las velas muestran el <strong class="text-slate-400">punto medio entre Comprar y Vender</strong> de las lecturas P2P de Venbot. No son velas OHLC nativas de Binance. Las líneas permiten ver por separado el precio para comprar USDT y el precio para vender USDT.
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
           <div class="bg-slate-950/60 border border-rose-500/20 rounded-xl p-2.5">
             <span class="text-slate-500 block">Mínimo P2P</span>
             <strong id="chart-low" class="tabular text-rose-300 block mt-0.5">--,-- Bs</strong>
@@ -250,6 +253,11 @@
             <span class="text-slate-500 block">Máximo P2P</span>
             <strong id="chart-high" class="tabular text-emerald-300 block mt-0.5">--,-- Bs</strong>
             <span id="chart-high-time" class="text-[9px] text-slate-600 block mt-1">--</span>
+          </div>
+          <div class="bg-slate-950/60 border border-indigo-500/20 rounded-xl p-2.5">
+            <span class="text-slate-500 block">Soporte / resistencia</span>
+            <strong id="chart-levels" class="tabular text-indigo-300 block mt-0.5">-- / --</strong>
+            <span id="chart-range-position" class="text-[9px] text-slate-600 block mt-1">Rango: --</span>
           </div>
         </div>
       </section>
@@ -418,7 +426,7 @@
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 space-y-2">
         <div class="flex items-center gap-2">
           <button id="ai-mic-btn" type="button" onclick="toggleAIListening()" class="focus-ring w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition" title="Hablar con Venbot"><i class="fa-solid fa-microphone"></i></button>
-          <input id="ai-user-input" type="text" placeholder="Pregúntame lo que quieras…" onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
+          <input id="ai-user-input" type="text" placeholder="Escribe o habla con Venbot..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
           <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1"><i class="fa-solid fa-paper-plane"></i></button>
         </div>
         <div id="ai-voice-status" class="text-[9px] text-slate-500 text-center">Voz apagada · puedes activarla con el altavoz</div>
@@ -459,23 +467,7 @@
     const API_PRICES = `${API_BASE_URL}/api/precios`;
     const API_HISTORY = `${API_BASE_URL}/api/history`;
     const API_AI_CHAT = `${API_BASE_URL}/api/ai/chat`;
-    const AI_HISTORY_KEY = 'venbot_ai_history_v1';
-    let aiConversation = [];
-    function normalizeAIText(text){
-      let s=String(text||'');
-      if(/[ÃÂâð�]/.test(s)){ try { const c=decodeURIComponent(escape(s)); if((c.match(/�/g)||[]).length <= (s.match(/�/g)||[]).length) s=c; } catch(e){} }
-      return s.replace(/\r\n?/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
-    }
-    function loadAIHistory(){
-      try{ const raw=localStorage.getItem(AI_HISTORY_KEY); const parsed=raw?JSON.parse(raw):[]; aiConversation=Array.isArray(parsed)?parsed.slice(-30):[]; }catch(e){ aiConversation=[]; }
-    }
-    function saveAIHistory(){ try{ localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(aiConversation.slice(-30))); }catch(e){} }
-    function renderAIHistory(){
-      const chat=document.getElementById('ai-chat-messages'); if(!chat) return;
-      chat.innerHTML='';
-      aiConversation.forEach(m=>appendAIMessage(m.role, normalizeAIText(m.content)));
-    }
-    loadAIHistory();
+    const aiConversation = [];
 
     const marketState = {
       buy: 0,
@@ -691,12 +683,23 @@
         drawLevel(meta.low, 'Mínimo', '#fb7185', [5,4]);
         drawLevel(meta.current, 'Actual', '#e2e8f0', [4,4]);
         drawLevel(meta.high, 'Máximo', '#34d399', [5,4]);
+        drawLevel(meta.support, 'Soporte', '#818cf8', [7,4]);
+        drawLevel(meta.resistance, 'Resistencia', '#c084fc', [7,4]);
       }
     };
 
     function formatChartTime(ts) {
       if (!ts || !Number.isFinite(Number(ts))) return '--';
       return new Date(Number(ts)).toLocaleString('es-VE', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+    }
+
+    function chartLineSeries(rows, field) {
+      if (!Array.isArray(rows)) return [];
+      return rows.map(row => {
+        const value = Number(row[field]);
+        const time = new Date(row.timestamp || row.fecha).getTime();
+        return Number.isFinite(value) && value > 0 && Number.isFinite(time) ? {x: time, y: value} : null;
+      }).filter(Boolean);
     }
 
     function renderChart() {
@@ -741,11 +744,9 @@
       }
 
       // Mínimo/máximo se calculan DESPUÉS de incorporar la vela viva.
-      // Así los extremos nunca quedan un ciclo atrás y Actual puede coincidir
-      // legítimamente con Mínimo o Máximo cuando el mercado realmente está allí.
       const candleExtremes = candles.filter(c => Number.isFinite(c.l) && Number.isFinite(c.h));
-      let low = candleExtremes.length ? Math.min(...candleExtremes.map(c => Number(c.l))) : (mids.length ? Math.min(...mids) : 0);
-      let high = candleExtremes.length ? Math.max(...candleExtremes.map(c => Number(c.h))) : (mids.length ? Math.max(...mids) : 0);
+      const low = candleExtremes.length ? Math.min(...candleExtremes.map(c => Number(c.l))) : (mids.length ? Math.min(...mids) : 0);
+      const high = candleExtremes.length ? Math.max(...candleExtremes.map(c => Number(c.h))) : (mids.length ? Math.max(...mids) : 0);
       let lowTs = 0, highTs = 0;
       if (candleExtremes.length) {
         const lowC = candleExtremes.find(c => Number(c.l) === low);
@@ -753,18 +754,38 @@
         lowTs = lowC ? Number(lowC.x) : 0;
         highTs = highC ? Number(highC.x) : 0;
       }
+
+      const analysis = marketState.analysis || {};
+      const support = Number(analysis.soporte_7h ?? analysis.soporte ?? 0);
+      const resistance = Number(analysis.resistencia_7h ?? analysis.resistencia ?? 0);
+      const rangePosition = Number(analysis.posicion_rango ?? 0);
+      const buySeries = chartLineSeries(marketState.history, 'compra');
+      const sellSeries = chartLineSeries(marketState.history, 'venta');
+      if (currentMid > 0 && Number.isFinite(liveTime)) {
+        const currentBuy = Number(marketState.buy);
+        const currentSell = Number(marketState.sell);
+        if (currentBuy > 0) buySeries.push({x: liveTime, y: currentBuy});
+        if (currentSell > 0) sellSeries.push({x: liveTime, y: currentSell});
+      }
+
       document.getElementById('chart-low').textContent = low > 0 ? `${money(low)} Bs` : '--,-- Bs';
       document.getElementById('chart-high').textContent = high > 0 ? `${money(high)} Bs` : '--,-- Bs';
       document.getElementById('chart-current').textContent = currentMid > 0 ? `${money(currentMid)} Bs` : '--,-- Bs';
       document.getElementById('chart-low-time').textContent = lowTs ? formatChartTime(lowTs) : '--';
       document.getElementById('chart-high-time').textContent = highTs ? formatChartTime(highTs) : '--';
       document.getElementById('chart-current-time').textContent = liveTime ? formatChartTime(liveTime) : '--';
+      document.getElementById('chart-levels').textContent = support > 0 && resistance > 0 ? `${money(support)} / ${money(resistance)}` : '-- / --';
+      document.getElementById('chart-range-position').textContent = rangePosition > 0 ? `Rango: ${pct(rangePosition)}%` : 'Rango: n/d';
 
-      // Reutilizar la instancia de Chart.js evita destruir/recrear el canvas cada
-      // 15 segundos, algo especialmente costoso en móvil.
+      const datasets = [
+        { label: 'USDT/VES · Punto medio', type: 'candlestick', data: candles, borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, barThickness: 'flex', maxBarThickness: 16 },
+        { label: 'Comprar USDT', type: 'line', data: buySeries, borderColor: '#38bdf8', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, pointHitRadius: 8, tension: 0.15, spanGaps: true },
+        { label: 'Vender USDT', type: 'line', data: sellSeries, borderColor: '#fbbf24', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, pointHitRadius: 8, tension: 0.15, spanGaps: true }
+      ];
+
       if (marketChart) {
-        marketChart.data.datasets[0].data = candles;
-        marketChart.options.plugins.venbotLevels = { low, current: currentMid, high };
+        marketChart.data.datasets = datasets;
+        marketChart.options.plugins.venbotLevels = { low, current: currentMid, high, support, resistance };
         marketChart.update('none');
         return;
       }
@@ -772,31 +793,29 @@
       marketChart = new Chart(canvas.getContext('2d'), {
         type: 'candlestick',
         plugins: [venbotLevelsPlugin],
-        data: { datasets: [{
-          label: 'USDT/VES P2P', data: candles,
-          borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' },
-          color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' },
-          barThickness: 'flex', maxBarThickness: 16,
-        }]},
+        data: { datasets },
         options: {
           responsive: true, maintainAspectRatio: false, parsing: false,
-          animation: false, interaction: { intersect: false, mode: 'nearest' },
+          animation: false, interaction: { intersect: false, mode: 'index' },
           plugins: {
-            venbotLevels: { low, current: currentMid, high },
-            legend: { display: false },
+            venbotLevels: { low, current: currentMid, high, support, resistance },
+            legend: { display: true, position: 'top', align: 'end', labels: { color: '#94a3b8', boxWidth: 12, boxHeight: 2, usePointStyle: true, pointStyle: 'line', padding: 12, font: { size: 9, weight: '600' } } },
             tooltip: { callbacks: {
-              title: (items) => items.length ? new Date(items[0].raw.x).toLocaleString('es-VE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '',
-              label: (ctx) => { const r=ctx.raw; return `O ${money(r.o)} · H ${money(r.h)} · L ${money(r.l)} · C ${money(r.c)} Bs`; }
+              title: (items) => items.length ? formatChartTime(items[0].raw?.x) : '',
+              label: (ctx) => {
+                const r = ctx.raw || {};
+                if (ctx.dataset.type === 'line') return `${ctx.dataset.label}: ${money(r.y)} Bs`;
+                return `Punto medio · O ${money(r.o)} · H ${money(r.h)} · L ${money(r.l)} · C ${money(r.c)} Bs`;
+              }
             }}
           },
           scales: {
-            x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7 }, grid:{ color:'rgba(51,65,85,.25)' } },
-            y: { position:'right', grace:'1.5%', ticks:{ color:'#64748b', maxTicksLimit:7, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
+            x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:8 }, grid:{ color:'rgba(51,65,85,.25)' } },
+            y: { position:'right', grace:'1.5%', ticks:{ color:'#64748b', maxTicksLimit:8, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
           }
         }
       });
     }
-
 
 
     async function loadSpotMarket() {
@@ -985,7 +1004,7 @@
         document.getElementById('menu-online-count').textContent = n;
       } catch(e) {}
     }
-    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Inicia sesión para usar Venbot AI. Tu plan FREE incluye 5 consultas al día.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); renderAIHistory(); }
+    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Inicia sesión para usar Venbot AI. Tu plan FREE incluye 5 consultas al día.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); }
     function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
     function openAlertsModal() {
       document.getElementById('alertsModal').classList.remove('hidden');
@@ -1026,44 +1045,25 @@
     }
 
     function markdownToSafeHTML(text) {
-      // Renderizado sencillo y legible: conserva párrafos, listas y saltos sin cortar palabras.
-      let raw = String(text || '').replace(/\r\n?/g, '\n').trim();
-      const blocks = raw.split(/\n{2,}/).map(x => x.trim()).filter(Boolean);
-      const renderInline = (value) => {
-        let s = escapeHTML(value);
-        s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300 break-words">$1</code>');
-        s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-        return s;
-      };
-      return blocks.map(block => {
-        const lines = block.split('\n').map(x => x.trim()).filter(Boolean);
-        if (!lines.length) return '';
-        const heading = lines[0].match(/^#{1,3}\s+(.+)$/);
-        if (heading && lines.length === 1) {
-          return `<h4 class="font-bold text-emerald-300 mt-3 mb-1.5">${renderInline(heading[1])}</h4>`;
-        }
-        const listItems = lines.filter(x => /^[-*]\s+/.test(x));
-        if (listItems.length === lines.length) {
-          return '<ul class="list-disc pl-5 space-y-1 my-2">' + listItems.map(x => `<li>${renderInline(x.replace(/^[-*]\s+/, ''))}</li>`).join('') + '</ul>';
-        }
-        const orderedItems = lines.filter(x => /^\d+[.)]\s+/.test(x));
-        if (orderedItems.length === lines.length) {
-          return '<ol class="list-decimal pl-5 space-y-1 my-2">' + orderedItems.map(x => `<li>${renderInline(x.replace(/^\d+[.)]\s+/, ''))}</li>`).join('') + '</ol>';
-        }
-        return `<p class="mb-2 last:mb-0">${lines.map(renderInline).join('<br>')}</p>`;
-      }).join('');
+      let s = escapeHTML(String(text || ''));
+      s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-2 mb-1">$1</h4>');
+      s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
+      s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
+      s = s.replace(/^[-*] (.+)$/gm, '<div class="ml-2">• $1</div>');
+      s = s.replace(/^(\d+)\. (.+)$/gm, '<div class="ml-2">$1. $2</div>');
+      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300">$1</code>');
+      s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+      return s.replace(/\n/g, '<br>');
     }
-
-    function clearAIHistory(){ aiConversation=[]; try{localStorage.removeItem(AI_HISTORY_KEY);}catch(e){}; renderAIHistory(); }
 
     function appendAIMessage(role, text) {
       const chat = document.getElementById('ai-chat-messages');
       const safe = role === 'user' ? escapeHTML(text).replace(/\n/g, '<br>') : markdownToSafeHTML(text);
       const user = role === 'user';
       chat.insertAdjacentHTML('beforeend', user
-        ? `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 text-sm max-w-[92%] leading-7 break-words overflow-wrap-anywhere">${safe}</div></div>`
-        : `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 text-sm max-w-[92%] leading-7 break-words overflow-wrap-anywhere">${safe}</div></div>`);
+        ? `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${safe}</div></div>`
+        : `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">${safe}</div></div>`);
       chat.scrollTop = chat.scrollHeight;
     }
 
@@ -1118,11 +1118,10 @@
       aiRequestRunning = true;
       input.value = '';
       appendAIMessage('user', text);
-      aiConversation.push({ role: 'user', content: normalizeAIText(text) });
-      saveAIHistory();
+      aiConversation.push({ role: 'user', content: text });
       const typingId = 'ai-typing-' + Date.now();
       const chat = document.getElementById('ai-chat-messages');
-      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 text-sm max-w-[92%] leading-7 break-words overflow-wrap-anywhere">Venbot está pensando…</div></div>`);
+      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
       chat.scrollTop = chat.scrollHeight;
       try {
         const controller = new AbortController();
@@ -1137,36 +1136,43 @@
         const decoder = new TextDecoder('utf-8');
         let buffer = '', answer = '';
         const body = document.getElementById(`${typingId}-body`);
-        const processSSEEvent = (event) => {
-          const line = event.split('\n').find(x => x.startsWith('data:'));
-          if (!line) return;
-          try {
-            const payload = JSON.parse(line.slice(5).trim());
-            if (payload.text) {
-              answer = normalizeAIText(answer + payload.text);
-              if (body) { body.classList.remove('text-slate-400'); body.classList.add('text-slate-200'); body.innerHTML = markdownToSafeHTML(answer); }
-              chat.scrollTop = chat.scrollHeight;
-            }
-          } catch(e) {}
-        };
         while (true) {
           const {value, done} = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, {stream:true});
           const events = buffer.split('\n\n');
           buffer = events.pop() || '';
-          events.forEach(processSSEEvent);
+          for (const event of events) {
+            const line = event.split('\n').find(x => x.startsWith('data:'));
+            if (!line) continue;
+            try {
+              const payload = JSON.parse(line.slice(5).trim());
+              if (payload.text) {
+                answer += payload.text;
+                if (body) { body.classList.remove('text-slate-400'); body.classList.add('text-slate-200'); body.innerHTML = markdownToSafeHTML(answer); }
+                chat.scrollTop = chat.scrollHeight;
+              }
+            } catch(e) {}
+          }
         }
-        buffer += decoder.decode();
-        if (buffer.trim()) processSSEEvent(buffer);
-        // El backend ya realiza toda la cadena de fallback (Gemini stream -> Gemini normal -> OpenRouter/local).
-        // No repetimos /api/ai/chat aquí porque cada endpoint consume una unidad de cuota.
+        if (!answer.trim()) {
+          // Segundo intento: endpoint normal de IA. Esto evita que un problema
+          // puntual del SSE deje al usuario sin respuesta.
+          try {
+            const fallback = await fetch(`${API_BASE_URL}/api/ai/chat`, {
+              method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json','X-Venbot-Session':getAuthToken() || ''},
+              body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) })
+            });
+            if (fallback.ok) {
+              const data = await fallback.json();
+              answer = String(data?.answer || '').trim();
+            }
+          } catch (e) { console.warn('Venbot AI fallback:', e); }
+        }
         document.getElementById(typingId)?.remove();
         if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
-        answer = normalizeAIText(answer);
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
-        saveAIHistory();
         speakAIResponse(answer);
       } catch (error) {
         console.error('Venbot AI:', error);
