@@ -2721,7 +2721,9 @@ async def cmd_aprobar(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if tg and telegram_app:
             await telegram_app.bot.send_message(chat_id=int(tg),text=f"🎉 *Pago aprobado*\n\n💎 Plan: *{result['plan']}*\n📅 Válido hasta: `{result['plan_expires_at']}`\n\nTu cuenta ya está activa. Usa /cuenta para consultar tu plan.",parse_mode="Markdown")
     except HTTPException as e: await update.message.reply_text(f"⚠️ {e.detail}")
-    except Exception: logger.exception("Error aprobando orden"); await update.message.reply_text("⚠️ Error aprobando la orden.")
+    except Exception as e:
+        logger.exception("Error aprobando orden")
+        await update.message.reply_text(f"⚠️ Error aprobando la orden: `{type(e).__name__}: {str(e)[:240]}`", parse_mode="Markdown")
 
 async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     chat_id=update.effective_chat.id
@@ -3130,7 +3132,7 @@ class BillingWebhookRequest(BaseModel):
     external_user_id: Optional[str] = Field(default=None, min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
     telegram_chat_id: Optional[int] = None
     username: Optional[str] = Field(default=None, min_length=6, max_length=40)
-    plan_code: str = Field(min_length=4, max_length=12)
+    plan_code: str = Field(min_length=3, max_length=12)
     event_type: str = Field(min_length=4, max_length=40)
     external_reference: str = Field(min_length=3, max_length=160)
     provider: str = Field(default="external_web", min_length=2, max_length=60)
@@ -3139,7 +3141,7 @@ class BillingWebhookRequest(BaseModel):
     payload: Optional[dict] = None
 
 class BillingOrderCreateRequest(BaseModel):
-    plan_code: str = Field(min_length=4, max_length=12)
+    plan_code: str = Field(min_length=3, max_length=12)
     pay_currency: str = Field(min_length=3, max_length=8)
 
 class AlertRuleCreateRequest(BaseModel):
@@ -3590,16 +3592,33 @@ def _approve_manual_order(order_id, admin_chat_id):
             row=cur.fetchone()
             if not row: raise HTTPException(status_code=404, detail="order_not_found")
             external_id,tg_id,plan,currency,amount,status,reference,proof_file,expires_at=row
-            if status == "PAYMENT_PAID": return {"ok":True,"idempotent":True,"order_id":order_id}
-            if status != "PAYMENT_PENDING": raise HTTPException(status_code=400, detail="order_not_pending")
+            if status == "PAYMENT_PAID":
+                # Recuperación segura: una aprobación anterior pudo marcar la orden como
+                # PAGADA y fallar antes de completar la activación de la cuenta.
+                cur.execute("SELECT 1 FROM venbot_billing_events WHERE external_reference=%s AND event_type='payment_succeeded' LIMIT 1", (order_id,))
+                activation_done = bool(cur.fetchone())
+                if activation_done:
+                    cur.execute("SELECT plan_code,plan_expires_at FROM venbot_users WHERE external_user_id=%s LIMIT 1", (external_id,))
+                    account_row = cur.fetchone()
+                    return {
+                        "ok": True, "idempotent": True, "order_id": order_id,
+                        "plan": account_row[0] if account_row else plan,
+                        "plan_expires_at": account_row[1].isoformat() if account_row and account_row[1] else None,
+                        "telegram_chat_id": tg_id,
+                    }
+                # La orden está PAYMENT_PAID pero no existe el evento de activación:
+                # permitimos completar la activación de forma idempotente.
+            elif status != "PAYMENT_PENDING":
+                raise HTTPException(status_code=400, detail="order_not_pending")
             if not proof_file or not reference:
                 raise HTTPException(status_code=400, detail="proof_and_reference_required")
-            if expires_at and expires_at <= datetime.now(VET):
+            if status == "PAYMENT_PENDING" and expires_at and expires_at <= datetime.now(VET):
                 cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_EXPIRED',updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (order_id,))
                 raise HTTPException(status_code=400, detail="order_expired")
-            cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (str(admin_chat_id),order_id))
-            if cur.rowcount != 1:
-                raise HTTPException(status_code=409, detail="order_state_changed")
+            if status == "PAYMENT_PENDING":
+                cur.execute("UPDATE venbot_billing_orders SET status='PAYMENT_PAID',paid_at=COALESCE(paid_at,CURRENT_TIMESTAMP),reviewed_at=CURRENT_TIMESTAMP,reviewed_by=%s,updated_at=CURRENT_TIMESTAMP WHERE order_id=%s AND status='PAYMENT_PENDING'", (str(admin_chat_id),order_id))
+                if cur.rowcount != 1:
+                    raise HTTPException(status_code=409, detail="order_state_changed")
     activation=BillingWebhookRequest(external_user_id=external_id,telegram_chat_id=tg_id,plan_code=plan,event_type="payment_succeeded",external_reference=order_id,provider="manual",country_code="VE",payload={"pay_currency":currency,"amount":amount,"reference":reference,"proof_file_id":proof_file,"reviewed_by":str(admin_chat_id)})
     result=_billing_activate_account(activation)
     result.update({"order_id":order_id,"pay_currency":currency,"quoted_amount":amount})
@@ -4091,19 +4110,41 @@ def obtener_history(period: str = Query("5m", pattern="^(5m|15m|30m|1h|1d)$")):
     return result
 
 
-VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional avanzado en español, con comportamiento natural similar al de un buen asistente general. Puedes conversar sobre prácticamente cualquier tema permitido: ciencia, historia, tecnología, programación, negocios, viajes, educación, redacción, matemáticas, análisis, cultura y preguntas sobre acontecimientos actuales cuando dispongas de búsqueda web.
+VENBOT_PROJECT_CONTEXT = """VENBOT · CONTEXTO DEL PROYECTO
+Venbot es una plataforma de información y análisis de mercados. Su núcleo actual es el monitor P2P USDT/VES de Binance con referencias de Mercantil, Provincial y BNC, tasas BCV/Euro, calculadora, histórico, Quant 7H/24H, niveles, alertas inteligentes y alertas personales. La cuenta, sesiones y planes FREE/PREMIUM/VIP ya forman parte del producto, y los pagos se validan manualmente.
 
-Además eres el copiloto del proyecto Venbot. Debes conocer y explicar con claridad las funciones que ya están implementadas y distinguirlas de las funciones que están en construcción o planificadas. El proyecto actual incluye monitor P2P USDT/VES, bancos Mercantil/Provincial/BNC, BCV/Euro, calculadora, histórico/gráfica P2P, análisis cuantitativo, proyección estadística, alertas, cuentas/planes, Telegram y un módulo Spot en evolución. La arquitectura se está preparando para que Spot tenga cotizaciones, histórico, análisis, gráficos y predicciones por moneda, y para soportar mercados P2P de otros países en el futuro. No afirmes que una función futura ya existe: di claramente "está en construcción" o "está planificada" cuando corresponda.
+Mercado Spot: Venbot ya tiene una capa de datos públicos de Binance Spot y snapshots para BTCUSDT, ETHUSDT, SOLUSDT, SUIUSDT, AAVEUSDT, UNIUSDT, KSMUSDT, ZECUSDT y XRPUSDT. El panel Spot está protegido por VIP y está previsto ampliarlo con gráficos, análisis predictivo y selección de monedas. No presentes esas funciones futuras como si ya estuvieran terminadas.
+
+Mercados exteriores: la arquitectura está pensada para incorporar mercados P2P de otros países y monedas posteriormente. No inventes cotizaciones de un país o mercado que Venbot todavía no tenga conectado.
+
+Regla de producto: cuando el usuario pregunte por Venbot, explica lo que existe realmente y diferencia claramente entre funciones activas, funciones en construcción y futuras ampliaciones."""
+
+VENBOT_AI_SYSTEM = f"""Eres Venbot AI, un asistente conversacional avanzado en español. Compórtate como un asistente humano de alta calidad: entiende el contexto, recuerda la conversación disponible, responde directamente y adapta el nivel de detalle a la pregunta. Puedes hablar de cualquier tema permitido del mundo: ciencia, historia, tecnología, programación, negocios, educación, viajes, cultura, matemáticas, escritura, ideas, actualidad y conversación cotidiana. No conviertas cada pregunta en una respuesta financiera ni lleves temas generales hacia P2P sin motivo.
+
+{VENBOT_PROJECT_CONTEXT}
 
 REGLAS ESTRICTAS PARA MERCADO:
-1) Usa exclusivamente el CONTEXTO REAL DE VENBOT recibido en cada consulta. Nunca inventes precios, tasas, liquidez, muestras, horarios, momentum, soporte, resistencia o proyecciones.
-2) Distingue siempre: dato observado, cálculo estadístico, estimación y recomendación. Una proyección nunca es un precio garantizado.
+1) Usa exclusivamente el CONTEXTO REAL DE VENBOT para cifras y estados de mercado. Nunca inventes precios, tasas, liquidez, muestras, horarios, momentum, soporte, resistencia o proyecciones.
+2) Distingue siempre entre dato observado, cálculo estadístico, estimación y recomendación. Una proyección nunca es un precio garantizado.
 3) Comprar USDT = anuncios SELL de Binance (el usuario compra USDT). Vender USDT = anuncios BUY (el usuario vende USDT). No inviertas jamás estas etiquetas.
-4) Si una ventana temporal aparece como n/d, significa que no hay datos suficientes o continuidad suficiente para calcularla; no la rellenes con 0.00% ni inventes una lectura.
-5) Si los datos son insuficientes por falta de histórico, dilo claramente y usa solo lo que sí está observado.
-6) Para preguntas de mercado, responde primero con una lectura breve y después con los números relevantes del contexto. No contradigas el bloque analítico de Venbot.
+4) Si una ventana temporal aparece como n/d, significa que no hay datos suficientes o continuidad suficiente; no la rellenes ni inventes una lectura.
+5) Si faltan datos, dilo claramente y usa solo lo que sí está observado.
+6) Para mercado, empieza con una conclusión humana de 1-2 frases y luego presenta solo las métricas que ayuden a responder. No recites todo el contexto.
+7) Si preguntan por 7H, usa proyeccion_7h y preséntala como escenario estadístico central con rango, cobertura y calidad cuando estén disponibles.
+8) Si preguntan por actualidad, noticias o información que pueda haber cambiado, usa la herramienta de búsqueda web disponible. No finjas que conoces un dato reciente si no lo verificaste.
+9) Si la pregunta es general y no requiere actualidad, responde con tu conocimiento y razonamiento normal.
+10) Si preguntan qué puede hacer Venbot, describe el producto real y no prometas funciones futuras como disponibles.
+11) Si preguntan por Spot, usa los datos Spot reales que aparezcan en el contexto y respeta el plan del usuario. Si el análisis predictivo Spot aún no existe para esa moneda, dilo y no lo simules.
+12) Para preguntas financieras, evita promesas de ganancias o certeza. Puedes explicar escenarios, riesgos, comparaciones y señales de forma neutral.
 
-Mantén continuidad real con el historial y responde de forma natural y fluida. Si la consulta NO es de mercado, eres un asistente general completo: responde cualquier tema permitido sin intentar llevar la conversación a P2P. Para preguntas sobre el propio proyecto, usa el contexto del producto y explica tanto lo que existe hoy como la dirección futura sin inventar funcionalidades. Si una pregunta requiere información actual del mundo y tienes herramienta de búsqueda disponible, úsala antes de afirmar datos cambiantes. Para consultas de mercado, usa exactamente el mismo motor cuantitativo que alimenta monitor y Telegram: conclusión primero, luego 3-5 métricas y una recomendación táctica. Si te preguntan por una predicción a 7H, usa proyeccion_7h y explica que es un escenario estadístico central con rango estimado, no certeza. Evita repetir todo el contexto y no cortes una frase a mitad. No prometas ganancias ni certeza financiera."""
+ESTILO DE RESPUESTA:
+- Español claro y natural, salvo que el usuario pida otro idioma.
+- Párrafos completos y legibles; no cortes frases a mitad.
+- Usa títulos cortos y listas solo cuando realmente mejoren la lectura.
+- Para preguntas sencillas, responde sencillo. Para análisis complejos, estructura la respuesta.
+- No empieces con frases robóticas como “según el contexto” salvo que sea necesario.
+- No repitas el descargo de responsabilidad en cada respuesta; úsalo cuando la pregunta implique una decisión financiera o una predicción.
+- Nunca afirmes haber ejecutado una compra, venta, pago, transferencia o acción externa si no puedes hacerlo."""
 
 
 def _obtener_contexto_bancos_ia():
@@ -4124,6 +4165,64 @@ def _obtener_contexto_bancos_ia():
             "timestamp": f.isoformat() if f else None,
         }
     return bancos
+
+
+def _serializar_contexto_spot(symbols=None):
+    """Contexto Spot real para IA. No expone Spot actual a planes no VIP."""
+    symbols = list(symbols or SPOT_SYMBOLS)[:12]
+    rows = {}
+    try:
+        datos = recolectar_spot(symbols, persist=False)
+    except Exception:
+        datos = {}
+    for sym in symbols:
+        item = datos.get(sym) or obtener_spot_snapshot_db(sym)
+        if not item:
+            continue
+        rows[sym] = {
+            "price": round(float(item.get("price") or 0), 8),
+            "bid": round(float(item.get("bid") or 0), 8),
+            "ask": round(float(item.get("ask") or 0), 8),
+            "change_24h_pct": round(float(item.get("change_24h_pct") or 0), 3),
+            "quote_volume_24h": round(float(item.get("quote_volume_24h") or 0), 2),
+            "timestamp": item.get("timestamp").isoformat() if hasattr(item.get("timestamp"), "isoformat") else item.get("timestamp"),
+            "source": item.get("source"),
+        }
+    return {"enabled_symbols": symbols, "lecturas": rows, "nota": "Datos públicos de Binance Spot. No implican capacidad de trading."}
+
+
+def _pregunta_datos_venbot(low):
+    return any(x in low for x in (
+        "qué datos estás utilizando", "que datos estas utilizando",
+        "qué datos utilizas", "que datos utilizas",
+        "qué datos usas", "que datos usas",
+        "qué información estás usando", "que informacion estas usando",
+        "de dónde salen los datos", "de donde salen los datos",
+        "con qué datos haces el análisis", "con que datos haces el analisis",
+        "cómo haces el análisis", "como haces el analisis"
+    ))
+
+
+def _respuesta_datos_venbot(contexto, include_spot=False):
+    a = contexto.get("analisis_cuantitativo") or {}
+    m = contexto.get("mercado_actual") or {}
+    bancos = contexto.get("bancos") or {}
+    partes = [
+        "Para este análisis estoy usando datos reales que Venbot tiene conectados en ese momento, no una cifra inventada.",
+        "En P2P uso las lecturas de Binance para USDT/VES y separo correctamente Comprar USDT (SELL) de Vender USDT (BUY). También incorporo las lecturas persistidas de Mercantil, Provincial y BNC cuando están disponibles.",
+        "Para el análisis cuantitativo uso el histórico temporal de Venbot, junto con métricas como tendencia, momentum, spread, liquidez, soporte, resistencia y el escenario estadístico de 7 horas cuando existe suficiente cobertura. Las tasas BCV y Euro se usan como referencias adicionales.",
+    ]
+    disponibles = [n.title() for n,b in bancos.items() if isinstance(b,dict) and b.get("disponible")]
+    if disponibles:
+        partes.append("En esta lectura hay datos bancarios disponibles de: " + ", ".join(disponibles) + ".")
+    if a:
+        p7 = a.get("proyeccion_7h") or {}
+        if p7:
+            partes.append(f"La parte predictiva no es una promesa: es un escenario estadístico calculado con el histórico disponible (cobertura aproximada de {float(p7.get('cobertura_horas',0) or 0):.1f} horas).")
+    if include_spot:
+        partes.append("Para Spot, Venbot puede consultar las lecturas públicas conectadas de Binance y, a medida que se complete el módulo, utilizará histórico y modelos específicos por moneda. No presento una predicción Spot como disponible si todavía no lo está.")
+    partes.append("Si quieres, también puedo explicarte exactamente qué significa cada dato y cómo influye en la lectura.")
+    return "\n\n".join(partes)
 
 
 def _serializar_contexto_mercado():
@@ -4149,26 +4248,6 @@ def _serializar_contexto_mercado():
     _AI_CONTEXT_CACHE["value"] = result
     _AI_CONTEXT_CACHE["expires"] = time.monotonic() + _CACHE_TTL_AI
     return result
-
-
-def _reparar_texto_ia(text):
-    """Corrige mojibake UTF-8/Latin-1 si un proveedor devuelve texto mal decodificado."""
-    if not text:
-        return text
-    s = str(text)
-    # Señales típicas: Ã¡, Ã©, Ã±, Â¿, â€¦, etc. Solo redecodifica si mejora claramente.
-    markers = ("Ã", "Â", "â", "ð")
-    if not any(m in s for m in markers):
-        return s
-    try:
-        repaired = s.encode("latin-1").decode("utf-8")
-        bad_before = sum(s.count(m) for m in markers)
-        bad_after = sum(repaired.count(m) for m in markers)
-        if bad_after < bad_before:
-            return repaired
-    except Exception:
-        pass
-    return s
 
 
 def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_instruction=None, max_output_tokens=900, timeout=7, tools=None):
@@ -4205,7 +4284,7 @@ def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_
                     if text:
                         return text
         text = str(data.get("output_text", "") or "").strip()
-        return _reparar_texto_ia(text) or None
+        return text or None
     except Exception as e:
         logger.warning("Gemini Interactions REST %s falló: %s", model, e)
         return None
@@ -4258,7 +4337,7 @@ def _respuesta_gemini_rest(prompt, model, temperature=0.35):
         data = r.json()
         parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
         text = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict)).strip()
-        return _reparar_texto_ia(text) or None
+        return text or None
     except Exception as e:
         logger.warning("Gemini legacy REST %s falló: %s", model, e)
         return None
@@ -4278,7 +4357,7 @@ def _respuesta_gemini_sdk(prompt, model, temperature=0.35):
                 max_output_tokens=900,
             ),
         )
-        return _reparar_texto_ia((getattr(response, "text", None) or "").strip()) or None
+        return (getattr(response, "text", None) or "").strip() or None
     except Exception as e:
         logger.warning("Gemini legacy SDK %s falló: %s", model, e)
         return None
@@ -4297,31 +4376,10 @@ def _respuesta_openrouter(prompt, temperature=0.45):
             logger.warning("OpenRouter HTTP %s: %s", r.status_code, r.text[:500])
             return None
         data = r.json()
-        return _reparar_texto_ia((((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()) or None
+        return (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or None
     except Exception as e:
         logger.warning("OpenRouter fallback falló: %s", e)
         return None
-
-def _respuesta_datos_mercado(contexto):
-    """Respuesta determinista sobre las fuentes usadas por el análisis."""
-    m = contexto.get("mercado_actual") or {}
-    a = contexto.get("analisis_cuantitativo") or {}
-    bancos = contexto.get("bancos") or {}
-    filas = contexto.get("historial_general") or []
-    ts = m.get("timestamp") or "n/d"
-    calidad = a.get("calidad_datos", "n/d")
-    p7 = a.get("proyeccion_7h") if isinstance(a.get("proyeccion_7h"), dict) else {}
-    muestras = p7.get("muestras", p7.get("sample_count", "n/d")) if p7 else "n/d"
-    return (
-        "Estoy usando datos reales que Venbot ya tiene persistidos, no una cifra inventada.\n\n"
-        f"• Mercado actual: última muestra GENERAL de Comprar USDT (SELL) y Vender USDT (BUY), con timestamp {ts}.\n"
-        f"• Bancos: lecturas independientes de Mercantil, Provincial y BNC; hay {sum(1 for x in bancos.values() if x.get('disponible'))} bancos disponibles en este momento.\n"
-        f"• Histórico P2P: {len(filas)} muestras recientes de GENERAL para calcular variaciones y estructura temporal.\n"
-        f"• Motor cuantitativo: tendencia, spread, soporte/resistencia y escenario 7H cuando existe suficiente continuidad histórica. Calidad reportada por el motor: {calidad}.\n"
-        f"• Proyección 7H: {muestras} muestras usadas cuando ese dato está disponible. Es una estimación estadística, no una certeza.\n\n"
-        "Para preguntas generales sobre el mundo uso el modelo de IA y, cuando hace falta información actual, búsqueda web. Para preguntas del mercado P2P, la fuente de verdad son los datos y cálculos de Venbot."
-    )
-
 
 def _respuesta_local_mercado(contexto):
     """Fallback determinista: responde con datos reales de Venbot sin fingir que Gemini respondió."""
@@ -4538,7 +4596,7 @@ def _stream_event(text=None, done=False):
     return "data: " + json.dumps(payload, ensure_ascii=True) + "\n\n"
 
 
-def _generador_ai_stream(mensaje, historial):
+def _generador_ai_stream(mensaje, historial, plan="FREE"):
     """SSE: respuestas locales salen inmediatamente; Gemini llega por fragmentos."""
     t0 = time.monotonic()
     texto = (mensaje or "").strip()
@@ -4547,19 +4605,17 @@ def _generador_ai_stream(mensaje, historial):
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
         "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
         "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
-        "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía"
+        "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía",
+        "spot", "btc", "eth", "sol", "sui", "aave", "uni", "ksm", "zec", "xrp"
     ))
-    contexto = _serializar_contexto_mercado() if market_query else {
-        "modo": "general",
-        "proyecto_venbot": {
-            "implementado": ["monitor P2P USDT/VES", "Mercantil, Provincial y BNC", "BCV/Euro", "calculadora", "histórico y gráfica P2P", "análisis cuantitativo", "proyección estadística 7H", "alertas inteligentes y personales", "cuentas, planes y facturación manual", "Telegram", "Spot básico con cotizaciones"],
-            "en_construccion": ["Spot analítico con gráfico y predicciones por moneda", "selector de monedas Spot", "mejoras del chat IA y experiencia conversacional", "comunidad", "arquitectura para mercados P2P de otros países"],
-            "regla": "Nunca presentar una función en_construccion como si ya estuviera disponible."
-        }
-    }
+    spot_query = any(k in low for k in ("spot", "btc", "bitcoin", "eth", "ethereum", "solana", "sui", "aave", "uniswap", "xrp", "zec"))
+    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
+    if spot_query:
+        contexto["spot"] = _serializar_contexto_spot() if str(plan).upper() == "VIP" else {"access": "VIP", "message": "El módulo Spot de Venbot es una función VIP; el usuario actual no tiene acceso a las lecturas Spot privadas del panel."}
+        contexto["proyecto"] = VENBOT_PROJECT_CONTEXT
     if market_query:
-        if any(x in low for x in ("qué datos estás utilizando", "que datos estas utilizando", "qué datos usas", "que datos usas", "de dónde salen los datos", "de donde salen los datos", "fuentes de datos")):
-            yield _stream_event(_respuesta_datos_mercado(contexto)); yield _stream_event(done=True); return
+        if _pregunta_datos_venbot(low):
+            yield _stream_event(_respuesta_datos_venbot(contexto, include_spot=spot_query and str(plan).upper() == "VIP")); yield _stream_event(done=True); return
         if _pregunta_manipulacion(low):
             yield _stream_event(_respuesta_manipulacion(contexto)); yield _stream_event(done=True); return
         if _pregunta_comparacion_bancos(low):
@@ -4575,9 +4631,9 @@ def _generador_ai_stream(mensaje, historial):
     if GEMINI_API_KEY:
         system = VENBOT_AI_SYSTEM
         if market_query:
-            system += "\n\nPara mercado, usa el contexto real y responde de forma natural, directa y humana. No recites todo el contexto."
+            system += "\n\nPara mercado, usa el contexto real y responde de forma natural, directa y humana. No recites todo el contexto. Si es Spot, respeta el nivel de acceso indicado."
         else:
-            system += "\n\nHabla como un asistente humano y útil: natural, claro, contextual y sin frases robóticas. Responde directamente antes de ampliar."
+            system += "\n\nHabla como un asistente humano y útil: natural, claro, contextual y sin frases robóticas. Puedes responder cualquier tema permitido. Si la pregunta requiere información actual, usa Google Search; si no, responde con conocimiento y razonamiento. No limites la respuesta a Venbot."
         # Toda consulta GENERAL tiene acceso a Google Search. Gemini decide si
         # realmente necesita buscar; así Venbot puede responder tanto conocimiento
         # general como preguntas actuales sin depender de una lista rígida de palabras.
@@ -4585,8 +4641,8 @@ def _generador_ai_stream(mensaje, historial):
         payload = {
             "model": GEMINI_MODEL, "system_instruction": system, "input": prompt,
             "generation_config": {
-                "temperature": 0.15 if market_query else 0.35,
-                "max_output_tokens": 900 if market_query else 800,
+                "temperature": 0.18 if market_query else 0.45,
+                "max_output_tokens": 750 if market_query else 900,
             },
             "store": False,
             "stream": True,
@@ -4612,7 +4668,7 @@ def _generador_ai_stream(mensaje, historial):
                         delta = ev.get("delta") or {}
                         if delta.get("type") == "text" and delta.get("text"):
                             got = True
-                            yield _stream_event(_reparar_texto_ia(str(delta["text"])))
+                            yield _stream_event(str(delta["text"]))
                 if got:
                     yield _stream_event(done=True); return
             else:
@@ -4630,7 +4686,7 @@ def _generador_ai_stream(mensaje, historial):
                 prompt, GEMINI_MODEL,
                 temperature=0.15 if market_query else 0.35,
                 system_instruction=system,
-                max_output_tokens=900 if market_query else 800,
+                max_output_tokens=600 if market_query else 450,
                 timeout=9,
                 tools=fallback_tools,
             )
@@ -4651,7 +4707,7 @@ def _generador_ai_stream(mensaje, historial):
     yield _stream_event(done=True)
 
 
-def generar_respuesta_ia(mensaje, historial):
+def generar_respuesta_ia(mensaje, historial, plan="FREE"):
     """IA híbrida: Gemini explica; Venbot aporta datos reales y fallback local inmediato."""
     t0 = time.monotonic()
     texto = (mensaje or "").strip()
@@ -4672,20 +4728,18 @@ def generar_respuesta_ia(mensaje, historial):
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
         "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
         "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
-        "mercantil", "provincial", "bnc", "banco"
+        "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía",
+        "spot", "btc", "bitcoin", "eth", "ethereum", "solana", "sui", "aave", "uniswap", "xrp", "zec"
     ))
-    contexto = _serializar_contexto_mercado() if market_query else {
-        "modo": "general",
-        "proyecto_venbot": {
-            "implementado": ["monitor P2P USDT/VES", "Mercantil, Provincial y BNC", "BCV/Euro", "calculadora", "histórico y gráfica P2P", "análisis cuantitativo", "proyección estadística 7H", "alertas inteligentes y personales", "cuentas, planes y facturación manual", "Telegram", "Spot básico con cotizaciones"],
-            "en_construccion": ["Spot analítico con gráfico y predicciones por moneda", "selector de monedas Spot", "mejoras del chat IA y experiencia conversacional", "comunidad", "arquitectura para mercados P2P de otros países"],
-            "regla": "Nunca presentar una función en_construccion como si ya estuviera disponible."
-        }
-    }
+    spot_query = any(k in low for k in ("spot", "btc", "bitcoin", "eth", "ethereum", "solana", "sui", "aave", "uniswap", "xrp", "zec"))
+    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
+    if spot_query:
+        contexto["spot"] = _serializar_contexto_spot() if str(plan).upper() == "VIP" else {"access": "VIP", "message": "El módulo Spot de Venbot es una función VIP; el usuario actual no tiene acceso a las lecturas Spot privadas del panel."}
+        contexto["proyecto"] = VENBOT_PROJECT_CONTEXT
     if market_query:
-        logger.info("AI CHAT: contexto P2P obtenido | bancos=%s | has_analysis=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("analisis_cuantitativo")))
-        if any(x in low for x in ("qué datos estás utilizando", "que datos estas utilizando", "qué datos usas", "que datos usas", "de dónde salen los datos", "de donde salen los datos", "fuentes de datos")):
-            return _respuesta_datos_mercado(contexto)
+        logger.info("AI CHAT: contexto de mercado obtenido | bancos=%s | spot=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("spot")))
+        if _pregunta_datos_venbot(low):
+            return _respuesta_datos_venbot(contexto, include_spot=spot_query and str(plan).upper() == "VIP")
         # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
         if _pregunta_manipulacion(low):
             logger.info("AI CHAT: detector de anomalías determinístico")
@@ -4714,10 +4768,10 @@ def generar_respuesta_ia(mensaje, historial):
 
     if market_query:
         system = VENBOT_AI_SYSTEM + "\n\nPara preguntas por bancos: compara explícitamente los campos bancos.*. Comprar USDT usa comprar_usdt_sell (SELL); vender USDT usa vender_usdt_buy (BUY). Indica el banco ganador y su precio cuando existan datos disponibles. No digas que faltan tasas bancarias si están presentes en CONTEXTO REAL DE VENBOT."
-        max_tokens, temperature = 900, 0.15
+        max_tokens, temperature = 750, 0.18
     else:
-        system = VENBOT_AI_SYSTEM + "\n\nPara preguntas generales responde de forma concisa: normalmente 1-3 párrafos. No conviertas una pregunta sencilla en un ensayo."
-        max_tokens, temperature = 800, 0.35
+        system = VENBOT_AI_SYSTEM + "\n\nPara preguntas generales responde como un asistente general completo. Si la pregunta requiere actualidad, usa Google Search. Normalmente 1-5 párrafos según la complejidad; no conviertas una pregunta sencilla en un ensayo."
+        max_tokens, temperature = 900, 0.45
 
     if GEMINI_API_KEY:
         logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s | google_search=%s", GEMINI_MODEL, market_query, not market_query)
@@ -4758,7 +4812,7 @@ async def ai_chat_stream(payload: AIChatRequest, request: Request):
     quota = _consume_ai_quota(user)
     if not quota["allowed"]:
         raise HTTPException(status_code=429, detail={"error":"ai_daily_limit", "limit":quota["limit"], "used":quota["used"]})
-    return StreamingResponse(_generador_ai_stream(payload.message.strip(), payload.history), media_type="text/event-stream", headers={"Cache-Control":"no-cache", "Connection":"keep-alive", "X-Accel-Buffering":"no"})
+    return StreamingResponse(_generador_ai_stream(payload.message.strip(), payload.history, _plan_vigente(user.get("plan_code"), user.get("plan_expires_at"))), media_type="text/event-stream", headers={"Cache-Control":"no-cache", "Connection":"keep-alive", "X-Accel-Buffering":"no"})
 
 
 @app.get("/api/ai/usage")
@@ -4788,7 +4842,7 @@ async def ai_chat(payload: AIChatRequest, request: Request):
     t0 = time.monotonic()
     mensaje = payload.message.strip()
     logger.info("AI CHAT: endpoint recibido")
-    respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history)
+    respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history, _plan_vigente(user.get("plan_code"), user.get("plan_expires_at")))
     logger.info("AI CHAT: respuesta enviada | elapsed=%.2fs | chars=%s", time.monotonic()-t0, len(respuesta or ""))
     return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else "not_configured")}
 
