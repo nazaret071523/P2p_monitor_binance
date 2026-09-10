@@ -148,7 +148,13 @@ QUANT_24H_TREND_WEIGHT_MAX = max(0.0, min(0.25, float(os.getenv("QUANT_24H_TREND
 PREDICTION_TRACKING_ENABLED = os.getenv("PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 PREDICTION_TRACKING_INTERVAL_SECONDS = max(60, int(os.getenv("PREDICTION_TRACKING_INTERVAL_SECONDS", "300")))
 PREDICTION_EVAL_TOLERANCE_MINUTES = max(2, int(os.getenv("PREDICTION_EVAL_TOLERANCE_MINUTES", "20")))
+# Seguimiento del Motor Spot: mide predicciones 1H/3H/7H/24H contra snapshots
+# reales posteriores de Binance. Se mantiene separado del tracking P2P.
+SPOT_PREDICTION_TRACKING_ENABLED = os.getenv("SPOT_PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS = max(300, int(os.getenv("SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS", "300")))
+SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES = max(5, int(os.getenv("SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES", "20")))
 _LAST_PREDICTION_TRACKING_TS = 0.0
+_LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
 telegram_app = None
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
@@ -404,6 +410,31 @@ def inicializar_db():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_spot_market_symbol_fecha
                     ON spot_market_snapshots(symbol, fecha DESC);
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_spot_prediction_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        observed_price DOUBLE PRECISION NOT NULL,
+                        pred_1h DOUBLE PRECISION, pred_3h DOUBLE PRECISION,
+                        pred_7h DOUBLE PRECISION, pred_24h DOUBLE PRECISION,
+                        trend TEXT, confidence INTEGER, regression_r2 DOUBLE PRECISION,
+                        support DOUBLE PRECISION, resistance DOUBLE PRECISION, volatility_pct DOUBLE PRECISION,
+                        evaluated_1h_at TIMESTAMPTZ, evaluated_3h_at TIMESTAMPTZ,
+                        evaluated_7h_at TIMESTAMPTZ, evaluated_24h_at TIMESTAMPTZ,
+                        actual_1h DOUBLE PRECISION, actual_3h DOUBLE PRECISION,
+                        actual_7h DOUBLE PRECISION, actual_24h DOUBLE PRECISION,
+                        error_pct_1h DOUBLE PRECISION, error_pct_3h DOUBLE PRECISION,
+                        error_pct_7h DOUBLE PRECISION, error_pct_24h DOUBLE PRECISION,
+                        direction_correct_1h BOOLEAN, direction_correct_3h BOOLEAN,
+                        direction_correct_7h BOOLEAN, direction_correct_24h BOOLEAN,
+                        payload JSONB
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_spot_prediction_symbol_created
+                    ON venbot_spot_prediction_events(symbol, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_spot_prediction_due
+                    ON venbot_spot_prediction_events(created_at DESC, evaluated_24h_at);
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
@@ -1189,6 +1220,160 @@ def analizar_spot_predictivo(symbol):
     }
     SPOT_ANALYSIS_CACHE[sym] = {"value": result, "expires": time.monotonic() + 30.0}
     return result
+
+
+def registrar_prediccion_spot_tracking(analysis):
+    """Guarda una predicción Spot para medirla posteriormente contra Binance real."""
+    if not DATABASE_URL or not SPOT_PREDICTION_TRACKING_ENABLED:
+        return False
+    try:
+        observed = analysis.get("observed") or {}
+        metrics = analysis.get("analysis") or {}
+        projections = analysis.get("projections") or {}
+        price = float(observed.get("price") or 0)
+        if price <= 0:
+            return False
+        vals = {h: float((projections.get(h) or {}).get("central") or 0) for h in ("1h", "3h", "7h", "24h")}
+        if any(v <= 0 for v in vals.values()):
+            return False
+        payload = {
+            "method": analysis.get("method"),
+            "scenarios_24h": analysis.get("scenarios_24h", {}),
+            "uncertainty_pct": {h: (projections.get(h) or {}).get("uncertainty_pct") for h in vals},
+        }
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO venbot_spot_prediction_events
+                    (symbol, observed_price, pred_1h, pred_3h, pred_7h, pred_24h,
+                     trend, confidence, regression_r2, support, resistance, volatility_pct, payload)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    analysis.get("symbol"), price, vals["1h"], vals["3h"], vals["7h"], vals["24h"],
+                    metrics.get("trend"), int(metrics.get("confidence", 0) or 0),
+                    float(metrics.get("regression_r2", 0) or 0),
+                    float(metrics.get("support", 0) or 0), float(metrics.get("resistance", 0) or 0),
+                    float(metrics.get("volatility_1h_pct", 0) or 0), json.dumps(payload, ensure_ascii=False),
+                ))
+        return True
+    except Exception as e:
+        logger.warning("No se pudo registrar predicción Spot %s: %s", analysis.get("symbol"), e)
+        return False
+
+
+def _buscar_snapshot_spot_futuro(symbol, objetivo, tolerance_minutes=None):
+    """Busca solo snapshots posteriores al horizonte objetivo; no usa datos previos."""
+    if not DATABASE_URL:
+        return None
+    tol = int(tolerance_minutes or SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES)
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT price, fecha FROM spot_market_snapshots
+                    WHERE symbol=%s AND fecha >= %s AND fecha <= %s
+                    ORDER BY fecha ASC LIMIT 1
+                """, (symbol, objetivo, objetivo + timedelta(minutes=tol)))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return {"price": float(row[0]), "fecha": row[1]}
+    except Exception as e:
+        logger.warning("No se pudo buscar snapshot Spot futuro %s: %s", symbol, e)
+        return None
+
+
+def evaluar_predicciones_spot_pendientes(limit=200):
+    """Evalúa predicciones Spot vencidas contra snapshots reales posteriores de Binance."""
+    if not DATABASE_URL or not SPOT_PREDICTION_TRACKING_ENABLED:
+        return {"evaluated": 0}
+    horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
+    total = 0
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, symbol, created_at, observed_price,
+                           pred_1h, pred_3h, pred_7h, pred_24h,
+                           evaluated_1h_at, evaluated_3h_at, evaluated_7h_at, evaluated_24h_at
+                    FROM venbot_spot_prediction_events
+                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '72 hours'
+                    ORDER BY created_at ASC LIMIT %s
+                """, (int(limit),))
+                rows = cur.fetchall()
+                for row in rows:
+                    pid, symbol, created_at, observed_price = row[:4]
+                    predictions = {"1h": row[4], "3h": row[5], "7h": row[6], "24h": row[7]}
+                    evaluated = {"1h": row[8], "3h": row[9], "7h": row[10], "24h": row[11]}
+                    for label, hours in horizons:
+                        if evaluated[label] is not None or predictions[label] is None:
+                            continue
+                        objetivo = created_at + timedelta(hours=hours)
+                        if datetime.now(VET) < objetivo.astimezone(VET):
+                            continue
+                        future = _buscar_snapshot_spot_futuro(symbol, objetivo)
+                        if not future:
+                            continue
+                        actual = float(future["price"])
+                        predicted = float(predictions[label])
+                        error_pct = abs(actual - predicted) / actual * 100.0 if actual else None
+                        predicted_move = predicted / float(observed_price) - 1.0 if observed_price else 0.0
+                        actual_move = actual / float(observed_price) - 1.0 if observed_price else 0.0
+                        direction_correct = (predicted_move == 0 and abs(actual_move) < 1e-12) or (predicted_move * actual_move > 0)
+                        col = {
+                            "1h": ("evaluated_1h_at", "actual_1h", "error_pct_1h", "direction_correct_1h"),
+                            "3h": ("evaluated_3h_at", "actual_3h", "error_pct_3h", "direction_correct_3h"),
+                            "7h": ("evaluated_7h_at", "actual_7h", "error_pct_7h", "direction_correct_7h"),
+                            "24h": ("evaluated_24h_at", "actual_24h", "error_pct_24h", "direction_correct_24h"),
+                        }[label]
+                        cur.execute(f"UPDATE venbot_spot_prediction_events SET {col[0]}=%s, {col[1]}=%s, {col[2]}=%s, {col[3]}=%s WHERE id=%s", (future["fecha"], actual, error_pct, direction_correct, pid))
+                        total += 1
+        return {"evaluated": total}
+    except Exception as e:
+        logger.warning("Evaluación de predicciones Spot falló: %s", e)
+        return {"evaluated": total, "error": "tracking Spot temporalmente no disponible"}
+
+
+def obtener_spot_prediction_performance(symbol=None):
+    """Resumen auditable del rendimiento Spot ya evaluado; no modifica el motor."""
+    if not DATABASE_URL:
+        return {"ok": False, "tracked": 0, "error": "database_unavailable"}
+    try:
+        where = "WHERE symbol=%s" if symbol else ""
+        params = (symbol,) if symbol else ()
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FILTER (WHERE evaluated_1h_at IS NOT NULL),
+                           COUNT(*) FILTER (WHERE evaluated_3h_at IS NOT NULL),
+                           COUNT(*) FILTER (WHERE evaluated_7h_at IS NOT NULL),
+                           COUNT(*) FILTER (WHERE evaluated_24h_at IS NOT NULL),
+                           AVG(error_pct_1h) FILTER (WHERE evaluated_1h_at IS NOT NULL),
+                           AVG(error_pct_3h) FILTER (WHERE evaluated_3h_at IS NOT NULL),
+                           AVG(error_pct_7h) FILTER (WHERE evaluated_7h_at IS NOT NULL),
+                           AVG(error_pct_24h) FILTER (WHERE evaluated_24h_at IS NOT NULL),
+                           AVG(CASE WHEN direction_correct_1h THEN 1.0 ELSE 0.0 END) FILTER (WHERE evaluated_1h_at IS NOT NULL),
+                           AVG(CASE WHEN direction_correct_3h THEN 1.0 ELSE 0.0 END) FILTER (WHERE evaluated_3h_at IS NOT NULL),
+                           AVG(CASE WHEN direction_correct_7h THEN 1.0 ELSE 0.0 END) FILTER (WHERE evaluated_7h_at IS NOT NULL),
+                           AVG(CASE WHEN direction_correct_24h THEN 1.0 ELSE 0.0 END) FILTER (WHERE evaluated_24h_at IS NOT NULL),
+                           MAX(created_at)
+                    FROM venbot_spot_prediction_events {where}
+                """, params)
+                row = cur.fetchone()
+                cur.execute(f"SELECT COUNT(*) FROM venbot_spot_prediction_events {where}", params)
+                tracked = int(cur.fetchone()[0] or 0)
+        labels = ("1h", "3h", "7h", "24h")
+        evaluated = [int(row[i] or 0) for i in range(4)]
+        errors = [round(float(row[i] or 0), 4) if row[i] is not None else None for i in range(4, 8)]
+        directions = [round(float(row[i] or 0) * 100.0, 2) if row[i] is not None else None for i in range(8, 12)]
+        return {
+            "ok": True, "symbol": symbol or "ALL", "tracked": tracked,
+            "horizons": {label: {"evaluated": evaluated[i], "mean_abs_error_pct": errors[i], "direction_accuracy_pct": directions[i]} for i, label in enumerate(labels)},
+            "last_prediction_at": row[12].isoformat() if row[12] else None,
+        }
+    except Exception as e:
+        logger.warning("Performance Spot falló: %s", e)
+        return {"ok": False, "tracked": 0, "error": "performance Spot temporalmente no disponible"}
 
 
 def obtener_spot_predicciones_contexto():
@@ -3098,6 +3283,20 @@ async def tarea_recoleccion_automatica():
                 except Exception as e:
                     logger.warning("Ciclo Spot falló sin afectar P2P: %s", e)
 
+            global _LAST_SPOT_PREDICTION_TRACKING_TS
+            if SPOT_PREDICTION_TRACKING_ENABLED and time.monotonic() - _LAST_SPOT_PREDICTION_TRACKING_TS >= SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS:
+                try:
+                    await asyncio.to_thread(evaluar_predicciones_spot_pendientes, 200)
+                    for _sym in SPOT_SYMBOLS:
+                        try:
+                            _spot_analysis = await asyncio.to_thread(analizar_spot_predictivo, _sym)
+                            await asyncio.to_thread(registrar_prediccion_spot_tracking, _spot_analysis)
+                        except Exception as _spot_pred_exc:
+                            logger.warning("Predicción Spot %s no registrada: %s", _sym, _spot_pred_exc)
+                    _LAST_SPOT_PREDICTION_TRACKING_TS = time.monotonic()
+                except Exception as e:
+                    logger.warning("Tracking predictivo Spot falló sin afectar P2P: %s", e)
+
             if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
                 datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
                 global _LAST_PREDICTION_TRACKING_TS
@@ -3446,6 +3645,7 @@ def health():
         "quant_engine": QUANT_ENGINE_V2.name,
         "smart_alerts": {"enabled": SMART_ALERTS_ENABLED, "cooldown_seconds": SMART_ALERT_COOLDOWN_SECONDS},
         "prediction_tracking": {"enabled": PREDICTION_TRACKING_ENABLED, "interval_seconds": PREDICTION_TRACKING_INTERVAL_SECONDS},
+        "spot_prediction_tracking": {"enabled": SPOT_PREDICTION_TRACKING_ENABLED, "interval_seconds": SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS},
         "timestamp": datetime.now(VET).isoformat(),
     }
 
@@ -4185,6 +4385,15 @@ def obtener_spot_prediction_api(request: Request, symbol: str = Query("BTCUSDT")
         return {"ok": False, "symbol": str(symbol).upper(), "error": "Datos Spot insuficientes o fuente temporalmente no disponible"}
 
 
+@app.get("/api/spot/predictions/performance")
+def obtener_spot_prediction_performance_api(request: Request, symbol: Optional[str] = Query(None)):
+    _require_plan_user(request, "VIP")
+    sym = _normalizar_spot_symbol(symbol) if symbol else None
+    if sym and sym not in SPOT_SYMBOLS:
+        raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    return obtener_spot_prediction_performance(sym)
+
+
 @app.get("/api/quant/v2")
 def obtener_quant_v2_api(include_spot: bool = Query(True)):
     mercado = obtener_mercado_actual_db() or {}
@@ -4267,7 +4476,8 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
     c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
     q=motor_quant_inteligente(c,v,int(mercado.get("liquidez",0) or 0),banco) if c>0 and v>0 else {}
     perf=obtener_prediction_performance(banco,100)
-    return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf}}
+    spot_perf = obtener_spot_prediction_performance() if SPOT_PREDICTION_TRACKING_ENABLED else {"ok": False, "tracked": 0}
+    return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
 
 
 @app.get("/api/analysis")
