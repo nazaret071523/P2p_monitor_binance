@@ -62,7 +62,8 @@ P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 
@@ -4323,15 +4324,16 @@ def _respuesta_gemini_sdk(prompt, model, temperature=0.35):
         logger.warning("Gemini legacy SDK %s falló: %s", model, e)
         return None
 
-def _respuesta_openrouter(prompt, temperature=0.45):
+def _respuesta_openrouter(prompt, temperature=0.45, system_instruction=None, max_tokens=1600):
     if not OPENROUTER_API_KEY:
         return None
     try:
+        system_text = system_instruction or VENBOT_AI_SYSTEM
         r = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json", "HTTP-Referer": RENDER_EXTERNAL_URL or "https://p2p-monitor-binance.onrender.com", "X-Title": "Venbot"},
-            json={"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": VENBOT_AI_SYSTEM}, {"role": "user", "content": prompt}], "temperature": temperature, "max_tokens": 1600},
-            timeout=15,
+            json={"model": OPENROUTER_MODEL, "messages": [{"role": "system", "content": system_text}, {"role": "user", "content": prompt}], "temperature": temperature, "max_tokens": max_tokens},
+            timeout=18,
         )
         if not r.ok:
             logger.warning("OpenRouter HTTP %s: %s", r.status_code, r.text[:500])
@@ -4343,26 +4345,31 @@ def _respuesta_openrouter(prompt, temperature=0.45):
         return None
 
 def _respuesta_ia_proveedor(prompt, system_instruction, market_query=False, max_output_tokens=700, temperature=0.25):
-    """Cascada única de proveedores: Gemini moderno -> Gemini legacy -> OpenRouter."""
+    """Cascada robusta: Gemini principal -> modelos Gemini alternos -> legacy -> OpenRouter."""
     if GEMINI_API_KEY:
         tools = None if market_query or not _ai_necesita_busqueda_web(prompt.lower()) else [{"type": "google_search"}]
-        # 1) Interactions REST.
-        text = _respuesta_gemini_interactions_rest(
-            prompt, GEMINI_MODEL, temperature=temperature,
-            system_instruction=system_instruction, max_output_tokens=max_output_tokens,
-            timeout=10, tools=tools
-        )
-        if text:
-            return _repair_ai_text(text), "gemini-interactions"
+        modelos = []
+        for model in [GEMINI_MODEL] + GEMINI_FALLBACK_MODELS:
+            if model and model not in modelos:
+                modelos.append(model)
+        for model in modelos:
+            text = _respuesta_gemini_interactions_rest(
+                prompt, model, temperature=temperature,
+                system_instruction=system_instruction, max_output_tokens=max_output_tokens,
+                timeout=12, tools=tools
+            )
+            if text:
+                return _repair_ai_text(text), f"gemini-interactions:{model}"
 
-        # 2) Endpoint legacy de Gemini como respaldo real ante cambios/incidencias de Interactions.
+        # Segundo camino Gemini: GenerateContent. Útil si Interactions presenta una incidencia temporal.
         legacy_prompt = f"{system_instruction}\n\n{prompt}"
-        text = _respuesta_gemini_rest(legacy_prompt, GEMINI_MODEL, temperature=temperature, timeout=12)
-        if text:
-            return _repair_ai_text(text), "gemini-legacy"
+        for model in modelos:
+            text = _respuesta_gemini_rest(legacy_prompt, model, temperature=temperature, timeout=14)
+            if text:
+                return _repair_ai_text(text), f"gemini-legacy:{model}"
 
     if OPENROUTER_API_KEY:
-        text = _respuesta_openrouter(prompt, temperature)
+        text = _respuesta_openrouter(prompt, temperature, system_instruction=system_instruction, max_tokens=max_output_tokens)
         if text:
             return _repair_ai_text(text), "openrouter"
 
@@ -4407,6 +4414,19 @@ def _money_ia(x):
         return f"{float(x):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "n/d"
+
+
+def _respuesta_general_respaldo(texto):
+    """Respaldo corto para preguntas generales muy comunes si todos los proveedores están temporalmente indisponibles."""
+    low = (texto or "").strip().lower()
+    if "qué es la inflación" in low or "que es la inflacion" in low:
+        return ("La **inflación** es el aumento generalizado y sostenido de los precios de bienes y servicios durante un período. "
+                "Cuando los precios suben de forma persistente, cada unidad de moneda permite comprar menos, por lo que disminuye su poder adquisitivo.\n\n"
+                "Puede originarse por factores como una demanda que crece más rápido que la oferta, aumentos de costos de producción o cambios en la cantidad de dinero y las expectativas. "
+                "La tasa de inflación mide cuánto cambia, en promedio, el nivel de precios; no significa que todos los productos suban al mismo ritmo.")
+    if low in {"hola", "hola!", "hola.", "buenas", "buenas!", "hey", "hey!"}:
+        return "Hola 👋 Soy Venbot AI. Puedo ayudarte con preguntas generales y, cuando corresponda, analizar los datos reales de P2P y Spot disponibles en Venbot."
+    return None
 
 
 def _pregunta_datos_ia(low):
@@ -4780,9 +4800,12 @@ def _generador_ai_stream(mensaje, historial):
 
         if market_query:
             yield _stream_event(_respuesta_local_mercado(contexto)); yield _stream_event(done=True); return
+        respaldo = _respuesta_general_respaldo(texto)
+        if respaldo:
+            yield _stream_event(respaldo); yield _stream_event(done=True); return
         if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
             yield _stream_event("Venbot AI no tiene un proveedor de IA configurado en el servidor."); yield _stream_event(done=True); return
-        yield _stream_event("No pude obtener una respuesta del proveedor de IA en este momento. Intenta de nuevo en unos segundos."); yield _stream_event(done=True)
+        yield _stream_event("Venbot AI no pudo completar esta consulta en este momento. Puedes intentarlo nuevamente en unos segundos."); yield _stream_event(done=True)
     except Exception as e:
         logger.exception("AI CHAT STREAM: error no controlado: %s", e)
         fallback = _respuesta_local_mercado(contexto) if 'contexto' in locals() and market_query else "Venbot AI tuvo un problema temporal al procesar la consulta. Intenta de nuevo en unos segundos."
@@ -4868,10 +4891,13 @@ def generar_respuesta_ia(mensaje, historial):
         logger.info("AI CHAT: fallback local P2P | total_elapsed=%.2fs", time.monotonic()-t0)
         return _respuesta_local_mercado(contexto)
 
+    respaldo = _respuesta_general_respaldo(texto)
+    if respaldo:
+        return respaldo
     if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
         return "Venbot AI no tiene un proveedor de IA configurado en el servidor."
     logger.warning("AI CHAT: sin respuesta de proveedor | total_elapsed=%.2fs", time.monotonic()-t0)
-    return "No pude obtener una respuesta del proveedor de IA en este momento. Intenta de nuevo en unos segundos."
+    return "Venbot AI no pudo completar esta consulta en este momento. Puedes intentarlo nuevamente en unos segundos."
 
 class AIChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=6000)
