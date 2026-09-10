@@ -44,8 +44,10 @@
       border: 1px solid rgba(16, 185, 129, 0.25);
       color: #34d399;
     }
+    .ai-response-body{overflow-wrap:anywhere;word-break:normal;white-space:normal;line-height:1.65;max-width:100%;}
+    .ai-response-body p{margin:.35rem 0 .65rem;}
+    .ai-response-body h3,.ai-response-body h4{line-height:1.35;}
 
-    #ai-chat-messages .leading-relaxed { overflow-wrap:anywhere; word-break:normal; }
     .ai-mode-btn { transition: all 0.2s ease; }
     .ai-mode-btn.active {
       background: rgba(52, 211, 153, 0.15);
@@ -189,22 +191,10 @@
           <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div>
-            <label for="calc-direction" class="text-xs font-semibold text-slate-300 block mb-1">Conversión</label>
-            <select id="calc-direction" onchange="handleCalcDirectionChange()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
-              <option value="usd_bs">USD → Bs</option>
-              <option value="bs_usd">Bs → USD</option>
-            </select>
-          </div>
-          <div>
-            <label for="calc-amount" id="calc-amount-label" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USD</label>
+            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USD</label>
             <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
-            <div class="flex gap-1.5 mt-1.5">
-              <button type="button" onclick="setCalcPreset(100)" class="text-[9px] px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">100</button>
-              <button type="button" onclick="setCalcPreset(500)" class="text-[9px] px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">500</button>
-              <button type="button" onclick="setCalcPreset(1000)" class="text-[9px] px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200">1.000</button>
-            </div>
           </div>
           <div>
             <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
@@ -220,10 +210,6 @@
             <strong id="calc-result" class="tabular text-lg font-black text-emerald-400 mt-0.5 block">--,-- Bs</strong>
             <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">--,-- Bs vs. Tasa BCV</span>
           </div>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 text-[9px] text-slate-500">
-          <span class="px-2 py-1 rounded-lg bg-slate-950/70 border border-slate-800">Principal: USD ↔ Bs</span>
-          <span>Los valores P2P y BCV se actualizan con el mercado disponible.</span>
         </div>
       </section>
 
@@ -429,7 +415,7 @@
         </div>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con cualquier tema y, cuando preguntes por el mercado, usaré el mismo motor P2P del monitor y Telegram.</div></div>
+        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="ai-response-body bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%]">¡Hola! Soy Venbot AI. Puedo ayudarte con cualquier tema y, cuando preguntes por el mercado, usaré el mismo motor P2P del monitor y Telegram.</div></div>
       </div>
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 space-y-2">
         <div class="flex items-center gap-2">
@@ -816,7 +802,6 @@
 
     function calculateRate() {
       const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
-      const direction = document.getElementById('calc-direction')?.value || 'usd_bs';
       const rateType = document.getElementById('calc-rate').value;
       const rates = {
         sell: marketState.sell,
@@ -825,56 +810,22 @@
         euro: marketState.euro
       };
       const rate = Number(rates[rateType] || 0);
-      const resultEl = document.getElementById('calc-result');
-      const diffEl = document.getElementById('calc-diff');
+      const result = amount * rate;
 
-      if (!(rate > 0)) {
-        resultEl.innerText = direction === 'usd_bs' ? '--,-- Bs' : '--,-- USD';
-        diffEl.innerText = 'Esperando tasa en vivo';
-        return;
-      }
-
-      const result = direction === 'usd_bs' ? amount * rate : (amount / rate);
-      resultEl.innerText = direction === 'usd_bs'
+      document.getElementById('calc-result').innerText = rate > 0
         ? `${money(result)} Bs`
-        : `${money(result)} USD`;
+        : '--,-- Bs';
 
-      if (marketState.bcv > 0) {
-        const bcvEquivalent = direction === 'usd_bs' ? amount * marketState.bcv : (amount / marketState.bcv);
-        const diff = result - bcvEquivalent;
+      if (rate > 0 && marketState.bcv > 0) {
+        const diff = amount * (rate - marketState.bcv);
         const sign = diff > 0 ? '+' : '';
-        diffEl.innerText = direction === 'usd_bs'
-          ? `${sign}${money(diff)} Bs vs. Tasa BCV`
-          : `${sign}${money(diff)} USD vs. Tasa BCV`;
+        document.getElementById('calc-diff').innerText = `${sign}${money(diff)} Bs vs. Tasa BCV`;
       } else {
-        diffEl.innerText = 'Tasa BCV no disponible';
+        document.getElementById('calc-diff').innerText = 'Esperando tasa en vivo';
       }
     }
 
     function handleRateChange() { calculateRate(); }
-
-    function handleCalcDirectionChange() {
-      const direction = document.getElementById('calc-direction').value;
-      const label = document.getElementById('calc-amount-label');
-      const input = document.getElementById('calc-amount');
-      const presets = [100, 500, 1000];
-      if (direction === 'bs_usd') {
-        label.textContent = 'Cantidad de Bs';
-        input.value = 100000;
-        input.step = '0.01';
-      } else {
-        label.textContent = 'Cantidad de USD';
-        input.value = 100;
-        input.step = '0.01';
-      }
-      calculateRate();
-    }
-
-    function setCalcPreset(value) {
-      const direction = document.getElementById('calc-direction').value;
-      document.getElementById('calc-amount').value = direction === 'bs_usd' ? value * 1000 : value;
-      calculateRate();
-    }
 
     async function setChartPeriod(period, btn) {
       marketState.period = period;
@@ -1060,19 +1011,8 @@
       })[ch]);
     }
 
-
-    function repairMojibake(text) {
-      const s = String(text || '');
-      if (!/[ÃÂâðŸ]/.test(s)) return s;
-      try {
-        const bytes = new Uint8Array([...s].map(ch => ch.charCodeAt(0) & 0xff));
-        const repaired = new TextDecoder('utf-8', {fatal:false}).decode(bytes);
-        return repaired.includes('�') ? s : repaired;
-      } catch(e) { return s; }
-    }
-
     function markdownToSafeHTML(text) {
-      let s = escapeHTML(repairMojibake(String(text || '')));
+      let s = escapeHTML(String(text || ''));
       s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-2 mb-1">$1</h4>');
       s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
       s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
@@ -1148,7 +1088,7 @@
       aiConversation.push({ role: 'user', content: text });
       const typingId = 'ai-typing-' + Date.now();
       const chat = document.getElementById('ai-chat-messages');
-      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
+      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="ai-response-body bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%]">Venbot está pensando…</div></div>`);
       chat.scrollTop = chat.scrollHeight;
       try {
         const controller = new AbortController();
@@ -1182,10 +1122,18 @@
             } catch(e) {}
           }
         }
-        // El endpoint SSE ya aplica el fallback del servidor. No repetimos la
-        // consulta contra /api/ai/chat porque eso consumiría otra cuota diaria.
+        // Vacía cualquier secuencia UTF-8 pendiente del último chunk.
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          const line = buffer.split('\n').find(x => x.startsWith('data:'));
+          if (line) {
+            try {
+              const payload = JSON.parse(line.slice(5).trim());
+              if (payload.text) answer += payload.text;
+            } catch(e) {}
+          }
+        }
         document.getElementById(typingId)?.remove();
-        answer = repairMojibake(answer);
         if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
