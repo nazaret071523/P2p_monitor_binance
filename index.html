@@ -1115,7 +1115,11 @@
     }
 
     function markdownToSafeHTML(text) {
-      let s = escapeHTML(String(text || ''));
+      // Normaliza artefactos de formato de algunos proveedores antes de escapar HTML.
+      let raw = String(text || '').replace(/\r\n?/g, '\n');
+      raw = raw.replace(/^\s*\\?[-–—]{3,}\s*$/gm, '');
+      raw = raw.replace(/\n{3,}/g, '\n\n').trim();
+      let s = escapeHTML(raw);
       s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-2 mb-1">$1</h4>');
       s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
       s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
