@@ -4203,6 +4203,24 @@ def _pregunta_datos_venbot(low):
     ))
 
 
+def _pregunta_proyecto_venbot(low):
+    return any(x in low for x in (
+        "qué es venbot", "que es venbot", "qué hace venbot", "que hace venbot",
+        "cómo funciona venbot", "como funciona venbot", "funciones de venbot",
+        "proyecto venbot", "planes de venbot", "free premium vip", "qué tiene venbot",
+        "que tiene venbot", "qué módulos tiene", "que modulos tiene", "qué módulos tendrá",
+        "que modulos tendra", "mercados exteriores", "mercados externos"
+    ))
+
+
+def _respuesta_proyecto_venbot(low, plan="FREE"):
+    return ("Venbot es una plataforma de información y análisis de mercados. "
+            "Hoy su núcleo es el monitor P2P USDT/VES de Binance, con referencias de Mercantil, Provincial y BNC, tasas BCV/Euro, calculadora, histórico, análisis cuantitativo, alertas y cuentas con planes FREE, PREMIUM y VIP.\n\n"
+            "También existe una capa de datos Spot de Binance para BTC, ETH, SOL, SUI, AAVE, UNI, KSM, ZEC y XRP. El siguiente desarrollo del módulo Spot es convertir esas lecturas en un panel analítico con gráficos, histórico, señales y modelos por moneda; esas funciones no deben presentarse como terminadas hasta que estén desplegadas.\n\n"
+            "La arquitectura está preparada para añadir mercados P2P de otros países y monedas. Cuando un mercado exterior esté conectado, podré analizarlo con sus propios datos; mientras tanto no inventaré cotizaciones.\n\n"
+            "Además de los mercados, puedo actuar como asistente general: explicar conceptos, razonar, calcular, escribir, programar, investigar temas actuales y mantener una conversación normal. Cuando una pregunta dependa de información reciente, el proveedor de IA puede utilizar búsqueda web.")
+
+
 def _respuesta_datos_venbot(contexto, include_spot=False):
     a = contexto.get("analisis_cuantitativo") or {}
     m = contexto.get("mercado_actual") or {}
@@ -4361,6 +4379,32 @@ def _respuesta_gemini_sdk(prompt, model, temperature=0.35):
     except Exception as e:
         logger.warning("Gemini legacy SDK %s falló: %s", model, e)
         return None
+
+def _normalizar_texto_ia(texto):
+    """Repara mojibake ocasional de proveedores/transportes sin tocar texto válido."""
+    if texto is None:
+        return ""
+    s = str(texto)
+    # Señales típicas de UTF-8 interpretado como Latin-1/Windows-1252.
+    if any(x in s for x in ("Ã", "Â", "â", "ð", "�")):
+        try:
+            candidato = s.encode("latin-1").decode("utf-8")
+            if candidato.count("�") < s.count("�") or not "�" in candidato:
+                s = candidato
+        except Exception:
+            pass
+    return s.replace("\\x00", "").strip()
+
+
+def _normalizar_respuesta_ia(texto):
+    """Limpieza final para que la UI reciba párrafos completos y legibles."""
+    s = _normalizar_texto_ia(texto)
+    # Evita cortes accidentales introducidos por CRLF/espacios repetidos.
+    s = s.replace("\\r\\n", "\\n").replace("\\r", "\\n")
+    s = re.sub(r"[ \\t]+\\n", "\\n", s)
+    s = re.sub(r"\\n{3,}", "\\n\\n", s)
+    return s.strip()
+
 
 def _respuesta_openrouter(prompt, temperature=0.45):
     if not OPENROUTER_API_KEY:
@@ -4592,8 +4636,8 @@ def _preparar_prompt_ia(mensaje, historial, contexto):
 def _stream_event(text=None, done=False):
     payload = {"done": bool(done)}
     if text is not None:
-        payload["text"] = text
-    return "data: " + json.dumps(payload, ensure_ascii=True) + "\n\n"
+        payload["text"] = _normalizar_texto_ia(text)
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
 def _generador_ai_stream(mensaje, historial, plan="FREE"):
@@ -4601,18 +4645,21 @@ def _generador_ai_stream(mensaje, historial, plan="FREE"):
     t0 = time.monotonic()
     texto = (mensaje or "").strip()
     low = texto.lower()
-    market_query = any(k in low for k in (
-        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
-        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
-        "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
-        "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía",
-        "spot", "btc", "eth", "sol", "sui", "aave", "uni", "ksm", "zec", "xrp"
-    ))
+    market_query = (
+        any(k in low for k in ("p2p", "usdt", "usdt/ves", "usdt ves", "ves/usdt", "binance p2p",
+                               "mercantil", "provincial", "bnc", "bcv", "spread p2p", "liquidez p2p",
+                               "soporte p2p", "resistencia p2p", "proyeccion 7h", "proyección 7h",
+                               "prediccion 7h", "predicción 7h", "mercado p2p"))
+        or (any(k in low for k in ("comprar usdt", "vender usdt", "precio de usdt", "cotizacion de usdt",
+                                   "cotización de usdt", "tasa usdt", "usdt hoy", "usdt ahora")))
+    )
     spot_query = any(k in low for k in ("spot", "btc", "bitcoin", "eth", "ethereum", "solana", "sui", "aave", "uniswap", "xrp", "zec"))
     contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
     if spot_query:
         contexto["spot"] = _serializar_contexto_spot() if str(plan).upper() == "VIP" else {"access": "VIP", "message": "El módulo Spot de Venbot es una función VIP; el usuario actual no tiene acceso a las lecturas Spot privadas del panel."}
         contexto["proyecto"] = VENBOT_PROJECT_CONTEXT
+    if _pregunta_proyecto_venbot(low):
+        yield _stream_event(_respuesta_proyecto_venbot(low, plan)); yield _stream_event(done=True); return
     if market_query:
         if _pregunta_datos_venbot(low):
             yield _stream_event(_respuesta_datos_venbot(contexto, include_spot=spot_query and str(plan).upper() == "VIP")); yield _stream_event(done=True); return
@@ -4668,7 +4715,7 @@ def _generador_ai_stream(mensaje, historial, plan="FREE"):
                         delta = ev.get("delta") or {}
                         if delta.get("type") == "text" and delta.get("text"):
                             got = True
-                            yield _stream_event(str(delta["text"]))
+                            yield _stream_event(_normalizar_texto_ia(str(delta["text"])))
                 if got:
                     yield _stream_event(done=True); return
             else:
@@ -4691,7 +4738,7 @@ def _generador_ai_stream(mensaje, historial, plan="FREE"):
                 tools=fallback_tools,
             )
             if fallback_text:
-                yield _stream_event(fallback_text)
+                yield _stream_event(_normalizar_respuesta_ia(fallback_text))
                 yield _stream_event(done=True)
                 return
         except Exception as e:
@@ -4724,22 +4771,25 @@ def generar_respuesta_ia(mensaje, historial, plan="FREE"):
         logger.info("AI CHAT: respuesta local de capacidades | elapsed=%.2fs", time.monotonic()-t0)
         return "Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenario estadístico a 7 horas."
 
-    market_query = any(k in low for k in (
-        "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
-        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
-        "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
-        "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía",
-        "spot", "btc", "bitcoin", "eth", "ethereum", "solana", "sui", "aave", "uniswap", "xrp", "zec"
-    ))
+    market_query = (
+        any(k in low for k in ("p2p", "usdt", "usdt/ves", "usdt ves", "ves/usdt", "binance p2p",
+                               "mercantil", "provincial", "bnc", "bcv", "spread p2p", "liquidez p2p",
+                               "soporte p2p", "resistencia p2p", "proyeccion 7h", "proyección 7h",
+                               "prediccion 7h", "predicción 7h", "mercado p2p"))
+        or (any(k in low for k in ("comprar usdt", "vender usdt", "precio de usdt", "cotizacion de usdt",
+                                   "cotización de usdt", "tasa usdt", "usdt hoy", "usdt ahora")))
+    )
     spot_query = any(k in low for k in ("spot", "btc", "bitcoin", "eth", "ethereum", "solana", "sui", "aave", "uniswap", "xrp", "zec"))
     contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
     if spot_query:
         contexto["spot"] = _serializar_contexto_spot() if str(plan).upper() == "VIP" else {"access": "VIP", "message": "El módulo Spot de Venbot es una función VIP; el usuario actual no tiene acceso a las lecturas Spot privadas del panel."}
         contexto["proyecto"] = VENBOT_PROJECT_CONTEXT
+    if _pregunta_proyecto_venbot(low):
+        return _respuesta_proyecto_venbot(low, plan)
     if market_query:
         logger.info("AI CHAT: contexto de mercado obtenido | bancos=%s | spot=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("spot")))
         if _pregunta_datos_venbot(low):
-            return _respuesta_datos_venbot(contexto, include_spot=spot_query and str(plan).upper() == "VIP")
+            return _normalizar_respuesta_ia(_respuesta_datos_venbot(contexto, include_spot=spot_query and str(plan).upper() == "VIP"))
         # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
         if _pregunta_manipulacion(low):
             logger.info("AI CHAT: detector de anomalías determinístico")
@@ -4754,9 +4804,9 @@ def generar_respuesta_ia(mensaje, historial, plan="FREE"):
         if banco_directo and any(x in low for x in ("cuánto", "cuanto", "está", "esta", "precio", "cotiza", "vale")):
             return banco_directo
         if any(x in low for x in ("precio actual", "precio de usdt", "cuánto está usdt", "cuanto esta usdt", "cotización actual", "cotizacion actual")):
-            return _respuesta_local_mercado(contexto)
+            return _normalizar_respuesta_ia(_respuesta_local_mercado(contexto))
         if any(x in low for x in ("próximas 7 horas", "proximas 7 horas", "7 horas", "proyección 7h", "proyeccion 7h", "predicción 7h", "prediccion 7h")):
-            return _respuesta_7h_local(contexto)
+            return _normalizar_respuesta_ia(_respuesta_7h_local(contexto))
     prev = []
     for h in (historial or [])[-8:]:
         role = "user" if str(h.get("role", "")).lower() in {"user", "human"} else "assistant"
@@ -4783,7 +4833,7 @@ def generar_respuesta_ia(mensaje, historial, plan="FREE"):
         )
         if text:
             logger.info("AI CHAT: Gemini respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
-            return text
+            return _normalizar_respuesta_ia(text)
         logger.warning("AI CHAT: Gemini no respondió | elapsed=%.2fs", time.monotonic()-gt0)
 
     # Fallback útil e inmediato para mercado: nunca deja al usuario sin los datos reales.
@@ -4796,7 +4846,7 @@ def generar_respuesta_ia(mensaje, historial, plan="FREE"):
         text = _respuesta_openrouter(prompt, temperature)
         if text:
             logger.info("AI CHAT: OpenRouter respondió | total_elapsed=%.2fs", time.monotonic()-t0)
-            return text
+            return _normalizar_respuesta_ia(text)
 
     logger.warning("AI CHAT: sin respuesta de proveedor | total_elapsed=%.2fs", time.monotonic()-t0)
     return "La IA no pudo responder ahora. El servicio P2P sigue funcionando; vuelve a intentarlo en unos segundos."
