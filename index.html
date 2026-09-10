@@ -1010,16 +1010,33 @@
     }
 
     function markdownToSafeHTML(text) {
-      let s = escapeHTML(String(text || ''));
-      s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-3 mb-1.5">$1</h4>');
-      s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-3 mb-1.5">$1</h3>');
-      s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-3 mb-1.5">$1</h3>');
-      s = s.replace(/^[-*] (.+)$/gm, '<div class="ml-2 mb-1">• $1</div>');
-      s = s.replace(/^(\d+)\. (.+)$/gm, '<div class="ml-2 mb-1">$1. $2</div>');
-      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300 break-words">$1</code>');
-      s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-      return s.replace(/\n/g, '<br>');
+      // Renderizado sencillo y legible: conserva párrafos, listas y saltos sin cortar palabras.
+      let raw = String(text || '').replace(/\r\n?/g, '\n').trim();
+      const blocks = raw.split(/\n{2,}/).map(x => x.trim()).filter(Boolean);
+      const renderInline = (value) => {
+        let s = escapeHTML(value);
+        s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300 break-words">$1</code>');
+        s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+        return s;
+      };
+      return blocks.map(block => {
+        const lines = block.split('\n').map(x => x.trim()).filter(Boolean);
+        if (!lines.length) return '';
+        const heading = lines[0].match(/^#{1,3}\s+(.+)$/);
+        if (heading && lines.length === 1) {
+          return `<h4 class="font-bold text-emerald-300 mt-3 mb-1.5">${renderInline(heading[1])}</h4>`;
+        }
+        const listItems = lines.filter(x => /^[-*]\s+/.test(x));
+        if (listItems.length === lines.length) {
+          return '<ul class="list-disc pl-5 space-y-1 my-2">' + listItems.map(x => `<li>${renderInline(x.replace(/^[-*]\s+/, ''))}</li>`).join('') + '</ul>';
+        }
+        const orderedItems = lines.filter(x => /^\d+[.)]\s+/.test(x));
+        if (orderedItems.length === lines.length) {
+          return '<ol class="list-decimal pl-5 space-y-1 my-2">' + orderedItems.map(x => `<li>${renderInline(x.replace(/^\d+[.)]\s+/, ''))}</li>`).join('') + '</ol>';
+        }
+        return `<p class="mb-2 last:mb-0">${lines.map(renderInline).join('<br>')}</p>`;
+      }).join('');
     }
 
     function appendAIMessage(role, text) {
