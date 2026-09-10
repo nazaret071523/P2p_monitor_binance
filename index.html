@@ -369,11 +369,32 @@
         </div>
       </section>
 
-      <section id="sec-spot" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24 border border-purple-500/20">
-        <div class="flex items-start justify-between gap-3">
-          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-chart-line text-purple-400"></i>Mercado Spot</h3><p class="text-[10px] text-slate-500 mt-1">Cotizaciones Spot de Binance para los activos habilitados en Venbot.</p></div>
-          <span id="spot-plan-badge" class="text-[10px] text-purple-300 font-bold bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-lg">VIP</span>
+      <section id="sec-spot" class="glass-card p-4 md:p-5 rounded-2xl space-y-4 scroll-mt-24 border border-purple-500/20">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-crystal-ball text-purple-400"></i>SPOT · PREDICCIÓN Y PROYECCIÓN</h3><span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span></div>
+            <p class="text-[10px] text-slate-500 mt-1">Binance aporta el dato observado; Venbot calcula tendencia, escenarios y proyecciones futuras.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="spot-symbol-select" class="text-[9px] font-bold text-slate-500 uppercase">Activo</label>
+            <select id="spot-symbol-select" onchange="loadSpotPrediction(this.value)" class="focus-ring bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-2 text-xs font-black text-slate-200">
+              <option value="BTCUSDT">BTC</option><option value="ETHUSDT">ETH</option><option value="SOLUSDT">SOL</option><option value="SUIUSDT">SUI</option><option value="AAVEUSDT">AAVE</option><option value="UNIUSDT">UNI</option><option value="KSMUSDT">KSM</option><option value="ZECUSDT">ZEC</option><option value="XRPUSDT">XRP</option>
+            </select>
+          </div>
         </div>
+
+        <div id="spot-prediction-status" class="text-[10px] text-slate-500">Selecciona un activo para generar su análisis predictivo.</div>
+
+        <div id="spot-prediction-head" class="grid grid-cols-1 md:grid-cols-4 gap-2.5"></div>
+
+        <div id="spot-horizon-grid" class="grid grid-cols-2 lg:grid-cols-4 gap-2.5"></div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+          <div id="spot-structure" class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400"></div>
+          <div id="spot-scenarios" class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400"></div>
+          <div id="spot-method" class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400"></div>
+        </div>
+
         <div id="spot-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2"></div>
         <div id="spot-status" class="text-[10px] text-slate-500">Inicia sesión con un plan VIP para consultar Spot.</div>
       </section>
@@ -805,6 +826,35 @@
       marketChart = new Chart(canvas.getContext('2d'), { type:'candlestick', data:{datasets}, options });
     }
 
+    async function loadSpotPrediction(symbol='BTCUSDT') {
+      const status=document.getElementById('spot-prediction-status');
+      const head=document.getElementById('spot-prediction-head');
+      const horizons=document.getElementById('spot-horizon-grid');
+      const structure=document.getElementById('spot-structure');
+      const scenarios=document.getElementById('spot-scenarios');
+      const method=document.getElementById('spot-method');
+      const ent=window.venbotEntitlements?.features || {};
+      if(!status || !head || !horizons) return;
+      if(!getAuthToken()){ status.textContent='Inicia sesión con un plan VIP para consultar las proyecciones Spot.'; return; }
+      if(!ent.spot){ status.textContent='La predicción y proyección Spot está disponible en el plan VIP.'; return; }
+      status.textContent='Calculando análisis con velas reales de Binance…';
+      try {
+        const r=await fetch(`${API_BASE_URL}/api/spot/prediction?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+        const d=await r.json(); if(!r.ok || !d.ok) throw new Error(d.error||'No disponible');
+        const o=d.observed, a=d.analysis, p=d.projections;
+        const fmt=(v)=>Number(v).toLocaleString('en-US',{maximumFractionDigits:8});
+        const signed=(v)=>`${Number(v)>=0?'+':''}${Number(v).toFixed(2)}%`;
+        head.innerHTML=`<div class="bg-slate-950/70 border border-purple-500/20 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Dato observado</span><strong class="block text-lg font-black text-purple-300 mt-1">${fmt(o.price)} <span class="text-[9px] text-slate-500">USDT</span></strong><span class="text-[10px] ${Number(o.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">24H ${signed(o.change_24h_pct)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Tendencia</span><strong class="block text-sm font-black text-slate-100 mt-2">${a.trend_icon} ${a.trend}</strong><span class="text-[9px] text-slate-500">Score ${Number(a.trend_score).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Volatilidad</span><strong class="block text-sm font-black text-slate-100 mt-2">${Number(a.volatility_1h_pct).toFixed(2)}% / 1H</strong><span class="text-[9px] text-slate-500">R² ${Number(a.regression_r2).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Confianza</span><strong class="block text-sm font-black text-purple-300 mt-2">${a.confidence}/100</strong><span class="text-[9px] text-slate-500">Calidad ${a.quality}</span></div>`;
+        horizons.innerHTML=['1h','3h','7h','24h'].map(h=>{const q=p[h]; return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-black text-slate-200 uppercase">Proyección ${h}</span><span class="text-[9px] ${Number(q.change_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${signed(q.change_pct)}</span></div><strong class="block text-base font-black text-white mt-2">${fmt(q.central)} <span class="text-[9px] text-slate-500">USDT</span></strong><div class="text-[9px] text-slate-500 mt-1">Rango ${fmt(q.low)} – ${fmt(q.high)}</div></div>`}).join('');
+        structure.innerHTML=`<div class="font-black text-slate-200 mb-2">Estructura técnica</div><div>Soporte: <b class="text-slate-200">${fmt(a.support)}</b></div><div>Resistencia: <b class="text-slate-200">${fmt(a.resistance)}</b></div><div>Momentum: <b class="text-slate-200">${Number(a.momentum_score)>=0?'+':''}${Number(a.momentum_score).toFixed(3)}%</b></div>`;
+        scenarios.innerHTML=`<div class="font-black text-slate-200 mb-2">Escenarios 24H</div><div>🔴 Bajista: <b class="text-slate-200">${fmt(d.scenarios_24h.bearish)}</b></div><div>🟡 Central: <b class="text-slate-200">${fmt(d.scenarios_24h.central)}</b></div><div>🟢 Alcista: <b class="text-slate-200">${fmt(d.scenarios_24h.bullish)}</b></div>`;
+        method.innerHTML=`<div class="font-black text-slate-200 mb-2">Cómo calcula Venbot</div><div>${d.method}</div><div class="mt-2 text-slate-500">${a.data_points_5m} velas de 5m · ${a.data_points_1h} velas de 1H.</div>`;
+        status.textContent=`${d.asset} analizado con datos reales de Binance · ${new Date(d.generated_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+      } catch(e) {
+        status.textContent='No se pudo generar la proyección Spot en este momento.';
+      }
+    }
+
     async function loadSpotMarket() {
       const grid=document.getElementById('spot-grid'), status=document.getElementById('spot-status');
       if(!grid || !status) return;
@@ -815,8 +865,11 @@
         const r=await fetch(`${API_BASE_URL}/api/spot?t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
         const d=await r.json(); if(!r.ok) throw new Error(d.detail?.error||d.detail||'No disponible');
         const items=Object.values(d.symbols||{});
-        grid.innerHTML=items.map(x=>`<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-2.5"><div class="flex items-center justify-between gap-2"><strong class="text-xs text-slate-200">${x.symbol.replace('USDT','')}</strong><span class="text-[9px] ${Number(x.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${Number(x.change_24h_pct)>=0?'+':''}${Number(x.change_24h_pct).toFixed(2)}%</span></div><div class="text-sm font-black text-purple-300 mt-1">${Number(x.price).toLocaleString('en-US',{maximumFractionDigits:8})}</div><div class="text-[9px] text-slate-500 mt-1">USDT · volumen 24h ${Number(x.quote_volume_24h||0).toLocaleString('en-US',{maximumFractionDigits:0})}</div></div>`).join('');
-        status.textContent=`${items.length} activos Spot · datos Binance · actualización en vivo`;
+        const selector=document.getElementById('spot-symbol-select');
+        if(selector && Array.isArray(d.configured_symbols)){ selector.innerHTML=d.configured_symbols.map(sym=>`<option value="${sym}">${sym.replace('USDT','')}</option>`).join(''); }
+        grid.innerHTML=items.map(x=>`<button type="button" onclick="document.getElementById('spot-symbol-select').value='${x.symbol}';loadSpotPrediction('${x.symbol}')" class="text-left bg-slate-950/70 border border-slate-800 hover:border-purple-500/30 rounded-xl p-2.5 transition"><div class="flex items-center justify-between gap-2"><strong class="text-xs text-slate-200">${x.symbol.replace('USDT','')}</strong><span class="text-[9px] ${Number(x.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${Number(x.change_24h_pct)>=0?'+':''}${Number(x.change_24h_pct).toFixed(2)}%</span></div><div class="text-sm font-black text-purple-300 mt-1">${Number(x.price).toLocaleString('en-US',{maximumFractionDigits:8})}</div><div class="text-[9px] text-slate-500 mt-1">USDT · dato observado</div></button>`).join('');
+        status.textContent=`${items.length} activos Spot disponibles · Binance aporta el dato observado`; 
+        loadSpotPrediction(document.getElementById('spot-symbol-select')?.value || 'BTCUSDT');
       } catch(e) { status.textContent='No se pudo cargar Spot en este momento.'; }
     }
 
