@@ -459,7 +459,23 @@
     const API_PRICES = `${API_BASE_URL}/api/precios`;
     const API_HISTORY = `${API_BASE_URL}/api/history`;
     const API_AI_CHAT = `${API_BASE_URL}/api/ai/chat`;
-    const aiConversation = [];
+    const AI_HISTORY_KEY = 'venbot_ai_history_v1';
+    let aiConversation = [];
+    function normalizeAIText(text){
+      let s=String(text||'');
+      if(/[ÃÂâð�]/.test(s)){ try { const c=decodeURIComponent(escape(s)); if((c.match(/�/g)||[]).length <= (s.match(/�/g)||[]).length) s=c; } catch(e){} }
+      return s.replace(/\r\n?/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+    }
+    function loadAIHistory(){
+      try{ const raw=localStorage.getItem(AI_HISTORY_KEY); const parsed=raw?JSON.parse(raw):[]; aiConversation=Array.isArray(parsed)?parsed.slice(-30):[]; }catch(e){ aiConversation=[]; }
+    }
+    function saveAIHistory(){ try{ localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(aiConversation.slice(-30))); }catch(e){} }
+    function renderAIHistory(){
+      const chat=document.getElementById('ai-chat-messages'); if(!chat) return;
+      chat.innerHTML='';
+      aiConversation.forEach(m=>appendAIMessage(m.role, normalizeAIText(m.content)));
+    }
+    loadAIHistory();
 
     const marketState = {
       buy: 0,
@@ -969,7 +985,7 @@
         document.getElementById('menu-online-count').textContent = n;
       } catch(e) {}
     }
-    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Inicia sesión para usar Venbot AI. Tu plan FREE incluye 5 consultas al día.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); }
+    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Inicia sesión para usar Venbot AI. Tu plan FREE incluye 5 consultas al día.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); renderAIHistory(); }
     function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
     function openAlertsModal() {
       document.getElementById('alertsModal').classList.remove('hidden');
@@ -1039,6 +1055,8 @@
       }).join('');
     }
 
+    function clearAIHistory(){ aiConversation=[]; try{localStorage.removeItem(AI_HISTORY_KEY);}catch(e){}; renderAIHistory(); }
+
     function appendAIMessage(role, text) {
       const chat = document.getElementById('ai-chat-messages');
       const safe = role === 'user' ? escapeHTML(text).replace(/\n/g, '<br>') : markdownToSafeHTML(text);
@@ -1100,7 +1118,8 @@
       aiRequestRunning = true;
       input.value = '';
       appendAIMessage('user', text);
-      aiConversation.push({ role: 'user', content: text });
+      aiConversation.push({ role: 'user', content: normalizeAIText(text) });
+      saveAIHistory();
       const typingId = 'ai-typing-' + Date.now();
       const chat = document.getElementById('ai-chat-messages');
       chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 text-sm max-w-[92%] leading-7 break-words overflow-wrap-anywhere">Venbot está pensando…</div></div>`);
@@ -1124,7 +1143,7 @@
           try {
             const payload = JSON.parse(line.slice(5).trim());
             if (payload.text) {
-              answer += payload.text;
+              answer = normalizeAIText(answer + payload.text);
               if (body) { body.classList.remove('text-slate-400'); body.classList.add('text-slate-200'); body.innerHTML = markdownToSafeHTML(answer); }
               chat.scrollTop = chat.scrollHeight;
             }
@@ -1144,8 +1163,10 @@
         // No repetimos /api/ai/chat aquí porque cada endpoint consume una unidad de cuota.
         document.getElementById(typingId)?.remove();
         if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
+        answer = normalizeAIText(answer);
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
+        saveAIHistory();
         speakAIResponse(answer);
       } catch (error) {
         console.error('Venbot AI:', error);
