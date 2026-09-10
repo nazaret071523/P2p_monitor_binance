@@ -2129,6 +2129,36 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 
+class QuantEngineV2:
+    """Compatibilidad explícita para el endpoint Quant v2.
+
+    El motor productivo actual sigue siendo motor_quant_inteligente().
+    Esta fachada evita que /api/quant/v2 y /api/health dependan de un
+    objeto inexistente y expone el mismo análisis sin crear un segundo
+    motor cuantitativo ni duplicar la lógica de predicción.
+    """
+    name = "QuantEngineV2-compat"
+
+    def analyze(self, compra, venta, liquidez, banco="GENERAL", include_spot=True):
+        result = motor_quant_inteligente(
+            float(compra or 0),
+            float(venta or 0),
+            int(liquidez or 0),
+            banco,
+            _from_v2=True,
+        )
+        if include_spot:
+            try:
+                result["spot_context"] = _spot_context_for_quant()
+            except Exception as exc:
+                logger.warning("Contexto Spot no disponible para Quant v2: %s", exc)
+                result["spot_context"] = {}
+        return result
+
+
+QUANT_ENGINE_V2 = QuantEngineV2()
+
+
 def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 5:
         return None
