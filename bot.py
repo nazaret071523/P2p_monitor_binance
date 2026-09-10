@@ -61,7 +61,7 @@ P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 
@@ -4091,36 +4091,19 @@ def obtener_history(period: str = Query("5m", pattern="^(5m|15m|30m|1h|1d)$")):
     return result
 
 
-VENBOT_AI_SYSTEM = """Eres Venbot AI: un asistente conversacional general, natural y competente, diseñado para conversar como un buen asistente humano y, al mismo tiempo, ser el analista inteligente del proyecto Venbot.
+VENBOT_AI_SYSTEM = """Eres Venbot AI, un asistente conversacional avanzado en español, con comportamiento natural similar al de un buen asistente general. Puedes conversar sobre prácticamente cualquier tema permitido: ciencia, historia, tecnología, programación, negocios, viajes, educación, redacción, matemáticas, análisis, cultura y preguntas sobre acontecimientos actuales cuando dispongas de búsqueda web.
 
-ALCANCE GENERAL:
-- Puedes responder preguntas sobre ciencia, historia, tecnología, programación, negocios, educación, viajes, cultura, escritura, matemáticas, lógica, creatividad y cualquier otro tema permitido.
-- No limites una pregunta general al mercado P2P ni menciones Venbot si no aporta valor.
-- Mantén una conversación con continuidad: recuerda el contexto reciente de la conversación y responde a la intención real del usuario.
-- Explica con claridad. Una pregunta sencilla merece una respuesta sencilla; una pregunta compleja merece una explicación estructurada. No alargues artificialmente las respuestas.
-- Usa párrafos completos, frases completas y conectores naturales. Nunca cortes una frase, palabra o lista a mitad.
-- Si una pregunta depende de información actual y dispones de búsqueda web, úsala y distingue hechos actuales de conocimiento general. Si no puedes verificar algo actual, dilo en vez de inventarlo.
+Además eres el copiloto del proyecto Venbot. Debes conocer y explicar con claridad las funciones que ya están implementadas y distinguirlas de las funciones que están en construcción o planificadas. El proyecto actual incluye monitor P2P USDT/VES, bancos Mercantil/Provincial/BNC, BCV/Euro, calculadora, histórico/gráfica P2P, análisis cuantitativo, proyección estadística, alertas, cuentas/planes, Telegram y un módulo Spot en evolución. La arquitectura se está preparando para que Spot tenga cotizaciones, histórico, análisis, gráficos y predicciones por moneda, y para soportar mercados P2P de otros países en el futuro. No afirmes que una función futura ya existe: di claramente "está en construcción" o "está planificada" cuando corresponda.
 
-VENBOT COMO PROYECTO:
-- Conoce y puede explicar las funciones de Venbot: monitor P2P USDT/VES, bancos de referencia, BCV/Euro, calculadora, histórico, gráficos, alertas, análisis cuantitativo, cuentas/planes, Telegram y las futuras funciones Spot y mercados exteriores.
-- Cuando el usuario pregunte por una función que todavía está en construcción, explica qué existe hoy y qué está previsto, sin fingir que una función futura ya está operativa.
-- La arquitectura de IA debe quedar preparada para ampliar el contexto con Spot y otros mercados sin cambiar la personalidad ni la conversación.
-
-REGLAS ESTRICTAS PARA MERCADO P2P:
-1) Usa exclusivamente el CONTEXTO REAL DE VENBOT recibido en cada consulta para precios, tasas, liquidez, muestras, horarios, momentum, soporte, resistencia y proyecciones. Nunca inventes cifras.
-2) Distingue dato observado, cálculo estadístico, estimación y recomendación. Una proyección nunca es un precio garantizado.
+REGLAS ESTRICTAS PARA MERCADO:
+1) Usa exclusivamente el CONTEXTO REAL DE VENBOT recibido en cada consulta. Nunca inventes precios, tasas, liquidez, muestras, horarios, momentum, soporte, resistencia o proyecciones.
+2) Distingue siempre: dato observado, cálculo estadístico, estimación y recomendación. Una proyección nunca es un precio garantizado.
 3) Comprar USDT = anuncios SELL de Binance (el usuario compra USDT). Vender USDT = anuncios BUY (el usuario vende USDT). No inviertas jamás estas etiquetas.
-4) Si una ventana temporal aparece como n/d o no existe histórico suficiente, dilo claramente. No rellenes con ceros ni inventes continuidad.
-5) Para mercado, empieza con una lectura breve, después explica 3-6 métricas relevantes y termina con qué significa para el usuario. No recites todo el contexto interno.
-6) Si preguntan por un precio futuro exacto, nunca afirmes que puedes conocerlo exactamente. Ofrece, si existen datos, un escenario estadístico y explica sus límites.
-7) No prometas ganancias, rentabilidad ni certeza financiera.
+4) Si una ventana temporal aparece como n/d, significa que no hay datos suficientes o continuidad suficiente para calcularla; no la rellenes con 0.00% ni inventes una lectura.
+5) Si los datos son insuficientes por falta de histórico, dilo claramente y usa solo lo que sí está observado.
+6) Para preguntas de mercado, responde primero con una lectura breve y después con los números relevantes del contexto. No contradigas el bloque analítico de Venbot.
 
-SEMÁNTICA OBLIGATORIA:
-- “Comprar USDT” en Venbot significa que el usuario compra USDT y corresponde a anuncios SELL de Binance.
-- “Vender USDT” en Venbot significa que el usuario vende USDT y corresponde a anuncios BUY de Binance.
-
-ESTILO:
-Responde como un asistente inteligente y humano: directo, amable, preciso, contextual y sin frases robóticas. No repitas “Como Venbot AI” al inicio de cada respuesta. Usa encabezados y listas solo cuando mejoren la comprensión. Mantén párrafos legibles y evita respuestas telegráficas o fragmentadas."""
+Mantén continuidad real con el historial y responde de forma natural y fluida. Si la consulta NO es de mercado, eres un asistente general completo: responde cualquier tema permitido sin intentar llevar la conversación a P2P. Para preguntas sobre el propio proyecto, usa el contexto del producto y explica tanto lo que existe hoy como la dirección futura sin inventar funcionalidades. Si una pregunta requiere información actual del mundo y tienes herramienta de búsqueda disponible, úsala antes de afirmar datos cambiantes. Para consultas de mercado, usa exactamente el mismo motor cuantitativo que alimenta monitor y Telegram: conclusión primero, luego 3-5 métricas y una recomendación táctica. Si te preguntan por una predicción a 7H, usa proyeccion_7h y explica que es un escenario estadístico central con rango estimado, no certeza. Evita repetir todo el contexto y no cortes una frase a mitad. No prometas ganancias ni certeza financiera."""
 
 
 def _obtener_contexto_bancos_ia():
@@ -4168,6 +4151,26 @@ def _serializar_contexto_mercado():
     return result
 
 
+def _reparar_texto_ia(text):
+    """Corrige mojibake UTF-8/Latin-1 si un proveedor devuelve texto mal decodificado."""
+    if not text:
+        return text
+    s = str(text)
+    # Señales típicas: Ã¡, Ã©, Ã±, Â¿, â€¦, etc. Solo redecodifica si mejora claramente.
+    markers = ("Ã", "Â", "â", "ð")
+    if not any(m in s for m in markers):
+        return s
+    try:
+        repaired = s.encode("latin-1").decode("utf-8")
+        bad_before = sum(s.count(m) for m in markers)
+        bad_after = sum(repaired.count(m) for m in markers)
+        if bad_after < bad_before:
+            return repaired
+    except Exception:
+        pass
+    return s
+
+
 def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_instruction=None, max_output_tokens=900, timeout=7, tools=None):
     """Ruta REST recomendada por Google para Gemini Interactions API."""
     if not GEMINI_API_KEY:
@@ -4202,7 +4205,7 @@ def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_
                     if text:
                         return text
         text = str(data.get("output_text", "") or "").strip()
-        return text or None
+        return _reparar_texto_ia(text) or None
     except Exception as e:
         logger.warning("Gemini Interactions REST %s falló: %s", model, e)
         return None
@@ -4237,68 +4240,6 @@ def _respuesta_gemini_interactions_sdk(prompt, model, temperature=0.35):
         return None
 
 
-def _respuesta_gemini_generate_content(prompt, model, temperature=0.35, max_output_tokens=900, timeout=15, system_instruction=None):
-    """Gemini standard generateContent: ruta estable y simple para el chat."""
-    if not GEMINI_API_KEY:
-        return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    payload = {
-        "systemInstruction": {"parts": [{"text": system_instruction or VENBOT_AI_SYSTEM}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_output_tokens,
-        },
-    }
-    try:
-        r = requests.post(
-            url,
-            headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
-            json=payload,
-            timeout=timeout,
-        )
-        if not r.ok:
-            logger.warning("Gemini generateContent %s HTTP %s: %s", model, r.status_code, r.text[:500])
-            return None
-        data = r.json()
-        parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
-        text = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict)).strip()
-        return text or None
-    except Exception as e:
-        logger.warning("Gemini generateContent %s falló: %s", model, e)
-        return None
-
-
-def _gemini_stream_rest(prompt, model, temperature=0.35, max_output_tokens=900, timeout=(3, 18), system_instruction=None):
-    """Streaming oficial Gemini generateContent, consumido como SSE."""
-    if not GEMINI_API_KEY:
-        return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"
-    payload = {
-        "systemInstruction": {"parts": [{"text": system_instruction or VENBOT_AI_SYSTEM}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_output_tokens,
-        },
-    }
-    try:
-        return requests.post(
-            url,
-            headers={
-                "x-goog-api-key": GEMINI_API_KEY,
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream",
-            },
-            json=payload,
-            timeout=timeout,
-            stream=True,
-        )
-    except Exception as e:
-        logger.warning("Gemini stream REST %s falló al conectar: %s", model, e)
-        return None
-
-
 def _respuesta_gemini_rest(prompt, model, temperature=0.35):
     """Compatibilidad legacy generateContent, útil como último fallback."""
     if not GEMINI_API_KEY:
@@ -4317,7 +4258,7 @@ def _respuesta_gemini_rest(prompt, model, temperature=0.35):
         data = r.json()
         parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
         text = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict)).strip()
-        return text or None
+        return _reparar_texto_ia(text) or None
     except Exception as e:
         logger.warning("Gemini legacy REST %s falló: %s", model, e)
         return None
@@ -4337,7 +4278,7 @@ def _respuesta_gemini_sdk(prompt, model, temperature=0.35):
                 max_output_tokens=900,
             ),
         )
-        return (getattr(response, "text", None) or "").strip() or None
+        return _reparar_texto_ia((getattr(response, "text", None) or "").strip()) or None
     except Exception as e:
         logger.warning("Gemini legacy SDK %s falló: %s", model, e)
         return None
@@ -4356,23 +4297,30 @@ def _respuesta_openrouter(prompt, temperature=0.45):
             logger.warning("OpenRouter HTTP %s: %s", r.status_code, r.text[:500])
             return None
         data = r.json()
-        return (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip() or None
+        return _reparar_texto_ia((((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()) or None
     except Exception as e:
         logger.warning("OpenRouter fallback falló: %s", e)
         return None
 
-def _reparar_mojibake(text):
-    """Corrige texto UTF-8 que haya sido interpretado accidentalmente como Latin-1/Windows-1252."""
-    if not text:
-        return text
-    s = str(text)
-    if not any(x in s for x in ("Ã", "Â", "â€", "ðŸ")):
-        return s
-    try:
-        repaired = s.encode("latin1").decode("utf-8")
-        return repaired if repaired.count("�") <= s.count("�") else s
-    except Exception:
-        return s
+def _respuesta_datos_mercado(contexto):
+    """Respuesta determinista sobre las fuentes usadas por el análisis."""
+    m = contexto.get("mercado_actual") or {}
+    a = contexto.get("analisis_cuantitativo") or {}
+    bancos = contexto.get("bancos") or {}
+    filas = contexto.get("historial_general") or []
+    ts = m.get("timestamp") or "n/d"
+    calidad = a.get("calidad_datos", "n/d")
+    p7 = a.get("proyeccion_7h") if isinstance(a.get("proyeccion_7h"), dict) else {}
+    muestras = p7.get("muestras", p7.get("sample_count", "n/d")) if p7 else "n/d"
+    return (
+        "Estoy usando datos reales que Venbot ya tiene persistidos, no una cifra inventada.\n\n"
+        f"• Mercado actual: última muestra GENERAL de Comprar USDT (SELL) y Vender USDT (BUY), con timestamp {ts}.\n"
+        f"• Bancos: lecturas independientes de Mercantil, Provincial y BNC; hay {sum(1 for x in bancos.values() if x.get('disponible'))} bancos disponibles en este momento.\n"
+        f"• Histórico P2P: {len(filas)} muestras recientes de GENERAL para calcular variaciones y estructura temporal.\n"
+        f"• Motor cuantitativo: tendencia, spread, soporte/resistencia y escenario 7H cuando existe suficiente continuidad histórica. Calidad reportada por el motor: {calidad}.\n"
+        f"• Proyección 7H: {muestras} muestras usadas cuando ese dato está disponible. Es una estimación estadística, no una certeza.\n\n"
+        "Para preguntas generales sobre el mundo uso el modelo de IA y, cuando hace falta información actual, búsqueda web. Para preguntas del mercado P2P, la fuente de verdad son los datos y cálculos de Venbot."
+    )
 
 
 def _respuesta_local_mercado(contexto):
@@ -4405,7 +4353,7 @@ def _respuesta_local_mercado(contexto):
             disponibles.append(f"{nombre.title()}: comprar {money(b.get('comprar_usdt_sell'))} · vender {money(b.get('vender_usdt_buy'))} Bs")
     if disponibles: lines.append("Bancos: " + " | ".join(disponibles) + ".")
     lines.append("Nota: este respaldo usa la última lectura real persistida; no es una respuesta generada por Gemini.")
-    return _reparar_mojibake("\n".join(lines))
+    return "\n".join(lines)
 
 
 def _money_ia(x):
@@ -4528,52 +4476,6 @@ def _respuesta_manipulacion(contexto):
             "Esto no significa que sea imposible una manipulación; solo que el detector no encuentra señales suficientes ahora mismo.")
 
 
-def _pregunta_datos_analisis(low):
-    return any(x in low for x in (
-        "qué datos estás utilizando", "que datos estas utilizando", "qué datos usas", "que datos usas",
-        "de dónde salen los datos", "de donde salen los datos", "qué estás analizando", "que estas analizando",
-        "cómo haces el análisis", "como haces el analisis", "con qué datos"
-    ))
-
-
-def _respuesta_datos_analisis(contexto):
-    m = contexto.get("mercado_actual") or {}
-    a = contexto.get("analisis_cuantitativo") or {}
-    bancos = contexto.get("bancos") or {}
-    muestras = len(contexto.get("historial_general") or [])
-    ts = m.get("timestamp") or "n/d"
-    tendencia = a.get("tendencia") or a.get("estado_tendencia") or "n/d"
-    return _reparar_mojibake(
-        "Estoy usando los datos reales que Venbot tiene persistidos para el mercado P2P USDT/VES. "
-        f"La lectura incluye Comprar USDT (SELL de Binance), Vender USDT (BUY), spread, liquidez, histórico reciente y el análisis cuantitativo del motor. "
-        f"También tengo lecturas separadas de Mercantil, Provincial y BNC cuando están disponibles.\n\n"
-        f"En esta consulta hay {muestras} muestras recientes de GENERAL; la última lectura de mercado está fechada {ts}. "
-        f"El motor calcula la tendencia actual ({tendencia}) y, cuando existe histórico suficiente, niveles y escenario 7H. "
-        "Los precios observados son datos de mercado; las proyecciones son estimaciones estadísticas y no precios garantizados."
-    )
-
-
-def _pregunta_precio_futuro_exacto(low):
-    return any(x in low for x in (
-        "exactamente", "precio exacto", "cuál será el precio", "cual sera el precio",
-        "mañana a las", "manana a las", "a las 10", "a las 10:00"
-    )) and any(x in low for x in ("usdt", "ves", "precio", "cotización", "cotizacion"))
-
-
-def _respuesta_precio_futuro_exacto(contexto):
-    a = contexto.get("analisis_cuantitativo") or {}
-    p = a.get("proyeccion_7h") or {}
-    if not p:
-        return "No puedo conocer con exactitud el precio de USDT/VES a una hora futura. Puedo darte un escenario estadístico con los datos que Venbot tiene ahora, pero no presentarlo como un precio seguro."
-    return _reparar_mojibake(
-        "No puedo saber con exactitud cuál será el precio de USDT/VES mañana a una hora concreta. "
-        "Eso sería presentar una estimación como certeza.\n\n"
-        f"Lo que sí puedo hacer es darte el escenario estadístico disponible: Comprar USDT {_money_ia(p.get('compra'))} Bs y Vender USDT {_money_ia(p.get('venta'))} Bs, "
-        f"con cobertura histórica de {float(p.get('cobertura_horas', 0) or 0):.1f} horas. "
-        "Ese escenario puede cambiar si cambia la oferta, demanda o liquidez del P2P."
-    )
-
-
 def _respuesta_momento_banco(contexto, low):
     bancos = contexto.get("bancos") or {}
     nombre = None
@@ -4647,12 +4549,17 @@ def _generador_ai_stream(mensaje, historial):
         "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
         "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía"
     ))
-    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
+    contexto = _serializar_contexto_mercado() if market_query else {
+        "modo": "general",
+        "proyecto_venbot": {
+            "implementado": ["monitor P2P USDT/VES", "Mercantil, Provincial y BNC", "BCV/Euro", "calculadora", "histórico y gráfica P2P", "análisis cuantitativo", "proyección estadística 7H", "alertas inteligentes y personales", "cuentas, planes y facturación manual", "Telegram", "Spot básico con cotizaciones"],
+            "en_construccion": ["Spot analítico con gráfico y predicciones por moneda", "selector de monedas Spot", "mejoras del chat IA y experiencia conversacional", "comunidad", "arquitectura para mercados P2P de otros países"],
+            "regla": "Nunca presentar una función en_construccion como si ya estuviera disponible."
+        }
+    }
     if market_query:
-        if _pregunta_datos_analisis(low):
-            yield _stream_event(_respuesta_datos_analisis(contexto)); yield _stream_event(done=True); return
-        if _pregunta_precio_futuro_exacto(low):
-            yield _stream_event(_respuesta_precio_futuro_exacto(contexto)); yield _stream_event(done=True); return
+        if any(x in low for x in ("qué datos estás utilizando", "que datos estas utilizando", "qué datos usas", "que datos usas", "de dónde salen los datos", "de donde salen los datos", "fuentes de datos")):
+            yield _stream_event(_respuesta_datos_mercado(contexto)); yield _stream_event(done=True); return
         if _pregunta_manipulacion(low):
             yield _stream_event(_respuesta_manipulacion(contexto)); yield _stream_event(done=True); return
         if _pregunta_comparacion_bancos(low):
@@ -4663,7 +4570,7 @@ def _generador_ai_stream(mensaje, historial):
         if any(x in low for x in ("próximas 7 horas", "proximas 7 horas", "7 horas", "proyección 7h", "proyeccion 7h", "predicción 7h", "prediccion 7h")):
             yield _stream_event(_respuesta_7h_local(contexto)); yield _stream_event(done=True); return
         if any(x in low for x in ("precio actual", "precio de usdt", "cuánto está usdt", "cuanto esta usdt", "cotización actual", "cotizacion actual")):
-            yield _stream_event(_reparar_mojibake(_respuesta_local_mercado(contexto))); yield _stream_event(done=True); return
+            yield _stream_event(_respuesta_local_mercado(contexto)); yield _stream_event(done=True); return
     prompt = _preparar_prompt_ia(texto, historial, contexto)
     if GEMINI_API_KEY:
         system = VENBOT_AI_SYSTEM
@@ -4671,57 +4578,47 @@ def _generador_ai_stream(mensaje, historial):
             system += "\n\nPara mercado, usa el contexto real y responde de forma natural, directa y humana. No recites todo el contexto."
         else:
             system += "\n\nHabla como un asistente humano y útil: natural, claro, contextual y sin frases robóticas. Responde directamente antes de ampliar."
-        # El modelo gratuito no depende de Google Search. Las preguntas de mercado
-        # se contestan con el contexto real de Venbot; las generales usan el modelo.
-        # Para consultas actuales generales, usamos grounding de Google Search.
-        # Para las demás consultas mantenemos streaming para una respuesta rápida.
-        if (not market_query) and _ai_necesita_busqueda_web(low):
-            grounded = _respuesta_gemini_interactions_rest(
-                prompt, GEMINI_MODEL, temperature=0.30, system_instruction=system,
-                max_output_tokens=1200, timeout=12, tools=[{"type": "google_search"}]
+        # Toda consulta GENERAL tiene acceso a Google Search. Gemini decide si
+        # realmente necesita buscar; así Venbot puede responder tanto conocimiento
+        # general como preguntas actuales sin depender de una lista rígida de palabras.
+        tools = None if market_query else [{"type": "google_search"}]
+        payload = {
+            "model": GEMINI_MODEL, "system_instruction": system, "input": prompt,
+            "generation_config": {
+                "temperature": 0.15 if market_query else 0.35,
+                "max_output_tokens": 900 if market_query else 800,
+            },
+            "store": False,
+            "stream": True,
+        }
+        if tools: payload["tools"] = tools
+        try:
+            r = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/interactions",
+                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json", "Accept": "text/event-stream"},
+                json=payload, timeout=(3, 18), stream=True,
             )
-            if grounded:
-                yield _stream_event(_reparar_mojibake(grounded)); yield _stream_event(done=True); return
-            stream = None
-        else:
-            stream = _gemini_stream_rest(
-                prompt, GEMINI_MODEL,
-                temperature=0.15 if market_query else 0.35,
-                max_output_tokens=1200,
-                timeout=(3, 22),
-                system_instruction=system,
-            )
-        if stream is not None:
-            try:
-                if stream.ok:
-                    got = False
-                    for line in stream.iter_lines(decode_unicode=True):
-                        if not line or not line.startswith("data:"):
-                            continue
-                        raw = line[5:].strip()
-                        if raw == "[DONE]":
-                            continue
-                        try:
-                            ev = json.loads(raw)
-                        except Exception:
-                            continue
-                        parts = (((ev.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
-                        text_delta = "".join(str(x.get("text", "")) for x in parts if isinstance(x, dict))
-                        if text_delta:
+            if r.ok:
+                got = False
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if raw == "[DONE]":
+                        continue
+                    try: ev = json.loads(raw)
+                    except Exception: continue
+                    if ev.get("event_type") == "step.delta":
+                        delta = ev.get("delta") or {}
+                        if delta.get("type") == "text" and delta.get("text"):
                             got = True
-                            yield _stream_event(_reparar_mojibake(text_delta))
-                    if got:
-                        yield _stream_event(done=True)
-                        return
-                else:
-                    logger.warning("Gemini stream generateContent HTTP %s: %s", stream.status_code, stream.text[:300])
-            except Exception as e:
-                logger.warning("Gemini stream consumo falló: %s", e)
-            finally:
-                try:
-                    stream.close()
-                except Exception:
-                    pass
+                            yield _stream_event(_reparar_texto_ia(str(delta["text"])))
+                if got:
+                    yield _stream_event(done=True); return
+            else:
+                logger.warning("Gemini stream HTTP %s: %s", r.status_code, r.text[:300])
+        except Exception as e:
+            logger.warning("Gemini stream falló: %s", e)
 
         # Si el stream no entrega texto (por ejemplo, una incidencia temporal del
         # stream o una respuesta con herramientas), reintentamos la misma pregunta
@@ -4733,12 +4630,12 @@ def _generador_ai_stream(mensaje, historial):
                 prompt, GEMINI_MODEL,
                 temperature=0.15 if market_query else 0.35,
                 system_instruction=system,
-                max_output_tokens=1200,
+                max_output_tokens=900 if market_query else 800,
                 timeout=9,
                 tools=fallback_tools,
             )
             if fallback_text:
-                yield _stream_event(_reparar_mojibake(fallback_text))
+                yield _stream_event(fallback_text)
                 yield _stream_event(done=True)
                 return
         except Exception as e:
@@ -4777,16 +4674,19 @@ def generar_respuesta_ia(mensaje, historial):
         "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
         "mercantil", "provincial", "bnc", "banco"
     ))
-    contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
+    contexto = _serializar_contexto_mercado() if market_query else {
+        "modo": "general",
+        "proyecto_venbot": {
+            "implementado": ["monitor P2P USDT/VES", "Mercantil, Provincial y BNC", "BCV/Euro", "calculadora", "histórico y gráfica P2P", "análisis cuantitativo", "proyección estadística 7H", "alertas inteligentes y personales", "cuentas, planes y facturación manual", "Telegram", "Spot básico con cotizaciones"],
+            "en_construccion": ["Spot analítico con gráfico y predicciones por moneda", "selector de monedas Spot", "mejoras del chat IA y experiencia conversacional", "comunidad", "arquitectura para mercados P2P de otros países"],
+            "regla": "Nunca presentar una función en_construccion como si ya estuviera disponible."
+        }
+    }
     if market_query:
         logger.info("AI CHAT: contexto P2P obtenido | bancos=%s | has_analysis=%s", list((contexto.get("bancos") or {}).keys()), bool(contexto.get("analisis_cuantitativo")))
+        if any(x in low for x in ("qué datos estás utilizando", "que datos estas utilizando", "qué datos usas", "que datos usas", "de dónde salen los datos", "de donde salen los datos", "fuentes de datos")):
+            return _respuesta_datos_mercado(contexto)
         # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
-        if _pregunta_datos_analisis(low):
-            logger.info("AI CHAT: explicación determinística de fuentes de datos")
-            return _respuesta_datos_analisis(contexto)
-        if _pregunta_precio_futuro_exacto(low):
-            logger.info("AI CHAT: rechazo de precio futuro exacto + escenario")
-            return _respuesta_precio_futuro_exacto(contexto)
         if _pregunta_manipulacion(low):
             logger.info("AI CHAT: detector de anomalías determinístico")
             return _respuesta_manipulacion(contexto)
@@ -4814,35 +4714,21 @@ def generar_respuesta_ia(mensaje, historial):
 
     if market_query:
         system = VENBOT_AI_SYSTEM + "\n\nPara preguntas por bancos: compara explícitamente los campos bancos.*. Comprar USDT usa comprar_usdt_sell (SELL); vender USDT usa vender_usdt_buy (BUY). Indica el banco ganador y su precio cuando existan datos disponibles. No digas que faltan tasas bancarias si están presentes en CONTEXTO REAL DE VENBOT."
-        max_tokens, temperature = 1200, 0.20
+        max_tokens, temperature = 900, 0.15
     else:
-        system = VENBOT_AI_SYSTEM + "\n\nResponde como un asistente general de alta calidad. Si la pregunta requiere información actual y se dispone de búsqueda web, prioriza fuentes actuales y menciona cuándo estás usando información reciente."
-        max_tokens, temperature = 1200, 0.35
+        system = VENBOT_AI_SYSTEM + "\n\nPara preguntas generales responde de forma concisa: normalmente 1-3 párrafos. No conviertas una pregunta sencilla en un ensayo."
+        max_tokens, temperature = 800, 0.35
 
     if GEMINI_API_KEY:
-        logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s | free_standard_api=true", GEMINI_MODEL, market_query)
+        logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s | google_search=%s", GEMINI_MODEL, market_query, not market_query)
         gt0 = time.monotonic()
-        if (not market_query) and _ai_necesita_busqueda_web(low):
-            text = _respuesta_gemini_interactions_rest(
-                prompt, GEMINI_MODEL, temperature, system_instruction=system,
-                max_output_tokens=max_tokens, timeout=12, tools=[{"type": "google_search"}]
-            )
-        else:
-            text = _respuesta_gemini_generate_content(
-                prompt, GEMINI_MODEL, temperature, max_tokens, timeout=15, system_instruction=system
-            )
-        if text:
-            logger.info("AI CHAT: Gemini generateContent respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
-            return text
-        # Compatibilidad: si el modelo/proyecto rechaza generateContent, probamos
-        # Interactions sin herramientas externas. Esto mantiene el chat gratuito
-        # y evita depender de Google Search para responder preguntas generales.
+        tools = None if market_query else [{"type": "google_search"}]
         text = _respuesta_gemini_interactions_rest(
             prompt, GEMINI_MODEL, temperature,
-            system_instruction=system, max_output_tokens=max_tokens, timeout=9, tools=None
+            system_instruction=system, max_output_tokens=max_tokens, timeout=9, tools=tools
         )
         if text:
-            logger.info("AI CHAT: Gemini Interactions respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
+            logger.info("AI CHAT: Gemini respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
             return text
         logger.warning("AI CHAT: Gemini no respondió | elapsed=%.2fs", time.monotonic()-gt0)
 
@@ -4872,7 +4758,7 @@ async def ai_chat_stream(payload: AIChatRequest, request: Request):
     quota = _consume_ai_quota(user)
     if not quota["allowed"]:
         raise HTTPException(status_code=429, detail={"error":"ai_daily_limit", "limit":quota["limit"], "used":quota["used"]})
-    return StreamingResponse(_generador_ai_stream(payload.message.strip(), payload.history), media_type="text/event-stream", headers={"Cache-Control":"no-cache", "Connection":"keep-alive", "X-Accel-Buffering":"no", "Content-Type":"text/event-stream; charset=utf-8"})
+    return StreamingResponse(_generador_ai_stream(payload.message.strip(), payload.history), media_type="text/event-stream", headers={"Cache-Control":"no-cache", "Connection":"keep-alive", "X-Accel-Buffering":"no"})
 
 
 @app.get("/api/ai/usage")
@@ -4890,15 +4776,7 @@ def ai_usage(request: Request):
 
 @app.get("/api/ai/health")
 def ai_health():
-    return {
-        "configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY),
-        "gemini_configured": bool(GEMINI_API_KEY),
-        "openrouter_configured": bool(OPENROUTER_API_KEY),
-        "provider": "gemini_free" if GEMINI_API_KEY else ("openrouter" if OPENROUTER_API_KEY else None),
-        "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else None),
-        "preferred_models": ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"],
-        "api": "generateContent + streamGenerateContent",
-    }
+    return {"configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY), "gemini_configured": bool(GEMINI_API_KEY), "openrouter_configured": bool(OPENROUTER_API_KEY), "preferred_models": ["gemini-3.6-flash", "gemini-3.5-flash-lite"], "api": "Interactions API"}
 
 
 @app.post("/api/ai/chat")
