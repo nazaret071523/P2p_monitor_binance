@@ -33,6 +33,11 @@
     .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
     .ad-label{letter-spacing:.12em}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
+    .calc-quick-btn{background:rgba(15,23,42,.75);border:1px solid rgba(51,65,85,.8);color:#94a3b8;border-radius:.65rem;padding:.42rem .72rem;font-size:9px;font-weight:800;transition:.18s ease}
+    .calc-quick-btn:hover{color:#6ee7b7;border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.08)}
+    .calc-direction-btn{transition:.18s ease}
+    .calc-direction-btn.active{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
+    .chart-shell{background:linear-gradient(180deg,rgba(15,23,42,.42),rgba(2,6,23,.34));border:1px solid rgba(51,65,85,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
 
     .bottom-nav {
       background: rgba(11, 15, 23, 0.95);
@@ -181,31 +186,81 @@
         </div>
       </section>
 
-      <section id="sec-calculadora" class="glass-card p-4 rounded-2xl space-y-4 scroll-mt-24">
-        <div class="flex items-start justify-between gap-3">
-          <div><h3 class="font-bold text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-calculator text-emerald-400"></i>Calculadora USD / VES</h3><p class="text-[10px] text-slate-500 mt-1">Convierte rápidamente usando precios P2P, la Tasa BCV o la Tasa Euro.</p></div>
-          <span class="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">Sin registro</span>
+      <section id="sec-calculadora" class="glass-card p-4 md:p-5 rounded-2xl space-y-4 scroll-mt-24 overflow-hidden">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+              <i class="fa-solid fa-calculator"></i>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="font-black text-slate-100 text-sm">Calculadora de mercado</h3>
+                <span class="text-[8px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full">En vivo</span>
+              </div>
+              <p class="text-[10px] text-slate-500 mt-1">Convierte USD/USDT, VES o EUR con las cotizaciones actuales de Venbot.</p>
+            </div>
+          </div>
+          <div class="text-[9px] text-slate-500 flex items-center gap-1.5"><i class="fa-solid fa-shield-halved text-slate-600"></i>Solo cálculo · sin ejecutar operaciones</div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div>
-            <label for="calc-amount" class="text-xs font-semibold text-slate-300 block mb-1">Cantidad de USD</label>
-            <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm font-bold text-white">
+        <div class="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+          <button id="calc-direction-forward" type="button" onclick="setCalcDirection('forward')" class="calc-direction-btn active focus-ring rounded-lg px-3 py-2 text-[10px] font-black text-emerald-300 bg-emerald-500/10 border border-emerald-500/20">USD / USDT → VES</button>
+          <button id="calc-direction-reverse" type="button" onclick="setCalcDirection('reverse')" class="calc-direction-btn focus-ring rounded-lg px-3 py-2 text-[10px] font-bold text-slate-400 border border-transparent">VES → USD / USDT</button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-[1.05fr_.95fr] gap-3">
+          <div class="rounded-2xl bg-slate-950/55 border border-slate-800 p-3.5 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <label for="calc-amount" id="calc-amount-label" class="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad de USD / USDT</label>
+              <button type="button" onclick="swapCalcDirection()" class="focus-ring w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-emerald-300 transition" title="Invertir conversión"><i class="fa-solid fa-right-left text-[10px]"></i></button>
+            </div>
+            <div class="relative">
+              <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl py-3 pl-3 pr-16 text-lg font-black text-white tabular">
+              <span id="calc-input-unit" class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-500">USD</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(50)">50</button>
+              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(100)">100</button>
+              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(300)">300</button>
+              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(500)">500</button>
+            </div>
+            <div>
+              <label for="calc-rate" class="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1.5">Cotización utilizada</label>
+              <select id="calc-rate" onchange="handleRateChange()" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-xs font-bold text-slate-200">
+                <option value="sell">Vender USDT · P2P Binance</option>
+                <option value="buy">Comprar USDT · P2P Binance</option>
+                <option value="bcv">USD · Tasa oficial BCV</option>
+                <option value="euro">EUR · Tasa oficial BCV</option>
+              </select>
+            </div>
+            <div class="flex items-center justify-between gap-2 text-[9px] text-slate-500">
+              <span id="calc-rate-label">Tasa P2P de Vender USDT</span><span id="calc-rate-live" class="text-emerald-400 font-bold">En vivo</span>
+            </div>
           </div>
-          <div>
-            <label for="calc-rate" class="text-xs font-semibold text-slate-300 block mb-1">Cotización</label>
-            <select id="calc-rate" onchange="handleRateChange()" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-semibold text-slate-200">
-              <option value="sell">Venta P2P (Binance) · En Vivo</option>
-              <option value="buy">Compra P2P (Binance) · En Vivo</option>
-              <option value="bcv">Tasa BCV (Oficial)</option>
-              <option value="euro">Tasa Euro (Oficial BCV)</option>
-            </select>
+
+          <div class="rounded-2xl bg-gradient-to-br from-emerald-500/10 via-slate-950/60 to-slate-950/70 border border-emerald-500/20 p-4 flex flex-col justify-between min-h-[220px]">
+            <div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] font-black uppercase tracking-wider text-slate-400">Resultado</span>
+                <span id="calc-result-badge" class="text-[8px] font-black uppercase tracking-wider text-slate-400 bg-slate-900/80 border border-slate-800 px-2 py-1 rounded-full">--</span>
+              </div>
+              <div id="calc-result" class="tabular text-3xl md:text-4xl font-black text-emerald-300 mt-3 break-words">--,-- Bs</div>
+              <div id="calc-result-sub" class="text-[10px] text-slate-500 mt-1">Esperando cotización en vivo</div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mt-4">
+              <div class="rounded-xl bg-slate-950/60 border border-slate-800 p-2.5">
+                <span class="text-[9px] text-slate-500 block">Tasa aplicada</span>
+                <strong id="calc-rate-value" class="tabular text-xs text-slate-200 block mt-1">--,--</strong>
+              </div>
+              <div class="rounded-xl bg-slate-950/60 border border-slate-800 p-2.5">
+                <span class="text-[9px] text-slate-500 block">Vs. BCV</span>
+                <strong id="calc-diff" class="tabular text-xs text-amber-300 block mt-1">--</strong>
+              </div>
+            </div>
           </div>
-          <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Resultado estimado</span>
-            <strong id="calc-result" class="tabular text-lg font-black text-emerald-400 mt-0.5 block">--,-- Bs</strong>
-            <span id="calc-diff" class="text-[10px] text-amber-300 font-bold mt-1 block">--,-- Bs vs. Tasa BCV</span>
-          </div>
+        </div>
+        <div class="rounded-xl border border-slate-800 bg-slate-950/35 px-3 py-2.5 text-[9px] leading-relaxed text-slate-500">
+          <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i>La calculadora usa la lectura seleccionada del monitor. <strong class="text-slate-400">Comprar USDT</strong> representa el precio que tú pagas al comprar; <strong class="text-slate-400">Vender USDT</strong> representa el precio que tú recibes al vender. El resultado es estimado y no abre ninguna orden.
         </div>
       </section>
 
@@ -228,13 +283,12 @@
         </div>
 
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-slate-400">
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Vela alcista</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span> Vela bajista</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400"></span> Comprar</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-300"></span> Vender</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Punto medio</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400"></span> Comprar USDT</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-300"></span> Vender USDT</span>
           <span class="ml-auto flex items-center gap-1.5 text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Lectura en vivo</span>
         </div>
-        <div class="relative h-96 w-full rounded-xl bg-slate-950/20 border border-slate-900/70 overflow-hidden"><canvas id="marketChart"></canvas></div>
+        <div class="relative h-[24rem] md:h-[30rem] w-full rounded-2xl chart-shell overflow-hidden"><canvas id="marketChart"></canvas></div>
         <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] leading-relaxed text-slate-500">
           <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i> Las velas muestran el <strong class="text-slate-400">punto medio entre Comprar y Vender</strong> de las lecturas P2P de Venbot. No son velas OHLC nativas de Binance. Las líneas permiten ver por separado el precio para comprar USDT y el precio para vender USDT.
         </div>
@@ -643,51 +697,6 @@
       });
     }
 
-    const venbotLevelsPlugin = {
-      id: 'venbotLevels',
-      afterDraw(chart) {
-        const meta = chart.options?.plugins?.venbotLevels;
-        if (!meta || !chart.scales?.y || !chart.chartArea) return;
-        const {ctx, chartArea, scales} = chart;
-        const drawLevel = (value, label, color, dash) => {
-          if (!(value > 0) || value < scales.y.min || value > scales.y.max) return;
-          const y = scales.y.getPixelForValue(value);
-          ctx.save();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1;
-          ctx.setLineDash(dash);
-          ctx.globalAlpha = 0.75;
-          ctx.beginPath();
-          ctx.moveTo(chartArea.left, y);
-          ctx.lineTo(chartArea.right, y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.globalAlpha = 1;
-          ctx.font = '600 10px system-ui, sans-serif';
-          const padX = 7, padY = 5;
-          const text = `${label} ${money(value)}`;
-          const w = ctx.measureText(text).width + padX * 2;
-          const h = 22;
-          const bx = chartArea.right - w - 6;
-          const by = Math.max(chartArea.top + 3, Math.min(y - h / 2, chartArea.bottom - h - 3));
-          ctx.fillStyle = 'rgba(7,10,17,.88)';
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.roundRect(bx, by, w, h, 6);
-          ctx.fill(); ctx.stroke();
-          ctx.fillStyle = color;
-          ctx.fillText(text, bx + padX, by + 15);
-          ctx.restore();
-        };
-        drawLevel(meta.low, 'Mínimo', '#fb7185', [5,4]);
-        drawLevel(meta.current, 'Actual', '#e2e8f0', [4,4]);
-        drawLevel(meta.high, 'Máximo', '#34d399', [5,4]);
-        drawLevel(meta.support, 'Soporte', '#818cf8', [7,4]);
-        drawLevel(meta.resistance, 'Resistencia', '#c084fc', [7,4]);
-      }
-    };
-
     function formatChartTime(ts) {
       if (!ts || !Number.isFinite(Number(ts))) return '--';
       return new Date(Number(ts)).toLocaleString('es-VE', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
@@ -712,27 +721,16 @@
       const currentMid = marketState.buy > 0 && marketState.sell > 0
         ? (marketState.buy + marketState.sell) / 2
         : (mids.length ? mids[mids.length - 1] : 0);
-
-      // Incluso con histórico vacío tras un despertar de Render, dibujamos una
-      // vela viva con el último precio real. Nunca dejamos el canvas sin datos.
       const liveTime = marketState.timestamp ? new Date(marketState.timestamp).getTime() : Date.now();
+      const bucketMs = candleBucketMs(marketState.period);
+
       if (!candles.length && currentMid > 0 && Number.isFinite(liveTime)) {
-        const key = Math.floor(liveTime / candleBucketMs(marketState.period)) * candleBucketMs(marketState.period);
+        const key = Math.floor(liveTime / bucketMs) * bucketMs;
         candles = [{ x:key, o:currentMid, h:currentMid, l:currentMid, c:currentMid }];
       }
+      if (!candles.length) return;
 
-      if (!candles.length) {
-        if (marketChart) {
-          marketChart.data.datasets[0].data = [];
-          marketChart.update('none');
-        }
-        return;
-      }
-
-      // Actualiza la última vela con la lectura viva para que 1M/5M/15M etc.
-      // evolucionen sin esperar a la siguiente consulta histórica.
       if (currentMid > 0 && Number.isFinite(liveTime)) {
-        const bucketMs = candleBucketMs(marketState.period);
         const key = Math.floor(liveTime / bucketMs) * bucketMs;
         const last = candles[candles.length - 1];
         if (!last || key > last.x) candles.push({ x:key, o:currentMid, h:currentMid, l:currentMid, c:currentMid });
@@ -743,10 +741,9 @@
         }
       }
 
-      // Mínimo/máximo se calculan DESPUÉS de incorporar la vela viva.
       const candleExtremes = candles.filter(c => Number.isFinite(c.l) && Number.isFinite(c.h));
-      const low = candleExtremes.length ? Math.min(...candleExtremes.map(c => Number(c.l))) : (mids.length ? Math.min(...mids) : 0);
-      const high = candleExtremes.length ? Math.max(...candleExtremes.map(c => Number(c.h))) : (mids.length ? Math.max(...mids) : 0);
+      const low = candleExtremes.length ? Math.min(...candleExtremes.map(c => Number(c.l))) : 0;
+      const high = candleExtremes.length ? Math.max(...candleExtremes.map(c => Number(c.h))) : 0;
       let lowTs = 0, highTs = 0;
       if (candleExtremes.length) {
         const lowC = candleExtremes.find(c => Number(c.l) === low);
@@ -755,68 +752,60 @@
         highTs = highC ? Number(highC.x) : 0;
       }
 
-      const analysis = marketState.analysis || {};
-      const support = Number(analysis.soporte_7h ?? analysis.soporte ?? 0);
-      const resistance = Number(analysis.resistencia_7h ?? analysis.resistencia ?? 0);
-      const rangePosition = Number(analysis.posicion_rango ?? 0);
       const buySeries = chartLineSeries(marketState.history, 'compra');
       const sellSeries = chartLineSeries(marketState.history, 'venta');
-      if (currentMid > 0 && Number.isFinite(liveTime)) {
-        const currentBuy = Number(marketState.buy);
-        const currentSell = Number(marketState.sell);
-        if (currentBuy > 0) buySeries.push({x: liveTime, y: currentBuy});
-        if (currentSell > 0) sellSeries.push({x: liveTime, y: currentSell});
-      }
+      if (Number(marketState.buy) > 0 && Number.isFinite(liveTime)) buySeries.push({x: liveTime, y:Number(marketState.buy)});
+      if (Number(marketState.sell) > 0 && Number.isFinite(liveTime)) sellSeries.push({x: liveTime, y:Number(marketState.sell)});
+
+      const range = high > low ? high - low : Math.max(currentMid * 0.006, 1);
+      const pad = range * 0.12;
+      const yMin = Math.max(0, low - pad);
+      const yMax = high + pad;
+      const prevMid = candles.length > 1 ? Number(candles[candles.length - 2].c) : currentMid;
+      const change = prevMid > 0 ? ((currentMid - prevMid) / prevMid) * 100 : 0;
 
       document.getElementById('chart-low').textContent = low > 0 ? `${money(low)} Bs` : '--,-- Bs';
       document.getElementById('chart-high').textContent = high > 0 ? `${money(high)} Bs` : '--,-- Bs';
       document.getElementById('chart-current').textContent = currentMid > 0 ? `${money(currentMid)} Bs` : '--,-- Bs';
       document.getElementById('chart-low-time').textContent = lowTs ? formatChartTime(lowTs) : '--';
       document.getElementById('chart-high-time').textContent = highTs ? formatChartTime(highTs) : '--';
-      document.getElementById('chart-current-time').textContent = liveTime ? formatChartTime(liveTime) : '--';
-      document.getElementById('chart-levels').textContent = support > 0 && resistance > 0 ? `${money(support)} / ${money(resistance)}` : '-- / --';
-      document.getElementById('chart-range-position').textContent = rangePosition > 0 ? `Rango: ${pct(rangePosition)}%` : 'Rango: n/d';
+      document.getElementById('chart-current-time').textContent = liveTime ? `${formatChartTime(liveTime)} · ${change >= 0 ? '+' : ''}${pct(change)}%` : '--';
 
       const datasets = [
-        { label: 'USDT/VES · Punto medio', type: 'candlestick', data: candles, borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, barThickness: 'flex', maxBarThickness: 16 },
-        { label: 'Comprar USDT', type: 'line', data: buySeries, borderColor: '#38bdf8', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, pointHitRadius: 8, tension: 0.15, spanGaps: true },
-        { label: 'Vender USDT', type: 'line', data: sellSeries, borderColor: '#fbbf24', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, pointHitRadius: 8, tension: 0.15, spanGaps: true }
+        { label: 'Punto medio', type: 'candlestick', data: candles, borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, barThickness: 'flex', maxBarThickness: 12 },
+        { label: 'Comprar USDT', type: 'line', data: buySeries, borderColor: '#38bdf8', backgroundColor: 'transparent', borderWidth: 1.25, pointRadius: 0, pointHitRadius: 8, tension: 0.18, spanGaps: true },
+        { label: 'Vender USDT', type: 'line', data: sellSeries, borderColor: '#fbbf24', backgroundColor: 'transparent', borderWidth: 1.25, pointRadius: 0, pointHitRadius: 8, tension: 0.18, spanGaps: true }
       ];
+
+      const options = {
+        responsive: true, maintainAspectRatio: false, parsing: false,
+        animation: false, interaction: { intersect: false, mode: 'index' },
+        layout: { padding: { top: 8, right: 6, bottom: 4, left: 4 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: { displayColors: true, padding: 10, backgroundColor: 'rgba(2,6,23,.94)', borderColor: 'rgba(148,163,184,.18)', borderWidth: 1, titleColor:'#e2e8f0', bodyColor:'#cbd5e1', callbacks: {
+            title: (items) => items.length ? formatChartTime(items[0].raw?.x) : '',
+            label: (ctx) => {
+              const r = ctx.raw || {};
+              if (ctx.dataset.type === 'line') return `${ctx.dataset.label}: ${money(r.y)} Bs`;
+              return `Punto medio · O ${money(r.o)} · H ${money(r.h)} · L ${money(r.l)} · C ${money(r.c)} Bs`;
+            }
+          }}
+        },
+        scales: {
+          x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7, font:{size:9} }, grid:{ color:'rgba(51,65,85,.18)', drawBorder:false } },
+          y: { position:'right', min:yMin, max:yMax, ticks:{ color:'#64748b', maxTicksLimit:7, padding:6, font:{size:9}, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.18)', drawBorder:false } }
+        }
+      };
 
       if (marketChart) {
         marketChart.data.datasets = datasets;
-        marketChart.options.plugins.venbotLevels = { low, current: currentMid, high, support, resistance };
+        marketChart.options = options;
         marketChart.update('none');
         return;
       }
-
-      marketChart = new Chart(canvas.getContext('2d'), {
-        type: 'candlestick',
-        plugins: [venbotLevelsPlugin],
-        data: { datasets },
-        options: {
-          responsive: true, maintainAspectRatio: false, parsing: false,
-          animation: false, interaction: { intersect: false, mode: 'index' },
-          plugins: {
-            venbotLevels: { low, current: currentMid, high, support, resistance },
-            legend: { display: true, position: 'top', align: 'end', labels: { color: '#94a3b8', boxWidth: 12, boxHeight: 2, usePointStyle: true, pointStyle: 'line', padding: 12, font: { size: 9, weight: '600' } } },
-            tooltip: { callbacks: {
-              title: (items) => items.length ? formatChartTime(items[0].raw?.x) : '',
-              label: (ctx) => {
-                const r = ctx.raw || {};
-                if (ctx.dataset.type === 'line') return `${ctx.dataset.label}: ${money(r.y)} Bs`;
-                return `Punto medio · O ${money(r.o)} · H ${money(r.h)} · L ${money(r.l)} · C ${money(r.c)} Bs`;
-              }
-            }}
-          },
-          scales: {
-            x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:8 }, grid:{ color:'rgba(51,65,85,.25)' } },
-            y: { position:'right', grace:'1.5%', ticks:{ color:'#64748b', maxTicksLimit:8, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.25)' } }
-          }
-        }
-      });
+      marketChart = new Chart(canvas.getContext('2d'), { type:'candlestick', data:{datasets}, options });
     }
-
 
     async function loadSpotMarket() {
       const grid=document.getElementById('spot-grid'), status=document.getElementById('spot-status');
@@ -833,32 +822,65 @@
       } catch(e) { status.textContent='No se pudo cargar Spot en este momento.'; }
     }
 
+    let calcDirection = 'forward';
+
+    function setCalcDirection(direction) {
+      calcDirection = direction === 'reverse' ? 'reverse' : 'forward';
+      document.querySelectorAll('.calc-direction-btn').forEach(btn => btn.classList.remove('active'));
+      const active = document.getElementById(calcDirection === 'forward' ? 'calc-direction-forward' : 'calc-direction-reverse');
+      if (active) active.classList.add('active');
+      updateCalculatorLabels();
+      calculateRate();
+    }
+
+    function swapCalcDirection() { setCalcDirection(calcDirection === 'forward' ? 'reverse' : 'forward'); }
+    function setCalcAmount(value) { const input=document.getElementById('calc-amount'); if(input){ input.value=value; calculateRate(); input.focus(); } }
+
+    function updateCalculatorLabels() {
+      const rateType = document.getElementById('calc-rate')?.value || 'sell';
+      const isEuro = rateType === 'euro';
+      const source = isEuro ? 'EUR' : 'USD / USDT';
+      const target = 'VES';
+      const sourceLabel = calcDirection === 'forward' ? `Cantidad de ${source}` : `Cantidad de ${target}`;
+      const sourceUnit = calcDirection === 'forward' ? (isEuro ? 'EUR' : 'USD') : 'VES';
+      const directionText = calcDirection === 'forward' ? `${source} → VES` : `VES → ${source}`;
+      const btn = document.getElementById(calcDirection === 'forward' ? 'calc-direction-forward' : 'calc-direction-reverse');
+      document.getElementById('calc-amount-label').textContent = sourceLabel;
+      document.getElementById('calc-input-unit').textContent = sourceUnit;
+      document.getElementById('calc-result-badge').textContent = directionText;
+      if (btn) btn.textContent = directionText;
+      document.getElementById('calc-direction-forward').textContent = `${source} → VES`;
+      document.getElementById('calc-direction-reverse').textContent = `VES → ${source}`;
+    }
+
     function calculateRate() {
-      const amount = parseFloat(document.getElementById('calc-amount').value) || 0;
-      const rateType = document.getElementById('calc-rate').value;
-      const rates = {
-        sell: marketState.sell,
-        buy: marketState.buy,
-        bcv: marketState.bcv,
-        euro: marketState.euro
-      };
+      const amount = parseFloat(document.getElementById('calc-amount')?.value) || 0;
+      const rateType = document.getElementById('calc-rate')?.value || 'sell';
+      const rates = { sell: marketState.sell, buy: marketState.buy, bcv: marketState.bcv, euro: marketState.euro };
       const rate = Number(rates[rateType] || 0);
-      const result = amount * rate;
+      const isEuro = rateType === 'euro';
+      const unit = isEuro ? 'EUR' : 'USD / USDT';
+      const result = calcDirection === 'forward' ? amount * rate : (rate > 0 ? amount / rate : 0);
+      const resultUnit = calcDirection === 'forward' ? 'Bs' : (isEuro ? 'EUR' : 'USD / USDT');
+      const rateLabel = {sell:'Tasa P2P de Vender USDT',buy:'Tasa P2P de Comprar USDT',bcv:'Tasa oficial BCV · USD',euro:'Tasa oficial BCV · EUR'}[rateType];
 
-      document.getElementById('calc-result').innerText = rate > 0
-        ? `${money(result)} Bs`
-        : '--,-- Bs';
+      updateCalculatorLabels();
+      document.getElementById('calc-rate-label').textContent = rateLabel || 'Cotización seleccionada';
+      document.getElementById('calc-rate-value').textContent = rate > 0 ? `${money(rate)} Bs/${isEuro ? 'EUR' : 'USD'}` : '--,--';
+      document.getElementById('calc-rate-live').textContent = rate > 0 ? (rateType === 'bcv' || rateType === 'euro' ? 'Oficial' : 'En vivo') : 'Sin lectura';
+      document.getElementById('calc-result').textContent = rate > 0 && amount >= 0 ? `${isEuro || resultUnit.includes('USD') ? (resultUnit === 'Bs' ? money(result) : money(result)) : money(result)} ${resultUnit}` : '--,--';
+      document.getElementById('calc-result-sub').textContent = rate > 0 ? `${money(amount)} ${calcDirection === 'forward' ? unit : 'VES'} · tasa ${money(rate)} Bs/${isEuro ? 'EUR' : 'USD'}` : 'Esperando cotización en vivo';
 
-      if (rate > 0 && marketState.bcv > 0) {
-        const diff = amount * (rate - marketState.bcv);
+      if (rate > 0 && marketState.bcv > 0 && !isEuro) {
+        const diff = calcDirection === 'forward' ? amount * (rate - marketState.bcv) : (amount / rate) - (amount / marketState.bcv);
         const sign = diff > 0 ? '+' : '';
-        document.getElementById('calc-diff').innerText = `${sign}${money(diff)} Bs vs. Tasa BCV`;
+        document.getElementById('calc-diff').textContent = `${sign}${money(diff)} ${calcDirection === 'forward' ? 'Bs' : 'USD'} vs BCV`;
       } else {
-        document.getElementById('calc-diff').innerText = 'Esperando tasa en vivo';
+        document.getElementById('calc-diff').textContent = isEuro ? 'Referencia EUR · BCV' : 'Sin comparación';
       }
     }
 
-    function handleRateChange() { calculateRate(); }
+    function handleRateChange() { updateCalculatorLabels(); calculateRate(); }
 
     async function setChartPeriod(period, btn) {
       marketState.period = period;
