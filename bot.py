@@ -173,6 +173,7 @@ _CACHE_TTL_AI = 5.0
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
+SPOT_ANALYSIS_CACHE = {}
 SPOT_LOCK = threading.Lock()
 _LAST_SPOT_COLLECTION_TS = 0.0
 
@@ -1009,6 +1010,209 @@ def obtener_spot_klines(symbol, interval="5m", limit=170):
             "l": float(k[3]), "c": float(k[4]), "volume": float(k[5]),
             "close_time": int(k[6]),
         })
+    return out
+
+
+
+def _regresion_log_precio(candles, max_points=170):
+    rows = [c for c in (candles or []) if float(c.get("c") or 0) > 0]
+    rows = rows[-max_points:]
+    if len(rows) < 12:
+        return {"slope_per_hour": 0.0, "r2": 0.0, "points": len(rows)}
+    t0 = float(rows[0]["x"])
+    x = np.array([(float(c["x"]) - t0) / 3600000.0 for c in rows], dtype=float)
+    y = np.log(np.array([float(c["c"]) for c in rows], dtype=float))
+    slope, intercept = np.polyfit(x, y, 1)
+    pred = slope * x + intercept
+    ss_res = float(np.sum((y - pred) ** 2))
+    ss_tot = float(np.sum((y - float(np.mean(y))) ** 2))
+    r2 = max(0.0, min(1.0, 1.0 - ss_res / ss_tot)) if ss_tot > 1e-12 else 0.0
+    return {"slope_per_hour": float(slope), "r2": r2, "points": len(rows)}
+
+
+def _retorno_desde_candles(candles, periods):
+    rows = [c for c in (candles or []) if float(c.get("c") or 0) > 0]
+    if not rows or periods >= len(rows):
+        return None
+    return (float(rows[-1]["c"]) / float(rows[-1-periods]["c"]) - 1.0) * 100.0
+
+
+def _volatilidad_horaria(candles):
+    rows = [c for c in (candles or []) if float(c.get("c") or 0) > 0]
+    if len(rows) < 20:
+        return 0.0
+    closes = np.array([float(c["c"]) for c in rows], dtype=float)
+    returns_5m = np.diff(np.log(closes))
+    if len(returns_5m) < 12:
+        return 0.0
+    return float(np.std(returns_5m[-120:], ddof=1) * np.sqrt(12.0))
+
+
+def _spot_calidad_label(confianza):
+    if confianza >= 80:
+        return "ALTA"
+    if confianza >= 65:
+        return "MEDIA-ALTA"
+    if confianza >= 50:
+        return "MEDIA"
+    return "BAJA"
+
+
+def analizar_spot_predictivo(symbol):
+    """Motor Spot v1: convierte velas reales de Binance en escenarios futuros.
+
+    No intenta adivinar un precio exacto. Combina pendiente temporal, momentum,
+    volatilidad y niveles recientes para producir escenarios y rangos por horizonte.
+    """
+    sym = _normalizar_spot_symbol(symbol)
+    if sym not in SPOT_SYMBOLS:
+        raise ValueError("Activo Spot no habilitado en Venbot")
+    now = time.monotonic()
+    cached = SPOT_ANALYSIS_CACHE.get(sym)
+    if cached and now < float(cached.get("expires") or 0):
+        return cached["value"]
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_ticker = ex.submit(obtener_spot_binance, sym)
+        f_5m = ex.submit(obtener_spot_klines, sym, "5m", 288)
+        f_1h = ex.submit(obtener_spot_klines, sym, "1h", 120)
+        ticker = f_ticker.result(timeout=SPOT_REQUEST_TIMEOUT + 2)
+        candles_5m = f_5m.result(timeout=SPOT_REQUEST_TIMEOUT + 2)
+        candles_1h = f_1h.result(timeout=SPOT_REQUEST_TIMEOUT + 2)
+
+    if not ticker or len(candles_5m) < 36 or len(candles_1h) < 30:
+        raise RuntimeError("Histórico Spot insuficiente para generar proyección")
+
+    price = float(ticker["price"])
+    reg_5m = _regresion_log_precio(candles_5m, 216)
+    reg_1h = _regresion_log_precio(candles_1h, 96)
+    vol_1h = _volatilidad_horaria(candles_5m)
+    r1h = _retorno_desde_candles(candles_5m, 12)
+    r3h = _retorno_desde_candles(candles_5m, 36)
+    r6h = _retorno_desde_candles(candles_5m, 72)
+    r12h = _retorno_desde_candles(candles_5m, 144)
+    r24h = float(ticker.get("change_24h_pct") or 0.0)
+
+    slope_5m = reg_5m["slope_per_hour"]
+    slope_1h = reg_1h["slope_per_hour"]
+    slope = 0.62 * slope_5m + 0.38 * slope_1h
+    momentum = 0.30 * (r1h or 0) + 0.25 * (r3h or 0) + 0.20 * (r6h or 0) + 0.15 * (r12h or 0) + 0.10 * r24h
+    momentum_per_hour = momentum / 6.0
+    drift = 0.72 * (slope * 100.0) + 0.28 * momentum_per_hour
+
+    trend_score = max(-1.0, min(1.0, drift / max(0.35, vol_1h * 1.8))) if vol_1h > 0 else 0.0
+    if trend_score >= 0.22:
+        trend = "ALCISTA"
+        trend_icon = "🟢"
+    elif trend_score <= -0.22:
+        trend = "BAJISTA"
+        trend_icon = "🔴"
+    else:
+        trend = "LATERAL / MIXTA"
+        trend_icon = "🟡"
+
+    last_24 = candles_1h[-24:] if len(candles_1h) >= 24 else candles_1h
+    support = min(float(c["l"]) for c in last_24)
+    resistance = max(float(c["h"]) for c in last_24)
+    recent_low = min(float(c["l"]) for c in candles_5m[-72:])
+    recent_high = max(float(c["h"]) for c in candles_5m[-72:])
+    support = min(support, recent_low)
+    resistance = max(resistance, recent_high)
+
+    agreement = 1.0 - min(1.0, abs(slope_5m - slope_1h) / max(0.0008, abs(slope_5m) + abs(slope_1h) + 0.0002))
+    history_score = min(1.0, min(reg_5m["points"], reg_1h["points"]) / 96.0)
+    r2_score = 0.5 * reg_5m["r2"] + 0.5 * reg_1h["r2"]
+    confidence = int(round(max(35.0, min(92.0, 45.0 + 18.0*r2_score + 15.0*agreement + 12.0*history_score + 5.0*min(1.0, abs(trend_score))))))
+    quality = _spot_calidad_label(confidence)
+
+    horizons = {"1h": 1, "3h": 3, "7h": 7, "24h": 24}
+    projections = {}
+    for label, hours in horizons.items():
+        raw_delta = drift * hours
+        # La banda crece con la raíz del tiempo; se limita para evitar extrapolaciones extremas.
+        uncertainty = max(0.0025, vol_1h) * np.sqrt(hours) * 1.05
+        max_move = min(0.18, max(0.012, uncertainty * 2.4 + 0.008))
+        central_delta = max(-max_move, min(max_move, raw_delta / 100.0))
+        central = price * np.exp(central_delta)
+        band = min(max_move * 0.90, max(0.004, uncertainty))
+        low = price * np.exp(central_delta - band)
+        high = price * np.exp(central_delta + band)
+        bull_delta = min(max_move, central_delta + band * 0.75)
+        bear_delta = max(-max_move, central_delta - band * 0.75)
+        projections[label] = {
+            "central": round(central, 8),
+            "low": round(low, 8),
+            "high": round(high, 8),
+            "change_pct": round((central/price - 1.0) * 100.0, 3),
+            "bullish": round(price * np.exp(bull_delta), 8),
+            "bearish": round(price * np.exp(bear_delta), 8),
+            "uncertainty_pct": round(band * 100.0, 3),
+        }
+
+    source_ts = ticker.get("timestamp")
+    result = {
+        "ok": True,
+        "symbol": sym,
+        "asset": sym.replace("USDT", ""),
+        "observed": {
+            "price": round(price, 8),
+            "change_24h_pct": round(r24h, 3),
+            "bid": round(float(ticker.get("bid") or 0), 8),
+            "ask": round(float(ticker.get("ask") or 0), 8),
+            "quote_volume_24h": round(float(ticker.get("quote_volume_24h") or 0), 2),
+            "timestamp": source_ts.isoformat() if hasattr(source_ts, "isoformat") else source_ts,
+            "source": "Binance Spot public market data",
+        },
+        "analysis": {
+            "trend": trend,
+            "trend_icon": trend_icon,
+            "trend_score": round(trend_score, 3),
+            "momentum_score": round(momentum, 3),
+            "volatility_1h_pct": round(vol_1h * 100.0, 3),
+            "support": round(support, 8),
+            "resistance": round(resistance, 8),
+            "regression_r2": round(r2_score, 3),
+            "confidence": confidence,
+            "quality": quality,
+            "data_points_5m": len(candles_5m),
+            "data_points_1h": len(candles_1h),
+            "returns_pct": {"1h": round(r1h or 0,3), "3h": round(r3h or 0,3), "6h": round(r6h or 0,3), "12h": round(r12h or 0,3), "24h": round(r24h,3)},
+        },
+        "projections": projections,
+        "scenarios_24h": {
+            "bearish": projections["24h"]["bearish"],
+            "central": projections["24h"]["central"],
+            "bullish": projections["24h"]["bullish"],
+        },
+        "method": "Pendiente temporal + momentum multiventana + volatilidad + niveles recientes; escenarios estadísticos, no precios garantizados.",
+        "generated_at": datetime.now(VET).isoformat(),
+    }
+    SPOT_ANALYSIS_CACHE[sym] = {"value": result, "expires": time.monotonic() + 30.0}
+    return result
+
+
+def obtener_spot_predicciones_contexto():
+    """Expone solo predicciones Spot ya calculadas y cacheadas para la IA.
+
+    No dispara nueve análisis nuevos durante cada consulta de chat.
+    """
+    out = {}
+    now = time.monotonic()
+    for sym, cached in list(SPOT_ANALYSIS_CACHE.items()):
+        if not cached or now >= float(cached.get("expires") or 0):
+            continue
+        r = cached.get("value") or {}
+        try:
+            out[sym] = {
+                "price": r["observed"]["price"],
+                "change_24h_pct": r["observed"]["change_24h_pct"],
+                "trend": r["analysis"]["trend"],
+                "confidence": r["analysis"]["confidence"],
+                "projection_24h": r["projections"]["24h"]["central"],
+                "projection_24h_change_pct": r["projections"]["24h"]["change_pct"],
+            }
+        except Exception:
+            continue
     return out
 
 
@@ -3969,6 +4173,18 @@ def obtener_spot_history(
         return {"ok": False, "symbol": str(symbol).upper(), "interval": interval, "count": 0, "candles": [], "error": "Fuente Spot temporalmente no disponible"}
 
 
+@app.get("/api/spot/prediction")
+def obtener_spot_prediction_api(request: Request, symbol: str = Query("BTCUSDT")):
+    _require_plan_user(request, "VIP")
+    try:
+        return analizar_spot_predictivo(symbol)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.warning("Spot prediction falló: %s", e)
+        return {"ok": False, "symbol": str(symbol).upper(), "error": "Datos Spot insuficientes o fuente temporalmente no disponible"}
+
+
 @app.get("/api/quant/v2")
 def obtener_quant_v2_api(include_spot: bool = Query(True)):
     mercado = obtener_mercado_actual_db() or {}
@@ -4234,7 +4450,8 @@ def _serializar_contexto_mercado():
         "analisis_cuantitativo": analisis,
         "historial_general": hist[-120:],
         "spot": _spot_context_for_quant(),
-        "spot_source": "Binance Spot public market data; precios actuales, bid/ask y variación 24H del caché del recolector.",
+        "spot_predicciones": obtener_spot_predicciones_contexto(),
+        "spot_source": "Binance Spot public market data; precios actuales, bid/ask, variación 24H y análisis predictivo calculado por Venbot.",
         "regla_temporal": "Las variaciones 5m/15m/30m/1h/3h/7h se calculan contra datos con timestamp real; n/d significa insuficiencia de histórico o un hueco demasiado grande."
     }
     _AI_CONTEXT_CACHE["value"] = result
@@ -4713,24 +4930,24 @@ def _pregunta_spot(low):
 
 def _respuesta_spot_local(contexto, low):
     symbol = _spot_symbol_from_text(low)
-    spot = contexto.get("spot") or {}
     if not symbol:
         return None
-    item = spot.get(symbol) or {}
-    price = float(item.get("price") or 0)
-    change = float(item.get("change_24h_pct") or 0)
-    bid = float(item.get("bid") or 0)
-    ask = float(item.get("ask") or 0)
-    volume = float(item.get("quote_volume_24h") or 0)
-    if price <= 0:
-        return f"No tengo una lectura Spot reciente de {symbol.replace('USDT','')}."
-    activo = symbol.replace("USDT", "")
-    direccion = "subiendo" if change > 0 else "bajando" if change < 0 else "estable"
+    try:
+        analysis = analizar_spot_predictivo(symbol)
+    except Exception:
+        return f"No tengo suficiente histórico Spot reciente de {symbol.replace('USDT','')} para generar una proyección fiable ahora."
+    obs = analysis["observed"]
+    a = analysis["analysis"]
+    p7 = analysis["projections"]["7h"]
+    p24 = analysis["projections"]["24h"]
     return (
-        f"**{activo} Spot:** {_money_ia(price)} USDT. En las últimas 24 horas registra **{change:+.2f}%**, por lo que la lectura inmediata es de {direccion}. "
-        f"Bid: {_money_ia(bid)} · Ask: {_money_ia(ask)} USDT · volumen 24H: {_money_ia(volume)} USDT.\n\n"
-        "Es una lectura de mercado Spot de Binance, no una predicción ni una garantía de rendimiento. "
-        "El histórico de velas Spot ya está preparado en Venbot para la siguiente fase de análisis técnico."
+        f"**{analysis['asset']} · PREDICCIÓN Y PROYECCIÓN**\n\n"
+        f"Dato observado: **{_money_ia(obs['price'])} USDT**, 24H **{obs['change_24h_pct']:+.2f}%**. "
+        f"La estructura actual es **{a['trend'].lower()}** y el momentum reciente es **{a['momentum_score']:+.3f}%**.\n\n"
+        f"**7H:** escenario central **{_money_ia(p7['central'])} USDT** ({p7['change_pct']:+.2f}%), rango estadístico **{_money_ia(p7['low'])}–{_money_ia(p7['high'])}**.\n"
+        f"**24H:** escenario central **{_money_ia(p24['central'])} USDT** ({p24['change_pct']:+.2f}%), rango **{_money_ia(p24['low'])}–{_money_ia(p24['high'])}**.\n"
+        f"Soporte reciente: **{_money_ia(a['support'])}** · resistencia: **{_money_ia(a['resistance'])}** · confianza del análisis: **{a['confidence']}/100 ({a['quality']})**.\n\n"
+        "Estas cifras son proyecciones estadísticas calculadas con velas reales de Binance; no son precios garantizados ni una promesa de rendimiento."
     )
 
 
