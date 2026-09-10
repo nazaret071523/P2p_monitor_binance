@@ -266,9 +266,6 @@
             </div>
           </div>
         </div>
-        <div class="rounded-xl border border-slate-800 bg-slate-950/35 px-3 py-2.5 text-[9px] leading-relaxed text-slate-500">
-          <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i>La calculadora usa la lectura seleccionada del monitor. <strong class="text-slate-400">Comprar USDT</strong> representa el precio que tú pagas al comprar; <strong class="text-slate-400">Vender USDT</strong> representa el precio que tú recibes al vender. El resultado es estimado y no abre ninguna orden.
-        </div>
       </section>
 
       <section class="glass-card p-4 rounded-2xl space-y-3">
@@ -735,7 +732,9 @@
       }
       if (!candles.length) return;
 
-      if (currentMid > 0 && Number.isFinite(liveTime)) {
+      // En 1D el backend ya entrega una vela por día usando el huso horario de Venezuela.
+      // No añadimos otra vela con buckets UTC porque podría partir el mismo día en dos.
+      if (currentMid > 0 && Number.isFinite(liveTime) && marketState.period !== '1d') {
         const key = Math.floor(liveTime / bucketMs) * bucketMs;
         const last = candles[candles.length - 1];
         if (!last || key > last.x) candles.push({ x:key, o:currentMid, h:currentMid, l:currentMid, c:currentMid });
@@ -790,7 +789,7 @@
           }}
         },
         scales: {
-          x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7, font:{size:9} }, grid:{ color:'rgba(51,65,85,.12)', drawBorder:false, tickLength:0 } },
+          x: { type: 'time', adapters:{ date:{ zone:'America/Caracas' } }, time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7, font:{size:9} }, grid:{ color:'rgba(51,65,85,.12)', drawBorder:false, tickLength:0 } },
           y: { position:'right', min:yMin, max:yMax, ticks:{ color:'#64748b', maxTicksLimit:7, padding:6, font:{size:9}, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.12)', drawBorder:false, tickLength:0 } }
         }
       };
