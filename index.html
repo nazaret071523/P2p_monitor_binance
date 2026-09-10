@@ -395,8 +395,6 @@
           <div id="spot-method" class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400"></div>
         </div>
 
-        <div id="spot-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2"></div>
-        <div id="spot-status" class="text-[10px] text-slate-500">Inicia sesión con un plan VIP para consultar Spot.</div>
       </section>
 
       <section id="sec-alertas" class="glass-card p-4 rounded-2xl border border-amber-500/20 flex items-center justify-between gap-3">
@@ -885,21 +883,23 @@
     }
 
     async function loadSpotMarket() {
-      const grid=document.getElementById('spot-grid'), status=document.getElementById('spot-status');
-      if(!grid || !status) return;
       const ent=window.venbotEntitlements?.features || {};
-      if(!getAuthToken()){ status.textContent='Inicia sesión con un plan VIP para consultar Spot.'; grid.innerHTML=''; return; }
-      if(!ent.spot){ status.textContent='Mercado Spot disponible en el plan VIP.'; grid.innerHTML='<div class="col-span-full text-xs text-slate-500">Actualiza a VIP desde la sección de planes para desbloquear Spot.</div>'; return; }
+      const token=getAuthToken();
+      const selector=document.getElementById('spot-symbol-select');
+      if(!token || !ent.spot) {
+        loadSpotPrediction(selector?.value || 'BTCUSDT');
+        return;
+      }
       try {
-        const r=await fetch(`${API_BASE_URL}/api/spot?t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
-        const d=await r.json(); if(!r.ok) throw new Error(d.detail?.error||d.detail||'No disponible');
-        const items=Object.values(d.symbols||{});
-        const selector=document.getElementById('spot-symbol-select');
-        if(selector && Array.isArray(d.configured_symbols)){ selector.innerHTML=d.configured_symbols.map(sym=>`<option value="${sym}">${sym.replace('USDT','')}</option>`).join(''); }
-        grid.innerHTML=items.map(x=>`<button type="button" onclick="document.getElementById('spot-symbol-select').value='${x.symbol}';loadSpotPrediction('${x.symbol}')" class="text-left bg-slate-950/70 border border-slate-800 hover:border-purple-500/30 rounded-xl p-2.5 transition"><div class="flex items-center justify-between gap-2"><strong class="text-xs text-slate-200">${x.symbol.replace('USDT','')}</strong><span class="text-[9px] ${Number(x.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${Number(x.change_24h_pct)>=0?'+':''}${Number(x.change_24h_pct).toFixed(2)}%</span></div><div class="text-sm font-black text-purple-300 mt-1">${spotDisplayNumber(x.price)}</div><div class="text-[9px] text-slate-500 mt-1">USDT · dato observado</div></button>`).join('');
-        status.textContent=`${items.length} activos Spot disponibles · Binance aporta el dato observado`; 
-        loadSpotPrediction(document.getElementById('spot-symbol-select')?.value || 'BTCUSDT');
-      } catch(e) { status.textContent='No se pudo cargar Spot en este momento.'; }
+        const r=await fetch(`${API_BASE_URL}/api/spot?t=${Date.now()}`,{headers:{'X-Venbot-Session':token,'Accept':'application/json'},cache:'no-store'});
+        const d=await r.json();
+        if(r.ok && Array.isArray(d.configured_symbols) && selector) {
+          selector.innerHTML=d.configured_symbols.map(sym=>`<option value="${sym}">${sym.replace('USDT','')}</option>`).join('');
+        }
+      } catch(e) {
+        console.warn('No se pudo actualizar la lista de activos Spot:',e);
+      }
+      loadSpotPrediction(selector?.value || 'BTCUSDT');
     }
 
     const CALC_CURRENCIES = { VES: 'Bolívares (VES)', USD: 'Dólares (USD)', USDT: 'USDT', EUR: 'Euros (EUR)' };
