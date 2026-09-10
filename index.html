@@ -226,34 +226,26 @@
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-[1.05fr_.95fr] gap-3">
-          <div class="rounded-2xl bg-slate-950/55 border border-slate-800 p-3.5 space-y-3">
+          <div class="rounded-2xl bg-slate-950/55 border border-slate-800 p-3.5 space-y-2.5">
             <div class="flex items-center justify-between gap-2">
-              <label for="calc-amount" id="calc-amount-label" class="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad de VES</label>
+              <label for="calc-amount" id="calc-amount-label" class="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad de USD</label>
               <button type="button" onclick="swapCalcCurrencies()" class="focus-ring w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-emerald-300 transition" title="Invertir conversión"><i class="fa-solid fa-right-left text-[10px]"></i></button>
             </div>
             <div class="relative">
-              <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl py-3 pl-3 pr-16 text-lg font-black text-white tabular">
+              <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl py-2.5 pl-3 pr-16 text-lg font-black text-white tabular">
               <span id="calc-input-unit" class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-500">USD</span>
             </div>
-            <div class="flex flex-wrap gap-1.5">
-              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(50)">50</button>
-              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(100)">100</button>
-              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(300)">300</button>
-              <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(500)">500</button>
+            <div class="flex items-center justify-between gap-2 pt-1 text-[9px]">
+              <span id="calc-rate-label" class="text-slate-500">Cotización aplicada</span>
+              <span id="calc-operation" class="font-bold text-emerald-300">--</span>
             </div>
-            <div>
-              <div class="flex items-center justify-between gap-2 mb-1.5">
-                <label class="text-[10px] font-black uppercase tracking-wider text-slate-400">Cotización aplicada</label>
-                <span id="calc-operation" class="text-[9px] font-bold text-emerald-300">--</span>
-              </div>
-              <div id="calc-rate-source" class="rounded-xl bg-slate-900/70 border border-slate-700 p-3 text-xs font-bold text-slate-200">Selecciona qué tienes y qué quieres recibir.</div>
-            </div>
-            <div class="flex items-center justify-between gap-2 text-[9px] text-slate-500">
-              <span id="calc-rate-label">Tasa P2P de Vender USDT</span><span id="calc-rate-live" class="text-emerald-400 font-bold">En vivo</span>
+            <div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/55 border border-slate-800 px-2.5 py-2">
+              <span id="calc-rate-source" class="text-[10px] font-bold text-slate-300">Selecciona qué tienes y qué quieres recibir.</span>
+              <span id="calc-rate-live" class="text-[9px] text-emerald-400 font-bold shrink-0">En vivo</span>
             </div>
           </div>
 
-          <div class="rounded-2xl bg-gradient-to-br from-emerald-500/10 via-slate-950/60 to-slate-950/70 border border-emerald-500/20 p-4 flex flex-col justify-between min-h-[220px]">
+          <div class="rounded-2xl bg-gradient-to-br from-emerald-500/10 via-slate-950/60 to-slate-950/70 border border-emerald-500/20 p-4 flex flex-col justify-between min-h-[180px]">
             <div>
               <div class="flex items-center justify-between gap-2">
                 <span class="text-[10px] font-black uppercase tracking-wider text-slate-400">Resultado</span>
@@ -299,12 +291,11 @@
 
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-slate-400">
           <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Punto medio</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400"></span> Comprar USDT</span>
           <span class="ml-auto flex items-center gap-1.5 text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Lectura en vivo</span>
         </div>
         <div class="relative h-[24rem] md:h-[30rem] w-full rounded-2xl chart-shell overflow-hidden"><canvas id="marketChart"></canvas></div>
         <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] leading-relaxed text-slate-500">
-          <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i> Las velas muestran el <strong class="text-slate-400">punto medio entre Comprar y Vender</strong> de las lecturas P2P de Venbot. No son velas OHLC nativas de Binance. La línea azul muestra la referencia de Comprar USDT. La lectura de Vender USDT se mantiene en el monitor y en la calculadora, pero no se dibuja como una segunda línea para evitar ruido visual.
+          <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i> Las velas muestran el <strong class="text-slate-400">punto medio entre Comprar y Vender</strong> de las lecturas P2P de Venbot. No son velas OHLC nativas de Binance. Las cotizaciones de Comprar y Vender siguen disponibles en el monitor y la calculadora; aquí se muestran solo las velas para mantener una lectura limpia.
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
           <div class="bg-slate-950/60 border border-rose-500/20 rounded-xl p-2.5">
@@ -766,9 +757,6 @@
         highTs = highC ? Number(highC.x) : 0;
       }
 
-      const buySeries = chartLineSeries(marketState.history, 'compra');
-      if (Number(marketState.buy) > 0 && Number.isFinite(liveTime)) buySeries.push({x: liveTime, y:Number(marketState.buy)});
-
       const range = high > low ? high - low : Math.max(currentMid * 0.006, 1);
       const pad = range * 0.12;
       const yMin = Math.max(0, low - pad);
@@ -785,7 +773,6 @@
 
       const datasets = [
         { label: 'Punto medio', type: 'candlestick', data: candles, borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, barThickness: 'flex', maxBarThickness: 12 },
-        { label: 'Comprar USDT', type: 'line', data: buySeries, borderColor: '#38bdf8', backgroundColor: 'transparent', borderWidth: 1.25, pointRadius: 0, pointHitRadius: 8, tension: 0.18, spanGaps: true },
       ];
 
       const options = {
@@ -798,14 +785,13 @@
             title: (items) => items.length ? formatChartTime(items[0].raw?.x) : '',
             label: (ctx) => {
               const r = ctx.raw || {};
-              if (ctx.dataset.type === 'line') return `${ctx.dataset.label}: ${money(r.y)} Bs`;
               return `Punto medio · O ${money(r.o)} · H ${money(r.h)} · L ${money(r.l)} · C ${money(r.c)} Bs`;
             }
           }}
         },
         scales: {
-          x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7, font:{size:9} }, grid:{ color:'rgba(51,65,85,.18)', drawBorder:false } },
-          y: { position:'right', min:yMin, max:yMax, ticks:{ color:'#64748b', maxTicksLimit:7, padding:6, font:{size:9}, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.18)', drawBorder:false } }
+          x: { type: 'time', time: { tooltipFormat: 'dd/LL HH:mm', displayFormats: { minute:'HH:mm', hour:'dd HH:mm', day:'dd/MM' } }, ticks: { color:'#64748b', maxRotation:0, autoSkip:true, maxTicksLimit:7, font:{size:9} }, grid:{ color:'rgba(51,65,85,.12)', drawBorder:false, tickLength:0 } },
+          y: { position:'right', min:yMin, max:yMax, ticks:{ color:'#64748b', maxTicksLimit:7, padding:6, font:{size:9}, callback:(v)=>money(v) }, grid:{ color:'rgba(51,65,85,.12)', drawBorder:false, tickLength:0 } }
         }
       };
 
