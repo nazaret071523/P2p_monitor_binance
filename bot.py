@@ -63,7 +63,7 @@ P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
-GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
+GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 
@@ -4764,6 +4764,17 @@ def _generador_ai_stream(mensaje, historial):
         # Abre el stream inmediatamente; evita que un proxy cierre la conexión mientras el proveedor responde.
         yield _stream_event("")
         contexto = _serializar_contexto_mercado() if market_query else {"modo": "general"}
+
+        # Atajos deterministas también en streaming: evitan una llamada innecesaria
+        # al proveedor para saludos/capacidades y mantienen el mismo comportamiento
+        # que el endpoint no-stream.
+        if low in {"hola", "hola!", "hola.", "buenas", "buenas!", "hey", "hey!"}:
+            yield _stream_event("Hola 👋 Soy Venbot AI. Puedo ayudarte con preguntas generales y, cuando corresponda, analizar los datos reales de P2P y Spot disponibles en Venbot.")
+            yield _stream_event(done=True); return
+        if any(x in low for x in ("qué puedes hacer", "que puedes hacer", "para qué sirves", "para que sirves")) and len(low) < 100:
+            yield _stream_event("Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenarios estadísticos. También puedo consultar la información Spot disponible en Venbot.")
+            yield _stream_event(done=True); return
+
         if market_query:
             if _pregunta_spot(low):
                 yield _stream_event(_respuesta_spot_local(contexto, low)); yield _stream_event(done=True); return
