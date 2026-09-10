@@ -203,16 +203,33 @@
           <div class="text-[9px] text-slate-500 flex items-center gap-1.5"><i class="fa-solid fa-shield-halved text-slate-600"></i>Solo cálculo · sin ejecutar operaciones</div>
         </div>
 
-        <div class="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
-          <button id="calc-direction-forward" type="button" onclick="setCalcDirection('forward')" class="calc-direction-btn active focus-ring rounded-lg px-3 py-2 text-[10px] font-black text-emerald-300 bg-emerald-500/10 border border-emerald-500/20">USD / USDT → VES</button>
-          <button id="calc-direction-reverse" type="button" onclick="setCalcDirection('reverse')" class="calc-direction-btn focus-ring rounded-lg px-3 py-2 text-[10px] font-bold text-slate-400 border border-transparent">VES → USD / USDT</button>
+        <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-2 items-end">
+          <div>
+            <label for="calc-from" class="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1.5">Tengo</label>
+            <select id="calc-from" onchange="handleCurrencyChange('from')" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-xs font-bold text-slate-200">
+              <option value="VES">Bolívares (VES)</option>
+              <option value="USD">Dólares (USD)</option>
+              <option value="USDT">USDT</option>
+              <option value="EUR">Euros (EUR)</option>
+            </select>
+          </div>
+          <div class="hidden sm:flex w-9 h-9 mb-0.5 rounded-xl bg-slate-900 border border-slate-700 items-center justify-center text-emerald-300"><i class="fa-solid fa-arrow-right"></i></div>
+          <div>
+            <label for="calc-to" class="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1.5">Quiero</label>
+            <select id="calc-to" onchange="handleCurrencyChange('to')" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-xs font-bold text-slate-200">
+              <option value="USDT">USDT</option>
+              <option value="VES">Bolívares (VES)</option>
+              <option value="USD">Dólares (USD)</option>
+              <option value="EUR">Euros (EUR)</option>
+            </select>
+          </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-[1.05fr_.95fr] gap-3">
           <div class="rounded-2xl bg-slate-950/55 border border-slate-800 p-3.5 space-y-3">
             <div class="flex items-center justify-between gap-2">
-              <label for="calc-amount" id="calc-amount-label" class="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad de USD / USDT</label>
-              <button type="button" onclick="swapCalcDirection()" class="focus-ring w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-emerald-300 transition" title="Invertir conversión"><i class="fa-solid fa-right-left text-[10px]"></i></button>
+              <label for="calc-amount" id="calc-amount-label" class="text-[10px] font-black uppercase tracking-wider text-slate-400">Cantidad de VES</label>
+              <button type="button" onclick="swapCalcCurrencies()" class="focus-ring w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-emerald-300 transition" title="Invertir conversión"><i class="fa-solid fa-right-left text-[10px]"></i></button>
             </div>
             <div class="relative">
               <input id="calc-amount" type="number" value="100" min="0" step="0.01" inputmode="decimal" oninput="calculateRate()" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl py-3 pl-3 pr-16 text-lg font-black text-white tabular">
@@ -225,13 +242,11 @@
               <button type="button" class="calc-quick-btn focus-ring" onclick="setCalcAmount(500)">500</button>
             </div>
             <div>
-              <label for="calc-rate" class="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1.5">Cotización utilizada</label>
-              <select id="calc-rate" onchange="handleRateChange()" class="focus-ring w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-xs font-bold text-slate-200">
-                <option value="sell">Vender USDT · P2P Binance</option>
-                <option value="buy">Comprar USDT · P2P Binance</option>
-                <option value="bcv">USD · Tasa oficial BCV</option>
-                <option value="euro">EUR · Tasa oficial BCV</option>
-              </select>
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <label class="text-[10px] font-black uppercase tracking-wider text-slate-400">Cotización aplicada</label>
+                <span id="calc-operation" class="text-[9px] font-bold text-emerald-300">--</span>
+              </div>
+              <div id="calc-rate-source" class="rounded-xl bg-slate-900/70 border border-slate-700 p-3 text-xs font-bold text-slate-200">Selecciona qué tienes y qué quieres recibir.</div>
             </div>
             <div class="flex items-center justify-between gap-2 text-[9px] text-slate-500">
               <span id="calc-rate-label">Tasa P2P de Vender USDT</span><span id="calc-rate-live" class="text-emerald-400 font-bold">En vivo</span>
@@ -285,12 +300,11 @@
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-slate-400">
           <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Punto medio</span>
           <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400"></span> Comprar USDT</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-300"></span> Vender USDT</span>
           <span class="ml-auto flex items-center gap-1.5 text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Lectura en vivo</span>
         </div>
         <div class="relative h-[24rem] md:h-[30rem] w-full rounded-2xl chart-shell overflow-hidden"><canvas id="marketChart"></canvas></div>
         <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] leading-relaxed text-slate-500">
-          <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i> Las velas muestran el <strong class="text-slate-400">punto medio entre Comprar y Vender</strong> de las lecturas P2P de Venbot. No son velas OHLC nativas de Binance. Las líneas permiten ver por separado el precio para comprar USDT y el precio para vender USDT.
+          <i class="fa-solid fa-circle-info text-slate-600 mr-1"></i> Las velas muestran el <strong class="text-slate-400">punto medio entre Comprar y Vender</strong> de las lecturas P2P de Venbot. No son velas OHLC nativas de Binance. La línea azul muestra la referencia de Comprar USDT. La lectura de Vender USDT se mantiene en el monitor y en la calculadora, pero no se dibuja como una segunda línea para evitar ruido visual.
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
           <div class="bg-slate-950/60 border border-rose-500/20 rounded-xl p-2.5">
@@ -753,9 +767,7 @@
       }
 
       const buySeries = chartLineSeries(marketState.history, 'compra');
-      const sellSeries = chartLineSeries(marketState.history, 'venta');
       if (Number(marketState.buy) > 0 && Number.isFinite(liveTime)) buySeries.push({x: liveTime, y:Number(marketState.buy)});
-      if (Number(marketState.sell) > 0 && Number.isFinite(liveTime)) sellSeries.push({x: liveTime, y:Number(marketState.sell)});
 
       const range = high > low ? high - low : Math.max(currentMid * 0.006, 1);
       const pad = range * 0.12;
@@ -774,7 +786,6 @@
       const datasets = [
         { label: 'Punto medio', type: 'candlestick', data: candles, borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, barThickness: 'flex', maxBarThickness: 12 },
         { label: 'Comprar USDT', type: 'line', data: buySeries, borderColor: '#38bdf8', backgroundColor: 'transparent', borderWidth: 1.25, pointRadius: 0, pointHitRadius: 8, tension: 0.18, spanGaps: true },
-        { label: 'Vender USDT', type: 'line', data: sellSeries, borderColor: '#fbbf24', backgroundColor: 'transparent', borderWidth: 1.25, pointRadius: 0, pointHitRadius: 8, tension: 0.18, spanGaps: true }
       ];
 
       const options = {
@@ -822,65 +833,115 @@
       } catch(e) { status.textContent='No se pudo cargar Spot en este momento.'; }
     }
 
-    let calcDirection = 'forward';
+    const CALC_CURRENCIES = { VES: 'Bolívares (VES)', USD: 'Dólares (USD)', USDT: 'USDT', EUR: 'Euros (EUR)' };
+    let calcFrom = 'VES';
+    let calcTo = 'USDT';
 
-    function setCalcDirection(direction) {
-      calcDirection = direction === 'reverse' ? 'reverse' : 'forward';
-      document.querySelectorAll('.calc-direction-btn').forEach(btn => btn.classList.remove('active'));
-      const active = document.getElementById(calcDirection === 'forward' ? 'calc-direction-forward' : 'calc-direction-reverse');
-      if (active) active.classList.add('active');
+    function setCalcAmount(value) {
+      const input = document.getElementById('calc-amount');
+      if (input) { input.value = value; calculateRate(); input.focus(); }
+    }
+
+    function swapCalcCurrencies() {
+      const from = document.getElementById('calc-from');
+      const to = document.getElementById('calc-to');
+      if (!from || !to) return;
+      const currentFrom = from.value;
+      from.value = to.value;
+      to.value = currentFrom;
+      calcFrom = from.value;
+      calcTo = to.value;
       updateCalculatorLabels();
       calculateRate();
     }
 
-    function swapCalcDirection() { setCalcDirection(calcDirection === 'forward' ? 'reverse' : 'forward'); }
-    function setCalcAmount(value) { const input=document.getElementById('calc-amount'); if(input){ input.value=value; calculateRate(); input.focus(); } }
+    function handleCurrencyChange(which) {
+      const from = document.getElementById('calc-from');
+      const to = document.getElementById('calc-to');
+      if (!from || !to) return;
+      if (which === 'from') calcFrom = from.value;
+      if (which === 'to') calcTo = to.value;
+      if (calcFrom === calcTo) {
+        const alternatives = Object.keys(CALC_CURRENCIES).filter(x => x !== calcFrom);
+        if (which === 'from') { to.value = alternatives[0]; calcTo = to.value; }
+        else { from.value = alternatives[0]; calcFrom = from.value; }
+      }
+      updateCalculatorLabels();
+      calculateRate();
+    }
 
     function updateCalculatorLabels() {
-      const rateType = document.getElementById('calc-rate')?.value || 'sell';
-      const isEuro = rateType === 'euro';
-      const source = isEuro ? 'EUR' : 'USD / USDT';
-      const target = 'VES';
-      const sourceLabel = calcDirection === 'forward' ? `Cantidad de ${source}` : `Cantidad de ${target}`;
-      const sourceUnit = calcDirection === 'forward' ? (isEuro ? 'EUR' : 'USD') : 'VES';
-      const directionText = calcDirection === 'forward' ? `${source} → VES` : `VES → ${source}`;
-      const btn = document.getElementById(calcDirection === 'forward' ? 'calc-direction-forward' : 'calc-direction-reverse');
-      document.getElementById('calc-amount-label').textContent = sourceLabel;
-      document.getElementById('calc-input-unit').textContent = sourceUnit;
-      document.getElementById('calc-result-badge').textContent = directionText;
-      if (btn) btn.textContent = directionText;
-      document.getElementById('calc-direction-forward').textContent = `${source} → VES`;
-      document.getElementById('calc-direction-reverse').textContent = `VES → ${source}`;
+      const from = document.getElementById('calc-from')?.value || calcFrom;
+      const to = document.getElementById('calc-to')?.value || calcTo;
+      const fromName = CALC_CURRENCIES[from] || from;
+      const toName = CALC_CURRENCIES[to] || to;
+      const labels = { VES:'VES', USD:'USD', USDT:'USDT', EUR:'EUR' };
+      document.getElementById('calc-amount-label').textContent = `Cantidad de ${fromName}`;
+      document.getElementById('calc-input-unit').textContent = labels[from] || from;
+      document.getElementById('calc-result-badge').textContent = `${labels[from] || from} → ${labels[to] || to}`;
+    }
+
+    function resolveCalculatorRate(from, to) {
+      if (from === to) return { rate: 1, multiply: true, label: 'Misma moneda · 1:1', live: 'Referencia', operation: 'Sin conversión' };
+      if (from === 'VES' && to === 'USDT') return { rate: Number(marketState.buy || 0), multiply: false, label: 'Comprar USDT · P2P Binance', live: 'En vivo', operation: 'Comprar USDT' };
+      if (from === 'USDT' && to === 'VES') return { rate: Number(marketState.sell || 0), multiply: true, label: 'Vender USDT · P2P Binance', live: 'En vivo', operation: 'Vender USDT' };
+      if (from === 'USD' && to === 'VES') return { rate: Number(marketState.bcv || 0), multiply: true, label: 'USD · Tasa oficial BCV', live: 'Oficial', operation: 'USD → VES' };
+      if (from === 'VES' && to === 'USD') return { rate: Number(marketState.bcv || 0), multiply: false, label: 'USD · Tasa oficial BCV', live: 'Oficial', operation: 'VES → USD' };
+      if (from === 'EUR' && to === 'VES') return { rate: Number(marketState.euro || 0), multiply: true, label: 'EUR · Tasa oficial BCV', live: 'Oficial', operation: 'EUR → VES' };
+      if (from === 'VES' && to === 'EUR') return { rate: Number(marketState.euro || 0), multiply: false, label: 'EUR · Tasa oficial BCV', live: 'Oficial', operation: 'VES → EUR' };
+      if ((from === 'USD' && to === 'USDT') || (from === 'USDT' && to === 'USD')) return { rate: 1, multiply: true, label: 'Referencia USD ↔ USDT', live: 'Referencia', operation: 'USD ↔ USDT' };
+      if ((from === 'USD' && to === 'EUR') || (from === 'EUR' && to === 'USD')) {
+        const usd = Number(marketState.bcv || 0), eur = Number(marketState.euro || 0);
+        return { rate: usd > 0 && eur > 0 ? usd / eur : 0, multiply: true, label: 'Referencia BCV USD/EUR', live: 'Oficial', operation: 'USD ↔ EUR' };
+      }
+      return { rate: 0, multiply: true, label: 'Conversión no disponible', live: 'Sin lectura', operation: 'Sin datos' };
     }
 
     function calculateRate() {
-      const amount = parseFloat(document.getElementById('calc-amount')?.value) || 0;
-      const rateType = document.getElementById('calc-rate')?.value || 'sell';
-      const rates = { sell: marketState.sell, buy: marketState.buy, bcv: marketState.bcv, euro: marketState.euro };
-      const rate = Number(rates[rateType] || 0);
-      const isEuro = rateType === 'euro';
-      const unit = isEuro ? 'EUR' : 'USD / USDT';
-      const result = calcDirection === 'forward' ? amount * rate : (rate > 0 ? amount / rate : 0);
-      const resultUnit = calcDirection === 'forward' ? 'Bs' : (isEuro ? 'EUR' : 'USD / USDT');
-      const rateLabel = {sell:'Tasa P2P de Vender USDT',buy:'Tasa P2P de Comprar USDT',bcv:'Tasa oficial BCV · USD',euro:'Tasa oficial BCV · EUR'}[rateType];
+      const amount = Math.max(0, Number.parseFloat(document.getElementById('calc-amount')?.value) || 0);
+      const from = document.getElementById('calc-from')?.value || calcFrom;
+      const to = document.getElementById('calc-to')?.value || calcTo;
+      const resolved = resolveCalculatorRate(from, to);
+      const rate = Number(resolved.rate || 0);
+      const result = rate > 0 ? (resolved.multiply ? amount * rate : amount / rate) : 0;
+      const valid = rate > 0;
 
+      calcFrom = from; calcTo = to;
       updateCalculatorLabels();
-      document.getElementById('calc-rate-label').textContent = rateLabel || 'Cotización seleccionada';
-      document.getElementById('calc-rate-value').textContent = rate > 0 ? `${money(rate)} Bs/${isEuro ? 'EUR' : 'USD'}` : '--,--';
-      document.getElementById('calc-rate-live').textContent = rate > 0 ? (rateType === 'bcv' || rateType === 'euro' ? 'Oficial' : 'En vivo') : 'Sin lectura';
-      document.getElementById('calc-result').textContent = rate > 0 && amount >= 0 ? `${isEuro || resultUnit.includes('USD') ? (resultUnit === 'Bs' ? money(result) : money(result)) : money(result)} ${resultUnit}` : '--,--';
-      document.getElementById('calc-result-sub').textContent = rate > 0 ? `${money(amount)} ${calcDirection === 'forward' ? unit : 'VES'} · tasa ${money(rate)} Bs/${isEuro ? 'EUR' : 'USD'}` : 'Esperando cotización en vivo';
+      document.getElementById('calc-operation').textContent = resolved.operation;
+      document.getElementById('calc-rate-source').textContent = resolved.label;
+      document.getElementById('calc-rate-label').textContent = resolved.label;
+      document.getElementById('calc-rate-value').textContent = valid ? (rate === 1 ? '1:1' : `${money(rate)} Bs/${from === 'EUR' || to === 'EUR' ? 'EUR' : (from === 'USDT' || to === 'USDT' ? 'USDT' : 'USD')}`) : '--,--';
+      document.getElementById('calc-rate-live').textContent = resolved.live;
+      document.getElementById('calc-result').textContent = valid ? `${money(result)} ${to}` : '--,--';
+      document.getElementById('calc-result-sub').textContent = valid ? `${money(amount)} ${from} · ${resolved.label}` : 'Esperando cotización en vivo';
 
-      if (rate > 0 && marketState.bcv > 0 && !isEuro) {
-        const diff = calcDirection === 'forward' ? amount * (rate - marketState.bcv) : (amount / rate) - (amount / marketState.bcv);
-        const sign = diff > 0 ? '+' : '';
-        document.getElementById('calc-diff').textContent = `${sign}${money(diff)} ${calcDirection === 'forward' ? 'Bs' : 'USD'} vs BCV`;
+      const diffEl = document.getElementById('calc-diff');
+      if ((from === 'VES' && to === 'USDT') || (from === 'USDT' && to === 'VES')) {
+        const bcv = Number(marketState.bcv || 0);
+        if (bcv > 0 && rate > 0) {
+          const p2pEquivalent = from === 'VES' ? amount / rate : amount * rate;
+          const bcvEquivalent = from === 'VES' ? amount / bcv : amount * bcv;
+          const diff = p2pEquivalent - bcvEquivalent;
+          diffEl.textContent = `${diff >= 0 ? '+' : ''}${money(diff)} ${to} vs BCV`;
+        } else diffEl.textContent = 'Sin comparación';
+      } else if (from === 'USD' && to === 'VES' && marketState.bcv > 0) {
+        diffEl.textContent = 'Referencia oficial BCV';
+      } else if (from === 'VES' && to === 'USD' && marketState.bcv > 0) {
+        diffEl.textContent = 'Referencia oficial BCV';
       } else {
-        document.getElementById('calc-diff').textContent = isEuro ? 'Referencia EUR · BCV' : 'Sin comparación';
+        diffEl.textContent = resolved.live === 'Referencia' ? 'Conversión de referencia' : 'Sin comparación';
       }
     }
 
-    function handleRateChange() { updateCalculatorLabels(); calculateRate(); }
+    function initCalculator() {
+      const from = document.getElementById('calc-from');
+      const to = document.getElementById('calc-to');
+      if (from) from.value = calcFrom;
+      if (to) to.value = calcTo;
+      updateCalculatorLabels();
+      calculateRate();
+    }
 
     async function setChartPeriod(period, btn) {
       marketState.period = period;
@@ -1143,17 +1204,28 @@
       aiConversation.push({ role: 'user', content: text });
       const typingId = 'ai-typing-' + Date.now();
       const chat = document.getElementById('ai-chat-messages');
-      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Venbot está pensando…</div></div>`);
+      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Pensando…</div></div>`);
       chat.scrollTop = chat.scrollHeight;
       try {
+        const token = getAuthToken();
+        if (!token) throw new Error('AUTH_REQUIRED');
         const controller = new AbortController();
-        const aiTimer = setTimeout(() => controller.abort(), 30000);
+        const aiTimer = setTimeout(() => controller.abort(), 45000);
         const response = await fetch(`${API_BASE_URL}/api/ai/chat/stream`, {
-          method: 'POST', headers: {'Content-Type':'application/json','Accept':'text/event-stream','X-Venbot-Session':getAuthToken() || ''},
-          body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }), signal: controller.signal
+          method: 'POST',
+          headers: {'Content-Type':'application/json','Accept':'text/event-stream','X-Venbot-Session':token},
+          body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }),
+          signal: controller.signal
         });
         clearTimeout(aiTimer);
-        if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+          let detail = '';
+          try { const d = await response.json(); detail = typeof d?.detail === 'string' ? d.detail : (d?.detail?.error || ''); } catch (_) {}
+          if (response.status === 401 || response.status === 403 || detail === 'auth_required') throw new Error('AUTH_REQUIRED');
+          if (response.status === 429 || detail === 'ai_daily_limit') throw new Error('AI_LIMIT');
+          throw new Error(`HTTP ${response.status}`);
+        }
+        if (!response.body) throw new Error('NO_STREAM');
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '', answer = '';
@@ -1174,32 +1246,28 @@
                 if (body) { body.classList.remove('text-slate-400'); body.classList.add('text-slate-200'); body.innerHTML = markdownToSafeHTML(answer); }
                 chat.scrollTop = chat.scrollHeight;
               }
-            } catch(e) {}
+            } catch (_) {}
           }
         }
-        if (!answer.trim()) {
-          // Segundo intento: endpoint normal de IA. Esto evita que un problema
-          // puntual del SSE deje al usuario sin respuesta.
-          try {
-            const fallback = await fetch(`${API_BASE_URL}/api/ai/chat`, {
-              method: 'POST', headers: {'Content-Type':'application/json','Accept':'application/json','X-Venbot-Session':getAuthToken() || ''},
-              body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) })
-            });
-            if (fallback.ok) {
-              const data = await fallback.json();
-              answer = String(data?.answer || '').trim();
-            }
-          } catch (e) { console.warn('Venbot AI fallback:', e); }
+        // Flush a final partial SSE event if the server closed without a trailing blank line.
+        if (buffer.trim()) {
+          const line = buffer.split('\n').find(x => x.startsWith('data:'));
+          if (line) { try { const payload = JSON.parse(line.slice(5).trim()); if (payload.text) answer += payload.text; } catch (_) {} }
         }
         document.getElementById(typingId)?.remove();
-        if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
+        if (!answer.trim()) throw new Error('EMPTY_AI');
         appendAIMessage('assistant', answer);
         aiConversation.push({ role: 'assistant', content: answer });
         speakAIResponse(answer);
       } catch (error) {
         console.error('Venbot AI:', error);
         document.getElementById(typingId)?.remove();
-        appendAIMessage('assistant', 'No pude conectar con la IA en este momento. El monitor sigue funcionando con los datos del mercado.');
+        const message = error?.message === 'AUTH_REQUIRED'
+          ? 'Para usar Venbot AI debes iniciar sesión en tu cuenta.'
+          : error?.message === 'AI_LIMIT'
+            ? 'Has alcanzado el límite diario de consultas de tu plan.'
+            : 'Venbot AI tuvo un problema temporal. El mercado sigue funcionando; vuelve a intentarlo en unos segundos.';
+        appendAIMessage('assistant', message);
       } finally {
         aiRequestRunning = false;
       }
@@ -1287,6 +1355,7 @@
 
     async function bootVenbot() {
       initTheme();
+    initCalculator();
       if (!API_BASE_URL || API_BASE_URL.includes('TU-SERVICIO')) {
         setSyncState(false, 'configura URL Render');
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
