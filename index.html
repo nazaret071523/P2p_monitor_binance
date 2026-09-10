@@ -44,10 +44,6 @@
       border: 1px solid rgba(16, 185, 129, 0.25);
       color: #34d399;
     }
-    .ai-response-body{overflow-wrap:anywhere;word-break:normal;white-space:normal;line-height:1.65;max-width:100%;}
-    .ai-response-body p{margin:.35rem 0 .65rem;}
-    .ai-response-body h3,.ai-response-body h4{line-height:1.35;}
-
     .ai-mode-btn { transition: all 0.2s ease; }
     .ai-mode-btn.active {
       background: rgba(52, 211, 153, 0.15);
@@ -77,7 +73,9 @@
     html.light .v14-menu-panel{background:#fff;color:#0f172a;border-color:#cbd5e1}
     html.light .v14-menu-panel .menu-link{color:#334155}
     html.light .v14-menu-panel .menu-link:hover{background:#f1f5f9}
-  </style>
+  .overflow-wrap-anywhere{overflow-wrap:anywhere;word-break:normal;}
+.ai-chat-copy{font-size:.925rem;line-height:1.75;overflow-wrap:anywhere;word-break:normal;}
+</style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
@@ -415,12 +413,12 @@
         </div>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="ai-response-body bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%]">¡Hola! Soy Venbot AI. Puedo ayudarte con cualquier tema y, cuando preguntes por el mercado, usaré el mismo motor P2P del monitor y Telegram.</div></div>
+        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con cualquier tema y, cuando preguntes por el mercado, usaré el mismo motor P2P del monitor y Telegram.</div></div>
       </div>
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 space-y-2">
         <div class="flex items-center gap-2">
           <button id="ai-mic-btn" type="button" onclick="toggleAIListening()" class="focus-ring w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition" title="Hablar con Venbot"><i class="fa-solid fa-microphone"></i></button>
-          <input id="ai-user-input" type="text" placeholder="Escribe o habla con Venbot..." onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
+          <input id="ai-user-input" type="text" placeholder="Pregúntame lo que quieras…" onkeydown="if(event.key==='Enter') sendAIMessage()" class="focus-ring flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-medium">
           <button type="button" onclick="sendAIMessage()" class="focus-ring bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1"><i class="fa-solid fa-paper-plane"></i></button>
         </div>
         <div id="ai-voice-status" class="text-[9px] text-slate-500 text-center">Voz apagada · puedes activarla con el altavoz</div>
@@ -1013,13 +1011,13 @@
 
     function markdownToSafeHTML(text) {
       let s = escapeHTML(String(text || ''));
-      s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-2 mb-1">$1</h4>');
-      s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
-      s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-2 mb-1">$1</h3>');
-      s = s.replace(/^[-*] (.+)$/gm, '<div class="ml-2">• $1</div>');
-      s = s.replace(/^(\d+)\. (.+)$/gm, '<div class="ml-2">$1. $2</div>');
+      s = s.replace(/^### (.+)$/gm, '<h4 class="font-bold text-emerald-300 mt-3 mb-1.5">$1</h4>');
+      s = s.replace(/^## (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-3 mb-1.5">$1</h3>');
+      s = s.replace(/^# (.+)$/gm, '<h3 class="font-bold text-emerald-300 mt-3 mb-1.5">$1</h3>');
+      s = s.replace(/^[-*] (.+)$/gm, '<div class="ml-2 mb-1">• $1</div>');
+      s = s.replace(/^(\d+)\. (.+)$/gm, '<div class="ml-2 mb-1">$1. $2</div>');
       s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300">$1</code>');
+      s = s.replace(/`([^`]+)`/g, '<code class="text-emerald-300 break-words">$1</code>');
       s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
       return s.replace(/\n/g, '<br>');
     }
@@ -1029,8 +1027,8 @@
       const safe = role === 'user' ? escapeHTML(text).replace(/\n/g, '<br>') : markdownToSafeHTML(text);
       const user = role === 'user';
       chat.insertAdjacentHTML('beforeend', user
-        ? `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${safe}</div></div>`
-        : `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">${safe}</div></div>`);
+        ? `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 text-sm max-w-[92%] leading-7 break-words overflow-wrap-anywhere">${safe}</div></div>`
+        : `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 text-sm max-w-[92%] leading-7 break-words overflow-wrap-anywhere">${safe}</div></div>`);
       chat.scrollTop = chat.scrollHeight;
     }
 
@@ -1088,7 +1086,7 @@
       aiConversation.push({ role: 'user', content: text });
       const typingId = 'ai-typing-' + Date.now();
       const chat = document.getElementById('ai-chat-messages');
-      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="ai-response-body bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%]">Venbot está pensando…</div></div>`);
+      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 text-sm max-w-[92%] leading-7 break-words overflow-wrap-anywhere">Venbot está pensando…</div></div>`);
       chat.scrollTop = chat.scrollHeight;
       try {
         const controller = new AbortController();
@@ -1103,36 +1101,30 @@
         const decoder = new TextDecoder('utf-8');
         let buffer = '', answer = '';
         const body = document.getElementById(`${typingId}-body`);
+        const processSSEEvent = (event) => {
+          const line = event.split('\n').find(x => x.startsWith('data:'));
+          if (!line) return;
+          try {
+            const payload = JSON.parse(line.slice(5).trim());
+            if (payload.text) {
+              answer += payload.text;
+              if (body) { body.classList.remove('text-slate-400'); body.classList.add('text-slate-200'); body.innerHTML = markdownToSafeHTML(answer); }
+              chat.scrollTop = chat.scrollHeight;
+            }
+          } catch(e) {}
+        };
         while (true) {
           const {value, done} = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, {stream:true});
           const events = buffer.split('\n\n');
           buffer = events.pop() || '';
-          for (const event of events) {
-            const line = event.split('\n').find(x => x.startsWith('data:'));
-            if (!line) continue;
-            try {
-              const payload = JSON.parse(line.slice(5).trim());
-              if (payload.text) {
-                answer += payload.text;
-                if (body) { body.classList.remove('text-slate-400'); body.classList.add('text-slate-200'); body.innerHTML = markdownToSafeHTML(answer); }
-                chat.scrollTop = chat.scrollHeight;
-              }
-            } catch(e) {}
-          }
+          events.forEach(processSSEEvent);
         }
-        // Vacía cualquier secuencia UTF-8 pendiente del último chunk.
         buffer += decoder.decode();
-        if (buffer.trim()) {
-          const line = buffer.split('\n').find(x => x.startsWith('data:'));
-          if (line) {
-            try {
-              const payload = JSON.parse(line.slice(5).trim());
-              if (payload.text) answer += payload.text;
-            } catch(e) {}
-          }
-        }
+        if (buffer.trim()) processSSEEvent(buffer);
+        // El backend ya realiza toda la cadena de fallback (Gemini stream -> Gemini normal -> OpenRouter/local).
+        // No repetimos /api/ai/chat aquí porque cada endpoint consume una unidad de cuota.
         document.getElementById(typingId)?.remove();
         if (!answer.trim()) answer = 'No pude responder en este momento. Intenta de nuevo en unos segundos.';
         appendAIMessage('assistant', answer);
