@@ -62,6 +62,7 @@ P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",") if m.strip()]
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
 
@@ -3207,6 +3208,7 @@ def health():
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN),
         "ai_configured": bool((GEMINI_API_KEY and genai) or OPENROUTER_API_KEY),
         "ai_model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else None),
+        "ai_fallback_models": _gemini_model_chain(),
         "spot": {"enabled": True, "symbols": list(SPOT_SYMBOLS), "source": "Binance public market data"},
         "quant_engine": QUANT_ENGINE_V2.name,
         "smart_alerts": {"enabled": SMART_ALERTS_ENABLED, "cooldown_seconds": SMART_ALERT_COOLDOWN_SECONDS},
@@ -4268,6 +4270,15 @@ def _serializar_contexto_mercado():
     return result
 
 
+def _gemini_model_chain():
+    """Orden de proveedores/modelos para que una cuota agotada en un modelo no deje la IA muda."""
+    out = []
+    for model in [GEMINI_MODEL] + list(GEMINI_FALLBACK_MODELS):
+        if model and model not in out:
+            out.append(model)
+    return out
+
+
 def _respuesta_gemini_interactions_rest(prompt, model, temperature=0.35, system_instruction=None, max_output_tokens=900, timeout=7, tools=None):
     """Ruta REST recomendada por Google para Gemini Interactions API."""
     if not GEMINI_API_KEY:
@@ -4695,54 +4706,54 @@ def _generador_ai_stream(mensaje, historial, plan="FREE"):
             "stream": True,
         }
         if tools: payload["tools"] = tools
-        try:
-            r = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/interactions",
-                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json", "Accept": "text/event-stream"},
-                json=payload, timeout=(3, 18), stream=True,
-            )
-            if r.ok:
-                got = False
-                for line in r.iter_lines(decode_unicode=True):
-                    if not line or not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        continue
-                    try: ev = json.loads(raw)
-                    except Exception: continue
-                    if ev.get("event_type") == "step.delta":
-                        delta = ev.get("delta") or {}
-                        if delta.get("type") == "text" and delta.get("text"):
-                            got = True
-                            yield _stream_event(_normalizar_texto_ia(str(delta["text"])))
-                if got:
-                    yield _stream_event(done=True); return
-            else:
-                logger.warning("Gemini stream HTTP %s: %s", r.status_code, r.text[:300])
-        except Exception as e:
-            logger.warning("Gemini stream falló: %s", e)
+        fallback_tools = None if market_query else [{"type": "google_search"}]
+        for model_name in _gemini_model_chain():
+            payload["model"] = model_name
+            try:
+                r = requests.post(
+                    "https://generativelanguage.googleapis.com/v1beta/interactions",
+                    headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json", "Accept": "text/event-stream"},
+                    json=payload, timeout=(3, 18), stream=True,
+                )
+                if r.ok:
+                    got = False
+                    for line in r.iter_lines(decode_unicode=True):
+                        if not line or not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            continue
+                        try: ev = json.loads(raw)
+                        except Exception: continue
+                        if ev.get("event_type") == "step.delta":
+                            delta = ev.get("delta") or {}
+                            if delta.get("type") == "text" and delta.get("text"):
+                                got = True
+                                # Normalizamos el texto completo por evento; no recortamos palabras.
+                                yield _stream_event(str(delta["text"]))
+                    if got:
+                        yield _stream_event(done=True); return
+                else:
+                    logger.warning("Gemini stream %s HTTP %s: %s", model_name, r.status_code, r.text[:300])
+            except Exception as e:
+                logger.warning("Gemini stream %s falló: %s", model_name, e)
 
-        # Si el stream no entrega texto (por ejemplo, una incidencia temporal del
-        # stream o una respuesta con herramientas), reintentamos la misma pregunta
-        # por Interactions normal. Para consultas generales mantenemos Google Search
-        # habilitado en este segundo intento.
-        try:
-            fallback_tools = None if market_query else [{"type": "google_search"}]
-            fallback_text = _respuesta_gemini_interactions_rest(
-                prompt, GEMINI_MODEL,
-                temperature=0.15 if market_query else 0.35,
-                system_instruction=system,
-                max_output_tokens=600 if market_query else 450,
-                timeout=9,
-                tools=fallback_tools,
-            )
-            if fallback_text:
-                yield _stream_event(_normalizar_respuesta_ia(fallback_text))
-                yield _stream_event(done=True)
-                return
-        except Exception as e:
-            logger.warning("Gemini fallback no-stream falló: %s", e)
+            # Reintento no-stream con el mismo modelo antes de pasar al siguiente.
+            try:
+                fallback_text = _respuesta_gemini_interactions_rest(
+                    prompt, model_name,
+                    temperature=0.15 if market_query else 0.35,
+                    system_instruction=system,
+                    max_output_tokens=600 if market_query else 700,
+                    timeout=9,
+                    tools=fallback_tools,
+                )
+                if fallback_text:
+                    yield _stream_event(_normalizar_respuesta_ia(fallback_text))
+                    yield _stream_event(done=True)
+                    return
+            except Exception as e:
+                logger.warning("Gemini fallback no-stream %s falló: %s", model_name, e)
 
     if market_query:
         yield _stream_event(_respuesta_local_mercado(contexto))
@@ -4827,14 +4838,16 @@ def generar_respuesta_ia(mensaje, historial, plan="FREE"):
         logger.info("AI CHAT: Gemini iniciado | model=%s | market=%s | google_search=%s", GEMINI_MODEL, market_query, not market_query)
         gt0 = time.monotonic()
         tools = None if market_query else [{"type": "google_search"}]
-        text = _respuesta_gemini_interactions_rest(
-            prompt, GEMINI_MODEL, temperature,
-            system_instruction=system, max_output_tokens=max_tokens, timeout=9, tools=tools
-        )
-        if text:
-            logger.info("AI CHAT: Gemini respondió | elapsed=%.2fs | chars=%s", time.monotonic()-gt0, len(text))
-            return _normalizar_respuesta_ia(text)
-        logger.warning("AI CHAT: Gemini no respondió | elapsed=%.2fs", time.monotonic()-gt0)
+        for model_name in _gemini_model_chain():
+            logger.info("AI CHAT: Gemini intento | model=%s | market=%s | google_search=%s", model_name, market_query, not market_query)
+            text = _respuesta_gemini_interactions_rest(
+                prompt, model_name, temperature,
+                system_instruction=system, max_output_tokens=max_tokens, timeout=9, tools=tools
+            )
+            if text:
+                logger.info("AI CHAT: Gemini respondió | model=%s | elapsed=%.2fs | chars=%s", model_name, time.monotonic()-gt0, len(text))
+                return _normalizar_respuesta_ia(text)
+        logger.warning("AI CHAT: ningún modelo Gemini respondió | elapsed=%.2fs", time.monotonic()-gt0)
 
     # Fallback útil e inmediato para mercado: nunca deja al usuario sin los datos reales.
     if market_query:
@@ -4880,7 +4893,7 @@ def ai_usage(request: Request):
 
 @app.get("/api/ai/health")
 def ai_health():
-    return {"configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY), "gemini_configured": bool(GEMINI_API_KEY), "openrouter_configured": bool(OPENROUTER_API_KEY), "preferred_models": ["gemini-3.6-flash", "gemini-3.5-flash-lite"], "api": "Interactions API"}
+    return {"configured": bool(GEMINI_API_KEY or OPENROUTER_API_KEY), "gemini_configured": bool(GEMINI_API_KEY), "openrouter_configured": bool(OPENROUTER_API_KEY), "preferred_models": _gemini_model_chain(), "api": "Interactions API"}
 
 
 @app.post("/api/ai/chat")
@@ -4894,7 +4907,7 @@ async def ai_chat(payload: AIChatRequest, request: Request):
     logger.info("AI CHAT: endpoint recibido")
     respuesta = await asyncio.to_thread(generar_respuesta_ia, mensaje, payload.history, _plan_vigente(user.get("plan_code"), user.get("plan_expires_at")))
     logger.info("AI CHAT: respuesta enviada | elapsed=%.2fs | chars=%s", time.monotonic()-t0, len(respuesta or ""))
-    return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else "not_configured")}
+    return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else "not_configured") , "quota_note": "La cuota de Venbot se consume una vez por consulta; los reintentos de proveedor no consumen unidades adicionales."}
 
 
 @app.post("/webhook")
