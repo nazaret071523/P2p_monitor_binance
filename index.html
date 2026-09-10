@@ -90,7 +90,7 @@
             <h1 class="font-extrabold text-lg tracking-wider text-emerald-400 leading-none">VENBOT</h1>
             <span class="bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Consulta</span>
           </div>
-          <p class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
+          <p id="header-market-context" class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
         </div>
         <div class="hidden md:block flex-1 max-w-xl mx-3">
           <div class="ad-slot rounded-xl px-4 py-2 text-center">
@@ -328,10 +328,10 @@
             </div>
             <div>
               <div class="flex items-center gap-2">
-                <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI · Binance P2P</h3>
+                <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI · Multimercado</h3>
                 <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Mercado + preguntas generales</span>
               </div>
-              <p class="text-[11px] text-slate-400 mt-0.5">Copiloto conversacional con datos reales del mercado P2P de Binance (USDT/VES).</p>
+              <p class="text-[11px] text-slate-400 mt-0.5">Copiloto conversacional · IA general + Motor P2P + Motor Spot.</p>
             </div>
           </div>
           <button type="button" onclick="handleAIClick()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
@@ -500,7 +500,7 @@
         </div>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con cualquier tema y, cuando preguntes por el mercado, usaré el mismo motor P2P del monitor y Telegram.</div></div>
+        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con preguntas generales y, cuando preguntes por mercados, utilizaré el motor correspondiente: P2P o Spot.</div></div>
       </div>
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 space-y-2">
         <div class="flex items-center gap-2">
@@ -826,6 +826,23 @@
       marketChart = new Chart(canvas.getContext('2d'), { type:'candlestick', data:{datasets}, options });
     }
 
+    function spotDisplayNumber(value) {
+      const n=Number(value);
+      if(!Number.isFinite(n)) return 'n/d';
+      const decimals=Math.abs(n)>=1?2:4;
+      return n.toLocaleString('es-ES',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});
+    }
+
+    function setMarketContext(kind='p2p', asset='') {
+      const el=document.getElementById('header-market-context');
+      if(!el) return;
+      if(kind==='spot') {
+        el.textContent=`Mercado Spot · ${asset ? asset + ' / USDT' : 'Binance'}`;
+      } else {
+        el.textContent='Mercado P2P · USDT / VES';
+      }
+    }
+
     async function loadSpotPrediction(symbol='BTCUSDT') {
       const status=document.getElementById('spot-prediction-status');
       const head=document.getElementById('spot-prediction-head');
@@ -842,12 +859,24 @@
         const r=await fetch(`${API_BASE_URL}/api/spot/prediction?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
         const d=await r.json(); if(!r.ok || !d.ok) throw new Error(d.error||'No disponible');
         const o=d.observed, a=d.analysis, p=d.projections;
-        const fmt=(v)=>Number(v).toLocaleString('en-US',{maximumFractionDigits:8});
+        const fmt=(v)=>{
+          const n=Number(v);
+          if(!Number.isFinite(n)) return 'n/d';
+          const decimals=Math.abs(n)>=1?2:4;
+          return n.toLocaleString('es-ES',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});
+        };
         const signed=(v)=>`${Number(v)>=0?'+':''}${Number(v).toFixed(2)}%`;
+        const relative=(v,base)=>{
+          const n=Number(v), b=Number(base);
+          if(!Number.isFinite(n)||!Number.isFinite(b)||!b) return 'n/d';
+          const pct=(n/b-1)*100;
+          return `${pct>=0?'+':''}${pct.toFixed(2)}% vs. observado`;
+        };
+        setMarketContext('spot', d.asset);
         head.innerHTML=`<div class="bg-slate-950/70 border border-purple-500/20 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Dato observado</span><strong class="block text-lg font-black text-purple-300 mt-1">${fmt(o.price)} <span class="text-[9px] text-slate-500">USDT</span></strong><span class="text-[10px] ${Number(o.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">24H ${signed(o.change_24h_pct)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Tendencia</span><strong class="block text-sm font-black text-slate-100 mt-2">${a.trend_icon} ${a.trend}</strong><span class="text-[9px] text-slate-500">Score ${Number(a.trend_score).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Volatilidad</span><strong class="block text-sm font-black text-slate-100 mt-2">${Number(a.volatility_1h_pct).toFixed(2)}% / 1H</strong><span class="text-[9px] text-slate-500">R² ${Number(a.regression_r2).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Confianza</span><strong class="block text-sm font-black text-purple-300 mt-2">${a.confidence}/100</strong><span class="text-[9px] text-slate-500">Calidad ${a.quality}</span></div>`;
         horizons.innerHTML=['1h','3h','7h','24h'].map(h=>{const q=p[h]; return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-black text-slate-200 uppercase">Proyección ${h}</span><span class="text-[9px] ${Number(q.change_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${signed(q.change_pct)}</span></div><strong class="block text-base font-black text-white mt-2">${fmt(q.central)} <span class="text-[9px] text-slate-500">USDT</span></strong><div class="text-[9px] text-slate-500 mt-1">Rango ${fmt(q.low)} – ${fmt(q.high)}</div></div>`}).join('');
         structure.innerHTML=`<div class="font-black text-slate-200 mb-2">Estructura técnica</div><div>Soporte: <b class="text-slate-200">${fmt(a.support)}</b></div><div>Resistencia: <b class="text-slate-200">${fmt(a.resistance)}</b></div><div>Momentum: <b class="text-slate-200">${Number(a.momentum_score)>=0?'+':''}${Number(a.momentum_score).toFixed(3)}%</b></div>`;
-        scenarios.innerHTML=`<div class="font-black text-slate-200 mb-2">Escenarios 24H</div><div>🔴 Bajista: <b class="text-slate-200">${fmt(d.scenarios_24h.bearish)}</b></div><div>🟡 Central: <b class="text-slate-200">${fmt(d.scenarios_24h.central)}</b></div><div>🟢 Alcista: <b class="text-slate-200">${fmt(d.scenarios_24h.bullish)}</b></div>`;
+        scenarios.innerHTML=`<div class="font-black text-slate-200 mb-2">Escenarios 24H</div><div>🔴 Bajista: <b class="text-slate-200">${fmt(d.scenarios_24h.bearish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bearish,o.price)})</span></div><div>🟡 Central: <b class="text-slate-200">${fmt(d.scenarios_24h.central)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.central,o.price)})</span></div><div>🟢 Alcista / favorable: <b class="text-slate-200">${fmt(d.scenarios_24h.bullish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bullish,o.price)})</span></div><div class="mt-2 text-slate-500">Los escenarios se comparan con el precio observado; “favorable” no implica necesariamente un precio superior al actual.</div>`;
         method.innerHTML=`<div class="font-black text-slate-200 mb-2">Cómo calcula Venbot</div><div>${d.method}</div><div class="mt-2 text-slate-500">${a.data_points_5m} velas de 5m · ${a.data_points_1h} velas de 1H.</div>`;
         status.textContent=`${d.asset} analizado con datos reales de Binance · ${new Date(d.generated_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
       } catch(e) {
@@ -867,7 +896,7 @@
         const items=Object.values(d.symbols||{});
         const selector=document.getElementById('spot-symbol-select');
         if(selector && Array.isArray(d.configured_symbols)){ selector.innerHTML=d.configured_symbols.map(sym=>`<option value="${sym}">${sym.replace('USDT','')}</option>`).join(''); }
-        grid.innerHTML=items.map(x=>`<button type="button" onclick="document.getElementById('spot-symbol-select').value='${x.symbol}';loadSpotPrediction('${x.symbol}')" class="text-left bg-slate-950/70 border border-slate-800 hover:border-purple-500/30 rounded-xl p-2.5 transition"><div class="flex items-center justify-between gap-2"><strong class="text-xs text-slate-200">${x.symbol.replace('USDT','')}</strong><span class="text-[9px] ${Number(x.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${Number(x.change_24h_pct)>=0?'+':''}${Number(x.change_24h_pct).toFixed(2)}%</span></div><div class="text-sm font-black text-purple-300 mt-1">${Number(x.price).toLocaleString('en-US',{maximumFractionDigits:8})}</div><div class="text-[9px] text-slate-500 mt-1">USDT · dato observado</div></button>`).join('');
+        grid.innerHTML=items.map(x=>`<button type="button" onclick="document.getElementById('spot-symbol-select').value='${x.symbol}';loadSpotPrediction('${x.symbol}')" class="text-left bg-slate-950/70 border border-slate-800 hover:border-purple-500/30 rounded-xl p-2.5 transition"><div class="flex items-center justify-between gap-2"><strong class="text-xs text-slate-200">${x.symbol.replace('USDT','')}</strong><span class="text-[9px] ${Number(x.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${Number(x.change_24h_pct)>=0?'+':''}${Number(x.change_24h_pct).toFixed(2)}%</span></div><div class="text-sm font-black text-purple-300 mt-1">${spotDisplayNumber(x.price)}</div><div class="text-[9px] text-slate-500 mt-1">USDT · dato observado</div></button>`).join('');
         status.textContent=`${items.length} activos Spot disponibles · Binance aporta el dato observado`; 
         loadSpotPrediction(document.getElementById('spot-symbol-select')?.value || 'BTCUSDT');
       } catch(e) { status.textContent='No se pudo cargar Spot en este momento.'; }
@@ -1412,6 +1441,15 @@
       updateLoginButton();
       await validateExistingSession();
       bootstrapVenbotFoundation();
+      const spotSection=document.getElementById('sec-spot');
+      if (spotSection && 'IntersectionObserver' in window) {
+        const observer=new IntersectionObserver(entries=>{
+          const entry=entries[0];
+          if(entry && entry.isIntersecting) setMarketContext('spot', document.getElementById('spot-symbol-select')?.value?.replace('USDT','') || 'Binance');
+          else if(entry && !entry.isIntersecting) setMarketContext('p2p');
+        }, {threshold:0.25});
+        observer.observe(spotSection);
+      }
       loadCommunityLinks();
       loadSpotMarket();
       setInterval(refreshOnlineCount, 30000);
