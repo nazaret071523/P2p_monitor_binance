@@ -388,8 +388,11 @@ def inicializar_db():
                         evaluated_1h_at TIMESTAMPTZ, evaluated_3h_at TIMESTAMPTZ, evaluated_7h_at TIMESTAMPTZ, evaluated_24h_at TIMESTAMPTZ,
                         actual_mid_1h DOUBLE PRECISION, actual_mid_3h DOUBLE PRECISION, actual_mid_7h DOUBLE PRECISION, actual_mid_24h DOUBLE PRECISION,
                         error_pct_1h DOUBLE PRECISION, error_pct_3h DOUBLE PRECISION, error_pct_7h DOUBLE PRECISION, error_pct_24h DOUBLE PRECISION,
-                        direction_correct_7h BOOLEAN, payload JSONB
-                    );
+                        direction_correct_1h BOOLEAN, direction_correct_3h BOOLEAN, direction_correct_7h BOOLEAN, direction_correct_24h BOOLEAN, payload JSONB
+                        );
+                        ALTER TABLE venbot_prediction_events ADD COLUMN IF NOT EXISTS direction_correct_1h BOOLEAN;
+                        ALTER TABLE venbot_prediction_events ADD COLUMN IF NOT EXISTS direction_correct_3h BOOLEAN;
+                        ALTER TABLE venbot_prediction_events ADD COLUMN IF NOT EXISTS direction_correct_24h BOOLEAN;
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_bank_created
                     ON venbot_prediction_events(banco, created_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_due
@@ -473,10 +476,22 @@ def registrar_prediccion_tracking(banco, actual_compra, actual_venta, datos):
         return False
     try:
         mid = (float(actual_compra) + float(actual_venta)) / 2.0
-        # Para 1H/3H/24H usamos el mismo escenario central del motor 7H como
-        # baseline explícito hasta que el tracking tenga modelos específicos.
         pred_c = float(datos.get("pred_compra", 0) or 0)
         pred_v = float(datos.get("pred_venta", 0) or 0)
+        mh = datos.get("proyecciones_horizontes") or {}
+        def _mh(label, key, fallback):
+            try:
+                return float((mh.get(label) or {}).get(key) or fallback)
+            except Exception:
+                return float(fallback)
+        pred_c1 = _mh("1h", "compra", pred_c)
+        pred_v1 = _mh("1h", "venta", pred_v)
+        pred_c3 = _mh("3h", "compra", pred_c)
+        pred_v3 = _mh("3h", "venta", pred_v)
+        pred_c7 = _mh("7h", "compra", pred_c)
+        pred_v7 = _mh("7h", "venta", pred_v)
+        pred_c24 = _mh("24h", "compra", pred_c)
+        pred_v24 = _mh("24h", "venta", pred_v)
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
@@ -489,7 +504,7 @@ def registrar_prediccion_tracking(banco, actual_compra, actual_venta, datos):
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (
                     banco, float(actual_compra), float(actual_venta), mid,
-                    pred_c, pred_v, pred_c, pred_v, pred_c, pred_v, pred_c, pred_v,
+                    pred_c1, pred_v1, pred_c3, pred_v3, pred_c7, pred_v7, pred_c24, pred_v24,
                     float(datos.get("pred_mid", mid) or mid),
                     float(datos.get("forecast_low_mid", mid) or mid),
                     float(datos.get("forecast_high_mid", mid) or mid),
@@ -497,7 +512,7 @@ def registrar_prediccion_tracking(banco, actual_compra, actual_venta, datos):
                     int(datos.get("confianza", 0) or 0),
                     float(datos.get("soporte_7h", mid) or mid), float(datos.get("resistencia_7h", mid) or mid),
                     float(datos.get("volatilidad_pct", 0) or 0),
-                    json.dumps({"calibracion_24h": datos.get("calibracion_24h", {}), "delta_7h_pct": datos.get("delta_7h_pct", 0)}, ensure_ascii=False),
+                    json.dumps({"calibracion_24h": datos.get("calibracion_24h", {}), "delta_7h_pct": datos.get("delta_7h_pct", 0), "proyecciones_horizontes": mh}, ensure_ascii=False),
                 ))
         return True
     except Exception as e:
@@ -531,7 +546,7 @@ def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None):
 
 
 def evaluar_predicciones_pendientes(limit=100):
-    """Evalúa horizontes vencidos contra muestras posteriores reales."""
+    """Evalúa cada horizonte contra la primera muestra P2P real posterior al objetivo."""
     if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
         return {"evaluated": 0}
     horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
@@ -540,7 +555,9 @@ def evaluar_predicciones_pendientes(limit=100):
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id,banco,created_at,pred_mid_7h,pred_compra_7h,pred_venta_7h,
+                    SELECT id,banco,created_at,actual_mid,
+                           pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
+                           pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
                            evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at
                     FROM venbot_prediction_events
                     WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
@@ -549,10 +566,19 @@ def evaluar_predicciones_pendientes(limit=100):
                 """, (int(limit),))
                 rows = cur.fetchall()
                 for row in rows:
-                    pid,banco,created_at,pred_mid,pred_c,pred_v,*evals = row
+                    (pid,banco,created_at,origin_mid,
+                     pc1,pv1,pc3,pv3,pc7,pv7,pc24,pv24,
+                     ev1,ev3,ev7,ev24) = row
+                    predictions = {
+                        "1h": ((float(pc1)+float(pv1))/2.0) if pc1 is not None and pv1 is not None else None,
+                        "3h": ((float(pc3)+float(pv3))/2.0) if pc3 is not None and pv3 is not None else None,
+                        "7h": ((float(pc7)+float(pv7))/2.0) if pc7 is not None and pv7 is not None else None,
+                        "24h": ((float(pc24)+float(pv24))/2.0) if pc24 is not None and pv24 is not None else None,
+                    }
+                    evaluated_at = {"1h": ev1, "3h": ev3, "7h": ev7, "24h": ev24}
                     updates = {}
-                    for idx,(label,hours) in enumerate(horizons):
-                        if evals[idx] is not None:
+                    for label, hours in horizons:
+                        if evaluated_at[label] is not None or predictions[label] is None:
                             continue
                         objetivo = created_at + timedelta(hours=hours)
                         if datetime.now(pytz.UTC) < objetivo:
@@ -560,27 +586,20 @@ def evaluar_predicciones_pendientes(limit=100):
                         actual = _buscar_muestra_futura(banco, objetivo)
                         if not actual:
                             continue
-                        actual_mid = actual["mid"]
-                        # Baseline 7H central para todos los horizontes hasta contar
-                        # con suficiente historial para entrenar horizontes propios.
-                        pred = float(pred_mid or 0)
-                        err = ((actual_mid - pred) / pred * 100.0) if pred else None
+                        pred = float(predictions[label])
+                        actual_mid = float(actual["mid"])
+                        err = abs(actual_mid - pred) / actual_mid * 100.0 if actual_mid else None
+                        predicted_move = pred - float(origin_mid or 0)
+                        actual_move = actual_mid - float(origin_mid or 0)
+                        direction_correct = None
+                        if abs(predicted_move) > 1e-12 and abs(actual_move) > 1e-12:
+                            direction_correct = (predicted_move * actual_move) > 0
+                        elif abs(predicted_move) <= 1e-12 and abs(actual_move) <= 1e-12:
+                            direction_correct = True
                         updates[f"actual_mid_{label}"] = actual_mid
                         updates[f"error_pct_{label}"] = err
                         updates[f"evaluated_{label}_at"] = actual["fecha"]
-                    if "actual_mid_7h" in updates:
-                        pred = float(pred_mid or 0)
-                        actual7 = float(updates["actual_mid_7h"] or 0)
-                        direction_correct = None
-                        # Compara el signo de la predicción contra el movimiento desde el origen.
-                        origin = None
-                        cur.execute("SELECT actual_mid FROM venbot_prediction_events WHERE id=%s", (pid,))
-                        rr = cur.fetchone()
-                        if rr:
-                            origin = float(rr[0] or 0)
-                        if origin and pred:
-                            direction_correct = (pred-origin == 0 and actual7-origin == 0) or ((pred-origin) * (actual7-origin) > 0)
-                        updates["direction_correct_7h"] = direction_correct
+                        updates[f"direction_correct_{label}"] = direction_correct
                     if updates:
                         sets=[]; vals=[]
                         for key,val in updates.items():
@@ -591,11 +610,11 @@ def evaluar_predicciones_pendientes(limit=100):
         return {"evaluated": evaluated}
     except Exception as e:
         logger.warning("Evaluación de predicciones falló: %s", e)
-        return {"evaluated": 0, "error": "tracking temporalmente no disponible"}
+        return {"evaluated": evaluated, "error": "tracking temporalmente no disponible"}
 
 
 def obtener_prediction_performance(banco="GENERAL", limit=100):
-    """Resumen auditable del tracking ya evaluado; no altera el motor."""
+    """Resumen auditable por horizonte del tracking P2P real."""
     if not DATABASE_URL:
         return {"ok": False, "message": "Sin base de datos"}
     banco = (banco or "GENERAL").upper().strip()
@@ -603,25 +622,42 @@ def obtener_prediction_performance(banco="GENERAL", limit=100):
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,direction_correct_7h,regimen,confidence,created_at
+                    SELECT error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,
+                           direction_correct_1h,direction_correct_3h,direction_correct_7h,direction_correct_24h,
+                           regimen,confidence,created_at
                     FROM venbot_prediction_events
                     WHERE banco=%s ORDER BY created_at DESC LIMIT %s
                 """, (banco,int(limit)))
                 rows=cur.fetchall()
-        def stats(idx):
-            vals=[float(r[idx]) for r in rows if r[idx] is not None]
-            if not vals: return {"evaluated":0,"mean_abs_error_pct":None,"median_abs_error_pct":None}
-            return {"evaluated":len(vals),"mean_abs_error_pct":round(float(np.mean(np.abs(vals))),4),"median_abs_error_pct":round(float(np.median(np.abs(vals))),4)}
-        decisive=[bool(r[4]) for r in rows if r[4] is not None]
+        def stats(error_idx, direction_idx):
+            vals=[float(r[error_idx]) for r in rows if r[error_idx] is not None]
+            dirs=[bool(r[direction_idx]) for r in rows if r[direction_idx] is not None]
+            return {
+                "evaluated": len(vals),
+                "mean_abs_error_pct": round(float(np.mean(np.abs(vals))),4) if vals else None,
+                "median_abs_error_pct": round(float(np.median(np.abs(vals))),4) if vals else None,
+                "direction_accuracy_pct": round(sum(dirs)/len(dirs)*100,2) if dirs else None,
+                "direction_evaluated": len(dirs),
+            }
         by_reg={}
         for r in rows:
-            reg=str(r[5] or "SIN_DATOS")
-            if r[4] is not None: by_reg.setdefault(reg,[]).append(bool(r[4]))
-        return {"ok":True,"bank":banco,"tracked":len(rows),
-                "horizons":{"1h":stats(0),"3h":stats(1),"7h":stats(2),"24h":stats(3)},
-                "direction_accuracy_7h_pct":round(sum(decisive)/len(decisive)*100,2) if decisive else None,
-                "by_regime":{"regimen":{k:round(sum(v)/len(v)*100,2) for k,v in by_reg.items()}},
-                "last_prediction_at":rows[0][7].isoformat() if rows else None}
+            reg=str(r[8] or "SIN_DATOS")
+            for label, idx in (("1h",4),("3h",5),("7h",6),("24h",7)):
+                if r[idx] is not None:
+                    by_reg.setdefault(label,{}).setdefault(reg,[]).append(bool(r[idx]))
+        return {
+            "ok":True,
+            "bank":banco,
+            "tracked":len(rows),
+            "horizons":{
+                "1h":stats(0,4), "3h":stats(1,5), "7h":stats(2,6), "24h":stats(3,7)
+            },
+            "by_regime":{
+                label:{reg:round(sum(vals)/len(vals)*100,2) for reg,vals in regs.items()}
+                for label,regs in by_reg.items()
+            },
+            "last_prediction_at":rows[0][10].isoformat() if rows else None,
+        }
     except Exception as e:
         logger.warning("Performance tracking falló: %s", e)
         return {"ok":False,"message":"Performance temporalmente no disponible"}
@@ -2343,6 +2379,143 @@ def backtest_quant_7h(banco_filtro="GENERAL", max_evaluaciones=24, spacing_minut
             "message": "Backtest temporalmente no disponible",
         }
 
+
+def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual, spread_actual, volatilidad_global, abs_typical_global, calibracion_24h):
+    """Genera escenarios P2P independientes para 1H/3H/7H/24H.
+
+    Cada horizonte calcula sus propios insumos sobre una ventana histórica
+    compatible con ese horizonte. No reutiliza el delta de 7H como pronóstico
+    para los demás plazos. Las salidas son escenarios estadísticos y no
+    garantías de precio.
+    """
+    if not fechas or len(mids) < 3 or mid_actual <= 0:
+        return {}
+
+    horizons = (("1h", 1.0, 12), ("3h", 3.0, 24), ("7h", 7.0, 36), ("24h", 24.0, 72))
+    out = {}
+    peso24_global = float((calibracion_24h or {}).get("peso_aplicado", 0.0) or 0.0)
+    drift24_global = float((calibracion_24h or {}).get("drift_24h_pct_h", 0.0) or 0.0)
+
+    def _series_window(hours):
+        cutoff = fechas[-1] - timedelta(hours=hours)
+        idx = [i for i, dt in enumerate(fechas) if dt >= cutoff]
+        if len(idx) < 3:
+            idx = list(range(max(0, len(fechas) - max(3, min(len(fechas), int(hours * 12)))), len(fechas)))
+        return idx
+
+    def _change(hours, idx):
+        target = fechas[-1] - timedelta(hours=hours)
+        candidates = [i for i in idx if abs((fechas[i] - target).total_seconds()) <= max(900.0, hours * 3600.0 * 0.35)]
+        if not candidates:
+            return None
+        j = min(candidates, key=lambda i: abs((fechas[i] - target).total_seconds()))
+        base = float(mids[j])
+        return ((mid_actual - base) / base * 100.0) if base > 0 else None
+
+    for label, hours, min_points in horizons:
+        idx = _series_window(hours)
+        if len(idx) < 3:
+            continue
+        vals = np.asarray([float(mids[i]) for i in idx if float(mids[i]) > 0], dtype=float)
+        if len(vals) < 3:
+            continue
+
+        # Ventana propia del horizonte: las señales largas no dominan 1H y
+        # las señales de muy corto plazo no dominan 24H.
+        changes = []
+        for h, weight in ((0.25, 0.12), (0.5, 0.18), (1.0, 0.28), (3.0, 0.24), (7.0, 0.12), (24.0, 0.06)):
+            if h > hours:
+                continue
+            ch = _change(h, idx)
+            if ch is not None:
+                changes.append((ch / h, weight))
+        if changes:
+            denom = sum(w for _, w in changes)
+            momentum_rate_h = sum(rate * weight for rate, weight in changes) / denom
+        else:
+            momentum_rate_h = 0.0
+
+        r_dates = [fechas[i] for i in idx]
+        x = np.asarray([(dt - r_dates[0]).total_seconds() / 3600.0 for dt in r_dates], dtype=float)
+        y = np.asarray([float(mids[i]) for i in idx], dtype=float)
+        regression_rate_h = 0.0
+        regression_r2 = 0.0
+        if len(np.unique(x)) >= 3 and float(np.ptp(x)) >= min(0.25, hours):
+            try:
+                slope, intercept = np.polyfit(x, y, 1)
+                yhat = slope * x + intercept
+                ss_res = float(np.sum((y - yhat) ** 2))
+                ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+                regression_r2 = max(0.0, min(1.0, 1.0 - ss_res / ss_tot)) if ss_tot > 0 else 0.0
+                regression_rate_h = float(slope / mid_actual * 100.0)
+            except Exception:
+                pass
+
+        returns = np.diff(vals) / vals[:-1] * 100.0 if len(vals) > 2 else np.array([])
+        volatility = float(np.std(returns, ddof=1)) if len(returns) > 1 else float(volatilidad_global or 0.0)
+        typical = float(np.median(np.abs(returns))) if len(returns) else float(abs_typical_global or 0.0)
+
+        reg_weight = 0.15 + 0.30 * regression_r2
+        drift_h = (1.0 - reg_weight) * momentum_rate_h + reg_weight * regression_rate_h
+        if label == "24h" and peso24_global > 0.0 and drift24_global != 0.0:
+            drift_h = (1.0 - peso24_global) * drift_h + peso24_global * drift24_global
+
+        median = float(np.median(vals))
+        mean_reversion = ((median - mid_actual) / mid_actual * 100.0) * (0.10 if hours <= 3 else 0.15)
+        raw_delta = drift_h * hours + mean_reversion
+
+        range_pct = ((float(np.max(vals)) - float(np.min(vals))) / mid_actual * 100.0) if mid_actual else 0.0
+        # La amplitud permitida crece con el horizonte, pero queda limitada
+        # para impedir extrapolaciones desproporcionadas en P2P.
+        max_delta = max(0.18, min(4.50, max(0.30 * np.sqrt(hours), range_pct * (0.55 if hours <= 3 else 0.85), volatility * np.sqrt(hours) * 2.2)))
+        delta_pct = float(np.clip(raw_delta, -max_delta, max_delta))
+        central = mid_actual * (1.0 + delta_pct / 100.0)
+
+        uncertainty = max(0.10, min(2.80, max(range_pct * 0.18, volatility * np.sqrt(hours) * 1.35, typical * np.sqrt(hours) * 1.8)))
+        uncertainty = min(uncertainty, max_delta * 0.85)
+        low = central * (1.0 - uncertainty / 100.0)
+        high = central * (1.0 + uncertainty / 100.0)
+
+        # El spread se proyecta con una mezcla conservadora del actual y la
+        # mediana del horizonte, sin tocar la semántica Comprar/Vender.
+        horizon_spreads = np.asarray([max(0.01, float(ventas[i]) - float(compras[i])) for i in idx], dtype=float)
+        median_spread = float(np.median(horizon_spreads)) if len(horizon_spreads) else float(spread_actual or 0.01)
+        pred_spread = max(0.01, 0.70 * float(spread_actual or median_spread) + 0.30 * median_spread)
+        pred_buy = central - pred_spread / 2.0
+        pred_sell = central + pred_spread / 2.0
+
+        direction = "ALCISTA" if delta_pct > max(0.05, typical * 0.75) else ("BAJISTA" if delta_pct < -max(0.05, typical * 0.75) else "RANGO")
+        confidence = int(round(max(15.0, min(92.0,
+            35.0 + 20.0 * min(1.0, len(vals) / max(float(min_points), 1.0))
+            + 20.0 * regression_r2
+            + 15.0 * min(1.0, 1.0 / max(0.25, volatility * 2.0))
+            + 10.0 * min(1.0, max(0.0, (1.0 if hours <= 7 else peso24_global)))
+        ))))
+
+        out[label] = {
+            "horizonte_horas": int(hours),
+            "compra": round(pred_buy, 2),
+            "venta": round(pred_sell, 2),
+            "midpoint": round(central, 2),
+            "rango_mid_min": round(low, 2),
+            "rango_mid_max": round(high, 2),
+            "cambio_pct": round((central / mid_actual - 1.0) * 100.0, 3),
+            "incertidumbre_pct": round(uncertainty, 3),
+            "direccion": direction,
+            "confianza": confidence,
+            "drift_pct_h": round(drift_h, 5),
+            "momentum_pct_h": round(momentum_rate_h, 5),
+            "regression_pct_h": round(regression_rate_h, 5),
+            "regression_r2": round(regression_r2, 3),
+            "volatilidad_pct": round(volatility, 4),
+            "muestras_ventana": int(len(vals)),
+            "cobertura_ventana_horas": round(max(0.0, (r_dates[-1] - r_dates[0]).total_seconds() / 3600.0), 3),
+            "fuente": "muestras P2P reales de Venbot",
+        }
+
+    return out
+
+
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL", _from_v2=False):
     """Motor cuantitativo único usado por Telegram, monitor y contexto de Venbot AI.
 
@@ -2564,6 +2737,10 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     manipulacion = detectar_manipulacion_mercado(mids, spreads, mid_actual, spread_actual)
     regimen = clasificar_regimen_quant(returns, drift_h, rango_pct, regression_r2)
     niveles_dinamicos = niveles_dinamicos_quant(recent, mid_actual, volatilidad)
+    proyecciones_horizontes = _proyecciones_multihorizonte_quant(
+        fechas, mids, compras, ventas, mid_actual, spread_actual,
+        volatilidad, abs_typical, calibracion_24h,
+    )
 
     liquidez = int(liquidez_actual)
     if liquidez >= 40:
@@ -2590,6 +2767,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "regimen": regimen, "niveles_dinamicos": niveles_dinamicos,
         "calidad_datos": calidad_datos,
         "calibracion_24h": calibracion_24h,
+        "proyecciones_horizontes": proyecciones_horizontes,
         "manipulacion": manipulacion,
     }
 
@@ -4535,11 +4713,24 @@ def obtener_prediction_recent_api(
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id,created_at,actual_compra,actual_venta,pred_compra_7h,pred_venta_7h,tendencia,regimen,confidence,actual_mid_7h,error_pct_7h,direction_correct_7h
+                    SELECT id,created_at,actual_compra,actual_venta,
+                           pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
+                           pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
+                           tendencia,regimen,confidence,actual_mid_1h,actual_mid_3h,actual_mid_7h,actual_mid_24h,
+                           error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,
+                           direction_correct_1h,direction_correct_3h,direction_correct_7h,direction_correct_24h
                     FROM venbot_prediction_events WHERE banco=%s ORDER BY created_at DESC LIMIT %s
                 """,(banco,int(limit)))
                 rows=cur.fetchall()
-        return {"ok":True,"bank":banco,"predictions":[{"id":r[0],"created_at":r[1].isoformat(),"actual_compra":r[2],"actual_venta":r[3],"pred_compra_7h":r[4],"pred_venta_7h":r[5],"tendencia":r[6],"regimen":r[7],"confidence":r[8],"actual_mid_7h":r[9],"error_pct_7h":r[10],"direction_correct_7h":r[11]} for r in rows]}
+        return {"ok":True,"bank":banco,"predictions":[{
+            "id":r[0],"created_at":r[1].isoformat(),"actual_compra":r[2],"actual_venta":r[3],
+            "pred_compra_1h":r[4],"pred_venta_1h":r[5],"pred_compra_3h":r[6],"pred_venta_3h":r[7],
+            "pred_compra_7h":r[8],"pred_venta_7h":r[9],"pred_compra_24h":r[10],"pred_venta_24h":r[11],
+            "tendencia":r[12],"regimen":r[13],"confidence":r[14],
+            "actual_mid_1h":r[15],"actual_mid_3h":r[16],"actual_mid_7h":r[17],"actual_mid_24h":r[18],
+            "error_pct_1h":r[19],"error_pct_3h":r[20],"error_pct_7h":r[21],"error_pct_24h":r[22],
+            "direction_correct_1h":r[23],"direction_correct_3h":r[24],"direction_correct_7h":r[25],"direction_correct_24h":r[26]
+        } for r in rows]}
     except Exception:
         return {"ok":False,"predictions":[],"message":"Historial de predicciones temporalmente no disponible"}
 
