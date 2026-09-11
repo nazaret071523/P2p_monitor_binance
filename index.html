@@ -78,7 +78,212 @@
     html.light .v14-menu-panel{background:#fff;color:#0f172a;border-color:#cbd5e1}
     html.light .v14-menu-panel .menu-link{color:#334155}
     html.light .v14-menu-panel .menu-link:hover{background:#f1f5f9}
+  
+/* ===== PROTOTIPO DE REORGANIZACIÓN — conserva identidad visual v12 ===== */
+#venbot-route-host{min-height:calc(100vh - 150px)}
+.venbot-view{display:none!important;animation:venbotFade .18s ease-out}
+.venbot-view.active{display:block!important}
+@keyframes venbotFade{from{opacity:.55;transform:translateY(5px)}to{opacity:1;transform:none}}
+#venbot-analysis-view,#venbot-spot-view,#venbot-alerts-view,#venbot-international-view{padding-top:.15rem}
+#venbot-analysis-view > .route-title,#venbot-spot-view > .route-title,#venbot-alerts-view > .route-title,#venbot-international-view > .route-title{margin-bottom:1rem}
+#venbot-analysis-view #sec-p2p-chart,#venbot-analysis-view #sec-gemini{margin-top:1rem}
+#venbot-analysis-view #sec-p2p-chart{scroll-margin-top:0}
+#venbot-analysis-view #sec-gemini{scroll-margin-top:0}
+#venbot-market-view #sec-calculadora{margin-top:1rem}
+/* En Inicio NO mostramos la gráfica: la gráfica vive en Análisis. */
+#venbot-market-view #sec-p2p-chart{display:none!important}
+/* IA: el bloque de análisis se conserva dentro de Análisis; el chat sigue siendo flotante/modal. */
+#venbot-market-view #sec-gemini,#venbot-spot-view #sec-gemini,#venbot-alerts-view #sec-gemini,#venbot-international-view #sec-gemini{display:none!important}
+/* Internacional es una pantalla, no una tarjeta incrustada. */
+.international-prototype{min-height:55vh}
+/* Mantener el header original intacto. */
+/* En móvil, el nav permite más destinos sin alterar su estética. */
+#venbot-route-nav .nav-scroll{overflow-x:auto;scrollbar-width:none}
+#venbot-route-nav .nav-scroll::-webkit-scrollbar{display:none}
+#venbot-route-nav .nav-scroll-inner{min-width:max-content;margin:0 auto}
+@media(min-width:768px){#venbot-route-nav .nav-scroll-inner{min-width:620px}}
+
+    /* ===== PROPUESTA ESTÉTICA — neon vivo, pero conservando 100% la identidad v12 ===== */
+    body{overflow-x:hidden}
+    body::before{
+      content:"";position:fixed;inset:-25%;z-index:-2;pointer-events:none;
+      background:
+        radial-gradient(circle at 18% 20%,rgba(16,185,129,.10),transparent 24%),
+        radial-gradient(circle at 82% 35%,rgba(59,130,246,.075),transparent 25%),
+        radial-gradient(circle at 55% 90%,rgba(139,92,246,.07),transparent 25%);
+      animation:venbotAmbient 18s ease-in-out infinite alternate;
+    }
+    body::after{
+      content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.18;
+      background:linear-gradient(115deg,transparent 0%,rgba(52,211,153,.04) 42%,transparent 58%);
+      background-size:220% 100%;animation:venbotSweep 12s linear infinite;
+    }
+    @keyframes venbotAmbient{0%{transform:translate3d(-2%,0,0) scale(1)}50%{transform:translate3d(2%,-1%,0) scale(1.04)}100%{transform:translate3d(-1%,2%,0) scale(1.02)}}
+    @keyframes venbotSweep{from{background-position:200% 0}to{background-position:-20% 0}}
+
+    .glass-card{
+      transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease;
+    }
+    .glass-card:hover{
+      transform:translateY(-2px);
+      border-color:rgba(52,211,153,.18);
+      box-shadow:0 14px 38px rgba(0,0,0,.22),0 0 24px rgba(16,185,129,.035);
+    }
+    #sec-mercado article{
+      position:relative;overflow:hidden;
+    }
+    #sec-mercado article::after{
+      content:"";position:absolute;left:-35%;top:0;width:35%;height:1px;
+      background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+      animation:venbotCardSweep 5.5s ease-in-out infinite;
+      pointer-events:none;
+    }
+    #sec-mercado article:nth-child(2)::after{animation-delay:1.8s}
+    #sec-mercado article:nth-child(3)::after{animation-delay:3.5s}
+    @keyframes venbotCardSweep{0%,55%{left:-35%;opacity:0}65%{opacity:1}85%{left:105%;opacity:.7}100%{left:105%;opacity:0}}
+
+    .chart-shell{
+      position:relative;
+    }
+    .chart-shell::before{
+      content:"";position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(110deg,transparent 20%,rgba(52,211,153,.055) 45%,transparent 70%);
+      background-size:220% 100%;animation:venbotChartSweep 9s linear infinite;
+    }
+    @keyframes venbotChartSweep{from{background-position:200% 0}to{background-position:-20% 0}}
+
+    #sec-calculadora{
+      position:relative;
+    }
+    #sec-calculadora::before{
+      content:"";position:absolute;inset:0;border-radius:1rem;pointer-events:none;
+      background:linear-gradient(90deg,rgba(52,211,153,0),rgba(52,211,153,.08),rgba(52,211,153,0));
+      background-size:45% 100%;background-repeat:no-repeat;
+      animation:venbotCalcGlow 7s ease-in-out infinite;
+    }
+    @keyframes venbotCalcGlow{0%,100%{background-position:-55% 0;opacity:.25}50%{background-position:110% 0;opacity:.65}}
+
+    #venbot-route-nav .nav-item{
+      transition:all .22s ease;
+    }
+    #venbot-route-nav .nav-item.active{
+      box-shadow:0 0 18px rgba(16,185,129,.08),inset 0 0 18px rgba(16,185,129,.035);
+    }
+
+    /* Nuevo emblema Venbot AI: orbe energético, no robot */
+    .venbot-ai-orb{
+      position:relative;display:inline-flex;align-items:center;justify-content:center;
+      width:48px;height:48px;border-radius:50%;
+      background:
+        radial-gradient(circle at 35% 30%,#a7f3d0 0 5%,#34d399 12%,#0f766e 36%,#111827 70%);
+      border:1px solid rgba(110,231,183,.65);
+      box-shadow:0 0 12px rgba(52,211,153,.42),0 0 30px rgba(59,130,246,.20),inset 0 0 16px rgba(255,255,255,.10);
+      animation:venbotOrbFloat 3.6s ease-in-out infinite;
+    }
+    .venbot-ai-orb::before,.venbot-ai-orb::after{
+      content:"";position:absolute;border-radius:50%;pointer-events:none;
+    }
+    .venbot-ai-orb::before{
+      inset:-5px;border:1px solid rgba(59,130,246,.45);
+      box-shadow:0 0 12px rgba(59,130,246,.28);
+      animation:venbotOrbRing 3.2s linear infinite;
+    }
+    .venbot-ai-orb::after{
+      inset:-10px;border:1px solid rgba(167,139,250,.25);
+      border-left-color:rgba(52,211,153,.75);
+      animation:venbotOrbRing 5.5s linear infinite reverse;
+    }
+    .venbot-ai-v{
+      position:relative;z-index:2;font-size:21px;font-weight:1000;font-style:italic;
+      color:#ecfeff;text-shadow:0 0 8px rgba(52,211,153,.9),0 0 18px rgba(59,130,246,.55);
+      transform:skew(-8deg);
+    }
+    .venbot-ai-mini{
+      width:32px;height:32px;border-radius:10px;position:relative;
+      display:inline-flex;align-items:center;justify-content:center;flex:none;
+      background:radial-gradient(circle at 35% 28%,#a7f3d0 0 4%,#34d399 16%,#064e3b 55%,#0f172a 78%);
+      border:1px solid rgba(110,231,183,.45);
+      box-shadow:0 0 12px rgba(52,211,153,.22),inset 0 0 10px rgba(255,255,255,.08);
+      animation:venbotMiniPulse 2.8s ease-in-out infinite;
+    }
+    .venbot-ai-mini::after{
+      content:"";position:absolute;inset:-3px;border-radius:12px;border:1px solid rgba(129,140,248,.25);
+      animation:venbotOrbRing 4s linear infinite;
+    }
+    .venbot-ai-mini .venbot-ai-v{font-size:14px}
+    @keyframes venbotOrbFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.035)}}
+    @keyframes venbotOrbRing{to{transform:rotate(360deg)}}
+    @keyframes venbotMiniPulse{0%,100%{box-shadow:0 0 9px rgba(52,211,153,.18),inset 0 0 10px rgba(255,255,255,.06)}50%{box-shadow:0 0 18px rgba(52,211,153,.36),inset 0 0 12px rgba(255,255,255,.09)}}
+
+    .venbot-ai-fab{
+      position:relative;
+      width:58px!important;height:58px!important;border-radius:50%!important;
+      background:transparent!important;border:0!important;box-shadow:none!important;
+      overflow:visible!important;
+    }
+    .venbot-ai-fab .venbot-ai-orb{width:52px;height:52px}
+    .venbot-ai-fab::before{
+      content:"";position:absolute;inset:-7px;border-radius:50%;
+      border:1px solid rgba(52,211,153,.28);border-top-color:rgba(129,140,248,.8);
+      animation:venbotOrbRing 6s linear infinite;
+    }
+    .venbot-ai-fab::after{
+      content:"";position:absolute;width:5px;height:5px;border-radius:50%;right:-1px;top:4px;
+      background:#a78bfa;box-shadow:0 0 9px #a78bfa;
+      animation:venbotSpark 2.2s ease-in-out infinite;
+    }
+    @keyframes venbotSpark{0%,100%{opacity:.35;transform:scale(.7)}50%{opacity:1;transform:scale(1.25)}}
+
+    @media(max-width:767px){
+      body::before{opacity:.7}
+      .glass-card:hover{transform:none;box-shadow:none}
+      .venbot-ai-fab{bottom:0}
+      #sec-mercado article::after{animation-duration:7s}
+    }
+    @media(prefers-reduced-motion:reduce){
+      body::before,body::after,#sec-mercado article::after,.chart-shell::before,#sec-calculadora::before,
+      .venbot-ai-orb,.venbot-ai-orb::before,.venbot-ai-orb::after,.venbot-ai-mini,.venbot-ai-mini::after,
+      .venbot-ai-fab::before,.venbot-ai-fab::after{animation:none!important}
+    }
+
   </style>
+
+<style id="venbot-neural-approved">
+.venbot-neural{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:58px;height:58px;filter:drop-shadow(0 0 16px rgba(0,153,255,.38)) drop-shadow(0 0 28px rgba(0,217,255,.14));animation:neuralFloat 4.4s ease-in-out infinite}
+.venbot-neural-svg{display:block;width:58px;height:58px;overflow:visible}
+.venbot-neural .neural-halo{fill:none;stroke:#159dff;stroke-width:1;opacity:.58;transform-origin:50% 50%;animation:neuralRotate 11s linear infinite}
+.venbot-neural .neural-halo2{fill:none;stroke:#6d5cff;stroke-width:.7;stroke-dasharray:1 3.5;transform-origin:50% 50%;animation:neuralRotateReverse 6s linear infinite}
+.venbot-neural .neural-orbit{fill:none;stroke:#00d9ff;stroke-width:1.05;opacity:.9;transform-origin:50% 50%;animation:neuralOrbitSpin 5.8s linear infinite}
+.venbot-neural .neural-orbit2{fill:none;stroke:#168cff;stroke-width:.7;opacity:.75;transform-origin:50% 50%;animation:neuralOrbitSpinReverse 7.5s linear infinite}
+.venbot-neural .neural-core-shell{fill:rgba(13,35,58,.92);stroke:#20bfff;stroke-width:.8;filter:drop-shadow(0 0 4px rgba(0,174,255,.5))}
+.venbot-neural .neural-core{fill:radial-gradient(circle,#d9fbff,#00aeff);filter:drop-shadow(0 0 9px rgba(0,174,255,.62));transform-origin:50% 50%;animation:neuralCorePulse 2.2s ease-in-out infinite}
+.venbot-neural .neural-v{fill:#f2fcff;stroke:#00d9ff;stroke-width:.35;filter:drop-shadow(0 0 5px rgba(0,217,255,.7));animation:neuralVPulse 2.2s ease-in-out infinite}
+.venbot-neural .neural-scan{stroke:#00d9ff;stroke-width:.65;stroke-linecap:round;animation:neuralScan 2.7s ease-in-out infinite}
+.venbot-neural .neural-node{fill:#00e5ff;filter:drop-shadow(0 0 5px currentColor);transform-origin:50% 50%;animation:neuralNodePulse 1.55s ease-in-out infinite}
+.venbot-neural .neural-node:nth-of-type(2){fill:#8b5cf6}.venbot-neural .neural-node:nth-of-type(3){fill:#ff4fd8}.venbot-neural .neural-node:nth-of-type(4){fill:#ffd166}.venbot-neural .neural-node:nth-of-type(5){fill:#39ff88}.venbot-neural .neural-particle:nth-of-type(1){fill:#ff5c8a}.venbot-neural .neural-particle:nth-of-type(2){fill:#42a5ff}
+.venbot-neural-mini{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:34px;height:34px;border-radius:11px;background:radial-gradient(circle at 50% 45%,rgba(0,153,255,.20),rgba(3,10,20,.98) 62%);border:1px solid rgba(0,200,255,.48);box-shadow:0 0 18px rgba(0,174,255,.20),inset 0 0 14px rgba(80,80,255,.10);overflow:visible}
+.venbot-neural-mini .venbot-neural-svg{width:34px;height:34px}.venbot-neural-mini .neural-orbit{fill:none;stroke:#00d9ff;stroke-width:1.4}.venbot-neural-mini .neural-orbit2{fill:none;stroke:#168cff;stroke-width:.8}.venbot-neural-mini .neural-back{fill:#0d2844}.venbot-neural-mini .neural-left{fill:#123a61}.venbot-neural-mini .neural-right{fill:#0a2038}.venbot-neural-mini .neural-face{fill:#14517a;stroke:#20bfff;stroke-width:.5}.venbot-neural-mini .neural-core{fill:#00aeff;filter:drop-shadow(0 0 5px rgba(0,174,255,.7))}.venbot-neural-mini .neural-v{fill:#f2fcff;stroke:#00d9ff;stroke-width:.45;filter:drop-shadow(0 0 4px #00d9ff)}.venbot-neural-mini .neural-node{fill:#00e5ff;filter:drop-shadow(0 0 4px #00d9ff)}
+.venbot-ai-fab .venbot-neural{width:58px;height:58px}.venbot-ai-fab::before{border-color:rgba(0,174,255,.18)!important;border-top-color:#00d9ff!important;border-bottom-color:#7c5cff!important}.venbot-ai-fab::after{background:#d9fbff!important;box-shadow:0 0 15px #00d9ff!important}
+@keyframes neuralFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes neuralRotate{to{transform:rotate(360deg)}} @keyframes neuralRotateReverse{to{transform:rotate(-360deg)}} @keyframes neuralOrbitSpin{to{transform:rotate(360deg)}} @keyframes neuralOrbitSpinReverse{to{transform:rotate(-360deg)}}
+@keyframes neuralCorePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}} @keyframes neuralVPulse{0%,100%{opacity:.9}50%{opacity:1}} @keyframes neuralScan{0%,100%{opacity:.15}50%{opacity:1}} @keyframes neuralNodePulse{0%,100%{opacity:.5;transform:scale(.85)}50%{opacity:1;transform:scale(1.12)}}
+.venbot-robot-wordmark{display:inline-flex!important;align-items:center!important;height:30px!important;margin:0!important;padding:0!important;white-space:nowrap!important;font-family:"Rajdhani","Orbitron","Arial Narrow",Arial,sans-serif!important;font-size:25px!important;font-weight:900!important;line-height:.9!important;letter-spacing:.035em!important;color:#58b9dc!important;transform:skewX(-5deg);filter:drop-shadow(0 0 3px rgba(0,174,255,.22))!important}
+.venbot-robot-wordmark>span{display:inline-block;background:linear-gradient(180deg,#a8dce9 0%,#5bbbdc 28%,#2b8fb8 58%,#155d85 100%)!important;-webkit-background-clip:text!important;background-clip:text!important;-webkit-text-fill-color:transparent!important;text-shadow:0 1px 0 rgba(220,250,255,.12),0 0 4px rgba(0,157,220,.13)!important;transform:scaleX(.94)}
+.venbot-robot-wordmark .robot-o{position:relative!important;width:37px!important;height:34px!important;margin:0 -3px!important;flex:0 0 37px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;overflow:visible!important;transform:skewX(0)!important}
+.venbot-robot-wordmark .robot-o-letter{position:relative!important;z-index:5!important;font-size:30px!important;line-height:1!important;margin:0!important;transform:none!important;background:linear-gradient(180deg,#a8dce9 0%,#5bbbdc 28%,#2b8fb8 58%,#155d85 100%)!important;-webkit-background-clip:text!important;background-clip:text!important;-webkit-text-fill-color:transparent!important;color:#58b9dc!important;text-shadow:0 1px 0 rgba(220,250,255,.12),0 0 4px rgba(0,157,220,.13)!important}
+.venbot-robot-wordmark .robot-o-svg{position:absolute!important;left:50%!important;top:50%!important;width:46px!important;height:38px!important;margin:0!important;transform:translate(-50%,-50%)!important;overflow:visible!important;z-index:6!important;pointer-events:none!important}
+.robot-o-ball{fill:#28c8ff;filter:drop-shadow(0 0 3px #28c8ff)}
+@media(max-width:640px){.venbot-robot-wordmark{height:28px!important;font-size:22px!important}.venbot-robot-wordmark .robot-o{width:31px!important;height:29px!important;flex-basis:31px!important;margin:0 -2px!important;font-size:24px!important}.venbot-robot-wordmark .robot-o-letter{font-size:24px!important}.venbot-robot-wordmark .robot-o-svg{width:43px!important;height:35px!important}}
+</style>
+
+<style id="venbot-o-orbit-real">
+.venbot-robot-wordmark .robot-o-ball{transform:none!important;transform-origin:auto!important;}
+</style>
+
+<style id="venbot-final-detail-corrections">
+/* Solo correcciones de los detalles aprobados: órbita real de la O y mismo Neural Orbit en IA. */
+.robot-o-ball{fill:#28c8ff!important;filter:drop-shadow(0 0 3px #28c8ff)!important;}
+</style>
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
@@ -87,7 +292,11 @@
       <div class="max-w-7xl mx-auto flex items-center justify-between gap-3">
         <div class="min-w-0 shrink-0">
           <div class="flex items-center gap-2">
-            <h1 class="font-extrabold text-lg tracking-wider text-emerald-400 leading-none">VENBOT</h1>
+            <h1 class="venbot-robot-wordmark" aria-label="VENBOT">
+  <span>V</span><span>E</span><span>N</span><span>B</span><span class="robot-o"><svg class="robot-o-svg" viewBox="0 0 46 38" aria-hidden="true">
+  <circle class="robot-o-ball" cx="41.5" cy="19" r="2.6"></circle>
+</svg><span class="robot-o-letter">O</span></span><span>T</span>
+</h1>
             <span class="bg-slate-800 text-slate-300 border border-slate-700 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Consulta</span>
           </div>
           <p id="header-market-context" class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
@@ -128,7 +337,9 @@
       </div>
     </div>
 
-    <main class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 space-y-4 pb-32">
+    <main id="venbot-route-host" class="max-w-7xl mx-auto w-full px-4 py-4 md:py-6 pb-32">
+      <div id="venbot-market-view" class="venbot-view active">
+
 
       <section id="sec-mercado" class="space-y-3 scroll-mt-24">
         <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -268,7 +479,60 @@
         </div>
       </section>
 
-      <section class="glass-card p-4 rounded-2xl space-y-3">
+      </div>
+
+      <section id="venbot-analysis-view" class="venbot-view">
+        <div class="route-title">
+          <p class="text-[10px] text-indigo-400 font-black uppercase tracking-[0.18em]">Análisis P2P</p>
+          <h2 class="text-xl md:text-2xl font-black text-white mt-1">Análisis y predicción</h2>
+          <p class="text-[10px] text-slate-500 mt-1">Gráfica, flujo, niveles y proyección en una pantalla dedicada.</p>
+        </div>
+        <div id="analysis-content-slot"></div>
+      </section>
+
+      <section id="venbot-spot-view" class="venbot-view">
+        <div class="route-title">
+          <p class="text-[10px] text-purple-400 font-black uppercase tracking-[0.18em]">Spot</p>
+          <h2 class="text-xl md:text-2xl font-black text-white mt-1">Spot · Predicción y proyección</h2>
+          <p class="text-[10px] text-slate-500 mt-1">Binance aporta el dato observado; Venbot calcula tendencia, escenarios y proyecciones futuras.</p>
+        </div>
+        <div id="spot-content-slot"></div>
+      </section>
+
+      <section id="venbot-alerts-view" class="venbot-view">
+        <div class="route-title">
+          <p class="text-[10px] text-amber-400 font-black uppercase tracking-[0.18em]">Alertas</p>
+          <h2 class="text-xl md:text-2xl font-black text-white mt-1">Alertas de precio P2P</h2>
+          <p class="text-[10px] text-slate-500 mt-1">Administra las alertas sin mezclarlas con el monitor principal.</p>
+        </div>
+        <div id="alerts-content-slot"></div>
+      </section>
+
+      <section id="venbot-international-view" class="venbot-view">
+        <div class="route-title">
+          <p class="text-[10px] text-sky-400 font-black uppercase tracking-[0.18em]">Expansión</p>
+          <h2 class="text-xl md:text-2xl font-black text-white mt-1">Mercado Internacional</h2>
+          <p class="text-[10px] text-slate-500 mt-1">Una pantalla independiente preparada para la expansión de Venbot.</p>
+        </div>
+        <div class="glass-card p-6 md:p-10 rounded-2xl border border-sky-500/20 international-prototype flex items-center justify-center text-center">
+          <div class="max-w-xl">
+            <div class="w-16 h-16 mx-auto rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-2xl"><i class="fa-solid fa-earth-americas"></i></div>
+            <h3 class="text-xl md:text-2xl font-black text-white mt-4">Próximamente</h3>
+            <p class="text-xs text-slate-400 leading-relaxed mt-2">País → moneda fiat → mercado P2P → bancos y métodos de pago → monitor → análisis → predicción → IA.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="venbot-more-view" class="venbot-view">
+        <div class="route-title">
+          <p class="text-[10px] text-slate-400 font-black uppercase tracking-[0.18em]">Venbot</p>
+          <h2 class="text-xl md:text-2xl font-black text-white mt-1">Más</h2>
+          <p class="text-[10px] text-slate-500 mt-1">Comunidad, cuenta, soporte y opciones legales siguen en el menú secundario.</p>
+        </div>
+        <div id="community-content-slot"></div>
+      </section>
+
+      <section id="sec-p2p-chart" class="glass-card p-4 rounded-2xl space-y-3">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <div class="flex items-center gap-2">
@@ -350,7 +614,7 @@
           </div>
 
           <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
-            <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5"><i class="fa-solid fa-robot text-sm"></i></div>
+            <span class="venbot-neural shrink-0 mt-0.5" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><circle class="neural-halo" cx="32" cy="32" r="29"/><circle class="neural-halo2" cx="32" cy="32" r="25"/><ellipse class="neural-orbit" cx="32" cy="32" rx="29" ry="12"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="25" ry="9"/><circle class="neural-core-shell" cx="32" cy="32" r="16"/><circle class="neural-core" cx="32" cy="32" r="13"/><path class="neural-v" d="M21.5 22h6.5l4 13.5L36 22h6.5l-7.2 21h-6.6z"/><path class="neural-scan" d="M21 45h22"/><circle class="neural-node" cx="32" cy="12.5" r="1.8"/><circle class="neural-node" cx="49" cy="25" r="1.5"/><circle class="neural-node" cx="44" cy="47" r="1.6"/><circle class="neural-node" cx="19" cy="47" r="1.4"/><circle class="neural-node" cx="15" cy="25" r="1.3"/><circle class="neural-particle" cx="53" cy="38" r="1.1"/><circle class="neural-particle" cx="11" cy="38" r=".9"/></svg></span>
             <div class="flex-1">
               <div class="flex items-center justify-between">
                 <h4 id="ai-title-display" class="text-xs font-bold text-slate-100">Proyección Operativa Binance P2P</h4>
@@ -434,15 +698,21 @@
     </main>
 
     <div class="fixed bottom-20 right-4 z-50">
-      <button type="button" onclick="handleAIClick()" class="focus-ring w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-2xl flex items-center justify-center text-xl font-bold transition transform hover:scale-105"><i class="fa-solid fa-robot"></i></button>
+      <button type="button" onclick="handleAIClick()" aria-label="Abrir Venbot AI" title="Abrir Venbot AI" class="focus-ring venbot-ai-fab">
+        <span class="venbot-neural" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><circle class="neural-halo" cx="32" cy="32" r="29"/><circle class="neural-halo2" cx="32" cy="32" r="25"/><ellipse class="neural-orbit" cx="32" cy="32" rx="29" ry="12"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="25" ry="9"/><circle class="neural-core-shell" cx="32" cy="32" r="16"/><circle class="neural-core" cx="32" cy="32" r="13"/><path class="neural-v" d="M21.5 22h6.5l4 13.5L36 22h6.5l-7.2 21h-6.6z"/><path class="neural-scan" d="M21 45h22"/><circle class="neural-node" cx="32" cy="12.5" r="1.8"/><circle class="neural-node" cx="49" cy="25" r="1.5"/><circle class="neural-node" cx="44" cy="47" r="1.6"/><circle class="neural-node" cx="19" cy="47" r="1.4"/><circle class="neural-node" cx="15" cy="25" r="1.3"/><circle class="neural-particle" cx="53" cy="38" r="1.1"/><circle class="neural-particle" cx="11" cy="38" r=".9"/></svg></span>
+      </button>
     </div>
 
-    <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
-      <div class="max-w-md mx-auto grid grid-cols-4 gap-1 text-center">
-        <button type="button" onclick="setActiveNav('mercado', 'sec-mercado')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-chart-simple text-base mb-1"></i><span class="text-[10px] font-bold">Mercado</span></button>
-        <button type="button" onclick="setActiveNav('calculadora', 'sec-calculadora')" id="nav-calculadora" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-calculator text-base mb-1"></i><span class="text-[10px] font-bold">Calculadora</span></button>
-        <button type="button" onclick="handleAIClick()" id="nav-gemini" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-wand-magic-sparkles text-base mb-1"></i><span class="text-[10px] font-bold">Venbot AI</span></button>
-        <button type="button" onclick="openAlertsModal()" id="nav-alertas" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-bell text-base mb-1"></i><span class="text-[10px] font-bold">Alertas</span></button>
+    <nav id="venbot-route-nav" class="bottom-nav fixed bottom-0 left-0 right-0 z-40 px-3 py-2">
+      <div class="nav-scroll">
+        <div class="nav-scroll-inner grid grid-cols-6 gap-1 text-center">
+          <button type="button" onclick="venbotRoute('market')" id="nav-mercado" class="nav-item active flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-chart-simple text-base mb-1"></i><span class="text-[10px] font-bold">Mercado</span></button>
+          <button type="button" onclick="venbotRoute('analysis')" id="nav-analysis" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-chart-line text-base mb-1"></i><span class="text-[10px] font-bold">Análisis</span></button>
+          <button type="button" onclick="venbotRoute('spot')" id="nav-spot" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-coins text-base mb-1"></i><span class="text-[10px] font-bold">Spot</span></button>
+          <button type="button" onclick="venbotRoute('alerts')" id="nav-alertas" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-bell text-base mb-1"></i><span class="text-[10px] font-bold">Alertas</span></button>
+          <button type="button" onclick="venbotRoute('international')" id="nav-international" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-earth-americas text-base mb-1"></i><span class="text-[10px] font-bold">Internacional</span></button>
+          <button type="button" onclick="venbotRoute('more')" id="nav-more" class="nav-item text-slate-400 hover:text-slate-200 flex flex-col items-center justify-center py-2 px-1 rounded-xl transition"><i class="fa-solid fa-ellipsis text-base mb-1"></i><span class="text-[10px] font-bold">Más</span></button>
+        </div>
       </div>
     </nav>
   </div>
@@ -490,7 +760,7 @@
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-        <div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-robot text-sm"></i></div><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI</h3><p class="text-[10px] text-emerald-400 font-semibold">Copiloto conversacional · mercado + preguntas generales</p></div></div>
+        <div class="flex items-center gap-2"><span class="venbot-neural-mini" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><ellipse class="neural-orbit" cx="32" cy="32" rx="27" ry="11"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="23" ry="8"/><path class="neural-back" d="M32 8 L49 19 L45 45 L32 55 L19 45 L15 19 Z"/><path class="neural-left" d="M32 8 L32 55 L19 45 L15 19 Z"/><path class="neural-right" d="M32 8 L49 19 L45 45 L32 55 Z"/><path class="neural-face" d="M32 13 L44 22 L41 41 L32 48 L23 41 L20 22 Z"/><circle class="neural-core" cx="32" cy="31" r="10"/><path class="neural-v" d="M24 23 L29 23 L32 34 L35 23 L40 23 L35 41 L29 41 Z"/><circle class="neural-node" cx="32" cy="16" r="1.6"/></svg></span><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI</h3><p class="text-[10px] text-emerald-400 font-semibold">Copiloto conversacional · mercado + preguntas generales</p></div></div>
         <div class="flex items-center gap-1.5">
           <button id="ai-voice-toggle" type="button" onclick="toggleAIVoice()" class="focus-ring w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition" title="Activar/desactivar voz"><i class="fa-solid fa-volume-high text-xs"></i></button>
           <button id="ai-voice-stop" type="button" onclick="stopAIVoice()" class="focus-ring w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition" title="Detener voz"><i class="fa-solid fa-stop text-xs"></i></button>
@@ -498,7 +768,7 @@
         </div>
       </div>
       <div id="ai-chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
-        <div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con preguntas generales y, cuando preguntes por mercados, utilizaré el motor correspondiente: P2P o Spot.</div></div>
+        <div class="flex items-start gap-2.5"><span class="venbot-neural-mini" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><ellipse class="neural-orbit" cx="32" cy="32" rx="27" ry="11"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="23" ry="8"/><path class="neural-back" d="M32 8 L49 19 L45 45 L32 55 L19 45 L15 19 Z"/><path class="neural-left" d="M32 8 L32 55 L19 45 L15 19 Z"/><path class="neural-right" d="M32 8 L49 19 L45 45 L32 55 Z"/><path class="neural-face" d="M32 13 L44 22 L41 41 L32 48 L23 41 L20 22 Z"/><circle class="neural-core" cx="32" cy="31" r="10"/><path class="neural-v" d="M24 23 L29 23 L32 34 L35 23 L40 23 L35 41 L29 41 Z"/><circle class="neural-node" cx="32" cy="16" r="1.6"/></svg></span><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">¡Hola! Soy Venbot AI. Puedo ayudarte con preguntas generales y, cuando preguntes por mercados, utilizaré el motor correspondiente: P2P o Spot.</div></div>
       </div>
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 space-y-2">
         <div class="flex items-center gap-2">
@@ -1219,7 +1489,7 @@
       const user = role === 'user';
       chat.insertAdjacentHTML('beforeend', user
         ? `<div class="flex items-start gap-2.5 justify-end"><div class="bg-emerald-600/20 border border-emerald-500/30 rounded-2xl p-3 text-slate-100 max-w-[85%] leading-relaxed">${safe}</div></div>`
-        : `<div class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">${safe}</div></div>`);
+        : `<div class="flex items-start gap-2.5"><span class="venbot-neural-mini" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><ellipse class="neural-orbit" cx="32" cy="32" rx="27" ry="11"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="23" ry="8"/><path class="neural-back" d="M32 8 L49 19 L45 45 L32 55 L19 45 L15 19 Z"/><path class="neural-left" d="M32 8 L32 55 L19 45 L15 19 Z"/><path class="neural-right" d="M32 8 L49 19 L45 45 L32 55 Z"/><path class="neural-face" d="M32 13 L44 22 L41 41 L32 48 L23 41 L20 22 Z"/><circle class="neural-core" cx="32" cy="31" r="10"/><path class="neural-v" d="M24 23 L29 23 L32 34 L35 23 L40 23 L35 41 L29 41 Z"/><circle class="neural-node" cx="32" cy="16" r="1.6"/></svg></span><div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-200 max-w-[85%] leading-relaxed">${safe}</div></div>`);
       chat.scrollTop = chat.scrollHeight;
     }
 
@@ -1277,7 +1547,7 @@
       aiConversation.push({ role: 'user', content: text });
       const typingId = 'ai-typing-' + Date.now();
       const chat = document.getElementById('ai-chat-messages');
-      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0"><i class="fa-solid fa-robot text-xs"></i></div><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Pensando…</div></div>`);
+      chat.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="flex items-start gap-2.5"><span class="venbot-neural-mini" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><ellipse class="neural-orbit" cx="32" cy="32" rx="27" ry="11"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="23" ry="8"/><path class="neural-back" d="M32 8 L49 19 L45 45 L32 55 L19 45 L15 19 Z"/><path class="neural-left" d="M32 8 L32 55 L19 45 L15 19 Z"/><path class="neural-right" d="M32 8 L49 19 L45 45 L32 55 Z"/><path class="neural-face" d="M32 13 L44 22 L41 41 L32 48 L23 41 L20 22 Z"/><circle class="neural-core" cx="32" cy="31" r="10"/><path class="neural-v" d="M24 23 L29 23 L32 34 L35 23 L40 23 L35 41 L29 41 Z"/><circle class="neural-node" cx="32" cy="16" r="1.6"/></svg></span><div id="${typingId}-body" class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-slate-400 max-w-[85%] leading-relaxed">Pensando…</div></div>`);
       chat.scrollTop = chat.scrollHeight;
       try {
         const token = getAuthToken();
@@ -1470,5 +1740,58 @@
 
     document.addEventListener('DOMContentLoaded', bootVenbot);
   </script>
+
+<script>
+(function(){
+  const host=document.getElementById('venbot-route-host');
+  const market=document.getElementById('venbot-market-view');
+  const analysis=document.getElementById('venbot-analysis-view');
+  const spot=document.getElementById('venbot-spot-view');
+  const alerts=document.getElementById('venbot-alerts-view');
+  const intl=document.getElementById('venbot-international-view');
+  const more=document.getElementById('venbot-more-view');
+  const chart=document.getElementById('sec-p2p-chart');
+  const gemini=document.getElementById('sec-gemini');
+  const spotOriginal=document.getElementById('sec-spot');
+  const alertsOriginal=document.getElementById('sec-alertas');
+  const communityOriginal=document.getElementById('sec-comunidad');
+  const contextMap={market:'Mercado P2P · USDT / VES',analysis:'Análisis P2P · Tendencia y predicción',spot:'Spot · Predicción y proyección',alerts:'Alertas de precio P2P',international:'Mercado Internacional',more:'Comunidad · Cuenta · Soporte'};
+  function place(){
+    if(chart) document.querySelector('#analysis-content-slot').appendChild(chart);
+    if(gemini) document.querySelector('#analysis-content-slot').appendChild(gemini);
+    if(spotOriginal) document.querySelector('#spot-content-slot').appendChild(spotOriginal);
+    if(alertsOriginal) document.querySelector('#alerts-content-slot').appendChild(alertsOriginal);
+    if(communityOriginal) document.querySelector('#community-content-slot').appendChild(communityOriginal);
+  }
+  window.venbotRoute=function(key){
+    place();
+    const views={market,analysis,spot,alerts,international:intl,more};
+    Object.values(views).forEach(v=>v&&v.classList.remove('active'));
+    (views[key]||market).classList.add('active');
+    document.querySelectorAll('#venbot-route-nav .nav-item').forEach(b=>b.classList.remove('active'));
+    const id={market:'nav-mercado',analysis:'nav-analysis',spot:'nav-spot',alerts:'nav-alertas',international:'nav-international',more:'nav-more'}[key];
+    const btn=document.getElementById(id); if(btn) btn.classList.add('active');
+    const ctx=document.getElementById('header-market-context'); if(ctx) ctx.textContent=contextMap[key]||contextMap.market;
+    window.scrollTo({top:0,behavior:'smooth'});
+  };
+  window.addEventListener('DOMContentLoaded',()=>{place();venbotRoute('market');});
+})();
+</script>
+
+<script id="venbot-o-orbit-runtime">
+(function(){
+ function start(){
+  const ball=document.querySelector('.venbot-robot-wordmark .robot-o-ball');
+  if(!ball||ball.dataset.orbitRunning)return;
+  ball.dataset.orbitRunning='1';
+  const cx=23,cy=19,rx=18.5,ry=8.5,period=4200;
+  function frame(t){const a=((t%period)/period)*Math.PI*2;ball.setAttribute('cx',(cx+rx*Math.cos(a)).toFixed(3));ball.setAttribute('cy',(cy+ry*Math.sin(a)).toFixed(3));requestAnimationFrame(frame)}
+  requestAnimationFrame(frame);
+ }
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
+})();
+</script>
 </body>
 </html>
+
+<!-- VENBOT: interfaz aprobada conectada al motor original; no se altera la lógica funcional. -->
