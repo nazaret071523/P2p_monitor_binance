@@ -870,6 +870,71 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL", desde: Optional[datetim
         return []
 
 
+def evaluar_calidad_datos_quant(filas, now=None):
+    """Valida la calidad temporal y numérica de la serie antes de usarla en Quant.
+
+    No descarta datos silenciosamente: devuelve métricas auditables sobre filas
+    válidas, duplicados, huecos, cobertura y suficiencia por horizonte.
+    """
+    now = now or datetime.now(VET)
+    total = len(filas or [])
+    valid = []
+    invalid = 0
+    for row in filas or []:
+        try:
+            c, v, _, fecha = row
+            c, v = float(c), float(v)
+            if c <= 0 or v <= 0 or not fecha:
+                invalid += 1
+                continue
+            dt = fecha.astimezone(VET) if getattr(fecha, "tzinfo", None) else VET.localize(fecha)
+            valid.append((dt, c, v))
+        except Exception:
+            invalid += 1
+    valid.sort(key=lambda x: x[0])
+    unique = []
+    duplicate_timestamps = 0
+    seen_ts = set()
+    for item in valid:
+        ts = item[0]
+        key = ts.isoformat()
+        if key in seen_ts:
+            duplicate_timestamps += 1
+            continue
+        seen_ts.add(key)
+        unique.append(item)
+    intervals = np.asarray([
+        (unique[i][0] - unique[i-1][0]).total_seconds() / 60.0
+        for i in range(1, len(unique))
+        if unique[i][0] > unique[i-1][0]
+    ], dtype=float)
+    coverage_hours = (unique[-1][0] - unique[0][0]).total_seconds() / 3600.0 if len(unique) > 1 else 0.0
+    recent_age_minutes = max(0.0, (now - unique[-1][0]).total_seconds() / 60.0) if unique else None
+    positive_intervals = intervals[intervals > 0] if len(intervals) else intervals
+    median_interval = float(np.median(positive_intervals)) if len(positive_intervals) else None
+    max_gap = float(np.max(positive_intervals)) if len(positive_intervals) else None
+    # Un hueco > 3 veces el intervalo mediano es una discontinuidad relevante.
+    gap_limit = max(30.0, median_interval * 3.0) if median_interval else 30.0
+    significant_gaps = int(np.sum(positive_intervals > gap_limit)) if len(positive_intervals) else 0
+    freshness_ok = recent_age_minutes is not None and recent_age_minutes <= max(MARKET_MAX_AGE_SECONDS / 60.0 * 3.0, 5.0)
+    return {
+        "total_filas": total,
+        "filas_validas": len(unique),
+        "filas_invalidas": invalid,
+        "duplicados_timestamp": duplicate_timestamps,
+        "cobertura_horas": round(max(0.0, coverage_hours), 3),
+        "intervalo_mediano_min": round(median_interval, 3) if median_interval is not None else None,
+        "hueco_max_min": round(max_gap, 3) if max_gap is not None else None,
+        "huecos_significativos": significant_gaps,
+        "edad_ultima_muestra_min": round(recent_age_minutes, 3) if recent_age_minutes is not None else None,
+        "frescura_ok": freshness_ok,
+        "suficiente_1h": coverage_hours >= 1.0 and len(unique) >= 12,
+        "suficiente_3h": coverage_hours >= 3.0 and len(unique) >= 24,
+        "suficiente_7h": coverage_hours >= 7.0 and len(unique) >= 36,
+        "suficiente_24h": coverage_hours >= 24.0 and len(unique) >= 72,
+    }
+
+
 # ==========================================
 # HTTP AUXILIAR
 # ==========================================
@@ -2287,6 +2352,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     """
     filas = obtener_estadisticas_db(limit=2500, banco=banco_filtro)
     total_muestras = len(filas)
+    calidad_datos = evaluar_calidad_datos_quant(filas)
 
     if actual_compra <= 0 or actual_venta <= 0:
         return {
@@ -2299,6 +2365,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
             "cambios": {}, "volatilidad_pct": 0.0, "spread_pct": 0.0,
             "spread_promedio": 0.0, "rango_pct": 0.0,
             "forecast_low_mid": None, "forecast_high_mid": None, "cobertura_horas": 0.0,
+            "calidad_datos": calidad_datos,
         }
 
     now = datetime.now(VET)
@@ -2483,7 +2550,15 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     acuerdo_24h = 1.0
     if peso24 > 0.0 and drift_h != 0 and drift_24h != 0 and (drift_h > 0) != (drift_24h > 0):
         acuerdo_24h = 0.45
-    confianza = int(round(100 * (0.30*coverage_score + 0.22*density_score + 0.23*agreement + 0.17*regression_r2 + 0.08*acuerdo_24h)))
+    calidad_score = 1.0
+    if calidad_datos.get("huecos_significativos", 0):
+        calidad_score *= max(0.55, 1.0 - min(0.35, calidad_datos["huecos_significativos"] * 0.05))
+    if calidad_datos.get("duplicados_timestamp", 0):
+        calidad_score *= max(0.75, 1.0 - min(0.20, calidad_datos["duplicados_timestamp"] * 0.01))
+    if not calidad_datos.get("frescura_ok", True):
+        calidad_score *= 0.70
+    confianza_base = 100 * (0.30*coverage_score + 0.22*density_score + 0.23*agreement + 0.17*regression_r2 + 0.08*acuerdo_24h)
+    confianza = int(round(confianza_base * calidad_score))
     confianza = max(15, min(92, confianza)) if len(series) >= 3 else 0
 
     manipulacion = detectar_manipulacion_mercado(mids, spreads, mid_actual, spread_actual)
@@ -2513,6 +2588,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "max_delta_pct": round(max_delta_pct, 3), "delta_7h_pct": round(delta_pct, 3),
         "regression_r2": round(regression_r2, 3), "cobertura_horas": round(cobertura_horas, 2),
         "regimen": regimen, "niveles_dinamicos": niveles_dinamicos,
+        "calidad_datos": calidad_datos,
         "calibracion_24h": calibracion_24h,
         "manipulacion": manipulacion,
     }
