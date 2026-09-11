@@ -3579,7 +3579,6 @@ class BillingOrderCreateRequest(BaseModel):
     pay_currency: str = Field(min_length=3, max_length=8)
 
 class AlertRuleCreateRequest(BaseModel):
-    external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
     banco: str = Field(default="GENERAL", min_length=3, max_length=12)
     target_value: float = Field(gt=0)
     direction: str = Field(default="above", min_length=3, max_length=10)
@@ -3587,7 +3586,6 @@ class AlertRuleCreateRequest(BaseModel):
     cooldown_seconds: int = Field(default=1800, ge=300, le=86400)
 
 class AlertRuleUpdateRequest(BaseModel):
-    external_user_id: str = Field(min_length=16, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
     banco: Optional[str] = Field(default=None, min_length=3, max_length=12)
     target_value: Optional[float] = Field(default=None, gt=0)
     direction: Optional[str] = Field(default=None, min_length=3, max_length=10)
