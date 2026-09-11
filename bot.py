@@ -3793,7 +3793,8 @@ def alert_rule_delete(rule_id: int, request: Request):
     return {"ok": True, "rules": _alert_rules_for_user(external_user_id)}
 
 @app.get("/api/alerts/smart")
-def smart_alerts(limit: int = Query(50, ge=1, le=200), banco: str = Query("GENERAL")):
+def smart_alerts(request: Request, limit: int = Query(50, ge=1, le=200), banco: str = Query("GENERAL")):
+    _require_plan_user(request, "PREMIUM")
     banco = (banco or "GENERAL").upper()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         raise HTTPException(status_code=400, detail="Banco no soportado")
@@ -3801,7 +3802,8 @@ def smart_alerts(limit: int = Query(50, ge=1, le=200), banco: str = Query("GENER
 
 
 @app.post("/api/alerts/smart/evaluate")
-def smart_alerts_evaluate():
+def smart_alerts_evaluate(request: Request):
+    _require_plan_user(request, "PREMIUM")
     """Evalúa una vez el mercado actual; útil para dashboard y pruebas sin esperar al collector."""
     mercado = obtener_mercado_actual_db() or {}
     if not mercado:
@@ -3899,14 +3901,18 @@ def foundation_consent(payload: ConsentRequest):
     return {"ok": True}
 
 @app.post("/api/account/delete")
-def account_delete(payload: AccountDeleteRequest):
+def account_delete(payload: AccountDeleteRequest, request: Request):
     if not DATABASE_URL:
         return {"ok": False, "error": "database_not_configured"}
+    user = _require_session_user(request)
+    if payload.external_user_id != user["external_user_id"]:
+        raise HTTPException(status_code=403, detail="account_owner_mismatch")
+    external_user_id = user["external_user_id"]
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE venbot_users SET status='deleted', deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s", (payload.external_user_id,))
-            cur.execute("DELETE FROM venbot_consents WHERE external_user_id=%s", (payload.external_user_id,))
-            cur.execute("UPDATE venbot_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE external_user_id=%s AND revoked_at IS NULL", (payload.external_user_id,))
+            cur.execute("UPDATE venbot_users SET status='deleted', deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s", (external_user_id,))
+            cur.execute("DELETE FROM venbot_consents WHERE external_user_id=%s", (external_user_id,))
+            cur.execute("UPDATE venbot_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE external_user_id=%s AND revoked_at IS NULL", (external_user_id,))
     return {"ok": True, "status": "deleted"}
 
 # ==========================================
@@ -4393,7 +4399,8 @@ def obtener_spot_prediction_performance_api(request: Request, symbol: Optional[s
 
 
 @app.get("/api/quant/v2")
-def obtener_quant_v2_api(include_spot: bool = Query(True)):
+def obtener_quant_v2_api(request: Request, include_spot: bool = Query(True)):
+    _require_plan_user(request, "VIP")
     mercado = obtener_mercado_actual_db() or {}
     compra = float(mercado.get("compra", 0) or 0)
     venta = float(mercado.get("venta", 0) or 0)
@@ -4406,10 +4413,12 @@ def obtener_quant_v2_api(include_spot: bool = Query(True)):
 
 @app.get("/api/quant/backtest")
 def obtener_quant_backtest(
+    request: Request,
     banco: str = Query("GENERAL"),
     max_evaluaciones: int = Query(24, ge=1, le=100),
     spacing_minutes: int = Query(60, ge=15, le=1440),
 ):
+    _require_plan_user(request, "VIP")
     banco = (banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         banco = "GENERAL"
@@ -4426,9 +4435,11 @@ def obtener_quant_backtest(
 
 @app.get("/api/predictions/performance")
 def obtener_prediction_performance_api(
+    request: Request,
     banco: str = Query("GENERAL"),
     limit: int = Query(100, ge=10, le=1000),
 ):
+    _require_plan_user(request, "VIP")
     banco=(banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
     return obtener_prediction_performance(banco, limit)
@@ -4436,9 +4447,11 @@ def obtener_prediction_performance_api(
 
 @app.get("/api/predictions/recent")
 def obtener_prediction_recent_api(
+    request: Request,
     banco: str = Query("GENERAL"),
     limit: int = Query(20, ge=1, le=100),
 ):
+    _require_plan_user(request, "VIP")
     banco=(banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
     if not DATABASE_URL: return {"ok":False,"predictions":[]}
@@ -4456,7 +4469,8 @@ def obtener_prediction_recent_api(
 
 
 @app.get("/api/predictions/signal")
-def obtener_prediction_signal_api(banco: str = Query("GENERAL")):
+def obtener_prediction_signal_api(request: Request, banco: str = Query("GENERAL")):
+    _require_plan_user(request, "VIP")
     banco=(banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
     mercado=obtener_ultimo_mercado_banco(banco)
