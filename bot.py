@@ -512,7 +512,7 @@ def registrar_prediccion_tracking(banco, actual_compra, actual_venta, datos):
                     int(datos.get("confianza", 0) or 0),
                     float(datos.get("soporte_7h", mid) or mid), float(datos.get("resistencia_7h", mid) or mid),
                     float(datos.get("volatilidad_pct", 0) or 0),
-                    json.dumps({"calibracion_24h": datos.get("calibracion_24h", {}), "delta_7h_pct": datos.get("delta_7h_pct", 0), "proyecciones_horizontes": mh}, ensure_ascii=False),
+                    json.dumps({"calibracion_24h": datos.get("calibracion_24h", {}), "delta_7h_pct": datos.get("delta_7h_pct", 0), "proyecciones_horizontes": mh, "generated_at": datetime.now(pytz.UTC).isoformat(), "target_at": {"1h": (datetime.now(pytz.UTC)+timedelta(hours=1)).isoformat(), "3h": (datetime.now(pytz.UTC)+timedelta(hours=3)).isoformat(), "7h": (datetime.now(pytz.UTC)+timedelta(hours=7)).isoformat(), "24h": (datetime.now(pytz.UTC)+timedelta(hours=24)).isoformat()}}, ensure_ascii=False),
                 ))
         return True
     except Exception as e:
@@ -2183,202 +2183,139 @@ def niveles_dinamicos_quant(recent, mid_actual, volatilidad_pct):
 
 
 def backtest_quant_7h(banco_filtro="GENERAL", max_evaluaciones=24, spacing_minutes=60):
-    """Backtest 7H con separación temporal entre orígenes.
+    """Backtest del motor Quant multihorizonte usando solo pasado en cada origen.
 
-    La predicción de cada origen usa únicamente datos disponibles hasta ese
-    instante. Los orígenes se seleccionan desde el tramo más reciente que ya
-    tiene 7H de futuro observado y se separan por ``spacing_minutes`` para
-    evitar la concentración artificial de evaluaciones consecutivas.
-
-    Nota metodológica: con una separación menor a 7H, las ventanas futuras
-    todavía se solapan. Por eso el resultado se etiqueta como ``temporally_spaced``
-    y no como muestras estadísticamente independientes en sentido estricto.
+    Mantiene el nombre histórico de la función por compatibilidad con la API,
+    pero ahora evalúa 1H/3H/7H/24H como pronósticos de precio completos.
+    Cada origen solo recibe las muestras con timestamp <= origen y cada objetivo
+    usa la primera muestra real posterior dentro de la tolerancia configurada.
     """
     try:
         max_evaluaciones = max(1, min(int(max_evaluaciones), 100))
         spacing_minutes = max(15, min(int(spacing_minutes), 24 * 60))
         spacing = timedelta(minutes=spacing_minutes)
-        prehistory = timedelta(hours=3)
-        future_horizon = timedelta(hours=7)
+        prehistory = timedelta(hours=72)
+        horizons = (("1h", 1.0), ("3h", 3.0), ("7h", 7.0), ("24h", 24.0))
+        max_horizon = timedelta(hours=24)
 
-        # 30k muestras cubren de sobra ~48H con el colector P2P de 10s y
-        # dejan margen para que el backtest pueda seleccionar orígenes separados.
-        filas = obtener_estadisticas_db(limit=30000, banco=banco_filtro)
+        filas = obtener_estadisticas_db(limit=50000, banco=banco_filtro)
         series = []
         for c, v, _, fecha in filas:
             try:
-                if not fecha or float(c) <= 0 or float(v) <= 0:
+                c, v = float(c), float(v)
+                if not fecha or c <= 0 or v <= 0:
                     continue
                 dt = fecha.astimezone(VET) if getattr(fecha, "tzinfo", None) else VET.localize(fecha)
-                series.append((dt, (float(c) + float(v)) / 2.0))
+                series.append((dt, (c + v) / 2.0, c, v))
             except Exception:
                 continue
-
         series.sort(key=lambda x: x[0])
-        if len(series) < 80:
-            return {
-                "status": "insufficient_history",
-                "evaluations": 0,
-                "spacing_minutes": spacing_minutes,
-                "message": "Se necesitan más muestras históricas para medir el motor sin sesgo.",
-            }
 
-        # Solo son elegibles los orígenes que tienen al menos 3H de historia
-        # y una observación real 7H después.
+        if len(series) < 100:
+            return {"status":"insufficient_history","evaluations":0,"message":"Se necesitan más muestras históricas para validar el motor multihorizonte."}
+
+        coverage_hours = (series[-1][0]-series[0][0]).total_seconds()/3600.0
         eligible = []
-        first_allowed = series[0][0] + prehistory
-        last_allowed = series[-1][0] - future_horizon
-        for i, (origin_t, _) in enumerate(series):
-            if origin_t < first_allowed or origin_t > last_allowed:
+        for i, (origin_t, _, _, _) in enumerate(series):
+            if origin_t < series[0][0] + prehistory:
+                continue
+            if origin_t > series[-1][0] - max_horizon:
                 continue
             eligible.append(i)
-
         if not eligible:
-            return {
-                "status": "insufficient_history",
-                "evaluations": 0,
-                "spacing_minutes": spacing_minutes,
-                "message": "No hubo ventanas completas de 7H con 3H de historia previa.",
-            }
+            return {"status":"insufficient_history","evaluations":0,"history_coverage_hours":round(coverage_hours,2),"message":"Aún no existen ventanas completas de 24H con 72H de historia previa."}
 
-        # Seleccionar desde el final hacia atrás. Así las evaluaciones son
-        # recientes y están separadas temporalmente en lugar de ser puntos
-        # consecutivos del mismo movimiento.
-        selected_indices = []
-        cursor = eligible[-1]
-        while cursor is not None and len(selected_indices) < max_evaluaciones:
-            selected_indices.append(cursor)
-            cursor = next(
-                (
-                    j for j in reversed(eligible)
-                    if series[j][0] <= series[cursor][0] - spacing
-                ),
-                None,
-            )
-        selected_indices.reverse()
+        selected=[]
+        cursor=eligible[-1]
+        while cursor is not None and len(selected)<max_evaluaciones:
+            selected.append(cursor)
+            previous=next((j for j in reversed(eligible) if series[j][0] <= series[cursor][0]-spacing), None)
+            cursor=previous
+        selected.reverse()
 
-        rows = []
-        for i in selected_indices:
-            origin_t, origin_mid = series[i]
-            target_t = origin_t + future_horizon
+        rows=[]
+        metrics={label:{"errors":[],"signed_errors":[],"direction":[],"coverage":[],"evaluated":0} for label,_ in horizons}
 
-            # Primera muestra disponible en o después del horizonte de 7H.
-            future = next(
-                (
-                    (j, x) for j, x in enumerate(series[i + 1:], start=i + 1)
-                    if x[0] >= target_t
-                ),
-                None,
-            )
-            if future is None:
+        for i in selected:
+            origin_t, origin_mid, origin_buy, origin_sell = series[i]
+            hist=[x for x in series[:i+1] if x[0] >= origin_t-prehistory]
+            if len(hist)<24:
                 continue
-
-            # La historia termina exactamente en el origen: no hay leakage.
-            hist = [
-                x for x in series[: i + 1]
-                if x[0] >= origin_t - prehistory
-            ]
-            if len(hist) < 12:
+            fechas=[x[0] for x in hist]
+            mids=np.asarray([x[1] for x in hist],dtype=float)
+            compras=np.asarray([x[2] for x in hist],dtype=float)
+            ventas=np.asarray([x[3] for x in hist],dtype=float)
+            if len(mids)<24:
                 continue
-
-            def point(hours):
-                target = origin_t - timedelta(hours=hours)
-                candidates = [
-                    x for x in hist
-                    if abs((x[0] - target).total_seconds())
-                    <= max(900, hours * 3600 * 0.35)
-                ]
-                if not candidates:
-                    return None
-                return min(
-                    candidates,
-                    key=lambda x: abs((x[0] - target).total_seconds())
-                )[1]
-
-            p1, p3 = point(1.0), point(3.0)
-            if p1 is None or p3 is None:
+            returns=np.diff(mids)/mids[:-1]*100.0 if len(mids)>2 else np.array([])
+            vol=float(np.std(returns,ddof=1)) if len(returns)>1 else 0.0
+            typical=float(np.median(np.abs(returns))) if len(returns) else 0.0
+            preds=_proyecciones_multihorizonte_quant(fechas,mids,compras,ventas,float(origin_mid),float(origin_sell-origin_buy),vol,typical,{})
+            if not preds:
                 continue
-
-            c1 = (origin_mid - p1) / p1 * 100.0
-            c3 = (origin_mid - p3) / p3 * 100.0
-            signal = c1 * 0.45 + c3 * 0.55
-            pred_dir = 1 if signal > 0.01 else (-1 if signal < -0.01 else 0)
-
-            actual_mid = future[1][1]
-            actual_change = (actual_mid - origin_mid) / origin_mid * 100.0
-            actual_dir = (
-                1 if actual_mid > origin_mid * (1 + 0.0001)
-                else (-1 if actual_mid < origin_mid * (1 - 0.0001) else 0)
-            )
-
-            # Error de magnitud de señal: compara el movimiento que el
-            # momentum sugería con el movimiento observado a 7H. No se presenta
-            # como un forecast de precio completo; es una métrica de calibración.
-            signal_error = abs(actual_change - signal)
-
-            rows.append({
-                "origin": origin_t.isoformat(),
-                "target": future[1][0].isoformat(),
-                "pred_dir": pred_dir,
-                "actual_dir": actual_dir,
-                "signal_pct": round(signal, 4),
-                "actual_change_pct": round(actual_change, 4),
-                "signal_error_pct": round(signal_error, 4),
-            })
+            row={"origin":origin_t.isoformat(),"origin_mid":round(float(origin_mid),4),"horizons":{}}
+            for label,hours in horizons:
+                pred=preds.get(label)
+                if not pred:
+                    continue
+                target=origin_t+timedelta(hours=hours)
+                future=next((x for x in series[i+1:] if x[0]>=target),None)
+                if future is None:
+                    continue
+                actual_t,actual_mid= future[0],future[1]
+                predicted=float(pred["midpoint"])
+                low=float(pred["rango_mid_min"]); high=float(pred["rango_mid_max"])
+                abs_error=abs(actual_mid-predicted)
+                signed_error=predicted-actual_mid
+                ape=abs_error/abs(actual_mid)*100.0 if actual_mid else None
+                pred_move=predicted-origin_mid
+                actual_move=actual_mid-origin_mid
+                pred_dir=1 if pred_move>0 else (-1 if pred_move<0 else 0)
+                actual_dir=1 if actual_move>0 else (-1 if actual_move<0 else 0)
+                direction_correct=(pred_dir==actual_dir) if pred_dir!=0 and actual_dir!=0 else None
+                inside=(low<=actual_mid<=high)
+                m=metrics[label]
+                m["errors"].append((abs_error,ape)); m["signed_errors"].append(signed_error)
+                if direction_correct is not None: m["direction"].append(direction_correct)
+                m["coverage"].append(inside); m["evaluated"]+=1
+                row["horizons"][label]={"target":actual_t.isoformat(),"target_requested":target.isoformat(),"predicted_mid":round(predicted,4),"range_low":round(low,4),"range_high":round(high,4),"actual_mid":round(actual_mid,4),"absolute_error":round(abs_error,4),"error_pct":round(ape,4) if ape is not None else None,"bias":round(signed_error,4),"direction_correct":direction_correct,"range_covered":inside}
+            if row["horizons"]:
+                rows.append(row)
 
         if not rows:
+            return {"status":"insufficient_history","evaluations":0,"history_coverage_hours":round(coverage_hours,2),"message":"No hubo ventanas completas para evaluar los cuatro horizontes."}
+
+        def summary(m):
+            errs=[x[0] for x in m["errors"]]; apes=[x[1] for x in m["errors"] if x[1] is not None]; signed=m["signed_errors"]
             return {
-                "status": "insufficient_history",
-                "evaluations": 0,
-                "spacing_minutes": spacing_minutes,
-                "message": "No hubo ventanas completas de 7H con datos suficientes.",
+                "evaluated":m["evaluated"],
+                "mae":round(float(np.mean(errs)),4) if errs else None,
+                "median_absolute_error":round(float(np.median(errs)),4) if errs else None,
+                "rmse":round(float(np.sqrt(np.mean(np.square(errs)))),4) if errs else None,
+                "mape_pct":round(float(np.mean(apes)),4) if apes else None,
+                "bias":round(float(np.mean(signed)),4) if signed else None,
+                "direction_accuracy_pct":round(float(np.mean(m["direction"]))*100.0,2) if m["direction"] else None,
+                "direction_evaluated":len(m["direction"]),
+                "interval_coverage_pct":round(float(np.mean(m["coverage"]))*100.0,2) if m["coverage"] else None,
             }
 
-        decisive = [
-            r for r in rows
-            if r["pred_dir"] != 0 and r["actual_dir"] != 0
-        ]
-        hits = sum(
-            1 for r in decisive
-            if r["pred_dir"] == r["actual_dir"]
-        )
-        mean_abs_move = (
-            float(np.mean([abs(r["actual_change_pct"]) for r in decisive]))
-            if decisive else 0.0
-        )
-        mean_abs_signal_error = (
-            float(np.mean([r["signal_error_pct"] for r in decisive]))
-            if decisive else 0.0
-        )
-
-        coverage_hours = (
-            (series[-1][0] - series[0][0]).total_seconds() / 3600.0
-        )
-
         return {
-            "status": "ok",
-            "evaluation_mode": "temporally_spaced",
-            "spacing_minutes": spacing_minutes,
-            "future_horizon_hours": 7,
-            "history_coverage_hours": round(coverage_hours, 2),
-            "evaluations": len(rows),
-            "decisive": len(decisive),
-            "direction_accuracy_pct": round(
-                hits / len(decisive) * 100, 2
-            ) if decisive else None,
-            "mean_abs_move_pct": round(mean_abs_move, 4),
-            "mean_abs_signal_error_pct": round(mean_abs_signal_error, 4),
-            "future_windows_overlap": spacing_minutes < 420,
-            "recent": rows[-10:],
+            "status":"ok",
+            "evaluation_mode":"full_engine_multihorizon_no_leakage",
+            "bank":banco_filtro,
+            "history_coverage_hours":round(coverage_hours,2),
+            "history_window_hours":72,
+            "max_horizon_hours":24,
+            "evaluations":len(rows),
+            "spacing_minutes":spacing_minutes,
+            "future_windows_overlap":spacing_minutes<1440,
+            "horizons":{label:summary(metrics[label]) for label,_ in horizons},
+            "recent":rows[-10:],
+            "methodology":"Predicción de precio generada con historia <= origen; validación contra primera muestra real >= objetivo dentro de la tolerancia configurada.",
         }
     except Exception as e:
-        logger.warning("Backtest Quant 7H falló: %s", e)
-        return {
-            "status": "error",
-            "evaluations": 0,
-            "message": "Backtest temporalmente no disponible",
-        }
-
+        logger.exception("Backtest Quant multihorizonte falló: %s", e)
+        return {"status":"error","evaluations":0,"message":"Backtest cuantitativo temporalmente no disponible"}
 
 def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual, spread_actual, volatilidad_global, abs_typical_global, calibracion_24h):
     """Genera escenarios P2P independientes para 1H/3H/7H/24H.
@@ -2523,7 +2460,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     no una garantía: combina momentum multi-ventana, una regresión temporal reciente,
     rango/volatilidad y una corrección moderada hacia la mediana del mercado.
     """
-    filas = obtener_estadisticas_db(limit=2500, banco=banco_filtro)
+    filas = obtener_estadisticas_db(limit=30000, banco=banco_filtro)
     total_muestras = len(filas)
     calidad_datos = evaluar_calidad_datos_quant(filas)
 
@@ -4676,14 +4613,12 @@ def obtener_quant_backtest(
     banco = (banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         banco = "GENERAL"
+    result = backtest_quant_7h(banco, max_evaluaciones, spacing_minutes)
     return {
         "ok": True,
         "bank": banco,
-        "backtest_7h": backtest_quant_7h(
-            banco,
-            max_evaluaciones,
-            spacing_minutes,
-        ),
+        "backtest_multihorizonte": result,
+        "backtest_7h": result,
     }
 
 
@@ -4723,7 +4658,7 @@ def obtener_prediction_recent_api(
                 """,(banco,int(limit)))
                 rows=cur.fetchall()
         return {"ok":True,"bank":banco,"predictions":[{
-            "id":r[0],"created_at":r[1].isoformat(),"actual_compra":r[2],"actual_venta":r[3],
+            "id":r[0],"created_at":r[1].isoformat(),"target_at_1h":(r[1]+timedelta(hours=1)).isoformat(),"target_at_3h":(r[1]+timedelta(hours=3)).isoformat(),"target_at_7h":(r[1]+timedelta(hours=7)).isoformat(),"target_at_24h":(r[1]+timedelta(hours=24)).isoformat(),"actual_compra":r[2],"actual_venta":r[3],
             "pred_compra_1h":r[4],"pred_venta_1h":r[5],"pred_compra_3h":r[6],"pred_venta_3h":r[7],
             "pred_compra_7h":r[8],"pred_venta_7h":r[9],"pred_compra_24h":r[10],"pred_venta_24h":r[11],
             "tendencia":r[12],"regimen":r[13],"confidence":r[14],
