@@ -612,46 +612,26 @@
           <button type="button" onclick="handleAIClick()" class="w-full focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-sm font-bold px-4 py-3 rounded-xl transition flex items-center justify-between"><span>Abrir IA <i class="fa-solid fa-wand-magic-sparkles ml-1"></i></span><i class="fa-solid fa-chevron-right"></i></button>
         </div>
 
-        <div class="rounded-2xl border border-slate-800/80 bg-slate-950/30 p-3 md:p-4 space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-            <div>
-              <h3 class="text-base md:text-lg font-black text-slate-100">Análisis Multihorizonte</h3>
-              <p class="text-[11px] md:text-xs text-slate-400 mt-1">Selecciona un horizonte para ver el análisis y las métricas estimadas.</p>
-            </div>
-            <span id="ai-badge-mode" class="text-[10px] font-bold text-emerald-400 uppercase text-left sm:text-right">BINANCE P2P ACTIVO</span>
-          </div>
-
+        <div class="rounded-2xl border border-slate-800/80 bg-slate-950/30 p-3 md:p-4 space-y-3">
+          <div class="flex items-start justify-between gap-3"><div><h3 class="text-sm md:text-base font-black text-slate-100">Análisis Multihorizonte</h3><p class="text-[11px] text-slate-400 mt-1">Selecciona un horizonte para ver el análisis y métricas estimadas.</p></div><span id="ai-badge-mode" class="text-[9px] font-bold text-emerald-400 uppercase text-right">BINANCE P2P ACTIVO</span></div>
           <div class="grid grid-cols-4 gap-1.5 md:gap-2" role="group" aria-label="Horizonte de proyección P2P">
             <button type="button" data-p2p-horizon="1h" onclick="selectP2PHorizon('1h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">1H</button>
             <button type="button" data-p2p-horizon="3h" onclick="selectP2PHorizon('3h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">3H</button>
             <button type="button" data-p2p-horizon="7h" onclick="selectP2PHorizon('7h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-300" aria-pressed="true">7H</button>
             <button type="button" data-p2p-horizon="24h" onclick="selectP2PHorizon('24h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">24H</button>
           </div>
-
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/80 p-3.5 md:p-4 space-y-3">
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
-                <h4 id="ai-title-display" class="text-base md:text-lg font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4>
-                <p id="gemini-insight-text" class="text-xs md:text-sm text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p>
-              </div>
-              <span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span>
-            </div>
-            <div id="p2p-horizon-panel"><div id="p2p-horizon-detail" class="text-xs text-slate-300 leading-relaxed">Selecciona un horizonte para consultar su proyección independiente.</div></div>
-            <div class="hidden grid grid-cols-2 md:grid-cols-4 gap-2.5" aria-hidden="true">
-              <div><span id="m1-title">SEÑAL P2P</span><strong id="m1-val">--</strong></div>
-              <div><span id="m2-title">VELOCIDAD P2P</span><strong id="m2-val">--</strong></div>
-              <div><span id="m3-title">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val">--</strong></div>
-              <div><span id="m4-title">RANGO P2P 4H</span><strong id="m4-val">--</strong></div>
+          <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 md:p-4 space-y-3">
+            <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 id="ai-title-display" class="text-sm md:text-base font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4><p id="gemini-insight-text" class="text-xs text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p></div><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span></div>
+            <div id="p2p-horizon-panel" class="mt-2"><div id="p2p-horizon-detail" class="text-xs text-slate-300 leading-relaxed">Selecciona un horizonte para consultar su proyección independiente.</div></div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+              <div class="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3"><span id="m1-title" class="text-[10px] font-bold text-emerald-300 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+              <div class="bg-sky-500/10 border border-sky-500/25 rounded-xl p-3"><span id="m2-title" class="text-[10px] font-bold text-sky-300 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+              <div class="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3"><span id="m3-title" class="text-[10px] font-bold text-amber-300 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+              <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P 4H</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
             </div>
           </div>
-
-          <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
-            <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2.5 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button>
-            <button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2.5 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button>
-            <button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2.5 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button>
-          </div>
+          <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1"><button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button><button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button><button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button></div>
         </div>
-
       </section>
 
       <section id="sec-spot" class="glass-card p-4 md:p-5 rounded-2xl space-y-4 scroll-mt-24 border border-purple-500/20">
@@ -1040,12 +1020,11 @@
       }
     }
 
-    let analysisRetryTimer = null;
     async function loadAnalysis() {
       if (analysisRequestRunning) return;
       analysisRequestRunning = true;
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 90000);
+        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 30000);
         if (data && data.ok !== false) {
           marketState.analysis = data;
           analysisLastSuccessfulFetch = new Date();
@@ -1055,14 +1034,8 @@
         }
       } catch (error) {
         console.error('Venbot /api/analysis:', error);
-        // No borra la última lectura válida. Si aún no existe, muestra un
-        // estado explícito y permite que el siguiente ciclo vuelva a intentar.
-        if (!marketState.analysis) {
-          const insight = document.getElementById('gemini-insight-text');
-          if (insight) insight.textContent = 'Conectando con el motor P2P… reintentando automáticamente.';
-          if (analysisRetryTimer) clearTimeout(analysisRetryTimer);
-          analysisRetryTimer = setTimeout(() => { analysisRetryTimer = null; loadAnalysis(); }, 5000);
-        }
+        // No borra la última lectura válida: la interfaz conserva el último estado
+        // mientras el servicio despierta o termina una consulta pesada.
       } finally {
         analysisRequestRunning = false;
       }
@@ -1429,7 +1402,7 @@
       const changeClass = Number.isFinite(change) && change < 0 ? 'text-rose-300' : 'text-emerald-300';
       const confidence = q.confianza === null || q.confianza === undefined ? 'n/d' : q.confianza;
       detail.innerHTML = `
-        <div class="space-y-3">
+        <div class="rounded-xl border border-slate-800 bg-slate-950/55 p-3 space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div><span class="block text-[9px] uppercase tracking-widest text-slate-500 font-bold">Horizonte seleccionado</span><strong class="text-sm text-slate-100">${horizonLabel} · Proyección independiente</strong></div>
             <span class="text-[10px] font-black ${changeClass}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span>
@@ -1870,24 +1843,16 @@
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
         return;
       }
-      // Arranque no bloqueante: el análisis P2P se solicita desde el inicio,
-      // sin esperar validación de sesión ni otras consultas secundarias.
-      // Así la pantalla no queda detenida en "Esperando lectura de mercado...".
-      // Primera lectura independiente: no depende de la sesión, del gráfico ni de Spot.
-      loadAnalysis();
       await Promise.allSettled([loadPrices(), loadHistory('5m')]);
-      // Segundo intento después de que el precio real ya esté disponible.
-      setTimeout(loadAnalysis, 1200);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
       updateLoginButton();
-      // La sesión no debe bloquear la lectura pública del mercado.
-      // La petición de análisis ya fue iniciada arriba y seguirá reintentándose
-      // cada 30 s si Render estaba despertando o la primera respuesta falló.
-      await validateExistingSession().catch(error => {
-        console.warn('Venbot sesión:', error);
-      });
+      await validateExistingSession();
+      // La lectura analítica se solicita después de validar la sesión y vuelve a
+      // intentarse periódicamente; así no queda congelada en el placeholder si
+      // Render estaba dormido o la primera petición ocurrió durante el arranque.
+      await loadAnalysis();
       bootstrapVenbotFoundation();
       const spotSection=document.getElementById('sec-spot');
       if (spotSection && 'IntersectionObserver' in window) {
@@ -1916,14 +1881,7 @@
       setInterval(loadAnalysis, 30000);
     }
 
-    let venbotBootStarted = false;
-    function startVenbotOnce() {
-      if (venbotBootStarted) return;
-      venbotBootStarted = true;
-      bootVenbot();
-    }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startVenbotOnce, { once: true });
-    else startVenbotOnce();
+    document.addEventListener('DOMContentLoaded', bootVenbot);
   </script>
 
 <script>
