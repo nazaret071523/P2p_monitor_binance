@@ -1040,11 +1040,12 @@
       }
     }
 
+    let analysisRetryTimer = null;
     async function loadAnalysis() {
       if (analysisRequestRunning) return;
       analysisRequestRunning = true;
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 30000);
+        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 90000);
         if (data && data.ok !== false) {
           marketState.analysis = data;
           analysisLastSuccessfulFetch = new Date();
@@ -1059,6 +1060,8 @@
         if (!marketState.analysis) {
           const insight = document.getElementById('gemini-insight-text');
           if (insight) insight.textContent = 'Conectando con el motor P2P… reintentando automáticamente.';
+          if (analysisRetryTimer) clearTimeout(analysisRetryTimer);
+          analysisRetryTimer = setTimeout(() => { analysisRetryTimer = null; loadAnalysis(); }, 5000);
         }
       } finally {
         analysisRequestRunning = false;
@@ -1870,8 +1873,11 @@
       // Arranque no bloqueante: el análisis P2P se solicita desde el inicio,
       // sin esperar validación de sesión ni otras consultas secundarias.
       // Así la pantalla no queda detenida en "Esperando lectura de mercado...".
+      // Primera lectura independiente: no depende de la sesión, del gráfico ni de Spot.
       loadAnalysis();
       await Promise.allSettled([loadPrices(), loadHistory('5m')]);
+      // Segundo intento después de que el precio real ya esté disponible.
+      setTimeout(loadAnalysis, 1200);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
@@ -1910,7 +1916,14 @@
       setInterval(loadAnalysis, 30000);
     }
 
-    document.addEventListener('DOMContentLoaded', bootVenbot);
+    let venbotBootStarted = false;
+    function startVenbotOnce() {
+      if (venbotBootStarted) return;
+      venbotBootStarted = true;
+      bootVenbot();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startVenbotOnce, { once: true });
+    else startVenbotOnce();
   </script>
 
 <script>
