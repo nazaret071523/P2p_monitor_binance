@@ -63,6 +63,10 @@ async def _safe_callback_answer(update: Update, *args, **kwargs):
     query = getattr(update, "callback_query", None)
     if not query:
         return False
+    # El dispatcher puede confirmar el mismo callback antes de entrar en
+    # el comando concreto. Evita una segunda llamada a answerCallbackQuery.
+    if getattr(update, "_venbot_callback_acknowledged", False):
+        return True
     try:
         await query.answer(*args, **kwargs)
         return True
@@ -3747,6 +3751,12 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Confirmar inmediatamente evita que Telegram marque el botón como
     # expirado mientras una consulta de base de datos o Quant tarda.
     await _safe_callback_answer(update)
+    # Marca el update para que los handlers llamados debajo no vuelvan a
+    # responder el mismo callback y no generen 400 de Telegram.
+    try:
+        setattr(update, "_venbot_callback_acknowledged", True)
+    except Exception:
+        pass
     if data == "cmd_estado":
         await cmd_estado(update, context)
     elif data == "cmd_rendimiento":
