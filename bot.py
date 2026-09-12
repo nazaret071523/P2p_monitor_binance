@@ -3309,6 +3309,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
         "tendencia": q.get("tendencia"),
         "detalle_tendencia": q.get("detalle_tendencia"),
         "manipulacion": manipulacion,
+        "proyecciones_horizontes": q.get("proyecciones_horizontes", {}),
         "proyeccion_7h": {
             "compra": q.get("pred_compra"),
             "venta": q.get("pred_venta"),
