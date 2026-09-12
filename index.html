@@ -1409,10 +1409,11 @@
       const change = Number(q.cambio_pct);
       const sign = Number.isFinite(change) && change >= 0 ? '+' : '';
       const horizonLabel = selectedP2PHorizon.toUpperCase();
+      const ownHorizonText = value => String(value || '').replace(/\b7H\b/gi, horizonLabel).replace(/\b7 horas?\b/gi, `${selectedP2PHorizon.replace('h','')} horas`);
       const changeClass = Number.isFinite(change) && change < 0 ? 'text-rose-300' : 'text-emerald-300';
       const confidence = q.confianza === null || q.confianza === undefined ? 'n/d' : q.confianza;
       detail.innerHTML = `
-        <div class="rounded-xl border border-slate-800 bg-slate-950/55 p-3 space-y-3">
+        <div class="space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div><span class="block text-[9px] uppercase tracking-widest text-slate-500 font-bold">Horizonte seleccionado</span><strong class="text-sm text-slate-100">${horizonLabel} · Proyección independiente</strong></div>
             <span class="text-[10px] font-black ${changeClass}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span>
@@ -1425,7 +1426,7 @@
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]">
             <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Rango estimado</span><strong class="block mt-1 text-slate-200">${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs</strong></div>
-            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${q.detalle || 'Escenario calculado con datos reales recientes.'}</strong></div>
+            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${ownHorizonText(q.detalle || 'Escenario calculado con datos reales recientes.')}</strong></div>
           </div>
         </div>`;
     }
@@ -1447,7 +1448,7 @@
           m2:[`VENTA EST. ${activeLabel}`, activeProjection.venta === null || activeProjection.venta === undefined ? 'n/d' : `${money(activeProjection.venta)} Bs`],
           m3:['TENDENCIA', a.tendencia || '--'],
           m4:['CALIDAD SEÑAL', `${activeProjection.confianza ?? activeProjection.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${ownHorizonText(a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.')} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
