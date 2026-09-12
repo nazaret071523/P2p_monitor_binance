@@ -2380,6 +2380,133 @@ def backtest_quant_7h(banco_filtro="GENERAL", max_evaluaciones=24, spacing_minut
         }
 
 
+def _buscar_futuro_series(series, objetivo, tolerance_minutes=20):
+    limite = objetivo + timedelta(minutes=int(tolerance_minutes))
+    for dt, mid, compra, venta in series:
+        if dt < objetivo:
+            continue
+        if dt > limite:
+            break
+        return {"fecha": dt, "mid": float(mid), "compra": float(compra), "venta": float(venta)}
+    return None
+
+
+def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, spacing_minutes=360):
+    """Backtest de precio completo 1H/3H/7H/24H contra muestras P2P reales.
+
+    Cada origen solo ve historia anterior o igual al origen. Las cuatro
+    predicciones se generan con el mismo helper productivo de escenarios y
+    luego se comparan con la primera muestra real dentro de la tolerancia.
+    """
+    horizons = (("1h", 1.0), ("3h", 3.0), ("7h", 7.0), ("24h", 24.0))
+    try:
+        max_evaluaciones = max(1, min(int(max_evaluaciones), 100))
+        spacing_minutes = max(60, min(int(spacing_minutes), 24 * 60))
+        spacing = timedelta(minutes=spacing_minutes)
+        prehistory = timedelta(hours=72)
+        filas = obtener_estadisticas_db(limit=100000, banco=banco_filtro)
+        series = []
+        for c, v, _, fecha in filas:
+            try:
+                c, v = float(c), float(v)
+                if c <= 0 or v <= 0 or not fecha:
+                    continue
+                dt = fecha.astimezone(VET) if getattr(fecha, "tzinfo", None) else VET.localize(fecha)
+                series.append((dt, (c + v) / 2.0, c, v))
+            except Exception:
+                continue
+        series.sort(key=lambda x: x[0])
+        coverage_hours = ((series[-1][0] - series[0][0]).total_seconds() / 3600.0) if len(series) > 1 else 0.0
+        required_span = 72 + 24
+        if coverage_hours < required_span:
+            return {"status":"insufficient_history","evaluations":0,"history_coverage_hours":round(coverage_hours,2),"required_history_hours":required_span,"message":f"Se necesitan al menos {required_span} horas de cobertura para evaluar 24H con 72H de historia previa."}
+
+        last_origin = series[-1][0] - timedelta(hours=24)
+        first_origin = series[0][0] + prehistory
+        eligible = [i for i,x in enumerate(series) if first_origin <= x[0] <= last_origin]
+        if not eligible:
+            return {"status":"insufficient_history","evaluations":0,"history_coverage_hours":round(coverage_hours,2),"message":"No hay ventanas completas para los cuatro horizontes."}
+
+        selected=[]
+        cursor=eligible[-1]
+        while cursor is not None and len(selected)<max_evaluaciones:
+            selected.append(cursor)
+            cutoff=series[cursor][0]-spacing
+            cursor=next((j for j in reversed(eligible) if series[j][0] <= cutoff), None)
+        selected.reverse()
+
+        metrics={h: {"samples":0,"mae":[],"mape":[],"sqe":[],"bias":[],"direction":[],"coverage":[],"rows":[]} for h,_ in horizons}
+        evaluated_origins=0
+        for i in selected:
+            origin_t, origin_mid, origin_c, origin_v = series[i]
+            hist=[x for x in series[:i+1] if x[0] >= origin_t-prehistory]
+            if len(hist) < 30:
+                continue
+            fechas=[x[0] for x in hist]
+            mids=np.asarray([x[1] for x in hist], dtype=float)
+            compras=np.asarray([x[2] for x in hist], dtype=float)
+            ventas=np.asarray([x[3] for x in hist], dtype=float)
+            returns=np.diff(mids)/mids[:-1]*100.0 if len(mids)>2 else np.array([])
+            vol=float(np.std(returns,ddof=1)) if len(returns)>1 else 0.0
+            typical=float(np.median(np.abs(returns))) if len(returns) else 0.0
+            spread_actual=max(0.01, origin_v-origin_c)
+            # El régimen se calcula solo con historia previa al origen.
+            recent_idx=[j for j,dt in enumerate(fechas) if dt >= origin_t-timedelta(hours=7)]
+            recent=mids[recent_idx] if recent_idx else mids[-120:]
+            rango=((float(np.max(recent))-float(np.min(recent)))/origin_mid*100.0) if len(recent) else 0.0
+            drift_7=0.0
+            if len(recent)>=3 and recent[0]>0:
+                drift_7=(float(recent[-1])-float(recent[0]))/float(recent[0])*100.0/7.0
+            r2=0.0
+            if len(recent)>=3:
+                x=np.arange(len(recent),dtype=float)
+                try:
+                    slope,intercept=np.polyfit(x,recent,1); yhat=slope*x+intercept; ssr=float(np.sum((recent-yhat)**2)); sst=float(np.sum((recent-np.mean(recent))**2)); r2=max(0.0,min(1.0,1-ssr/sst)) if sst>0 else 0.0
+                except Exception: pass
+            regime=clasificar_regimen_quant(returns,drift_7,rango,r2).get("regimen","TRANSICION")
+            proj=_proyecciones_multihorizonte_quant(fechas,mids,compras,ventas,origin_mid,spread_actual,vol,typical,{})
+            any_eval=False
+            for label,hours in horizons:
+                pred=proj.get(label) or {}
+                central=float(pred.get("midpoint") or 0)
+                low=float(pred.get("rango_mid_min") or 0)
+                high=float(pred.get("rango_mid_max") or 0)
+                if central<=0: continue
+                future=_buscar_futuro_series(series,origin_t+timedelta(hours=hours),20)
+                if not future: continue
+                actual=float(future["mid"])
+                err=actual-central
+                ape=abs(err)/actual*100.0 if actual else None
+                sq=err*err
+                pmove=central-origin_mid; amove=actual-origin_mid
+                direction=None
+                if abs(pmove)>1e-12 and abs(amove)>1e-12: direction=(pmove*amove)>0
+                elif abs(pmove)<=1e-12 and abs(amove)<=1e-12: direction=True
+                inside=(low<=actual<=high) if low>0 and high>=low else None
+                m=metrics[label]
+                m["samples"]+=1; m["mae"].append(abs(err)); m["mape"].append(ape if ape is not None else 0.0); m["sqe"].append(sq); m["bias"].append(err)
+                if direction is not None: m["direction"].append(bool(direction))
+                if inside is not None: m["coverage"].append(bool(inside))
+                m["rows"].append({"origin":origin_t.isoformat(),"target":(origin_t+timedelta(hours=hours)).isoformat(),"observed_at":future["fecha"].isoformat(),"predicted_mid":round(central,4),"forecast_low":round(low,4),"forecast_high":round(high,4),"actual_mid":round(actual,4),"error_ves":round(err,4),"error_pct":round(ape,4) if ape is not None else None,"direction_correct":direction,"interval_covered":inside,"regime":regime})
+                any_eval=True
+            if any_eval: evaluated_origins+=1
+
+        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(coverage_hours,2),"history_required_hours":72,"spacing_minutes":spacing_minutes,"future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"horizons":{}}
+        for label,_ in horizons:
+            m=metrics[label]; n=m["samples"]
+            out["horizons"][label]={"evaluated":n,"mae_ves":round(float(np.mean(m["mae"])),4) if n else None,"mape_pct":round(float(np.mean(m["mape"])),4) if n else None,"rmse_ves":round(float(np.sqrt(np.mean(m["sqe"]))),4) if n else None,"bias_ves":round(float(np.mean(m["bias"])),4) if n else None,"median_abs_error_ves":round(float(np.median(m["mae"])),4) if n else None,"direction_accuracy_pct":round(sum(m["direction"])/len(m["direction"])*100,2) if m["direction"] else None,"direction_evaluated":len(m["direction"]),"interval_coverage_pct":round(sum(m["coverage"])/len(m["coverage"])*100,2) if m["coverage"] else None,"interval_evaluated":len(m["coverage"]),"recent":m["rows"][-5:]}
+            regimes={}
+            for row in m["rows"]:
+                regimes.setdefault(row["regime"],{"n":0,"abs_error":[],"direction":[],"coverage":[]}); r=regimes[row["regime"]]; r["n"]+=1; r["abs_error"].append(abs(row["error_ves"]));
+                if row["direction_correct"] is not None:r["direction"].append(row["direction_correct"])
+                if row["interval_covered"] is not None:r["coverage"].append(row["interval_covered"])
+            out["horizons"][label]["by_regime"]={reg:{"evaluated":r["n"],"mae_ves":round(float(np.mean(r["abs_error"])),4) if r["abs_error"] else None,"direction_accuracy_pct":round(sum(r["direction"])/len(r["direction"])*100,2) if r["direction"] else None,"interval_coverage_pct":round(sum(r["coverage"])/len(r["coverage"])*100,2) if r["coverage"] else None} for reg,r in regimes.items()}
+        return out
+    except Exception as e:
+        logger.exception("Backtest Quant multihorizonte falló: %s", e)
+        return {"status":"error","evaluations":0,"message":"Backtest multihorizonte temporalmente no disponible"}
+
+
 def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual, spread_actual, volatilidad_global, abs_typical_global, calibracion_24h):
     """Genera escenarios P2P independientes para 1H/3H/7H/24H.
 
@@ -2523,7 +2650,7 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     no una garantía: combina momentum multi-ventana, una regresión temporal reciente,
     rango/volatilidad y una corrección moderada hacia la mediana del mercado.
     """
-    filas = obtener_estadisticas_db(limit=2500, banco=banco_filtro)
+    filas = obtener_estadisticas_db(limit=30000, banco=banco_filtro)
     total_muestras = len(filas)
     calidad_datos = evaluar_calidad_datos_quant(filas)
 
@@ -4679,11 +4806,10 @@ def obtener_quant_backtest(
     return {
         "ok": True,
         "bank": banco,
-        "backtest_7h": backtest_quant_7h(
-            banco,
-            max_evaluaciones,
-            spacing_minutes,
+        "backtest_multihorizonte": backtest_quant_multihorizonte(
+            banco, max_evaluaciones, spacing_minutes,
         ),
+        "backtest_7h": backtest_quant_7h(banco, max_evaluaciones, spacing_minutes),
     }
 
 
