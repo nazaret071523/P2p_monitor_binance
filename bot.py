@@ -5,6 +5,7 @@ import logging
 import time
 import json
 import threading
+from bisect import bisect_left, bisect_right
 import secrets
 import hashlib
 import base64
@@ -2423,6 +2424,7 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
             except Exception:
                 continue
         series.sort(key=lambda x: x[0])
+        times = [x[0] for x in series]
         coverage_hours = ((series[-1][0] - series[0][0]).total_seconds() / 3600.0) if len(series) > 1 else 0.0
         required_span = 72 + 24
         if coverage_hours < required_span:
@@ -2434,19 +2436,22 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
         if not eligible:
             return {"status":"insufficient_history","evaluations":0,"history_coverage_hours":round(coverage_hours,2),"message":"No hay ventanas completas para los cuatro horizontes."}
 
+        eligible_times=[times[i] for i in eligible]
         selected=[]
-        cursor=eligible[-1]
-        while cursor is not None and len(selected)<max_evaluaciones:
+        pos=len(eligible)-1
+        while pos >= 0 and len(selected)<max_evaluaciones:
+            cursor=eligible[pos]
             selected.append(cursor)
-            cutoff=series[cursor][0]-spacing
-            cursor=next((j for j in reversed(eligible) if series[j][0] <= cutoff), None)
+            cutoff=times[cursor]-spacing
+            pos=bisect_right(eligible_times, cutoff, 0, pos+1)-1
         selected.reverse()
 
         metrics={h: {"samples":0,"mae":[],"mape":[],"sqe":[],"bias":[],"direction":[],"coverage":[],"rows":[]} for h,_ in horizons}
         evaluated_origins=0
         for i in selected:
             origin_t, origin_mid, origin_c, origin_v = series[i]
-            hist=[x for x in series[:i+1] if x[0] >= origin_t-prehistory]
+            hist_start=bisect_left(times, origin_t-prehistory, 0, i+1)
+            hist=series[hist_start:i+1]
             if len(hist) < 30:
                 continue
             fechas=[x[0] for x in hist]
@@ -2479,8 +2484,10 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
                 low=float(pred.get("rango_mid_min") or 0)
                 high=float(pred.get("rango_mid_max") or 0)
                 if central<=0: continue
-                future=_buscar_futuro_series(series,origin_t+timedelta(hours=hours),20)
-                if not future: continue
+                target_t=origin_t+timedelta(hours=hours)
+                future_idx=bisect_left(times, target_t, i+1)
+                if future_idx >= len(series) or times[future_idx] > target_t+timedelta(minutes=20): continue
+                future={"fecha":times[future_idx],"mid":float(series[future_idx][1]),"compra":float(series[future_idx][2]),"venta":float(series[future_idx][3])}
                 actual=float(future["mid"])
                 err=actual-central
                 ape=abs(err)/actual*100.0 if actual else None
@@ -4917,13 +4924,19 @@ def obtener_quant_backtest(
     banco = (banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         banco = "GENERAL"
+    logger.info(
+        "Backtest Quant multihorizonte iniciado: banco=%s evaluaciones=%s spacing=%s min",
+        banco, max_evaluaciones, spacing_minutes,
+    )
+    result = backtest_quant_multihorizonte(banco, max_evaluaciones, spacing_minutes)
+    logger.info(
+        "Backtest Quant multihorizonte finalizado: banco=%s status=%s evaluaciones=%s",
+        banco, result.get("status"), result.get("evaluations"),
+    )
     return {
         "ok": True,
         "bank": banco,
-        "backtest_multihorizonte": backtest_quant_multihorizonte(
-            banco, max_evaluaciones, spacing_minutes,
-        ),
-        "backtest_7h": backtest_quant_7h(banco, max_evaluaciones, spacing_minutes),
+        "backtest_multihorizonte": result,
     }
 
 
