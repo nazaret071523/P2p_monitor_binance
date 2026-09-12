@@ -924,33 +924,21 @@
     function renderQuantBacktest(data) {
       const box=document.getElementById('quant-backtest-result');
       if(!box) return;
-      const b=data?.backtest_7h || {};
+      const b=data?.backtest_multihorizonte || {};
       if(data?.ok !== true) { box.classList.add('hidden'); return; }
       if(b.status !== 'ok') {
         box.classList.remove('hidden');
         box.innerHTML=`<div class="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[10px] text-amber-200">${String(b.message || 'Histórico insuficiente para ejecutar el backtest.')}</div>`;
         return;
       }
-      const recent=Array.isArray(b.recent)?b.recent:[];
+      const hs=b.horizons||{};
+      const labels=[['1h','1H'],['3h','3H'],['7h','7H'],['24h','24H']];
+      const cards=labels.map(([k,label])=>{const h=hs[k]||{}; return `<div class="rounded-xl bg-slate-950/55 border border-slate-800 p-3 space-y-2"><div class="flex items-center justify-between"><span class="text-[10px] font-black text-slate-100">${label}</span><span class="text-[9px] text-slate-500">${fmtBacktestNumber(h.evaluated)} eval.</span></div><div class="grid grid-cols-2 gap-2 text-[9px]"><div><span class="text-slate-600 block">MAE</span><span class="text-slate-200">${fmtBacktestNumber(h.mae_ves,' Bs')}</span></div><div><span class="text-slate-600 block">MAPE</span><span class="text-slate-200">${fmtBacktestNumber(h.mape_pct,'%')}</span></div><div><span class="text-slate-600 block">RMSE</span><span class="text-slate-200">${fmtBacktestNumber(h.rmse_ves,' Bs')}</span></div><div><span class="text-slate-600 block">Bias</span><span class="text-slate-200">${fmtBacktestNumber(h.bias_ves,' Bs')}</span></div><div><span class="text-slate-600 block">Dirección</span><span class="text-slate-200">${fmtBacktestNumber(h.direction_accuracy_pct,'%')}</span></div><div><span class="text-slate-600 block">Cobertura rango</span><span class="text-slate-200">${fmtBacktestNumber(h.interval_coverage_pct,'%')}</span></div></div></div>`;}).join('');
+      const recent=[]; labels.forEach(([k,label])=>(hs[k]?.recent||[]).forEach(r=>recent.push({...r,label})));
+      recent.sort((a,b)=>new Date(a.target)-new Date(b.target));
       const last=recent.length?recent[recent.length-1]:null;
       box.classList.remove('hidden');
-      box.innerHTML=`
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Histórico</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.history_coverage_hours,' h')}</strong></div>
-          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Evaluaciones</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.evaluations)}</strong></div>
-          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Dirección</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.direction_accuracy_pct,'%')}</strong></div>
-          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Error señal</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.mean_abs_signal_error_pct,'%')}</strong></div>
-        </div>
-        <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-3">
-          <div class="flex items-center justify-between gap-2"><span class="text-[9px] font-black uppercase tracking-wider text-slate-500">Última evaluación disponible</span><span class="text-[9px] text-slate-600">7H</span></div>
-          ${last ? `<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-            <div><span class="text-[9px] text-slate-600 block">Origen</span><span class="text-[10px] text-slate-200">${new Date(last.origin).toLocaleString('es-VE')}</span></div>
-            <div><span class="text-[9px] text-slate-600 block">Objetivo</span><span class="text-[10px] text-slate-200">${new Date(last.target).toLocaleString('es-VE')}</span></div>
-            <div><span class="text-[9px] text-slate-600 block">Señal</span><span class="text-[10px] text-slate-200">${fmtBacktestNumber(last.signal_pct,'%')}</span></div>
-            <div><span class="text-[9px] text-slate-600 block">Real</span><span class="text-[10px] text-slate-200">${fmtBacktestNumber(last.actual_change_pct,'%')}</span></div>
-          </div>` : '<div class="text-[10px] text-slate-500 mt-2">Sin evaluaciones recientes.</div>'}
-        </div>
-        <p class="text-[9px] text-slate-600">Este panel consulta el endpoint protegido con tu sesión. El backtest expuesto actualmente corresponde a la validación temporal 7H; las métricas completas 1H/3H/7H/24H se incorporarán en el siguiente avance del Motor Quant.</p>`;
+      box.innerHTML=`<div class="grid grid-cols-2 md:grid-cols-4 gap-2"><div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Histórico</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.history_coverage_hours,' h')}</strong></div><div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Orígenes evaluados</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.evaluations)}</strong></div><div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Separación</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.spacing_minutes,' min')}</strong></div><div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Solapamiento</span><strong class="text-xs text-slate-100 block mt-1">${b.future_windows_overlap?'Sí':'No'}</strong></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-2">${cards}</div>${last?`<div class="rounded-xl bg-slate-950/55 border border-slate-800 p-3"><div class="text-[9px] font-black uppercase tracking-wider text-slate-500">Última evaluación disponible · ${last.label}</div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-[9px]"><div><span class="text-slate-600 block">Generado/origen</span><span class="text-slate-200">${new Date(last.origin).toLocaleString('es-VE')}</span></div><div><span class="text-slate-600 block">Objetivo</span><span class="text-slate-200">${new Date(last.target).toLocaleString('es-VE')}</span></div><div><span class="text-slate-600 block">Predicción</span><span class="text-slate-200">${fmtBacktestNumber(last.predicted_mid,' Bs')}</span></div><div><span class="text-slate-600 block">Real</span><span class="text-slate-200">${fmtBacktestNumber(last.actual_mid,' Bs')}</span></div></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-[9px]"><div><span class="text-slate-600 block">Error</span><span class="text-slate-200">${fmtBacktestNumber(last.error_ves,' Bs')}</span></div><div><span class="text-slate-600 block">Error %</span><span class="text-slate-200">${fmtBacktestNumber(last.error_pct,'%')}</span></div><div><span class="text-slate-600 block">Dirección</span><span class="text-slate-200">${last.direction_correct===null?'n/d':(last.direction_correct?'Acertó':'Falló')}</span></div><div><span class="text-slate-600 block">Rango</span><span class="text-slate-200">${last.interval_covered===null?'n/d':(last.interval_covered?'Dentro':'Fuera')}</span></div></div></div>`:''}<p class="text-[9px] text-slate-600">Backtest de precio completo con historia anterior al origen, sin usar datos futuros. Las horas mostradas corresponden a la hora de origen y al objetivo de cada horizonte.</p>`;
     }
 
     async function runQuantBacktest() {
@@ -961,7 +949,7 @@
       if(btn){btn.disabled=true;btn.textContent='Ejecutando...';}
       if(status) status.textContent='Consultando histórico y ejecutando backtest...';
       try {
-        const r=await fetch(`${API_BASE_URL}/api/quant/backtest?banco=GENERAL&max_evaluaciones=24&spacing_minutes=60&t=${Date.now()}`,{method:'GET',cache:'no-store',headers:{'Accept':'application/json','X-Venbot-Session':token}});
+        const r=await fetch(`${API_BASE_URL}/api/quant/backtest?banco=GENERAL&max_evaluaciones=24&spacing_minutes=360&t=${Date.now()}`,{method:'GET',cache:'no-store',headers:{'Accept':'application/json','X-Venbot-Session':token}});
         let d={}; try{d=await r.json();}catch(e){}
         if(!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
         renderQuantBacktest(d);
