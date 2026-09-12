@@ -169,6 +169,12 @@ _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
 _P2P_BANK_AD_CACHE = {}
 collector_task = None
 
+# Backtest Quant: ejecución asíncrona para no mantener abierta la petición HTTP.
+QUANT_BACKTEST_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+QUANT_BACKTEST_JOBS = {}
+QUANT_BACKTEST_LOCK = threading.Lock()
+QUANT_BACKTEST_JOB_TTL_SECONDS = max(900, int(os.getenv("QUANT_BACKTEST_JOB_TTL_SECONDS", "3600")))
+
 # Sesiones activas: solo se conserva un identificador efímero enviado por el cliente
 # y su último heartbeat. No se guardan IP, correo ni otros datos personales.
 ONLINE_SESSIONS = {}
@@ -2412,7 +2418,15 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
         spacing_minutes = max(60, min(int(spacing_minutes), 24 * 60))
         spacing = timedelta(minutes=spacing_minutes)
         prehistory = timedelta(hours=72)
-        filas = obtener_estadisticas_db(limit=100000, banco=banco_filtro)
+        # Solo necesitamos 72H de historia previa + 24H de futuro.
+        # Cargar una ventana acotada evita recorrer innecesariamente toda la tabla.
+        query_now = datetime.now(VET)
+        filas = obtener_estadisticas_db(
+            limit=50000,
+            banco=banco_filtro,
+            desde=query_now - timedelta(hours=120),
+        )
+        logger.info("Backtest histórico cargado: banco=%s muestras=%s", banco_filtro, len(filas))
         series = []
         for c, v, _, fecha in filas:
             try:
@@ -2448,8 +2462,9 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
 
         metrics={h: {"samples":0,"mae":[],"mape":[],"sqe":[],"bias":[],"direction":[],"coverage":[],"rows":[]} for h,_ in horizons}
         evaluated_origins=0
-        for i in selected:
+        for seq, i in enumerate(selected, 1):
             origin_t, origin_mid, origin_c, origin_v = series[i]
+            logger.info("Backtest Quant origen %s/%s: %s", seq, len(selected), origin_t.isoformat())
             hist_start=bisect_left(times, origin_t-prehistory, 0, i+1)
             hist=series[hist_start:i+1]
             if len(hist) < 30:
@@ -2637,17 +2652,26 @@ def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual
 
     def _series_window(hours):
         cutoff = fechas[-1] - timedelta(hours=hours)
-        idx = [i for i, dt in enumerate(fechas) if dt >= cutoff]
+        start = bisect_left(fechas, cutoff)
+        idx = list(range(start, len(fechas)))
         if len(idx) < 3:
-            idx = list(range(max(0, len(fechas) - max(3, min(len(fechas), int(hours * 12)))), len(fechas)))
+            start = max(0, len(fechas) - max(3, min(len(fechas), int(hours * 12))))
+            idx = list(range(start, len(fechas)))
         return idx
 
     def _change(hours, idx):
         target = fechas[-1] - timedelta(hours=hours)
-        candidates = [i for i in idx if abs((fechas[i] - target).total_seconds()) <= max(900.0, hours * 3600.0 * 0.35)]
+        left = bisect_left(fechas, target, idx[0], idx[-1] + 1)
+        candidates = []
+        if left < len(fechas):
+            candidates.append(left)
+        if left - 1 >= idx[0]:
+            candidates.append(left - 1)
         if not candidates:
             return None
         j = min(candidates, key=lambda i: abs((fechas[i] - target).total_seconds()))
+        if abs((fechas[j] - target).total_seconds()) > max(900.0, hours * 3600.0 * 0.35):
+            return None
         base = float(mids[j])
         return ((mid_actual - base) / base * 100.0) if base > 0 else None
 
@@ -4918,26 +4942,97 @@ def obtener_quant_backtest(
     request: Request,
     banco: str = Query("GENERAL"),
     max_evaluaciones: int = Query(24, ge=1, le=100),
-    spacing_minutes: int = Query(60, ge=15, le=1440),
+    spacing_minutes: int = Query(360, ge=15, le=1440),
 ):
-    _require_plan_user(request, "VIP")
+    user = _require_plan_user(request, "VIP")
     banco = (banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         banco = "GENERAL"
-    logger.info(
-        "Backtest Quant multihorizonte iniciado: banco=%s evaluaciones=%s spacing=%s min",
-        banco, max_evaluaciones, spacing_minutes,
-    )
-    result = backtest_quant_multihorizonte(banco, max_evaluaciones, spacing_minutes)
-    logger.info(
-        "Backtest Quant multihorizonte finalizado: banco=%s status=%s evaluaciones=%s",
-        banco, result.get("status"), result.get("evaluations"),
-    )
+
+    now = time.time()
+    with QUANT_BACKTEST_LOCK:
+        # Limpieza de trabajos terminados/antiguos.
+        for jid, job in list(QUANT_BACKTEST_JOBS.items()):
+            if now - float(job.get("created_at", now)) > QUANT_BACKTEST_JOB_TTL_SECONDS:
+                QUANT_BACKTEST_JOBS.pop(jid, None)
+
+        # No iniciar otro backtest pesado mientras exista uno en ejecución.
+        for jid, job in QUANT_BACKTEST_JOBS.items():
+            if job.get("status") in {"queued", "running"} and job.get("external_user_id") == user["external_user_id"]:
+                return {"ok": True, "status": job.get("status"), "job_id": jid, "message": "Ya existe un backtest en ejecución para esta sesión."}
+
+        job_id = uuid.uuid4().hex
+        QUANT_BACKTEST_JOBS[job_id] = {
+            "status": "queued",
+            "created_at": now,
+            "updated_at": now,
+            "external_user_id": user["external_user_id"],
+            "bank": banco,
+            "max_evaluaciones": max_evaluaciones,
+            "spacing_minutes": spacing_minutes,
+            "result": None,
+            "error": None,
+        }
+
+    def _run_job():
+        with QUANT_BACKTEST_LOCK:
+            job = QUANT_BACKTEST_JOBS.get(job_id)
+            if not job:
+                return
+            job["status"] = "running"
+            job["updated_at"] = time.time()
+        logger.info(
+            "Backtest Quant multihorizonte iniciado: banco=%s evaluaciones=%s spacing=%s min job=%s",
+            banco, max_evaluaciones, spacing_minutes, job_id,
+        )
+        try:
+            result = backtest_quant_multihorizonte(banco, max_evaluaciones, spacing_minutes)
+            with QUANT_BACKTEST_LOCK:
+                job = QUANT_BACKTEST_JOBS.get(job_id)
+                if job:
+                    job["status"] = "completed" if result.get("status") == "ok" else "failed"
+                    job["result"] = result
+                    job["updated_at"] = time.time()
+            logger.info(
+                "Backtest Quant multihorizonte finalizado: banco=%s status=%s evaluaciones=%s job=%s",
+                banco, result.get("status"), result.get("evaluations"), job_id,
+            )
+        except Exception as exc:
+            logger.exception("Backtest Quant job %s falló: %s", job_id, exc)
+            with QUANT_BACKTEST_LOCK:
+                job = QUANT_BACKTEST_JOBS.get(job_id)
+                if job:
+                    job["status"] = "failed"
+                    job["error"] = "Backtest multihorizonte temporalmente no disponible"
+                    job["updated_at"] = time.time()
+
+    QUANT_BACKTEST_EXECUTOR.submit(_run_job)
+    logger.info("Backtest Quant encolado: banco=%s job=%s", banco, job_id)
     return {
         "ok": True,
+        "status": "queued",
+        "job_id": job_id,
         "bank": banco,
-        "backtest_multihorizonte": result,
+        "message": "Backtest encolado. Consulta el estado con el mismo job_id.",
     }
+
+
+@app.get("/api/quant/backtest/status")
+def obtener_quant_backtest_status(request: Request, job_id: str = Query(..., min_length=16, max_length=64)):
+    user = _require_plan_user(request, "VIP")
+    with QUANT_BACKTEST_LOCK:
+        job = QUANT_BACKTEST_JOBS.get(job_id)
+        if not job or job.get("external_user_id") != user["external_user_id"]:
+            raise HTTPException(status_code=404, detail="backtest_job_not_found")
+        return {
+            "ok": True,
+            "status": job.get("status"),
+            "job_id": job_id,
+            "bank": job.get("bank"),
+            "updated_at": job.get("updated_at"),
+            "result": job.get("result"),
+            "error": job.get("error"),
+        }
 
 
 @app.get("/api/predictions/performance")
