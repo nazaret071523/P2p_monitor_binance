@@ -600,36 +600,59 @@
         </div>
       </section>
 
-      <section id="sec-gemini" class="relative glass-card p-4 md:p-5 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
-        <div class="rounded-2xl border border-slate-800/80 bg-slate-950/35 p-4 space-y-3">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div class="flex items-center gap-3 min-w-0">
-              <span class="venbot-neural shrink-0" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><circle class="neural-halo" cx="32" cy="32" r="29"/><circle class="neural-halo2" cx="32" cy="32" r="25"/><ellipse class="neural-orbit" cx="32" cy="32" rx="29" ry="12"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="25" ry="9"/><circle class="neural-core-shell" cx="32" cy="32" r="16"/><circle class="neural-core" cx="32" cy="32" r="13"/><path class="neural-v" d="M21.5 22h6.5l4 13.5L36 22h6.5l-7.2 21h-6.6z"/><path class="neural-scan" d="M21 45h22"/><circle class="neural-node" cx="32" cy="12.5" r="1.8"/><circle class="neural-node" cx="49" cy="25" r="1.5"/><circle class="neural-node" cx="44" cy="47" r="1.6"/><circle class="neural-node" cx="19" cy="47" r="1.4"/><circle class="neural-node" cx="15" cy="25" r="1.3"/><circle class="neural-particle" cx="53" cy="38" r="1.1"/><circle class="neural-particle" cx="11" cy="38" r=".9"/></svg></span>
-              <div class="min-w-0"><h3 class="text-sm md:text-base font-black text-slate-100">Venbot AI · Multimercado</h3><p class="text-[11px] md:text-xs text-slate-400 mt-1">Copiloto conversacional · IA general + Motor P2P + Motor Spot.</p></div>
+      <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-lg">
+              <i class="fa-solid fa-brain text-emerald-400"></i>
             </div>
-            <span class="text-[10px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-full uppercase">Mercado + preguntas generales</span>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI · Multimercado</h3>
+                <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Mercado + preguntas generales</span>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-0.5">Copiloto conversacional · IA general + Motor P2P + Motor Spot.</p>
+            </div>
           </div>
-          <button type="button" onclick="handleAIClick()" class="w-full focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-sm font-bold px-4 py-3 rounded-xl transition flex items-center justify-between"><span>Abrir IA <i class="fa-solid fa-wand-magic-sparkles ml-1"></i></span><i class="fa-solid fa-chevron-right"></i></button>
+          <button type="button" onclick="handleAIClick()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
+            Abrir IA <i class="fa-solid fa-wand-magic-sparkles"></i>
+          </button>
         </div>
 
-        <div class="rounded-2xl border border-slate-800/80 bg-slate-950/30 p-3 md:p-4 space-y-3">
-          <div class="flex items-start justify-between gap-3"><div><h3 class="text-sm md:text-base font-black text-slate-100">Análisis Multihorizonte</h3><p class="text-[11px] text-slate-400 mt-1">Selecciona un horizonte para ver el análisis y métricas estimadas.</p></div><span id="ai-badge-mode" class="text-[9px] font-bold text-emerald-400 uppercase text-right">BINANCE P2P ACTIVO</span></div>
-          <div class="grid grid-cols-4 gap-1.5 md:gap-2" role="group" aria-label="Horizonte de proyección P2P">
-            <button type="button" data-p2p-horizon="1h" onclick="selectP2PHorizon('1h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">1H</button>
-            <button type="button" data-p2p-horizon="3h" onclick="selectP2PHorizon('3h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">3H</button>
-            <button type="button" data-p2p-horizon="7h" onclick="selectP2PHorizon('7h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-300" aria-pressed="true">7H</button>
-            <button type="button" data-p2p-horizon="24h" onclick="selectP2PHorizon('24h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">24H</button>
+        <div class="space-y-3">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
+              <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-bolt text-amber-400"></i> Proyección</button>
+              <button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-chart-pie text-sky-400"></i> Flujo P2P</button>
+              <button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-bullseye text-purple-400"></i> Niveles P2P</button>
+            </div>
+            <span id="ai-badge-mode" class="text-[9px] font-bold text-emerald-400 uppercase">BINANCE P2P ACTIVO</span>
           </div>
-          <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 md:p-4 space-y-3">
-            <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 id="ai-title-display" class="text-sm md:text-base font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4><p id="gemini-insight-text" class="text-xs text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p></div><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span></div></div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-              <div class="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3"><span id="m1-title" class="text-[10px] font-bold text-emerald-300 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-              <div class="bg-sky-500/10 border border-sky-500/25 rounded-xl p-3"><span id="m2-title" class="text-[10px] font-bold text-sky-300 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-              <div class="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3"><span id="m3-title" class="text-[10px] font-bold text-amber-300 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-              <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
+
+          <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1" role="group" aria-label="Horizonte de proyección P2P">
+            <button type="button" data-p2p-horizon="1h" onclick="selectP2PHorizon('1h')" class="p2p-horizon-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400">1H</button>
+            <button type="button" data-p2p-horizon="3h" onclick="selectP2PHorizon('3h')" class="p2p-horizon-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400">3H</button>
+            <button type="button" data-p2p-horizon="7h" onclick="selectP2PHorizon('7h')" class="p2p-horizon-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-emerald-300 bg-emerald-500/10">7H</button>
+            <button type="button" data-p2p-horizon="24h" onclick="selectP2PHorizon('24h')" class="p2p-horizon-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400">24H</button>
+          </div>
+
+          <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
+            <span class="venbot-neural shrink-0 mt-0.5" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><circle class="neural-halo" cx="32" cy="32" r="29"/><circle class="neural-halo2" cx="32" cy="32" r="25"/><ellipse class="neural-orbit" cx="32" cy="32" rx="29" ry="12"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="25" ry="9"/><circle class="neural-core-shell" cx="32" cy="32" r="16"/><circle class="neural-core" cx="32" cy="32" r="13"/><path class="neural-v" d="M21.5 22h6.5l4 13.5L36 22h6.5l-7.2 21h-6.6z"/><path class="neural-scan" d="M21 45h22"/><circle class="neural-node" cx="32" cy="12.5" r="1.8"/><circle class="neural-node" cx="49" cy="25" r="1.5"/><circle class="neural-node" cx="44" cy="47" r="1.6"/><circle class="neural-node" cx="19" cy="47" r="1.4"/><circle class="neural-node" cx="15" cy="25" r="1.3"/><circle class="neural-particle" cx="53" cy="38" r="1.1"/><circle class="neural-particle" cx="11" cy="38" r=".9"/></svg></span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <h4 id="ai-title-display" class="text-xs font-bold text-slate-100">Proyección Operativa Binance P2P</h4>
+                <span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> En línea</span>
+              </div>
+              <p id="gemini-insight-text" class="text-xs text-slate-300 mt-1 leading-relaxed font-normal">Esperando lectura de mercado...</p>
             </div>
           </div>
-          <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1"><button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button><button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button><button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button></div>
+
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+            <div class="bg-slate-900/60 border border-emerald-500/20 rounded-xl p-3"><span id="m1-title" class="text-[11px] font-bold text-emerald-400 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+            <div class="bg-slate-900/60 border border-sky-500/20 rounded-xl p-3"><span id="m2-title" class="text-[11px] font-bold text-sky-400 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+            <div class="bg-slate-900/60 border border-amber-500/20 rounded-xl p-3"><span id="m3-title" class="text-[11px] font-bold text-amber-400 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+            <div class="bg-slate-900/60 border border-purple-500/20 rounded-xl p-3"><span id="m4-title" class="text-[11px] font-bold text-purple-400 uppercase tracking-wide block">RANGO P2P 4H</span><strong id="m4-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
+          </div>
         </div>
       </section>
 
@@ -836,8 +859,6 @@
     let priceRequestRunning = false;
     let historyRequestRunning = false;
     let aiRequestRunning = false;
-    let analysisRequestRunning = false;
-    let analysisLastSuccessfulFetch = null;
 
     function money(n) {
       const value = Number(n);
@@ -1019,43 +1040,11 @@
       }
     }
 
-    function normalizeAnalysisPayload(data) {
-      if (!data || typeof data !== 'object') return null;
-      // Algunas versiones del backend entregan el motor dentro de `quant`.
-      // La interfaz debe aceptar ambas formas sin romper el resto del panel.
-      const quant = data.quant && typeof data.quant === 'object' ? data.quant : {};
-      const normalized = { ...quant, ...data };
-      if (!normalized.proyecciones_horizontes && quant.proyecciones_horizontes) {
-        normalized.proyecciones_horizontes = quant.proyecciones_horizontes;
-      }
-      if (!normalized.proyeccion_7h && quant.proyeccion_7h) {
-        normalized.proyeccion_7h = quant.proyeccion_7h;
-      }
-      return normalized;
-    }
-
     async function loadAnalysis() {
-      if (analysisRequestRunning) return;
-      analysisRequestRunning = true;
       try {
-        const raw = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 30000);
-        const data = normalizeAnalysisPayload(raw);
-        if (data && data.ok !== false) {
-          marketState.analysis = data;
-          analysisLastSuccessfulFetch = new Date();
-          renderAIIndicators();
-        } else {
-          throw new Error(data?.error || 'Análisis no disponible');
-        }
-      } catch (error) {
-        console.error('Venbot /api/analysis:', error);
-        const insight = document.getElementById('gemini-insight-text');
-        if (insight && !marketState.analysis) {
-          insight.textContent = 'No se pudo cargar el análisis todavía. Reintentando automáticamente…';
-        }
-      } finally {
-        analysisRequestRunning = false;
-      }
+        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 15000);
+        if (data && data.ok !== false) { marketState.analysis = data; renderAIIndicators(); }
+      } catch (error) { console.error('Venbot /api/analysis:', error); }
     }
 
     function candleBucketMs(period) {
@@ -1396,47 +1385,42 @@
 
     function selectP2PHorizon(horizon) {
       selectedP2PHorizon = ['1h','3h','7h','24h'].includes(horizon) ? horizon : '7h';
+      document.querySelectorAll('.p2p-horizon-btn').forEach(btn => {
+        const active = btn.dataset.p2pHorizon === selectedP2PHorizon;
+        btn.classList.toggle('active', active);
+        btn.classList.toggle('text-emerald-300', active);
+        btn.classList.toggle('bg-emerald-500/10', active);
+        btn.classList.toggle('text-slate-400', !active);
+      });
       renderAIIndicators();
     }
 
     function getP2PProjection(analysis, horizon) {
       const source = analysis?.proyecciones_horizontes;
-      if (!source || typeof source !== 'object') return horizon === '7h' ? (analysis?.proyeccion_7h || {}) : {};
-      const aliases = [horizon, horizon.toUpperCase(), horizon.replace('h','H'), `horizonte_${horizon}`, `horizon_${horizon}`];
-      for (const key of aliases) {
-        if (source[key] && typeof source[key] === 'object') return source[key];
+      if (source && typeof source === 'object') {
+        return source[horizon] || source[horizon.toUpperCase()] || source[horizon.replace('h','H')] || {};
       }
       return horizon === '7h' ? (analysis?.proyeccion_7h || {}) : {};
     }
 
-    // Texto siempre ligado al horizonte actualmente seleccionado. Esta función
-    // debe vivir fuera de renderP2PHorizon porque también la usa el bloque IA.
-    function horizonAwareText(value, horizon = selectedP2PHorizon) {
-      const label = String(horizon || '7h').toUpperCase();
-      const hours = String(horizon || '7h').replace('h','');
-      return String(value || '')
-        .replace(/\b7H\b/gi, label)
-        .replace(/\b7\s*horas?\b/gi, `${hours} horas`)
-        .replace(/\b7-hour\b/gi, `${hours}-hour`);
+    function horizonAwareText(value) {
+      return String(value || '').replace(/\b7H\b/gi, selectedP2PHorizon.toUpperCase()).replace(/\b7\s*horas?\b/gi, selectedP2PHorizon.replace('h','') + ' horas');
     }
 
     function renderAIIndicators() {
       const a = marketState.analysis;
       const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
-      if (!a) return;
-      const m = a.metricas || {};
+      if (!a || !a.metricas) return;
+      const m = a.metricas;
       const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
-      const activeHorizon = selectedP2PHorizon || '7h';
-      const activeProjection = getP2PProjection(a, activeHorizon);
-      const activeLabel = activeHorizon.toUpperCase();
       const views = {
         '1': {
-          title:`Proyección Cuantitativa Binance P2P · ${activeLabel}`,
-          m1:[`COMPRA EST. ${activeLabel}`, activeProjection.compra === null || activeProjection.compra === undefined ? 'n/d' : `${money(activeProjection.compra)} Bs`],
-          m2:[`VENTA EST. ${activeLabel}`, activeProjection.venta === null || activeProjection.venta === undefined ? 'n/d' : `${money(activeProjection.venta)} Bs`],
+          title:`Proyección Cuantitativa Binance P2P · ${selectedP2PHorizon.toUpperCase()}`,
+          m1:[`COMPRA EST. ${selectedP2PHorizon.toUpperCase()}`, getP2PProjection(a, selectedP2PHorizon).compra != null ? `${money(getP2PProjection(a, selectedP2PHorizon).compra)} Bs` : 'n/d'],
+          m2:[`VENTA EST. ${selectedP2PHorizon.toUpperCase()}`, getP2PProjection(a, selectedP2PHorizon).venta != null ? `${money(getP2PProjection(a, selectedP2PHorizon).venta)} Bs` : 'n/d'],
           m3:['TENDENCIA', a.tendencia || '--'],
-          m4:['CALIDAD SEÑAL', `${activeProjection.confianza ?? activeProjection.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${horizonAwareText(a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.', activeHorizon)} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
+          m4:['CALIDAD SEÑAL', `${getP2PProjection(a, selectedP2PHorizon).confianza ?? getP2PProjection(a, selectedP2PHorizon).calidad ?? m.calidad_datos ?? 0}%`],
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado: ${money(a.proyeccion_7h?.rango_mid_min)} – ${money(a.proyeccion_7h?.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
@@ -1832,8 +1816,6 @@
       }
     }
 
-    window.loadAnalysis = loadAnalysis;
-
     async function bootVenbot() {
       initTheme();
     initCalculator();
@@ -1842,16 +1824,12 @@
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
         return;
       }
-      await Promise.allSettled([loadPrices(), loadHistory('5m')]);
+      await Promise.allSettled([loadPrices(), loadHistory('5m'), loadAnalysis()]);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
       updateLoginButton();
       await validateExistingSession();
-      // El análisis se inicia después de validar la sesión para evitar la
-      // carrera que dejaba el bloque en estado de carga aunque el API estuviera sano.
-      loadAnalysis().catch(error => console.error('Venbot análisis inicial:', error));
-      setInterval(() => loadAnalysis().catch(error => console.error('Venbot análisis periódico:', error)), 30000);
       bootstrapVenbotFoundation();
       const spotSection=document.getElementById('sec-spot');
       if (spotSection && 'IntersectionObserver' in window) {
@@ -1877,13 +1855,10 @@
           loadHistory(marketState.period);
         }
       }, 5000);
+      setInterval(loadAnalysis, 15000);
     }
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', bootVenbot, { once: true });
-    } else {
-      bootVenbot();
-    }
+    document.addEventListener('DOMContentLoaded', bootVenbot);
   </script>
 
 <script>
