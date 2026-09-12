@@ -1844,15 +1844,17 @@
         return;
       }
       await Promise.allSettled([loadPrices(), loadHistory('5m')]);
+      // El análisis no debe quedar bloqueado por la validación de sesión ni
+      // por una llamada lenta de inicialización. Arranca en paralelo y luego
+      // continúa con sus reintentos periódicos.
+      loadAnalysis().catch(error => console.error('Venbot análisis inicial:', error));
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
       updateLoginButton();
       await validateExistingSession();
-      // La lectura analítica se solicita después de validar la sesión y vuelve a
-      // intentarse periódicamente; así no queda congelada en el placeholder si
-      // Render estaba dormido o la primera petición ocurrió durante el arranque.
-      await loadAnalysis();
+      // La primera solicitud ya fue lanzada en paralelo. No la esperamos aquí:
+      // así una sesión lenta o el arranque de Foundation no bloquean el panel.
       bootstrapVenbotFoundation();
       const spotSection=document.getElementById('sec-spot');
       if (spotSection && 'IntersectionObserver' in window) {
