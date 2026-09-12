@@ -627,7 +627,7 @@
               <div class="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3"><span id="m1-title" class="text-[10px] font-bold text-emerald-300 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-sky-500/10 border border-sky-500/25 rounded-xl p-3"><span id="m2-title" class="text-[10px] font-bold text-sky-300 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3"><span id="m3-title" class="text-[10px] font-bold text-amber-300 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-              <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P 4H</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
+              <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
             </div>
           </div>
           <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1"><button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button><button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button><button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button></div>
@@ -1020,11 +1020,27 @@
       }
     }
 
+    function normalizeAnalysisPayload(data) {
+      if (!data || typeof data !== 'object') return null;
+      // Algunas versiones del backend entregan el motor dentro de `quant`.
+      // La interfaz debe aceptar ambas formas sin romper el resto del panel.
+      const quant = data.quant && typeof data.quant === 'object' ? data.quant : {};
+      const normalized = { ...quant, ...data };
+      if (!normalized.proyecciones_horizontes && quant.proyecciones_horizontes) {
+        normalized.proyecciones_horizontes = quant.proyecciones_horizontes;
+      }
+      if (!normalized.proyeccion_7h && quant.proyeccion_7h) {
+        normalized.proyeccion_7h = quant.proyeccion_7h;
+      }
+      return normalized;
+    }
+
     async function loadAnalysis() {
       if (analysisRequestRunning) return;
       analysisRequestRunning = true;
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 30000);
+        const raw = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 30000);
+        const data = normalizeAnalysisPayload(raw);
         if (data && data.ok !== false) {
           marketState.analysis = data;
           analysisLastSuccessfulFetch = new Date();
@@ -1034,8 +1050,10 @@
         }
       } catch (error) {
         console.error('Venbot /api/analysis:', error);
-        // No borra la última lectura válida: la interfaz conserva el último estado
-        // mientras el servicio despierta o termina una consulta pesada.
+        const insight = document.getElementById('gemini-insight-text');
+        if (insight && !marketState.analysis) {
+          insight.textContent = 'No se pudo cargar el análisis todavía. Reintentando automáticamente…';
+        }
       } finally {
         analysisRequestRunning = false;
       }
@@ -1444,9 +1462,9 @@
     function renderAIIndicators() {
       const a = marketState.analysis;
       const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
-      if (!a || !a.metricas) return;
+      if (!a) return;
       renderP2PHorizon();
-      const m = a.metricas;
+      const m = a.metricas || {};
       const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
       const activeHorizon = selectedP2PHorizon || '7h';
       const activeProjection = getP2PProjection(a, activeHorizon);
@@ -1869,6 +1887,8 @@
       // por una llamada lenta de inicialización. Arranca en paralelo y luego
       // continúa con sus reintentos periódicos.
       loadAnalysis().catch(error => console.error('Venbot análisis inicial:', error));
+      // Reintenta y actualiza el análisis sin bloquear precios, historial, Spot ni la navegación.
+      setInterval(() => loadAnalysis().catch(error => console.error('Venbot análisis periódico:', error)), 30000);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
@@ -1901,10 +1921,13 @@
           loadHistory(marketState.period);
         }
       }, 5000);
-      setInterval(loadAnalysis, 30000);
     }
 
-    document.addEventListener('DOMContentLoaded', bootVenbot);
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bootVenbot, { once: true });
+    } else {
+      bootVenbot();
+    }
   </script>
 
 <script>
