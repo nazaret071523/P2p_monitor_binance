@@ -946,14 +946,33 @@
       const btn=document.getElementById('quant-backtest-run');
       const token=getAuthToken();
       if(!token) { if(status) status.textContent='Inicia sesión con un plan VIP para ejecutar la validación.'; return; }
-      if(btn){btn.disabled=true;btn.textContent='Ejecutando...';}
-      if(status) status.textContent='Consultando histórico y ejecutando backtest...';
+      if(btn){btn.disabled=true;btn.textContent='Procesando...';}
+      if(status) status.textContent='Backtest en cola...';
       try {
-        const r=await fetch(`${API_BASE_URL}/api/quant/backtest?banco=GENERAL&max_evaluaciones=24&spacing_minutes=360&t=${Date.now()}`,{method:'GET',cache:'no-store',headers:{'Accept':'application/json','X-Venbot-Session':token}});
+        const base=`${API_BASE_URL}/api/quant/backtest?banco=GENERAL&max_evaluaciones=24&spacing_minutes=360&t=${Date.now()}`;
+        const r=await fetch(base,{method:'GET',cache:'no-store',headers:{'Accept':'application/json','X-Venbot-Session':token}});
         let d={}; try{d=await r.json();}catch(e){}
-        if(!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        renderQuantBacktest(d);
-        if(status) status.textContent='Backtest ejecutado correctamente.';
+        if(!r.ok) throw new Error(typeof d.detail==='string'?d.detail:`HTTP ${r.status}`);
+        if(d.status==='completed' || d.backtest_multihorizonte){ renderQuantBacktest(d); if(status) status.textContent='Backtest ejecutado correctamente.'; return; }
+        const jobId=d.job_id;
+        if(!jobId) throw new Error('El servidor no devolvió el identificador del backtest.');
+        let done=false;
+        for(let attempt=0;attempt<180 && !done;attempt++){
+          await new Promise(resolve=>setTimeout(resolve,2000));
+          const sr=await fetch(`${API_BASE_URL}/api/quant/backtest/status?job_id=${encodeURIComponent(jobId)}&t=${Date.now()}`,{method:'GET',cache:'no-store',headers:{'Accept':'application/json','X-Venbot-Session':token}});
+          let sd={}; try{sd=await sr.json();}catch(e){}
+          if(!sr.ok) throw new Error(typeof sd.detail==='string'?sd.detail:`HTTP ${sr.status}`);
+          if(sd.status==='completed'){
+            renderQuantBacktest({ok:true,bank:sd.bank,backtest_multihorizonte:sd.result});
+            if(status) status.textContent='Backtest ejecutado correctamente.';
+            done=true;
+          } else if(sd.status==='failed'){
+            throw new Error(sd.error||'El backtest no pudo completarse.');
+          } else if(status){
+            status.textContent=sd.status==='running'?'Calculando 1H / 3H / 7H / 24H con histórico real...':'Backtest en cola...';
+          }
+        }
+        if(!done) throw new Error('El backtest está tardando más de lo esperado. Revisa los logs de Render; el proceso continúa en segundo plano.');
       } catch(e) {
         const msg=e?.message||'No se pudo ejecutar el backtest.';
         if(status) status.textContent=msg==='unauthorized'?'Sesión no autorizada. Inicia sesión nuevamente con un plan VIP.':msg;
