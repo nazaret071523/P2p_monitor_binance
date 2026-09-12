@@ -621,8 +621,7 @@
             <button type="button" data-p2p-horizon="24h" onclick="selectP2PHorizon('24h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">24H</button>
           </div>
           <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 md:p-4 space-y-3">
-            <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 id="ai-title-display" class="text-sm md:text-base font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4><p id="gemini-insight-text" class="text-xs text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p></div><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span></div>
-            <div id="p2p-horizon-panel" class="mt-2"><div id="p2p-horizon-detail" class="text-xs text-slate-300 leading-relaxed">Selecciona un horizonte para consultar su proyección independiente.</div></div>
+            <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 id="ai-title-display" class="text-sm md:text-base font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4><p id="gemini-insight-text" class="text-xs text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p></div><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span></div></div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
               <div class="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3"><span id="m1-title" class="text-[10px] font-bold text-emerald-300 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-sky-500/10 border border-sky-500/25 rounded-xl p-3"><span id="m2-title" class="text-[10px] font-bold text-sky-300 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
@@ -1397,7 +1396,7 @@
 
     function selectP2PHorizon(horizon) {
       selectedP2PHorizon = ['1h','3h','7h','24h'].includes(horizon) ? horizon : '7h';
-      renderP2PHorizon();
+      renderAIIndicators();
     }
 
     function getP2PProjection(analysis, horizon) {
@@ -1421,49 +1420,10 @@
         .replace(/\b7-hour\b/gi, `${hours}-hour`);
     }
 
-    function renderP2PHorizon() {
-      const panel = document.getElementById('p2p-horizon-panel');
-      const detail = document.getElementById('p2p-horizon-detail');
-      const a = marketState.analysis;
-      const q = getP2PProjection(a, selectedP2PHorizon);
-      if (!panel || !detail) return;
-      panel.classList.toggle('hidden', !a?.proyecciones_horizontes && !a?.proyeccion_7h);
-      document.querySelectorAll('.p2p-horizon-btn').forEach(btn => {
-        const active = btn.dataset.p2pHorizon === selectedP2PHorizon;
-        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-        btn.className = `p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold ${active ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300' : 'bg-slate-900/70 border border-slate-700 text-slate-400'}`;
-      });
-      if (!q) { detail.textContent = 'Este horizonte aún no tiene datos suficientes para proyectar.'; return; }
-      const moneySafe = value => value === null || value === undefined || !Number.isFinite(Number(value)) ? 'n/d' : money(Number(value));
-      const change = Number(q.cambio_pct);
-      const sign = Number.isFinite(change) && change >= 0 ? '+' : '';
-      const horizonLabel = selectedP2PHorizon.toUpperCase();
-      const changeClass = Number.isFinite(change) && change < 0 ? 'text-rose-300' : 'text-emerald-300';
-      const confidence = q.confianza === null || q.confianza === undefined ? 'n/d' : q.confianza;
-      detail.innerHTML = `
-        <div class="space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <div><span class="block text-[9px] uppercase tracking-widest text-slate-500 font-bold">Horizonte seleccionado</span><strong class="text-sm text-slate-100">${horizonLabel} · Proyección independiente</strong></div>
-            <span class="text-[10px] font-black ${changeClass}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span>
-          </div>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5"><span class="block text-[9px] uppercase text-emerald-300/80 font-bold">Compra</span><strong class="block mt-1 text-sm text-emerald-300">${moneySafe(q.compra)} Bs</strong></div>
-            <div class="rounded-lg border border-sky-500/20 bg-sky-500/5 p-2.5"><span class="block text-[9px] uppercase text-sky-300/80 font-bold">Venta</span><strong class="block mt-1 text-sm text-sky-300">${moneySafe(q.venta)} Bs</strong></div>
-            <div class="rounded-lg border border-slate-700 bg-slate-900/60 p-2.5"><span class="block text-[9px] uppercase text-slate-500 font-bold">Precio central</span><strong class="block mt-1 text-sm text-white">${moneySafe(q.midpoint)} Bs</strong></div>
-            <div class="rounded-lg border border-purple-500/20 bg-purple-500/5 p-2.5"><span class="block text-[9px] uppercase text-purple-300/80 font-bold">Confianza</span><strong class="block mt-1 text-sm text-purple-300">${confidence}/100</strong></div>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]">
-            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Rango estimado</span><strong class="block mt-1 text-slate-200">${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs</strong></div>
-            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${horizonAwareText(q.detalle || 'Escenario calculado con datos reales recientes.')}</strong></div>
-          </div>
-        </div>`;
-    }
-
     function renderAIIndicators() {
       const a = marketState.analysis;
       const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
       if (!a) return;
-      renderP2PHorizon();
       const m = a.metricas || {};
       const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
       const activeHorizon = selectedP2PHorizon || '7h';
@@ -1883,19 +1843,15 @@
         return;
       }
       await Promise.allSettled([loadPrices(), loadHistory('5m')]);
-      // El análisis no debe quedar bloqueado por la validación de sesión ni
-      // por una llamada lenta de inicialización. Arranca en paralelo y luego
-      // continúa con sus reintentos periódicos.
-      loadAnalysis().catch(error => console.error('Venbot análisis inicial:', error));
-      // Reintenta y actualiza el análisis sin bloquear precios, historial, Spot ni la navegación.
-      setInterval(() => loadAnalysis().catch(error => console.error('Venbot análisis periódico:', error)), 30000);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
       updateLoginButton();
       await validateExistingSession();
-      // La primera solicitud ya fue lanzada en paralelo. No la esperamos aquí:
-      // así una sesión lenta o el arranque de Foundation no bloquean el panel.
+      // El análisis se inicia después de validar la sesión para evitar la
+      // carrera que dejaba el bloque en estado de carga aunque el API estuviera sano.
+      loadAnalysis().catch(error => console.error('Venbot análisis inicial:', error));
+      setInterval(() => loadAnalysis().catch(error => console.error('Venbot análisis periódico:', error)), 30000);
       bootstrapVenbotFoundation();
       const spotSection=document.getElementById('sec-spot');
       if (spotSection && 'IntersectionObserver' in window) {
