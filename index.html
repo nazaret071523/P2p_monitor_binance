@@ -1422,7 +1422,26 @@
       const moneySafe = value => value === null || value === undefined || !Number.isFinite(Number(value)) ? 'n/d' : money(Number(value));
       const change = Number(q.cambio_pct);
       const sign = Number.isFinite(change) && change >= 0 ? '+' : '';
-      detail.innerHTML = `<span class="text-slate-300 font-bold">${selectedP2PHorizon.toUpperCase()}</span> · Compra <b class="text-emerald-300">${moneySafe(q.compra)} Bs</b> · Venta <b class="text-sky-300">${moneySafe(q.venta)} Bs</b> · Central <b class="text-white">${moneySafe(q.midpoint)} Bs</b> · Rango ${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs · Cambio <span class="${change >= 0 ? 'text-emerald-300' : 'text-rose-300'}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span> · Confianza ${q.confianza ?? 'n/d'}/100`;
+      const horizonLabel = selectedP2PHorizon.toUpperCase();
+      const changeClass = Number.isFinite(change) && change < 0 ? 'text-rose-300' : 'text-emerald-300';
+      const confidence = q.confianza === null || q.confianza === undefined ? 'n/d' : q.confianza;
+      detail.innerHTML = `
+        <div class="rounded-xl border border-slate-800 bg-slate-950/55 p-3 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div><span class="block text-[9px] uppercase tracking-widest text-slate-500 font-bold">Horizonte seleccionado</span><strong class="text-sm text-slate-100">${horizonLabel} · Proyección independiente</strong></div>
+            <span class="text-[10px] font-black ${changeClass}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5"><span class="block text-[9px] uppercase text-emerald-300/80 font-bold">Compra</span><strong class="block mt-1 text-sm text-emerald-300">${moneySafe(q.compra)} Bs</strong></div>
+            <div class="rounded-lg border border-sky-500/20 bg-sky-500/5 p-2.5"><span class="block text-[9px] uppercase text-sky-300/80 font-bold">Venta</span><strong class="block mt-1 text-sm text-sky-300">${moneySafe(q.venta)} Bs</strong></div>
+            <div class="rounded-lg border border-slate-700 bg-slate-900/60 p-2.5"><span class="block text-[9px] uppercase text-slate-500 font-bold">Precio central</span><strong class="block mt-1 text-sm text-white">${moneySafe(q.midpoint)} Bs</strong></div>
+            <div class="rounded-lg border border-purple-500/20 bg-purple-500/5 p-2.5"><span class="block text-[9px] uppercase text-purple-300/80 font-bold">Confianza</span><strong class="block mt-1 text-sm text-purple-300">${confidence}/100</strong></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]">
+            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Rango estimado</span><strong class="block mt-1 text-slate-200">${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs</strong></div>
+            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${q.detalle || 'Escenario calculado con datos reales recientes.'}</strong></div>
+          </div>
+        </div>`;
     }
 
     function renderAIIndicators() {
@@ -1432,14 +1451,17 @@
       renderP2PHorizon();
       const m = a.metricas;
       const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
+      const activeHorizon = selectedP2PHorizon || '7h';
+      const activeProjection = a.proyecciones_horizontes?.[activeHorizon] || a.proyeccion_7h || {};
+      const activeLabel = activeHorizon.toUpperCase();
       const views = {
         '1': {
-          title:'Proyección Cuantitativa Binance P2P · 7H',
-          m1:['COMPRA EST. 7H', a.proyeccion_7h?.compra ? `${money(a.proyeccion_7h.compra)} Bs` : 'n/d'],
-          m2:['VENTA EST. 7H', a.proyeccion_7h?.venta ? `${money(a.proyeccion_7h.venta)} Bs` : 'n/d'],
+          title:`Proyección Cuantitativa Binance P2P · ${activeLabel}`,
+          m1:[`COMPRA EST. ${activeLabel}`, activeProjection.compra ? `${money(activeProjection.compra)} Bs` : 'n/d'],
+          m2:[`VENTA EST. ${activeLabel}`, activeProjection.venta ? `${money(activeProjection.venta)} Bs` : 'n/d'],
           m3:['TENDENCIA', a.tendencia || '--'],
-          m4:['CALIDAD SEÑAL', `${a.proyeccion_7h?.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado: ${money(a.proyeccion_7h?.rango_mid_min)} – ${money(a.proyeccion_7h?.rango_mid_max)} Bs.`
+          m4:['CALIDAD SEÑAL', `${activeProjection.confianza ?? activeProjection.calidad ?? m.calidad_datos ?? 0}%`],
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
