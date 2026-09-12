@@ -1392,6 +1392,17 @@
       return horizon === '7h' ? (analysis?.proyeccion_7h || {}) : {};
     }
 
+    // Texto siempre ligado al horizonte actualmente seleccionado. Esta función
+    // debe vivir fuera de renderP2PHorizon porque también la usa el bloque IA.
+    function horizonAwareText(value, horizon = selectedP2PHorizon) {
+      const label = String(horizon || '7h').toUpperCase();
+      const hours = String(horizon || '7h').replace('h','');
+      return String(value || '')
+        .replace(/\b7H\b/gi, label)
+        .replace(/\b7\s*horas?\b/gi, `${hours} horas`)
+        .replace(/\b7-hour\b/gi, `${hours}-hour`);
+    }
+
     function renderP2PHorizon() {
       const panel = document.getElementById('p2p-horizon-panel');
       const detail = document.getElementById('p2p-horizon-detail');
@@ -1409,7 +1420,6 @@
       const change = Number(q.cambio_pct);
       const sign = Number.isFinite(change) && change >= 0 ? '+' : '';
       const horizonLabel = selectedP2PHorizon.toUpperCase();
-      const ownHorizonText = value => String(value || '').replace(/\b7H\b/gi, horizonLabel).replace(/\b7 horas?\b/gi, `${selectedP2PHorizon.replace('h','')} horas`);
       const changeClass = Number.isFinite(change) && change < 0 ? 'text-rose-300' : 'text-emerald-300';
       const confidence = q.confianza === null || q.confianza === undefined ? 'n/d' : q.confianza;
       detail.innerHTML = `
@@ -1426,7 +1436,7 @@
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]">
             <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Rango estimado</span><strong class="block mt-1 text-slate-200">${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs</strong></div>
-            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${ownHorizonText(q.detalle || 'Escenario calculado con datos reales recientes.')}</strong></div>
+            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${horizonAwareText(q.detalle || 'Escenario calculado con datos reales recientes.')}</strong></div>
           </div>
         </div>`;
     }
@@ -1448,7 +1458,7 @@
           m2:[`VENTA EST. ${activeLabel}`, activeProjection.venta === null || activeProjection.venta === undefined ? 'n/d' : `${money(activeProjection.venta)} Bs`],
           m3:['TENDENCIA', a.tendencia || '--'],
           m4:['CALIDAD SEÑAL', `${activeProjection.confianza ?? activeProjection.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${ownHorizonText(a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.')} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${horizonAwareText(a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.', activeHorizon)} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
