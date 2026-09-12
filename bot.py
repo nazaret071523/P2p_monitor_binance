@@ -143,6 +143,13 @@ SMART_ALERT_BREAKOUT_BUFFER_PCT = max(0.01, float(os.getenv("SMART_ALERT_BREAKOU
 # Calibración Quant 24H: primera fase de ajuste tras acumular al menos un día de datos.
 QUANT_24H_CALIBRATION_ENABLED = os.getenv("QUANT_24H_CALIBRATION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 QUANT_24H_TREND_WEIGHT_MAX = max(0.0, min(0.25, float(os.getenv("QUANT_24H_TREND_WEIGHT_MAX", "0.12"))))
+# Capa ML híbrida: solo se activa si demuestra mejora fuera de muestra.
+QUANT_ML_ENABLED = os.getenv("QUANT_ML_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+QUANT_ML_MIN_SAMPLES = max(120, int(os.getenv("QUANT_ML_MIN_SAMPLES", "240")))
+QUANT_ML_BLEND_MAX = max(0.10, min(0.60, float(os.getenv("QUANT_ML_BLEND_MAX", "0.35"))))
+QUANT_ML_REFRESH_SECONDS = max(300, int(os.getenv("QUANT_ML_REFRESH_SECONDS", "1800")))
+QUANT_ML_CACHE = {}
+QUANT_ML_LOCK = threading.Lock()
 # Seguimiento de predicciones: registra una lectura cada pocos minutos y evalúa
 # sus horizontes contra datos P2P reales posteriores. No modifica el motor Quant.
 PREDICTION_TRACKING_ENABLED = os.getenv("PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -2464,7 +2471,7 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
                     slope,intercept=np.polyfit(x,recent,1); yhat=slope*x+intercept; ssr=float(np.sum((recent-yhat)**2)); sst=float(np.sum((recent-np.mean(recent))**2)); r2=max(0.0,min(1.0,1-ssr/sst)) if sst>0 else 0.0
                 except Exception: pass
             regime=clasificar_regimen_quant(returns,drift_7,rango,r2).get("regimen","TRANSICION")
-            proj=_proyecciones_multihorizonte_quant(fechas,mids,compras,ventas,origin_mid,spread_actual,vol,typical,{})
+            proj=_proyecciones_multihorizonte_quant(fechas,mids,compras,ventas,origin_mid,spread_actual,vol,typical,{},use_ml=False)
             any_eval=False
             for label,hours in horizons:
                 pred=proj.get(label) or {}
@@ -2507,7 +2514,105 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
         return {"status":"error","evaluations":0,"message":"Backtest multihorizonte temporalmente no disponible"}
 
 
-def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual, spread_actual, volatilidad_global, abs_typical_global, calibracion_24h):
+def _quant_downsample_5m(fechas, mids, compras, ventas):
+    """Reduce P2P a ~1 muestra/5 min para que ML no sobrepondere autocorrelación."""
+    if len(fechas) < 3: return fechas, mids, compras, ventas
+    of, om, oc, ov = [], [], [], []
+    last = None
+    for dt, mid, c, v in zip(fechas, mids, compras, ventas):
+        if last is None or (dt-last).total_seconds() >= 300:
+            of.append(dt); om.append(float(mid)); oc.append(float(c)); ov.append(float(v)); last=dt
+    return of, np.asarray(om), np.asarray(oc), np.asarray(ov)
+
+def _quant_feature_vector(fechas, mids, compras, ventas, idx):
+    if idx < 1 or idx >= len(mids): return None
+    now=fechas[idx]; cur=float(mids[idx])
+    if cur<=0: return None
+    def prior(hours):
+        target=now-timedelta(hours=hours)
+        cand=[j for j in range(max(0,idx-1000),idx) if abs((fechas[j]-target).total_seconds()) <= max(600, hours*3600*.30)]
+        if not cand: return None
+        j=min(cand,key=lambda j:abs((fechas[j]-target).total_seconds()))
+        return float(mids[j]) if mids[j]>0 else None
+    def ret(hours):
+        b=prior(hours); return ((cur/b)-1)*100 if b else 0.0
+    def stats(hours):
+        start=now-timedelta(hours=hours); vals=[float(mids[j]) for j in range(idx+1) if fechas[j]>=start and mids[j]>0]
+        if len(vals)<3: return 0.0,0.0,0.0
+        arr=np.asarray(vals); rr=np.diff(arr)/arr[:-1]*100; vol=float(np.std(rr,ddof=1)) if len(rr)>1 else 0.0
+        rng=(float(np.max(arr))-float(np.min(arr)))/cur*100 if cur else 0.0
+        slope=0.0
+        try: slope=float(np.polyfit(np.arange(len(arr),dtype=float),arr,1)[0])/cur*100
+        except Exception: pass
+        return vol,rng,slope
+    v1,r1,s1=stats(1); v3,r3,s3=stats(3); v7,r7,s7=stats(7); v24,r24,s24=stats(24)
+    spread=max(.01,float(ventas[idx])-float(compras[idx]))
+    return np.asarray([cur,ret(.25),ret(.5),ret(1),ret(3),ret(7),ret(24),v1,v3,v7,v24,r1,r3,r7,r24,s1,s3,s7,s24,spread/cur*100],dtype=float)
+
+def _quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid):
+    if not QUANT_ML_ENABLED or current_mid<=0: return None
+    try:
+        f,m,c,v=_quant_downsample_5m(fechas,mids,compras,ventas)
+        usable=[]
+        for i in range(len(m)):
+            if (f[i]-f[0]).total_seconds()/3600 < 25: continue
+            target=f[i]+timedelta(hours=horizon_hours)
+            j=next((k for k in range(i+1,len(m)) if f[k]>=target),None)
+            if j is None: break
+            x=_quant_feature_vector(f,m,c,v,i)
+            if x is None or not np.all(np.isfinite(x)): continue
+            y=(float(m[j])/float(m[i])-1)*100
+            usable.append((f[i],x,y))
+        if len(usable)<QUANT_ML_MIN_SAMPLES: return None
+        usable=usable[-1200:]
+        split=int(len(usable)*.75)
+        if split<QUANT_ML_MIN_SAMPLES-30 or len(usable)-split<30: return None
+        tr,va=usable[:split],usable[split:]
+        model=xgb.XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
+        model.fit(np.vstack([r[1] for r in tr]),np.asarray([r[2] for r in tr]),verbose=False)
+        ml=np.asarray(model.predict(np.vstack([r[1] for r in va])),dtype=float)
+        # Baseline comparable: momentum/regresión de la misma ventana histórica.
+        base=[]; actual=[]
+        for row in va:
+            bi=next((k for k,dt in enumerate(f) if dt==row[0]),None)
+            if bi is None or bi<30: continue
+            hf=f[:bi+1]; hm=m[:bi+1]; hc=c[:bi+1]; hv=v[:bi+1]
+            rr=np.diff(hm)/hm[:-1]*100; vol=float(np.std(rr,ddof=1)) if len(rr)>1 else 0; typ=float(np.median(np.abs(rr))) if len(rr) else 0
+            sp=max(.01,float(hv[-1])-float(hc[-1]))
+            bp=_proyecciones_multihorizonte_quant(hf,hm,hc,hv,float(hm[-1]),sp,vol,typ,{},use_ml=False).get(f'{int(horizon_hours)}h')
+            base.append(((float(bp.get('midpoint'))/float(hm[-1])-1)*100) if bp else 0.0); actual.append(row[2])
+        n=min(len(base),len(ml))
+        if n<20: return None
+        base=np.asarray(base[-n:]); ml=ml[-n:]; actual=np.asarray(actual[-n:])
+        bmae=float(np.mean(np.abs(actual-base))); mmae=float(np.mean(np.abs(actual-ml)))
+        bd=np.sign(base); md=np.sign(ml); ad=np.sign(actual);
+        mask=(bd!=0)&(ad!=0); maskm=(md!=0)&(ad!=0)
+        bacc=float(np.mean(bd[mask]==ad[mask])) if np.any(mask) else 0; macc=float(np.mean(md[maskm]==ad[maskm])) if np.any(maskm) else 0
+        improvement=(bmae-mmae)/max(bmae,1e-9)
+        accepted=improvement>=.03 and macc>=bacc-.03
+        final=xgb.XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
+        final.fit(np.vstack([r[1] for r in usable]),np.asarray([r[2] for r in usable]),verbose=False)
+        xnow=_quant_feature_vector(f,m,c,v,len(m)-1)
+        if xnow is None: return None
+        pred=float(final.predict(xnow.reshape(1,-1))[0])
+        return {'activo':bool(accepted),'muestras':len(usable),'mae_validacion_ml_pct':round(mmae,5),'mae_validacion_baseline_pct':round(bmae,5),'mejora_pct':round(improvement*100,2),'direccion_ml_pct':round(macc*100,2),'direccion_baseline_pct':round(bacc*100,2),'retorno_ml_pct':round(pred,5),'blend_pct':QUANT_ML_BLEND_MAX if accepted else 0.0,'validacion_fuera_muestra':True,'motivo':'ml_supera_baseline' if accepted else 'ml_no_supera_baseline'}
+    except Exception as e:
+        logger.warning('Candidato ML %sH no disponible: %s',horizon_hours,e); return None
+
+def _quant_ml_cached(fechas,mids,compras,ventas,horizon_hours,current_mid):
+    try:
+        key=f'{horizon_hours}:{int(fechas[-1].timestamp())//QUANT_ML_REFRESH_SECONDS}'
+        now=time.monotonic()
+        with QUANT_ML_LOCK:
+            cached=QUANT_ML_CACHE.get(key)
+            if cached and now-cached['ts']<QUANT_ML_REFRESH_SECONDS: return cached['info']
+        info=_quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid)
+        with QUANT_ML_LOCK: QUANT_ML_CACHE[key]={'ts':now,'info':info}
+        return info
+    except Exception: return None
+
+
+def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual, spread_actual, volatilidad_global, abs_typical_global, calibracion_24h, use_ml=True):
     """Genera escenarios P2P independientes para 1H/3H/7H/24H.
 
     Cada horizonte calcula sus propios insumos sobre una ventana histórica
@@ -2597,6 +2702,14 @@ def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual
         max_delta = max(0.18, min(4.50, max(0.30 * np.sqrt(hours), range_pct * (0.55 if hours <= 3 else 0.85), volatility * np.sqrt(hours) * 2.2)))
         delta_pct = float(np.clip(raw_delta, -max_delta, max_delta))
         central = mid_actual * (1.0 + delta_pct / 100.0)
+        ml_info = None
+        if use_ml and QUANT_ML_ENABLED and len(mids) >= 500:
+            ml_info = _quant_ml_cached(fechas,mids,compras,ventas,hours,mid_actual)
+            if ml_info and ml_info.get("activo"):
+                blend=float(ml_info.get("blend_pct",0) or 0); ml_ret=float(ml_info.get("retorno_ml_pct",0) or 0)
+                base_ret=((central/mid_actual)-1)*100 if mid_actual else 0
+                blended=(1-blend)*base_ret+blend*ml_ret
+                central=mid_actual*(1+blended/100); delta_pct=blended
 
         uncertainty = max(0.10, min(2.80, max(range_pct * 0.18, volatility * np.sqrt(hours) * 1.35, typical * np.sqrt(hours) * 1.8)))
         uncertainty = min(uncertainty, max_delta * 0.85)
@@ -2635,6 +2748,7 @@ def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual
             "regression_pct_h": round(regression_rate_h, 5),
             "regression_r2": round(regression_r2, 3),
             "volatilidad_pct": round(volatility, 4),
+            "ml_hibrido": ml_info or {"activo": False, "motivo": "sin_evidencia_suficiente"},
             "muestras_ventana": int(len(vals)),
             "cobertura_ventana_horas": round(max(0.0, (r_dates[-1] - r_dates[0]).total_seconds() / 3600.0), 3),
             "fuente": "muestras P2P reales de Venbot",
