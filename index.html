@@ -50,6 +50,8 @@
       color: #34d399;
     }
     .ai-mode-btn { transition: all 0.2s ease; }
+    .horizon-btn.active { background: rgba(16,185,129,.18); border: 1px solid rgba(52,211,153,.85); color: #d1fae5; }
+    .horizon-btn { border: 1px solid transparent; min-width: 0; }
     .ai-mode-btn.active {
       background: rgba(52, 211, 153, 0.15);
       border-color: rgba(52, 211, 153, 0.4);
@@ -603,57 +605,60 @@
       <section id="sec-gemini" class="relative glass-card p-4 rounded-2xl border border-indigo-500/20 overflow-hidden scroll-mt-24 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-3">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-lg">
-              <i class="fa-solid fa-brain text-emerald-400"></i>
-            </div>
+            <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-lg"><i class="fa-solid fa-brain text-emerald-400"></i></div>
             <div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <h3 class="text-xs sm:text-sm font-extrabold text-white tracking-wide">Venbot AI · Multimercado</h3>
                 <span class="text-[9px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full uppercase">Mercado + preguntas generales</span>
               </div>
               <p class="text-[11px] text-slate-400 mt-0.5">Copiloto conversacional · IA general + Motor P2P + Motor Spot.</p>
             </div>
           </div>
-          <button type="button" onclick="handleAIClick()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">
-            Abrir IA <i class="fa-solid fa-wand-magic-sparkles"></i>
-          </button>
+          <button type="button" onclick="handleAIClick()" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">Abrir IA <i class="fa-solid fa-wand-magic-sparkles"></i></button>
         </div>
 
         <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
-              <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-bolt text-amber-400"></i> Proyección 7H</button>
-              <button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-chart-pie text-sky-400"></i> Flujo P2P</button>
-              <button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1"><i class="fa-solid fa-bullseye text-purple-400"></i> Niveles P2P</button>
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <h3 class="text-base sm:text-lg font-black text-slate-100">Análisis Multihorizonte</h3>
+              <p class="text-[10px] text-slate-500 mt-1">Selecciona un horizonte para consultar el análisis y las métricas estimadas.</p>
             </div>
             <span id="ai-badge-mode" class="text-[9px] font-bold text-emerald-400 uppercase">BINANCE P2P ACTIVO</span>
           </div>
 
+          <div class="grid grid-cols-4 gap-2 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
+            <button type="button" id="btn-horizon-1h" onclick="switchHorizon('1h')" class="horizon-btn active focus-ring rounded-lg py-2 text-[11px] font-black text-slate-300">1H</button>
+            <button type="button" id="btn-horizon-3h" onclick="switchHorizon('3h')" class="horizon-btn focus-ring rounded-lg py-2 text-[11px] font-black text-slate-400">3H</button>
+            <button type="button" id="btn-horizon-7h" onclick="switchHorizon('7h')" class="horizon-btn focus-ring rounded-lg py-2 text-[11px] font-black text-slate-400">7H</button>
+            <button type="button" id="btn-horizon-24h" onclick="switchHorizon('24h')" class="horizon-btn focus-ring rounded-lg py-2 text-[11px] font-black text-slate-400">24H</button>
+          </div>
+
           <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
             <span class="venbot-neural shrink-0 mt-0.5" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><circle class="neural-halo" cx="32" cy="32" r="29"/><circle class="neural-halo2" cx="32" cy="32" r="25"/><ellipse class="neural-orbit" cx="32" cy="32" rx="29" ry="12"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="25" ry="9"/><circle class="neural-core-shell" cx="32" cy="32" r="16"/><circle class="neural-core" cx="32" cy="32" r="13"/><path class="neural-v" d="M21.5 22h6.5l4 13.5L36 22h6.5l-7.2 21h-6.6z"/><path class="neural-scan" d="M21 45h22"/><circle class="neural-node" cx="32" cy="12.5" r="1.8"/><circle class="neural-node" cx="49" cy="25" r="1.5"/><circle class="neural-node" cx="44" cy="47" r="1.6"/><circle class="neural-node" cx="19" cy="47" r="1.4"/><circle class="neural-node" cx="15" cy="25" r="1.3"/><circle class="neural-particle" cx="53" cy="38" r="1.1"/><circle class="neural-particle" cx="11" cy="38" r=".9"/></svg></span>
-            <div class="flex-1">
-              <div class="flex items-center justify-between">
-                <h4 id="ai-title-display" class="text-xs font-bold text-slate-100">Proyección Operativa Binance P2P</h4>
-                <span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> En línea</span>
-              </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2 flex-wrap"><h4 id="ai-title-display" class="text-xs sm:text-sm font-bold text-slate-100">Proyección Cuantitativa Binance P2P</h4><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> En línea</span></div>
               <p id="gemini-insight-text" class="text-xs text-slate-300 mt-1 leading-relaxed font-normal">Esperando lectura de mercado...</p>
-              <div id="p2p-horizon-panel" class="hidden mt-3">
-                <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Horizonte de proyección P2P">
-                  <button type="button" data-p2p-horizon="1h" onclick="selectP2PHorizon('1h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/70 border border-slate-700 text-slate-400">1H</button>
-                  <button type="button" data-p2p-horizon="3h" onclick="selectP2PHorizon('3h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/70 border border-slate-700 text-slate-400">3H</button>
-                  <button type="button" data-p2p-horizon="7h" onclick="selectP2PHorizon('7h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-500/15 border border-emerald-500/40 text-emerald-300" aria-pressed="true">7H</button>
-                  <button type="button" data-p2p-horizon="24h" onclick="selectP2PHorizon('24h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/70 border border-slate-700 text-slate-400">24H</button>
-                </div>
-                <div id="p2p-horizon-detail" class="text-[10px] text-slate-500 mt-2">Selecciona un horizonte para consultar su proyección independiente.</div>
-              </div>
             </div>
           </div>
 
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-            <div class="bg-slate-900/60 border border-emerald-500/20 rounded-xl p-3"><span id="m1-title" class="text-[11px] font-bold text-emerald-400 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-            <div class="bg-slate-900/60 border border-sky-500/20 rounded-xl p-3"><span id="m2-title" class="text-[11px] font-bold text-sky-400 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-            <div class="bg-slate-900/60 border border-amber-500/20 rounded-xl p-3"><span id="m3-title" class="text-[11px] font-bold text-amber-400 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-            <div class="bg-slate-900/60 border border-purple-500/20 rounded-xl p-3"><span id="m4-title" class="text-[11px] font-bold text-purple-400 uppercase tracking-wide block">RANGO P2P 4H</span><strong id="m4-val" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div class="bg-slate-900/60 border border-emerald-500/20 rounded-xl p-3"><span class="text-[10px] font-bold text-emerald-400 uppercase tracking-wide block">COMPRA ESTIMADA</span><strong id="h-buy" class="text-sm sm:text-base font-black text-slate-100 mt-1 block">-- Bs</strong></div>
+            <div class="bg-slate-900/60 border border-sky-500/20 rounded-xl p-3"><span class="text-[10px] font-bold text-sky-400 uppercase tracking-wide block">VENTA ESTIMADA</span><strong id="h-sell" class="text-sm sm:text-base font-black text-slate-100 mt-1 block">-- Bs</strong></div>
+            <div class="bg-slate-900/60 border border-amber-500/20 rounded-xl p-3"><span class="text-[10px] font-bold text-amber-400 uppercase tracking-wide block">PRECIO CENTRAL</span><strong id="h-mid" class="text-sm sm:text-base font-black text-slate-100 mt-1 block">-- Bs</strong></div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div class="bg-slate-900/60 border border-purple-500/20 rounded-xl p-3"><span class="text-[10px] font-bold text-purple-400 uppercase tracking-wide block">RANGO ESTIMADO</span><strong id="h-range" class="text-xs sm:text-sm font-black text-slate-100 mt-1 block">-- – -- Bs</strong></div>
+            <div class="bg-slate-900/60 border border-emerald-500/20 rounded-xl p-3"><span class="text-[10px] font-bold text-emerald-400 uppercase tracking-wide block">CAMBIO VS. ACTUAL</span><strong id="h-change" class="text-sm sm:text-base font-black text-rose-300 mt-1 block">--%</strong></div>
+            <div class="bg-slate-900/60 border border-indigo-500/20 rounded-xl p-3"><span class="text-[10px] font-bold text-indigo-300 uppercase tracking-wide block">CONFIANZA</span><strong id="h-confidence" class="text-sm sm:text-base font-black text-slate-100 mt-1 block">--/100</strong></div>
+          </div>
+          <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3"><span class="text-[10px] text-slate-500 uppercase tracking-wide block">ESCENARIO ACTUAL</span><strong id="h-scenario" class="text-xs sm:text-sm text-slate-100 mt-1 block">Esperando análisis...</strong></div>
+
+          <div class="flex items-center justify-between gap-2 flex-wrap border-t border-slate-800/80 pt-3">
+            <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
+              <button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring px-3 py-2 rounded-lg text-[10px] font-bold text-slate-300 flex items-center gap-1"><i class="fa-solid fa-bolt text-amber-400"></i> Proyección</button>
+              <button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring px-3 py-2 rounded-lg text-[10px] font-bold text-slate-400 flex items-center gap-1"><i class="fa-solid fa-chart-pie text-sky-400"></i> Flujo P2P</button>
+              <button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring px-3 py-2 rounded-lg text-[10px] font-bold text-slate-400 flex items-center gap-1"><i class="fa-solid fa-bullseye text-purple-400"></i> Niveles P2P</button>
+            </div>
           </div>
         </div>
       </section>
@@ -1399,72 +1404,46 @@
       await loadHistory(period);
     }
 
-    let selectedP2PHorizon = '7h';
-
-    function selectP2PHorizon(horizon) {
-      selectedP2PHorizon = ['1h','3h','7h','24h'].includes(horizon) ? horizon : '7h';
-      renderP2PHorizon();
-    }
-
-    function renderP2PHorizon() {
-      const panel = document.getElementById('p2p-horizon-panel');
-      const detail = document.getElementById('p2p-horizon-detail');
-      const a = marketState.analysis;
-      const q = a?.proyecciones_horizontes?.[selectedP2PHorizon];
-      if (!panel || !detail) return;
-      panel.classList.toggle('hidden', !a?.proyecciones_horizontes);
-      document.querySelectorAll('.p2p-horizon-btn').forEach(btn => {
-        const active = btn.dataset.p2pHorizon === selectedP2PHorizon;
-        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-        btn.className = `p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold ${active ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300' : 'bg-slate-900/70 border border-slate-700 text-slate-400'}`;
-      });
-      if (!q) { detail.textContent = 'Este horizonte aún no tiene datos suficientes para proyectar.'; return; }
-      const moneySafe = value => value === null || value === undefined || !Number.isFinite(Number(value)) ? 'n/d' : money(Number(value));
-      const change = Number(q.cambio_pct);
-      const sign = Number.isFinite(change) && change >= 0 ? '+' : '';
-      detail.innerHTML = `<span class="text-slate-300 font-bold">${selectedP2PHorizon.toUpperCase()}</span> · Compra <b class="text-emerald-300">${moneySafe(q.compra)} Bs</b> · Venta <b class="text-sky-300">${moneySafe(q.venta)} Bs</b> · Central <b class="text-white">${moneySafe(q.midpoint)} Bs</b> · Rango ${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs · Cambio <span class="${change >= 0 ? 'text-emerald-300' : 'text-rose-300'}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span> · Confianza ${q.confianza ?? 'n/d'}/100`;
-    }
-
     function renderAIIndicators() {
       const a = marketState.analysis;
-      const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
       if (!a || !a.metricas) return;
-      renderP2PHorizon();
-      const m = a.metricas;
-      const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
-      const views = {
-        '1': {
-          title:'Proyección Cuantitativa Binance P2P · 7H',
-          m1:['COMPRA EST. 7H', a.proyeccion_7h?.compra ? `${money(a.proyeccion_7h.compra)} Bs` : 'n/d'],
-          m2:['VENTA EST. 7H', a.proyeccion_7h?.venta ? `${money(a.proyeccion_7h.venta)} Bs` : 'n/d'],
-          m3:['TENDENCIA', a.tendencia || '--'],
-          m4:['CALIDAD SEÑAL', `${a.proyeccion_7h?.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado: ${money(a.proyeccion_7h?.rango_mid_min)} – ${money(a.proyeccion_7h?.rango_mid_max)} Bs.`
-        },
-        '2': {
-          title:'Flujo y Liquidez Binance P2P',
-          m1:['ESTADO DE FLUJO', a.flujo?.estado || '--'],
-          m2:['LIQUIDEZ', String(m.liquidez ?? 0)],
-          m3:['SPREAD MEDIO', `${money(m.spread_promedio)} Bs`],
-          m4:['CAMBIO SPREAD', `${m.spread_cambio_pct >= 0 ? '+' : ''}${pct(m.spread_cambio_pct)}%`],
-          text:a.flujo?.detalle || 'Esperando análisis.'
-        },
-        '3': {
-          title:'Niveles y Rango Binance P2P',
-          m1:['ZONA ACTUAL', a.niveles?.estado || '--'],
-          m2:['SOPORTE', `${money(m.soporte)} Bs`],
-          m3:['ACTUAL', `${money((marketState.buy + marketState.sell) / 2)} Bs`],
-          m4:['RESISTENCIA', `${money(m.resistencia)} Bs`],
-          text:`${a.niveles?.detalle || 'Esperando análisis.'} Posición en rango: ${pct(m.posicion_rango)}%.`
-        }
-      }[mode] || null;
-      if (!views) return;
-      document.getElementById('ai-title-display').textContent = views.title;
-      document.getElementById('gemini-insight-text').textContent = views.text;
-      [['m1-title','m1-val'],['m2-title','m2-val'],['m3-title','m3-val'],['m4-title','m4-val']].forEach((ids,i)=>{
-        document.getElementById(ids[0]).textContent=views[['m1','m2','m3','m4'][i]][0];
-        document.getElementById(ids[1]).textContent=views[['m1','m2','m3','m4'][i]][1];
-      });
+      const m = a.metricas || {};
+      const horizon = window.__venbotHorizon || '1h';
+      const all = a.proyecciones_horizontes || {};
+      const p = all[horizon] || all[horizon.toUpperCase()] || (horizon === '7h' ? a.proyeccion_7h : null) || {};
+      const fmt = (v, suffix='') => (v === null || v === undefined || !Number.isFinite(Number(v))) ? 'n/d' : `${money(Number(v))}${suffix}`;
+      const pctText = (v) => (v === null || v === undefined || !Number.isFinite(Number(v))) ? 'n/d' : `${Number(v) >= 0 ? '+' : ''}${pct(Number(v))}%`;
+      const label = horizon.toUpperCase();
+      const direction = p.direccion || a.tendencia || 'SIN LECTURA';
+      const confidence = p.confianza ?? p.calidad ?? a.confianza ?? m.calidad_datos ?? 0;
+      const buy = p.compra ?? p.pred_compra;
+      const sell = p.venta ?? p.pred_venta;
+      const mid = p.midpoint ?? ((Number(buy||0)+Number(sell||0))/2 || null);
+      const text = a.manipulacion?.activa ? '🚨 Vigilancia: movimiento anómalo detectado. ' : '';
+      document.getElementById('ai-title-display').textContent = `Proyección Cuantitativa Binance P2P · ${label}`;
+      document.getElementById('gemini-insight-text').textContent = `${text}${p.detalle || a.detalle_tendencia || 'Lectura estadística del horizonte seleccionado.'} La proyección es una referencia estadística y no garantiza el precio futuro.`;
+      document.getElementById('h-buy').textContent = `${fmt(buy, ' Bs')}`;
+      document.getElementById('h-sell').textContent = `${fmt(sell, ' Bs')}`;
+      document.getElementById('h-mid').textContent = `${fmt(mid, ' Bs')}`;
+      document.getElementById('h-range').textContent = `${fmt(p.rango_mid_min)} – ${fmt(p.rango_mid_max)} Bs`;
+      document.getElementById('h-change').textContent = pctText(p.cambio_pct);
+      document.getElementById('h-confidence').textContent = `${confidence}/100`;
+      document.getElementById('h-scenario').textContent = direction;
+
+      const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
+      if (mode === '2') {
+        document.getElementById('ai-title-display').textContent = `Flujo y Liquidez Binance P2P · ${label}`;
+        document.getElementById('gemini-insight-text').textContent = a.flujo?.detalle || `Liquidez: ${m.liquidez ?? 0}. Spread medio: ${fmt(m.spread_promedio, ' Bs')}.`;
+      } else if (mode === '3') {
+        document.getElementById('ai-title-display').textContent = `Niveles y Rango Binance P2P · ${label}`;
+        document.getElementById('gemini-insight-text').textContent = `${a.niveles?.detalle || 'Niveles dinámicos del mercado.'} Soporte: ${fmt(m.soporte ?? a.soporte_7h, ' Bs')}; resistencia: ${fmt(m.resistencia ?? a.resistencia_7h, ' Bs')}.`;
+      }
+    }
+
+    function switchHorizon(horizon) {
+      window.__venbotHorizon = horizon;
+      document.querySelectorAll('.horizon-btn').forEach(btn => btn.classList.toggle('active', btn.id === `btn-horizon-${horizon}`));
+      renderAIIndicators();
     }
 
 
@@ -1585,12 +1564,6 @@
       const btn = document.getElementById('btn-ai-mode-' + mode);
       if (btn) btn.classList.add('active');
 
-      const titles = {
-        1: 'Proyección Operativa Binance P2P',
-        2: 'Flujo y Liquidez Binance P2P',
-        3: 'Niveles y Rango Binance P2P'
-      };
-      document.getElementById('ai-title-display').textContent = titles[mode] || titles[1];
       renderAIIndicators();
     }
 
@@ -1835,6 +1808,7 @@
       }
     }
 
+    window.__venbotHorizon = '1h';
     window.loadAnalysis = loadAnalysis;
 
     async function bootVenbot() {
