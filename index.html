@@ -637,6 +637,15 @@
                 <span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> En línea</span>
               </div>
               <p id="gemini-insight-text" class="text-xs text-slate-300 mt-1 leading-relaxed font-normal">Esperando lectura de mercado...</p>
+              <div id="p2p-horizon-panel" class="hidden mt-3">
+                <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Horizonte de proyección P2P">
+                  <button type="button" data-p2p-horizon="1h" onclick="selectP2PHorizon('1h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/70 border border-slate-700 text-slate-400">1H</button>
+                  <button type="button" data-p2p-horizon="3h" onclick="selectP2PHorizon('3h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/70 border border-slate-700 text-slate-400">3H</button>
+                  <button type="button" data-p2p-horizon="7h" onclick="selectP2PHorizon('7h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-500/15 border border-emerald-500/40 text-emerald-300" aria-pressed="true">7H</button>
+                  <button type="button" data-p2p-horizon="24h" onclick="selectP2PHorizon('24h')" class="p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-900/70 border border-slate-700 text-slate-400">24H</button>
+                </div>
+                <div id="p2p-horizon-detail" class="text-[10px] text-slate-500 mt-2">Selecciona un horizonte para consultar su proyección independiente.</div>
+              </div>
             </div>
           </div>
 
@@ -1390,10 +1399,37 @@
       await loadHistory(period);
     }
 
+    let selectedP2PHorizon = '7h';
+
+    function selectP2PHorizon(horizon) {
+      selectedP2PHorizon = ['1h','3h','7h','24h'].includes(horizon) ? horizon : '7h';
+      renderP2PHorizon();
+    }
+
+    function renderP2PHorizon() {
+      const panel = document.getElementById('p2p-horizon-panel');
+      const detail = document.getElementById('p2p-horizon-detail');
+      const a = marketState.analysis;
+      const q = a?.proyecciones_horizontes?.[selectedP2PHorizon];
+      if (!panel || !detail) return;
+      panel.classList.toggle('hidden', !a?.proyecciones_horizontes);
+      document.querySelectorAll('.p2p-horizon-btn').forEach(btn => {
+        const active = btn.dataset.p2pHorizon === selectedP2PHorizon;
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        btn.className = `p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold ${active ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300' : 'bg-slate-900/70 border border-slate-700 text-slate-400'}`;
+      });
+      if (!q) { detail.textContent = 'Este horizonte aún no tiene datos suficientes para proyectar.'; return; }
+      const moneySafe = value => value === null || value === undefined || !Number.isFinite(Number(value)) ? 'n/d' : money(Number(value));
+      const change = Number(q.cambio_pct);
+      const sign = Number.isFinite(change) && change >= 0 ? '+' : '';
+      detail.innerHTML = `<span class="text-slate-300 font-bold">${selectedP2PHorizon.toUpperCase()}</span> · Compra <b class="text-emerald-300">${moneySafe(q.compra)} Bs</b> · Venta <b class="text-sky-300">${moneySafe(q.venta)} Bs</b> · Central <b class="text-white">${moneySafe(q.midpoint)} Bs</b> · Rango ${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs · Cambio <span class="${change >= 0 ? 'text-emerald-300' : 'text-rose-300'}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span> · Confianza ${q.confianza ?? 'n/d'}/100`;
+    }
+
     function renderAIIndicators() {
       const a = marketState.analysis;
       const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
       if (!a || !a.metricas) return;
+      renderP2PHorizon();
       const m = a.metricas;
       const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
       const views = {
