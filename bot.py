@@ -3757,42 +3757,48 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         setattr(update, "_venbot_callback_acknowledged", True)
     except Exception:
         pass
-    if data == "cmd_estado":
-        await cmd_estado(update, context)
-    elif data == "cmd_rendimiento":
-        await cmd_rendimiento(update, context)
-    elif data == "cmd_prediccion":
-        await cmd_prediccion(update, context)
-    elif data == "cmd_cuenta":
-        await cmd_cuenta(update, context)
-    elif data == "cmd_credenciales":
-        await cmd_credenciales(update, context)
-    elif data == "cmd_grafica":
-        await cmd_grafica(update, context)
-    elif data == "cmd_bancos":
-        await cmd_bancos(update, context)
-    elif data == "cmd_suscribir":
-        await cmd_suscribir(update, context)
-    elif data.startswith("buy_"):
+    try:
+        if data == "cmd_estado":
+            await cmd_estado(update, context)
+        elif data == "cmd_rendimiento":
+            await cmd_rendimiento(update, context)
+        elif data == "cmd_prediccion":
+            await cmd_prediccion(update, context)
+        elif data == "cmd_cuenta":
+            await cmd_cuenta(update, context)
+        elif data == "cmd_credenciales":
+            await cmd_credenciales(update, context)
+        elif data == "cmd_grafica":
+            await cmd_grafica(update, context)
+        elif data == "cmd_bancos":
+            await cmd_bancos(update, context)
+        elif data == "cmd_suscribir":
+            await cmd_suscribir(update, context)
+        elif data.startswith("buy_"):
+            try:
+                _, plan, currency = data.split("_", 2)
+                await _enviar_checkout_telegram(update, context, plan, currency)
+            except Exception:
+                logger.exception("Error procesando compra Telegram: %s", data)
+                await _safe_callback_answer(update, "No se pudo crear la orden", show_alert=True)
+        elif data.startswith("proof_"):
+            order_id=data.replace("proof_", "", 1)
+            context.user_data["manual_proof_order_id"]=order_id
+            context.user_data.pop("manual_proof_file_id",None)
+            await query.message.reply_text(f"📸 *Comprobante para {order_id}*\n\n1. Envíame la captura del pago.\n2. Después envíame el código de referencia en otro mensaje.\n\nNo envíes datos bancarios adicionales ni contraseñas.",parse_mode="Markdown")
+        elif data == "cmd_menu":
+            await start(update, context)
+        elif data.startswith("banco_"):
+            banco = data.replace("banco_", "", 1)
+            CONFIGURACION_BANCOS[chat_id] = banco
+            await _safe_callback_answer(update, f"Filtro cambiado a {banco}")
+            await cmd_prediccion(update, context)
+    except Exception:
+        logger.exception("Error procesando callback de Telegram: %s", data)
         try:
-            _, plan, currency = data.split("_", 2)
-            await _enviar_checkout_telegram(update, context, plan, currency)
+            await update.effective_message.reply_text("⚠️ La consulta falló. Intenta nuevamente en unos segundos.")
         except Exception:
-            logger.exception("Error procesando compra Telegram: %s", data)
-            await _safe_callback_answer(update, "No se pudo crear la orden", show_alert=True)
-    elif data.startswith("proof_"):
-        order_id=data.replace("proof_", "", 1)
-        context.user_data["manual_proof_order_id"]=order_id
-        context.user_data.pop("manual_proof_file_id",None)
-        await _safe_callback_answer(update)
-        await query.message.reply_text(f"📸 *Comprobante para {order_id}*\n\n1. Envíame la captura del pago.\n2. Después envíame el código de referencia en otro mensaje.\n\nNo envíes datos bancarios adicionales ni contraseñas.",parse_mode="Markdown")
-    elif data == "cmd_menu":
-        await start(update, context)
-    elif data.startswith("banco_"):
-        banco = data.replace("banco_", "", 1)
-        CONFIGURACION_BANCOS[chat_id] = banco
-        await _safe_callback_answer(update, f"Filtro cambiado a {banco}")
-        await cmd_prediccion(update, context)
+            logger.exception("No se pudo enviar el mensaje de error del callback: %s", data)
 
 
 # ==========================================
