@@ -487,6 +487,22 @@
           <h2 class="text-xl md:text-2xl font-black text-white mt-1">Análisis y predicción</h2>
           <p class="text-[10px] text-slate-500 mt-1">Gráfica, flujo, niveles y proyección en una pantalla dedicada.</p>
         </div>
+
+        <section id="sec-quant-backtest" class="glass-card p-4 rounded-2xl border border-indigo-500/20 space-y-3">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-flask text-indigo-400"></i>Validación Motor Quant</h3>
+                <span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span>
+              </div>
+              <p class="text-[10px] text-slate-500 mt-1">Ejecuta el backtest autenticado con tu sesión actual. No expone tu token ni abre el endpoint públicamente.</p>
+            </div>
+            <button id="quant-backtest-run" type="button" onclick="runQuantBacktest()" class="shrink-0 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-200 text-[10px] font-black px-3 py-2 hover:bg-indigo-500/25 transition">Ejecutar</button>
+          </div>
+          <div id="quant-backtest-status" class="text-[10px] text-slate-500">Inicia sesión con un plan VIP para ejecutar la validación.</div>
+          <div id="quant-backtest-result" class="hidden"></div>
+        </section>
+
         <div id="analysis-content-slot"></div>
       </section>
 
@@ -897,6 +913,65 @@
 
       if (marketState.sell > 0) {
         document.getElementById('chart-current').textContent = marketState.buy > 0 && marketState.sell > 0 ? `${money((marketState.buy + marketState.sell) / 2)} Bs` : '--,-- Bs';
+      }
+    }
+
+    function fmtBacktestNumber(value, suffix='') {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'n/d';
+      return `${Number(value).toLocaleString('es-VE', {maximumFractionDigits: 4})}${suffix}`;
+    }
+
+    function renderQuantBacktest(data) {
+      const box=document.getElementById('quant-backtest-result');
+      if(!box) return;
+      const b=data?.backtest_7h || {};
+      if(data?.ok !== true) { box.classList.add('hidden'); return; }
+      if(b.status !== 'ok') {
+        box.classList.remove('hidden');
+        box.innerHTML=`<div class="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[10px] text-amber-200">${String(b.message || 'Histórico insuficiente para ejecutar el backtest.')}</div>`;
+        return;
+      }
+      const recent=Array.isArray(b.recent)?b.recent:[];
+      const last=recent.length?recent[recent.length-1]:null;
+      box.classList.remove('hidden');
+      box.innerHTML=`
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Histórico</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.history_coverage_hours,' h')}</strong></div>
+          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Evaluaciones</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.evaluations)}</strong></div>
+          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Dirección</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.direction_accuracy_pct,'%')}</strong></div>
+          <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-2.5"><span class="text-[9px] text-slate-500 block">Error señal</span><strong class="text-xs text-slate-100 block mt-1">${fmtBacktestNumber(b.mean_abs_signal_error_pct,'%')}</strong></div>
+        </div>
+        <div class="rounded-xl bg-slate-950/55 border border-slate-800 p-3">
+          <div class="flex items-center justify-between gap-2"><span class="text-[9px] font-black uppercase tracking-wider text-slate-500">Última evaluación disponible</span><span class="text-[9px] text-slate-600">7H</span></div>
+          ${last ? `<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+            <div><span class="text-[9px] text-slate-600 block">Origen</span><span class="text-[10px] text-slate-200">${new Date(last.origin).toLocaleString('es-VE')}</span></div>
+            <div><span class="text-[9px] text-slate-600 block">Objetivo</span><span class="text-[10px] text-slate-200">${new Date(last.target).toLocaleString('es-VE')}</span></div>
+            <div><span class="text-[9px] text-slate-600 block">Señal</span><span class="text-[10px] text-slate-200">${fmtBacktestNumber(last.signal_pct,'%')}</span></div>
+            <div><span class="text-[9px] text-slate-600 block">Real</span><span class="text-[10px] text-slate-200">${fmtBacktestNumber(last.actual_change_pct,'%')}</span></div>
+          </div>` : '<div class="text-[10px] text-slate-500 mt-2">Sin evaluaciones recientes.</div>'}
+        </div>
+        <p class="text-[9px] text-slate-600">Este panel consulta el endpoint protegido con tu sesión. El backtest expuesto actualmente corresponde a la validación temporal 7H; las métricas completas 1H/3H/7H/24H se incorporarán en el siguiente avance del Motor Quant.</p>`;
+    }
+
+    async function runQuantBacktest() {
+      const status=document.getElementById('quant-backtest-status');
+      const btn=document.getElementById('quant-backtest-run');
+      const token=getAuthToken();
+      if(!token) { if(status) status.textContent='Inicia sesión con un plan VIP para ejecutar la validación.'; return; }
+      if(btn){btn.disabled=true;btn.textContent='Ejecutando...';}
+      if(status) status.textContent='Consultando histórico y ejecutando backtest...';
+      try {
+        const r=await fetch(`${API_BASE_URL}/api/quant/backtest?banco=GENERAL&max_evaluaciones=24&spacing_minutes=60&t=${Date.now()}`,{method:'GET',cache:'no-store',headers:{'Accept':'application/json','X-Venbot-Session':token}});
+        let d={}; try{d=await r.json();}catch(e){}
+        if(!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        renderQuantBacktest(d);
+        if(status) status.textContent='Backtest ejecutado correctamente.';
+      } catch(e) {
+        const msg=e?.message||'No se pudo ejecutar el backtest.';
+        if(status) status.textContent=msg==='unauthorized'?'Sesión no autorizada. Inicia sesión nuevamente con un plan VIP.':msg;
+        const box=document.getElementById('quant-backtest-result'); if(box){box.classList.remove('hidden');box.innerHTML=`<div class="rounded-xl bg-rose-500/5 border border-rose-500/20 p-3 text-[10px] text-rose-200">${msg}</div>`;}
+      } finally {
+        if(btn){btn.disabled=false;btn.textContent='Ejecutar';}
       }
     }
 
