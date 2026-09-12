@@ -852,6 +852,8 @@
     let priceRequestRunning = false;
     let historyRequestRunning = false;
     let aiRequestRunning = false;
+    let analysisRequestRunning = false;
+    let analysisLastSuccessfulFetch = null;
 
     function money(n) {
       const value = Number(n);
@@ -1034,10 +1036,24 @@
     }
 
     async function loadAnalysis() {
+      if (analysisRequestRunning) return;
+      analysisRequestRunning = true;
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 15000);
-        if (data && data.ok !== false) { marketState.analysis = data; renderAIIndicators(); }
-      } catch (error) { console.error('Venbot /api/analysis:', error); }
+        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 30000);
+        if (data && data.ok !== false) {
+          marketState.analysis = data;
+          analysisLastSuccessfulFetch = new Date();
+          renderAIIndicators();
+        } else {
+          throw new Error(data?.error || 'Análisis no disponible');
+        }
+      } catch (error) {
+        console.error('Venbot /api/analysis:', error);
+        // No borra la última lectura válida: la interfaz conserva el último estado
+        // mientras el servicio despierta o termina una consulta pesada.
+      } finally {
+        analysisRequestRunning = false;
+      }
     }
 
     function candleBucketMs(period) {
@@ -1783,6 +1799,8 @@
       }
     }
 
+    window.loadAnalysis = loadAnalysis;
+
     async function bootVenbot() {
       initTheme();
     initCalculator();
@@ -1791,12 +1809,16 @@
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
         return;
       }
-      await Promise.allSettled([loadPrices(), loadHistory('5m'), loadAnalysis()]);
+      await Promise.allSettled([loadPrices(), loadHistory('5m')]);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
       updateLoginButton();
       await validateExistingSession();
+      // La lectura analítica se solicita después de validar la sesión y vuelve a
+      // intentarse periódicamente; así no queda congelada en el placeholder si
+      // Render estaba dormido o la primera petición ocurrió durante el arranque.
+      await loadAnalysis();
       bootstrapVenbotFoundation();
       const spotSection=document.getElementById('sec-spot');
       if (spotSection && 'IntersectionObserver' in window) {
@@ -1822,7 +1844,7 @@
           loadHistory(marketState.period);
         }
       }, 5000);
-      setInterval(loadAnalysis, 15000);
+      setInterval(loadAnalysis, 30000);
     }
 
     document.addEventListener('DOMContentLoaded', bootVenbot);
