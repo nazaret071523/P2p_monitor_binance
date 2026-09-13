@@ -623,11 +623,11 @@
           <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 md:p-4 space-y-3">
             <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 id="ai-title-display" class="text-sm md:text-base font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4><p id="gemini-insight-text" class="text-xs text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p></div><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span></div>
             <div id="p2p-horizon-panel" class="mt-2"><div id="p2p-horizon-detail" class="text-xs text-slate-300 leading-relaxed">Selecciona un horizonte para consultar su proyección independiente.</div></div>
-            <div id="ai-projection-summary" class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
               <div class="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3"><span id="m1-title" class="text-[10px] font-bold text-emerald-300 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-sky-500/10 border border-sky-500/25 rounded-xl p-3"><span id="m2-title" class="text-[10px] font-bold text-sky-300 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3"><span id="m3-title" class="text-[10px] font-bold text-amber-300 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
-              <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P 4H</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
+              <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
             </div>
           </div>
           <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1"><button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button><button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button><button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button></div>
@@ -1034,8 +1034,10 @@
         }
       } catch (error) {
         console.error('Venbot /api/analysis:', error);
-        // No borra la última lectura válida: la interfaz conserva el último estado
-        // mientras el servicio despierta o termina una consulta pesada.
+        const insight = document.getElementById('gemini-insight-text');
+        if (insight && !marketState.analysis) {
+          insight.textContent = 'No se pudo cargar el análisis todavía. Reintentando automáticamente…';
+        }
       } finally {
         analysisRequestRunning = false;
       }
@@ -1392,6 +1394,17 @@
       return horizon === '7h' ? (analysis?.proyeccion_7h || {}) : {};
     }
 
+    // Texto siempre ligado al horizonte actualmente seleccionado. Esta función
+    // debe vivir fuera de renderP2PHorizon porque también la usa el bloque IA.
+    function horizonAwareText(value, horizon = selectedP2PHorizon) {
+      const label = String(horizon || '7h').toUpperCase();
+      const hours = String(horizon || '7h').replace('h','');
+      return String(value || '')
+        .replace(/\b7H\b/gi, label)
+        .replace(/\b7\s*horas?\b/gi, `${hours} horas`)
+        .replace(/\b7-hour\b/gi, `${hours}-hour`);
+    }
+
     function renderP2PHorizon() {
       const panel = document.getElementById('p2p-horizon-panel');
       const detail = document.getElementById('p2p-horizon-detail');
@@ -1412,7 +1425,7 @@
       const changeClass = Number.isFinite(change) && change < 0 ? 'text-rose-300' : 'text-emerald-300';
       const confidence = q.confianza === null || q.confianza === undefined ? 'n/d' : q.confianza;
       detail.innerHTML = `
-        <div class="rounded-xl border border-slate-800 bg-slate-950/55 p-3 space-y-3">
+        <div class="space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div><span class="block text-[9px] uppercase tracking-widest text-slate-500 font-bold">Horizonte seleccionado</span><strong class="text-sm text-slate-100">${horizonLabel} · Proyección independiente</strong></div>
             <span class="text-[10px] font-black ${changeClass}">${sign}${Number.isFinite(change) ? change.toFixed(2) : 'n/d'}%</span>
@@ -1425,7 +1438,7 @@
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px]">
             <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Rango estimado</span><strong class="block mt-1 text-slate-200">${moneySafe(q.rango_mid_min)} – ${moneySafe(q.rango_mid_max)} Bs</strong></div>
-            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${q.detalle || 'Escenario calculado con datos reales recientes.'}</strong></div>
+            <div class="rounded-lg bg-slate-900/70 border border-slate-800 px-3 py-2"><span class="text-slate-500">Lectura</span><strong class="block mt-1 text-slate-200">${horizonAwareText(q.detalle || 'Escenario calculado con datos reales recientes.')}</strong></div>
           </div>
         </div>`;
     }
@@ -1433,11 +1446,9 @@
     function renderAIIndicators() {
       const a = marketState.analysis;
       const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
-      if (!a || !a.metricas) return;
+      if (!a) return;
       renderP2PHorizon();
-      const m = a.metricas;
-      const summary = document.getElementById('ai-projection-summary');
-      if (summary) summary.classList.toggle('hidden', mode === '1');
+      const m = a.metricas || {};
       const fmtWindow = (v) => v === null || v === undefined ? 'n/d' : `${v >= 0 ? '+' : ''}${pct(v)}%`;
       const activeHorizon = selectedP2PHorizon || '7h';
       const activeProjection = getP2PProjection(a, activeHorizon);
@@ -1449,7 +1460,7 @@
           m2:[`VENTA EST. ${activeLabel}`, activeProjection.venta === null || activeProjection.venta === undefined ? 'n/d' : `${money(activeProjection.venta)} Bs`],
           m3:['TENDENCIA', a.tendencia || '--'],
           m4:['CALIDAD SEÑAL', `${activeProjection.confianza ?? activeProjection.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${horizonAwareText(a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.', activeHorizon)} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
@@ -1860,6 +1871,8 @@
       // por una llamada lenta de inicialización. Arranca en paralelo y luego
       // continúa con sus reintentos periódicos.
       loadAnalysis().catch(error => console.error('Venbot análisis inicial:', error));
+      // Reintenta y actualiza el análisis sin bloquear precios, historial, Spot ni la navegación.
+      setInterval(() => loadAnalysis().catch(error => console.error('Venbot análisis periódico:', error)), 30000);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
