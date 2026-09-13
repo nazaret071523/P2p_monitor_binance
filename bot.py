@@ -68,6 +68,12 @@ async def _safe_callback_answer(update: Update, *args, **kwargs):
     if getattr(update, "_venbot_callback_acknowledged", False):
         return True
     try:
+        # Marcar antes de responder evita una segunda confirmación del mismo
+        # callback cuando el dispatcher entra luego en el handler concreto.
+        try:
+            setattr(update, "_venbot_callback_acknowledged", True)
+        except Exception:
+            pass
         await query.answer(*args, **kwargs)
         return True
     except BadRequest as exc:
@@ -3390,7 +3396,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
 # ==========================================
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔮 Análisis P2P y Proyección 7H", callback_data="cmd_prediccion")],
+        [InlineKeyboardButton("🔮 Análisis P2P y Proyecciones", callback_data="cmd_prediccion")],
         [InlineKeyboardButton("🛠 Estado del sistema", callback_data="cmd_estado"), InlineKeyboardButton("📊 Rendimiento", callback_data="cmd_rendimiento")],
         [InlineKeyboardButton("💎 Muestra los planes VIP y PREMIUM", callback_data="cmd_suscribir")],
         [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("🔐 Mis credenciales", callback_data="cmd_credenciales")],
@@ -3751,12 +3757,6 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Confirmar inmediatamente evita que Telegram marque el botón como
     # expirado mientras una consulta de base de datos o Quant tarda.
     await _safe_callback_answer(update)
-    # Marca el update para que los handlers llamados debajo no vuelvan a
-    # responder el mismo callback y no generen 400 de Telegram.
-    try:
-        setattr(update, "_venbot_callback_acknowledged", True)
-    except Exception:
-        pass
     if data == "cmd_estado":
         await cmd_estado(update, context)
     elif data == "cmd_rendimiento":
