@@ -41,6 +41,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.error import BadRequest
 import uvicorn
 
 # ==========================================
@@ -51,6 +52,32 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("venbot")
+
+
+async def _safe_callback_answer(update: Update, *args, **kwargs):
+    """Confirma el callback una sola vez y tolera consultas expiradas."""
+    query = getattr(update, "callback_query", None)
+    if not query:
+        return False
+    if getattr(update, "_venbot_callback_acknowledged", False):
+        return True
+    try:
+        setattr(update, "_venbot_callback_acknowledged", True)
+    except Exception:
+        pass
+    try:
+        await query.answer(*args, **kwargs)
+        return True
+    except BadRequest as exc:
+        msg = str(exc).lower()
+        if "too old" in msg or "response timeout" in msg or "query id is invalid" in msg:
+            logger.warning("Callback Telegram expirado; se continúa: %s", exc)
+            return False
+        logger.exception("Error confirmando callback de Telegram")
+        return False
+    except Exception:
+        logger.exception("Error inesperado confirmando callback de Telegram")
+        return False
 
 VET = pytz.timezone("America/Caracas")
 
@@ -3477,9 +3504,6 @@ async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    if update.callback_query:
-        await update.callback_query.answer()
-
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
     # Telegram debe usar la misma captura persistida que alimenta el monitor.
     # Así no genera otra consulta Binance ni queda desincronizado del frontend.
@@ -3717,6 +3741,7 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     data = query.data
     chat_id = update.effective_chat.id
+    await _safe_callback_answer(update)
     if data == "cmd_estado":
         await cmd_estado(update, context)
     elif data == "cmd_rendimiento":
@@ -3739,19 +3764,19 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _enviar_checkout_telegram(update, context, plan, currency)
         except Exception:
             logger.exception("Error procesando compra Telegram: %s", data)
-            await query.answer("No se pudo crear la orden", show_alert=True)
+            await _safe_callback_answer(update, "No se pudo crear la orden", show_alert=True)
     elif data.startswith("proof_"):
         order_id=data.replace("proof_", "", 1)
         context.user_data["manual_proof_order_id"]=order_id
         context.user_data.pop("manual_proof_file_id",None)
-        await query.answer()
+        await _safe_callback_answer(update)
         await query.message.reply_text(f"📸 *Comprobante para {order_id}*\n\n1. Envíame la captura del pago.\n2. Después envíame el código de referencia en otro mensaje.\n\nNo envíes datos bancarios adicionales ni contraseñas.",parse_mode="Markdown")
     elif data == "cmd_menu":
         await start(update, context)
     elif data.startswith("banco_"):
         banco = data.replace("banco_", "", 1)
         CONFIGURACION_BANCOS[chat_id] = banco
-        await query.answer(f"Filtro cambiado a {banco}")
+        await _safe_callback_answer(update, f"Filtro cambiado a {banco}")
         await cmd_prediccion(update, context)
 
 
