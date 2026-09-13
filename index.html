@@ -1396,15 +1396,23 @@
     }
 
     function getP2PProjection(analysis, horizon) {
-      const source = analysis?.proyecciones_horizontes;
+      const root = analysis?.analysis && typeof analysis.analysis === 'object' ? analysis.analysis : analysis;
+      const source = root?.proyecciones_horizontes || root?.projections_horizons || root?.proyecciones || {};
       if (source && typeof source === 'object') {
-        return source[horizon] || source[horizon.toUpperCase()] || source[horizon.replace('h','H')] || {};
+        const wanted = String(horizon || '').toLowerCase();
+        const key = Object.keys(source).find(k => String(k).toLowerCase() === wanted);
+        if (key) return source[key] || {};
       }
-      return horizon === '7h' ? (analysis?.proyeccion_7h || {}) : {};
+      // Compatibilidad únicamente para el horizonte legado 7H.
+      return horizon === '7h' ? (root?.proyeccion_7h || {}) : {};
     }
 
-    function horizonAwareText(value) {
-      return String(value || '').replace(/\b7H\b/gi, selectedP2PHorizon.toUpperCase()).replace(/\b7\s*horas?\b/gi, selectedP2PHorizon.replace('h','') + ' horas');
+    function horizonAwareText(value, horizon = selectedP2PHorizon) {
+      const label = String(horizon || '7h').toUpperCase();
+      const hours = String(horizon || '7h').replace('h','');
+      return String(value || '')
+        .replace(/\b7H\b/gi, label)
+        .replace(/\b7\s*horas?\b/gi, hours + ' horas');
     }
 
     function renderAIIndicators() {
@@ -1420,7 +1428,7 @@
           m2:[`VENTA EST. ${selectedP2PHorizon.toUpperCase()}`, getP2PProjection(a, selectedP2PHorizon).venta != null ? `${money(getP2PProjection(a, selectedP2PHorizon).venta)} Bs` : 'n/d'],
           m3:['TENDENCIA', a.tendencia || '--'],
           m4:['CALIDAD SEÑAL', `${getP2PProjection(a, selectedP2PHorizon).confianza ?? getP2PProjection(a, selectedP2PHorizon).calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado: ${money(a.proyeccion_7h?.rango_mid_min)} – ${money(a.proyeccion_7h?.rango_mid_max)} Bs.`
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${horizonAwareText(a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.')} Rango midpoint estimado: ${money(getP2PProjection(a, selectedP2PHorizon).rango_mid_min)} – ${money(getP2PProjection(a, selectedP2PHorizon).rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
