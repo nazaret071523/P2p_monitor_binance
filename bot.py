@@ -2786,12 +2786,6 @@ def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual
         pred_sell = central + pred_spread / 2.0
 
         direction = "ALCISTA" if delta_pct > max(0.05, typical * 0.75) else ("BAJISTA" if delta_pct < -max(0.05, typical * 0.75) else "RANGO")
-        if direction == "ALCISTA":
-            detail = f"Momentum y pendiente temporal favorecen un escenario central alcista a {int(hours)}H."
-        elif direction == "BAJISTA":
-            detail = f"Momentum y pendiente temporal favorecen un escenario central bajista a {int(hours)}H."
-        else:
-            detail = f"La proyección {int(hours)}H permanece en rango: las señales están dentro del ruido estadístico reciente."
         confidence = int(round(max(15.0, min(92.0,
             35.0 + 20.0 * min(1.0, len(vals) / max(float(min_points), 1.0))
             + 20.0 * regression_r2
@@ -2809,8 +2803,6 @@ def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual
             "cambio_pct": round((central / mid_actual - 1.0) * 100.0, 3),
             "incertidumbre_pct": round(uncertainty, 3),
             "direccion": direction,
-            "detalle": detail,
-            "lectura": detail,
             "confianza": confidence,
             "drift_pct_h": round(drift_h, 5),
             "momentum_pct_h": round(momentum_rate_h, 5),
