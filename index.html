@@ -623,7 +623,13 @@
           <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 md:p-4 space-y-3">
             <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 id="ai-title-display" class="text-sm md:text-base font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4><p id="gemini-insight-text" class="text-xs text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p></div><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span></div>
             <div id="p2p-horizon-panel" class="mt-2"><div id="p2p-horizon-detail" class="text-xs text-slate-300 leading-relaxed">Selecciona un horizonte para consultar su proyección independiente.</div></div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+              <div class="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3"><span id="m1-title" class="text-[10px] font-bold text-emerald-300 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+              <div class="bg-sky-500/10 border border-sky-500/25 rounded-xl p-3"><span id="m2-title" class="text-[10px] font-bold text-sky-300 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+              <div class="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3"><span id="m3-title" class="text-[10px] font-bold text-amber-300 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
+              <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P 4H</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
             </div>
+          </div>
           <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1"><button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button><button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button><button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button></div>
         </div>
       </section>
@@ -1386,6 +1392,10 @@
       return horizon === '7h' ? (analysis?.proyeccion_7h || {}) : {};
     }
 
+    function horizonAwareNarrative(value, horizonLabel) {
+      return String(value || '').replace(/\b7H\b/gi, horizonLabel);
+    }
+
     function renderP2PHorizon() {
       const panel = document.getElementById('p2p-horizon-panel');
       const detail = document.getElementById('p2p-horizon-detail');
@@ -1441,7 +1451,7 @@
           m2:[`VENTA EST. ${activeLabel}`, activeProjection.venta === null || activeProjection.venta === undefined ? 'n/d' : `${money(activeProjection.venta)} Bs`],
           m3:['TENDENCIA', a.tendencia || '--'],
           m4:['CALIDAD SEÑAL', `${activeProjection.confianza ?? activeProjection.calidad ?? m.calidad_datos ?? 0}%`],
-          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.'} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
+          text:`${a.manipulacion?.activa ? '🚨 VIGILANCIA: movimiento anómalo detectado. ' : ''}${horizonAwareNarrative(a.detalle_tendencia || a.tactica?.detalle || 'Esperando análisis.', activeLabel)} Rango midpoint estimado ${activeLabel}: ${money(activeProjection.rango_mid_min)} – ${money(activeProjection.rango_mid_max)} Bs.`
         },
         '2': {
           title:'Flujo y Liquidez Binance P2P',
