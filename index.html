@@ -568,6 +568,8 @@
 
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-slate-400">
           <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Punto medio</span>
+          <span class="flex items-center gap-1.5"><span class="w-5 h-px bg-indigo-400"></span> Soporte</span>
+          <span class="flex items-center gap-1.5"><span class="w-5 h-px bg-rose-400"></span> Resistencia</span>
           <span class="ml-auto flex items-center gap-1.5 text-emerald-300"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Lectura en vivo</span>
         </div>
         <div class="relative h-[24rem] md:h-[30rem] w-full rounded-2xl chart-shell overflow-hidden"><canvas id="marketChart"></canvas></div>
@@ -623,14 +625,14 @@
           <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 md:p-4 space-y-3">
             <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h4 id="ai-title-display" class="text-sm md:text-base font-black text-slate-100">Proyección Cuantitativa Binance P2P</h4><p id="gemini-insight-text" class="text-xs text-slate-300 mt-2 leading-relaxed">Esperando lectura de mercado...</p></div><span class="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>En línea</span></div>
             <div id="p2p-horizon-panel" class="mt-2"><div id="p2p-horizon-detail" class="text-xs text-slate-300 leading-relaxed">Selecciona un horizonte para consultar su proyección independiente.</div></div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5 hidden" aria-hidden="true">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
               <div class="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-3"><span id="m1-title" class="text-[10px] font-bold text-emerald-300 uppercase tracking-wide block">SEÑAL P2P</span><strong id="m1-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-sky-500/10 border border-sky-500/25 rounded-xl p-3"><span id="m2-title" class="text-[10px] font-bold text-sky-300 uppercase tracking-wide block">VELOCIDAD P2P</span><strong id="m2-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3"><span id="m3-title" class="text-[10px] font-bold text-amber-300 uppercase tracking-wide block">LIQUIDEZ ANUNCIANTES</span><strong id="m3-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--</strong></div>
               <div class="bg-purple-500/10 border border-purple-500/25 rounded-xl p-3"><span id="m4-title" class="text-[10px] font-bold text-purple-300 uppercase tracking-wide block">RANGO P2P 4H</span><strong id="m4-val" class="text-xs md:text-sm font-black text-slate-100 mt-1 block">--.-- – --.-- Bs</strong></div>
             </div>
           </div>
-          <div class="hidden flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1" aria-hidden="true"><button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button><button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button><button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button></div>
+          <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1" role="tablist" aria-label="Detalle de análisis P2P"><button type="button" onclick="switchAIMode(1)" id="btn-ai-mode-1" class="ai-mode-btn active focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-emerald-300 bg-emerald-500/10"><i class="fa-solid fa-bolt text-amber-400 mr-1"></i>Proyección</button><button type="button" onclick="switchAIMode(2)" id="btn-ai-mode-2" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-chart-pie text-sky-400 mr-1"></i>Flujo P2P</button><button type="button" onclick="switchAIMode(3)" id="btn-ai-mode-3" class="ai-mode-btn focus-ring flex-1 px-2 py-2 rounded-lg text-[10px] font-bold text-slate-400"><i class="fa-solid fa-bullseye text-purple-400 mr-1"></i>Niveles P2P</button></div>
         </div>
       </section>
 
@@ -1030,6 +1032,7 @@
           marketState.analysis = normalized;
           analysisLastSuccessfulFetch = new Date();
           renderAIIndicators();
+          renderChart();
         } else {
           throw new Error(data?.error || 'Análisis no disponible');
         }
@@ -1145,9 +1148,25 @@
       document.getElementById('chart-high-time').textContent = highTs ? formatChartTime(highTs) : '--';
       document.getElementById('chart-current-time').textContent = liveTime ? `${formatChartTime(liveTime)} · ${change >= 0 ? '+' : ''}${pct(change)}%` : '--';
 
+      const chartWidth = canvas.clientWidth || 720;
+      const candleWidth = Math.max(4, Math.min(16, Math.floor((chartWidth / Math.max(candles.length, 1)) * 0.72)));
+      const analysis = marketState.analysis || {};
+      const dynamicLevels = analysis.niveles_dinamicos || {};
+      const support = Number(dynamicLevels.soporte ?? analysis.soporte_7h);
+      const resistance = Number(dynamicLevels.resistencia ?? analysis.resistencia_7h);
+      const rangePosition = Number(analysis.posicion_rango_7h);
+      const lineData = (value) => Number.isFinite(value) && value > 0 ? [{x: candles[0].x, y:value}, {x:candles[candles.length - 1].x, y:value}] : [];
+
       const datasets = [
-        { label: 'Punto medio', type: 'candlestick', data: candles, borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, barThickness: 'flex', maxBarThickness: 12 },
+        { label: 'Punto medio', type: 'candlestick', data: candles, borderColor: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, color: { up: '#34d399', down: '#fb7185', unchanged: '#94a3b8' }, barThickness: candleWidth, maxBarThickness: 16 },
+        ...(Number.isFinite(support) && support > 0 ? [{ label:'Soporte', type:'line', data:lineData(support), borderColor:'#818cf8', borderWidth:1.5, borderDash:[5,4], pointRadius:0, pointHoverRadius:0, fill:false, tension:0 }] : []),
+        ...(Number.isFinite(resistance) && resistance > 0 ? [{ label:'Resistencia', type:'line', data:lineData(resistance), borderColor:'#fb7185', borderWidth:1.5, borderDash:[5,4], pointRadius:0, pointHoverRadius:0, fill:false, tension:0 }] : []),
       ];
+
+      const levelEl = document.getElementById('chart-levels');
+      if (levelEl) levelEl.textContent = Number.isFinite(support) && support > 0 && Number.isFinite(resistance) && resistance > 0 ? `${money(support)} / ${money(resistance)} Bs` : '-- / --';
+      const posEl = document.getElementById('chart-range-position');
+      if (posEl) posEl.textContent = Number.isFinite(rangePosition) ? `Rango: ${pct(rangePosition)}%` : 'Rango: --';
 
       const options = {
         responsive: true, maintainAspectRatio: false, parsing: false,
@@ -1159,6 +1178,8 @@
             title: (items) => items.length ? formatChartTime(items[0].raw?.x) : '',
             label: (ctx) => {
               const r = ctx.raw || {};
+              if (ctx.dataset?.label === 'Soporte') return `Soporte · ${money(r.y)} Bs`;
+              if (ctx.dataset?.label === 'Resistencia') return `Resistencia · ${money(r.y)} Bs`;
               return `Punto medio · O ${money(r.o)} · H ${money(r.h)} · L ${money(r.l)} · C ${money(r.c)} Bs`;
             }
           }}
@@ -1602,9 +1623,15 @@
     }
 
     function switchAIMode(mode) {
-      document.querySelectorAll('.ai-mode-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.ai-mode-btn').forEach(btn => {
+        btn.classList.remove('active','bg-emerald-500/10','text-emerald-300');
+        btn.classList.add('text-slate-400');
+      });
       const btn = document.getElementById('btn-ai-mode-' + mode);
-      if (btn) btn.classList.add('active');
+      if (btn) {
+        btn.classList.add('active','bg-emerald-500/10','text-emerald-300');
+        btn.classList.remove('text-slate-400');
+      }
 
       const titles = {
         1: 'Proyección Operativa Binance P2P',
