@@ -526,6 +526,14 @@
           <p class="text-[10px] text-slate-500 mt-1">Administra las alertas sin mezclarlas con el monitor principal.</p>
         </div>
         <div id="alerts-content-slot"></div>
+        <div id="smart-alerts-card" class="glass-card p-4 rounded-2xl border border-amber-500/20 mt-4">
+          <div class="flex items-center justify-between gap-3 mb-3">
+            <div><h3 class="font-bold text-slate-100 text-sm">Eventos inteligentes</h3><p class="text-[10px] text-slate-500">Señales estadísticas recientes detectadas por Venbot.</p></div>
+            <button type="button" onclick="loadSmartAlerts()" class="focus-ring text-[10px] font-bold px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700">Actualizar</button>
+          </div>
+          <div id="smart-alerts-status" class="text-[10px] text-slate-500 mb-2">Inicia sesión con Premium o VIP para verlas.</div>
+          <div id="smart-alerts-list" class="space-y-2 max-h-56 overflow-y-auto"></div>
+        </div>
       </section>
 
       <section id="venbot-international-view" class="venbot-view">
@@ -1611,6 +1619,7 @@
     function openAlertsModal() {
       document.getElementById('alertsModal').classList.remove('hidden');
       loadPersonalAlerts();
+      loadSmartAlerts();
     }
     function closeAlertsModal() { document.getElementById('alertsModal').classList.add('hidden'); }
 
@@ -1801,6 +1810,30 @@
       } finally {
         aiRequestRunning = false;
       }
+    }
+
+    async function loadSmartAlerts() {
+      const list = document.getElementById('smart-alerts-list');
+      const status = document.getElementById('smart-alerts-status');
+      if (!list || !status) return;
+      try {
+        const token = getAuthToken();
+        if (!token) { status.textContent='Inicia sesión con Premium o VIP para ver eventos inteligentes.'; list.innerHTML=''; return; }
+        const r = await fetch(`${API_BASE_URL}/api/alerts/smart?banco=GENERAL&limit=20`, {headers:{'X-Venbot-Session':token,'Accept':'application/json'}});
+        const d = await r.json().catch(()=>({}));
+        if (!r.ok) throw new Error(d.detail || 'No se pudieron cargar los eventos');
+        const events = d.events || [];
+        status.textContent = events.length ? `Últimos ${events.length} eventos · cooldown ${Math.round(Number(d.cooldown_seconds || 1800)/60)} min.` : 'Sin eventos inteligentes recientes.';
+        list.innerHTML='';
+        events.forEach(ev => {
+          const row=document.createElement('div');
+          const sev=ev.severity==='critical' ? 'border-red-500/25' : ev.severity==='warning' ? 'border-amber-500/25' : 'border-slate-800';
+          row.className=`rounded-xl border ${sev} bg-slate-900/70 p-2`;
+          const when=ev.created_at ? new Date(ev.created_at).toLocaleString() : '';
+          row.innerHTML=`<div class="text-[10px] text-white font-bold">${ev.title || 'Evento'} · ${ev.banco || 'GENERAL'}</div><div class="text-[9px] text-slate-400 mt-1">${ev.message || ''}</div><div class="text-[8px] text-slate-600 mt-1">${when}</div>`;
+          list.appendChild(row);
+        });
+      } catch (e) { status.textContent = e.message || 'No se pudieron cargar los eventos inteligentes.'; list.innerHTML=''; }
     }
 
     async function loadPersonalAlerts() {
