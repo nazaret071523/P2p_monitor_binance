@@ -1635,9 +1635,20 @@ def _parsear_home_bcv(html):
 
     page_text = soup.get_text(" ", strip=True)
     effective_date = None
-    m = re.search(r"Fecha\s+Valor\s*:?\s*([^|]+?)(?=\s+(?:USD|EUR|CNY|TRY|RUB)\b|$)", page_text, flags=re.I)
-    if m:
-        effective_date = m.group(1).strip()
+    # El HTML del BCV no usa un separador ``|`` de forma fiable. La versión
+    # anterior capturaba todo el resto de la página después de ``Fecha Valor``
+    # y terminaba enviando el contenido bruto del portal a la tarjeta de la UI.
+    # Extraemos únicamente la fecha de vigencia con formatos conocidos.
+    date_patterns = (
+        r"Fecha\s+Valor\s*:?\s*([A-Za-zÁÉÍÓÚáéíóúÜü]+,\s*\d{1,2}\s+[A-Za-zÁÉÍÓÚáéíóúÜü]+\s+\d{4})",
+        r"Fecha\s+Valor\s*:?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
+        r"Fecha\s+Valor\s*:?\s*(\d{4}-\d{1,2}-\d{1,2})",
+    )
+    for pattern in date_patterns:
+        m = re.search(pattern, page_text, flags=re.I)
+        if m:
+            effective_date = m.group(1).strip()
+            break
 
     return {"usd": usd, "eur": eur, "effective_date": effective_date}
 
