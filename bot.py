@@ -3478,16 +3478,13 @@ async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # El callback ya se confirma en manejar_botones(). Enviar una respuesta
-    # inmediata evita que el usuario perciba que el botón quedó congelado
-    # mientras el motor cuantitativo trabaja en segundo plano.
-    try:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⏳ Preparando la proyección P2P con la última lectura disponible…"
-        )
-    except Exception:
-        logger.exception("No se pudo enviar el aviso inicial de predicción")
+    # El callback ya fue confirmado por manejar_botones; informar de inmediato
+    # y ejecutar el cálculo fuera del event loop.
+    if update.callback_query and update.callback_query.message:
+        try:
+            await update.callback_query.message.reply_text("⏳ Preparando la lectura con los últimos datos reales…")
+        except Exception:
+            logger.exception("No se pudo enviar aviso inicial de predicción")
 
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
     # Telegram debe usar la misma captura persistida que alimenta el monitor.
@@ -3737,17 +3734,7 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "cmd_rendimiento":
         await cmd_rendimiento(update, context)
     elif data == "cmd_prediccion":
-        try:
-            await cmd_prediccion(update, context)
-        except Exception:
-            logger.exception("Error procesando predicción Telegram")
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="⚠️ No se pudo completar la proyección. Inténtalo nuevamente en unos segundos."
-                )
-            except Exception:
-                logger.exception("No se pudo enviar el error de predicción a Telegram")
+        await cmd_prediccion(update, context)
     elif data == "cmd_cuenta":
         await cmd_cuenta(update, context)
     elif data == "cmd_credenciales":
@@ -3764,12 +3751,11 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _enviar_checkout_telegram(update, context, plan, currency)
         except Exception:
             logger.exception("Error procesando compra Telegram: %s", data)
-            await query.answer("No se pudo crear la orden", show_alert=True)
+            await query.message.reply_text("⚠️ No se pudo crear la orden.")
     elif data.startswith("proof_"):
         order_id=data.replace("proof_", "", 1)
         context.user_data["manual_proof_order_id"]=order_id
         context.user_data.pop("manual_proof_file_id",None)
-        await query.answer()
         await query.message.reply_text(f"📸 *Comprobante para {order_id}*\n\n1. Envíame la captura del pago.\n2. Después envíame el código de referencia en otro mensaje.\n\nNo envíes datos bancarios adicionales ni contraseñas.",parse_mode="Markdown")
     elif data == "cmd_menu":
         await start(update, context)
@@ -5132,8 +5118,16 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
 
 
 @app.get("/api/analysis")
-def obtener_analysis_api():
-    return calcular_analisis_monitor("GENERAL")
+async def obtener_analysis_api():
+    """Entrega el análisis sin bloquear el event loop de FastAPI."""
+    inicio = time.monotonic()
+    try:
+        resultado = await asyncio.to_thread(calcular_analisis_monitor, "GENERAL")
+        logger.info("ANALYSIS API completado: ok=%s duracion=%.2fs", resultado.get("ok", True) if isinstance(resultado, dict) else True, time.monotonic() - inicio)
+        return resultado
+    except Exception as exc:
+        logger.exception("ANALYSIS API falló: %s", exc)
+        return {"ok": False, "error": "Análisis temporalmente no disponible"}
 
 
 @app.get("/api/history")
