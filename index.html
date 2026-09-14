@@ -1038,7 +1038,7 @@
           if (usable || !marketState.analysis) marketState.analysis = normalized;
           if (usable) { analysisLastSuccessfulFetch = new Date(); renderAIIndicators(); }
           if (normalized?.pending && !window.__venbotAnalysisRetry) {
-            window.__venbotAnalysisRetry=setTimeout(()=>{window.__venbotAnalysisRetry=null;loadAnalysis();},5000);
+            window.__venbotAnalysisRetry=setTimeout(()=>{window.__venbotAnalysisRetry=null;loadAnalysis();},12000);
           }
         } else {
           throw new Error(data?.error || 'Análisis no disponible');
