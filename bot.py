@@ -3478,6 +3478,17 @@ async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
+    # El callback ya se confirma en manejar_botones(). Enviar una respuesta
+    # inmediata evita que el usuario perciba que el botón quedó congelado
+    # mientras el motor cuantitativo trabaja en segundo plano.
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⏳ Preparando la proyección P2P con la última lectura disponible…"
+        )
+    except Exception:
+        logger.exception("No se pudo enviar el aviso inicial de predicción")
+
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
     # Telegram debe usar la misma captura persistida que alimenta el monitor.
     # Así no genera otra consulta Binance ni queda desincronizado del frontend.
@@ -3726,7 +3737,17 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "cmd_rendimiento":
         await cmd_rendimiento(update, context)
     elif data == "cmd_prediccion":
-        await cmd_prediccion(update, context)
+        try:
+            await cmd_prediccion(update, context)
+        except Exception:
+            logger.exception("Error procesando predicción Telegram")
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ No se pudo completar la proyección. Inténtalo nuevamente en unos segundos."
+                )
+            except Exception:
+                logger.exception("No se pudo enviar el error de predicción a Telegram")
     elif data == "cmd_cuenta":
         await cmd_cuenta(update, context)
     elif data == "cmd_credenciales":
