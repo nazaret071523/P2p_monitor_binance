@@ -6106,6 +6106,79 @@ def _respuesta_banco_individual(contexto, low):
     return None
 
 
+
+def _pregunta_proyeccion_horizonte(low):
+    """Detecta una consulta explícita sobre un horizonte P2P soportado."""
+    text = (low or "").lower()
+    patterns = {
+        "1h": ("1h", "1 h", "1 hora", "una hora"),
+        "3h": ("3h", "3 h", "3 horas", "tres horas"),
+        "7h": ("7h", "7 h", "7 horas", "siete horas"),
+        "24h": ("24h", "24 h", "24 horas", "un día", "un dia"),
+    }
+    if not any(k in text for k in ("proyección", "proyeccion", "predicción", "prediccion", "escenario", "futuro", "pronóstico", "pronostico")):
+        return None
+    for label, terms in patterns.items():
+        if any(t in text for t in terms):
+            return label
+    return None
+
+
+def _respuesta_contextual_horizonte_local(contexto, horizonte):
+    """Respuesta determinista para explicar cualquier proyección P2P disponible."""
+    a = contexto.get("analisis_cuantitativo") or {}
+    proy = a.get("proyecciones_horizontes") or {}
+    q = proy.get(horizonte) or {}
+    m = contexto.get("mercado_actual") or {}
+    if not q:
+        return f"No hay una proyección {horizonte.upper()} disponible con los datos reales actuales de Venbot."
+    compra_actual = m.get("comprar_usdt_sell")
+    venta_actual = m.get("vender_usdt_buy")
+    def pct_text(v):
+        try:
+            return f"{float(v):+.2f}%"
+        except Exception:
+            return "n/d"
+    cobertura = q.get("cobertura_ventana_horas")
+    muestras = q.get("muestras_ventana")
+    direccion = q.get("direccion") or "n/d"
+    confianza = q.get("confianza")
+    rango_min = q.get("rango_mid_min")
+    rango_max = q.get("rango_mid_max")
+    central = q.get("midpoint")
+    lineas = [
+        f"**Escenario Venbot · {horizonte.upper()}**",
+        f"Dato observado ahora: comprar {_money_ia(compra_actual)} Bs/USDT · vender {_money_ia(venta_actual)} Bs/USDT.",
+        f"Escenario central: {_money_ia(central)} Bs/USDT ({pct_text(q.get('cambio_pct'))}).",
+        f"Rango estadístico: {_money_ia(rango_min)}–{_money_ia(rango_max)} Bs/USDT.",
+        f"Dirección calculada: **{direccion}** · confianza: **{confianza if confianza is not None else 'n/d'}/100**.",
+    ]
+    if cobertura is not None or muestras is not None:
+        lineas.append(f"Base temporal: {cobertura if cobertura is not None else 'n/d'} h de cobertura y {muestras if muestras is not None else 'n/d'} muestras en la ventana.")
+    if a.get("detalle_tendencia"):
+        lineas.append(f"Lectura general: {a.get('detalle_tendencia')}")
+    lineas.append("Es una estimación estadística calculada por Venbot; no es un precio garantizado.")
+    return "\n".join(lineas)
+
+
+def _respuesta_resumen_contextual_local(contexto):
+    """Resumen rápido de mercado para la acción 'Situación actual'."""
+    m = contexto.get("mercado_actual") or {}
+    a = contexto.get("analisis_cuantitativo") or {}
+    p = a.get("proyecciones_horizontes") or {}
+    lines = [
+        f"**Situación actual · Venbot**",
+        f"P2P observado: comprar {_money_ia(m.get('comprar_usdt_sell'))} Bs/USDT · vender {_money_ia(m.get('vender_usdt_buy'))} Bs/USDT · spread {_money_ia(m.get('spread'))} Bs.",
+        f"Tendencia: **{a.get('tendencia') or 'n/d'}** · liquidez: **{(a.get('metricas') or {}).get('liquidez', m.get('liquidez', 'n/d'))}**.",
+    ]
+    for label in ("1h", "3h", "7h", "24h"):
+        q = p.get(label) or {}
+        if q:
+            lines.append(f"{label.upper()}: central {_money_ia(q.get('midpoint'))} Bs · cambio {q.get('cambio_pct', 'n/d')}% · confianza {q.get('confianza', 'n/d')}/100.")
+    lines.append(f"Soporte: {_money_ia(a.get('proyeccion_7h', {}).get('soporte_7h'))} Bs · resistencia: {_money_ia(a.get('proyeccion_7h', {}).get('resistencia_7h'))} Bs." if isinstance(a.get('proyeccion_7h'), dict) else "Niveles: n/d.")
+    lines.append("La lectura combina datos P2P observados y proyecciones estadísticas; no es una garantía de precio futuro.")
+    return "\n".join(lines)
+
 def _respuesta_7h_local(contexto):
     a = contexto.get("analisis_cuantitativo") or {}
     p = a.get("proyeccion_7h") or {}
@@ -6273,7 +6346,7 @@ def _generador_ai_stream(mensaje, historial):
     low = texto.lower()
     market_query = any(k in low for k in (
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
-        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
+        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción", "escenario", "futuro", "pronóstico", "pronostico",
         "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
         "mercantil", "provincial", "bnc", "banco", "manipulacion", "manipulación", "anomalia", "anomalía",
         "btc", "bitcoin", "eth", "ethereum", "sol", "solana", "sui", "aave", "uni", "uniswap", "ksm", "kusama", "zec", "xrp", "ripple", "spot"
@@ -6294,6 +6367,11 @@ def _generador_ai_stream(mensaje, historial):
             yield _stream_event(done=True); return
 
         if market_query:
+            if any(x in low for x in ("situación actual", "situacion actual", "resumen del mercado", "qué está pasando", "que esta pasando")):
+                yield _stream_event(_respuesta_resumen_contextual_local(contexto)); yield _stream_event(done=True); return
+            horizonte = _pregunta_proyeccion_horizonte(low)
+            if horizonte:
+                yield _stream_event(_respuesta_contextual_horizonte_local(contexto, horizonte)); yield _stream_event(done=True); return
             if _pregunta_spot(low):
                 yield _stream_event(_respuesta_spot_local(contexto, low)); yield _stream_event(done=True); return
             if _pregunta_datos_ia(low):
@@ -6360,7 +6438,7 @@ def generar_respuesta_ia(mensaje, historial):
 
     market_query = any(k in low for k in (
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
-        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción",
+        "momentum", "soporte", "resistencia", "proyeccion", "proyección", "prediccion", "predicción", "escenario", "futuro", "pronóstico", "pronostico",
         "tendencia", "bcv", "dolar", "dólar", "euro", "binance", "tasa", "arbitraje", "7h", "7 horas",
         "mercantil", "provincial", "bnc", "banco", "btc", "bitcoin", "eth", "ethereum",
         "sol", "solana", "sui", "aave", "uni", "uniswap", "ksm", "kusama", "zec", "xrp", "ripple", "spot"
@@ -6369,6 +6447,11 @@ def generar_respuesta_ia(mensaje, historial):
     if market_query:
         logger.info("AI CHAT: contexto mercado obtenido | bancos=%s | spot=%s | has_analysis=%s", list((contexto.get("bancos") or {}).keys()), len(contexto.get("spot") or {}), bool(contexto.get("analisis_cuantitativo")))
         # Consultas factuales de mercado no dependen de Gemini: la fuente de verdad es Venbot.
+        if any(x in low for x in ("situación actual", "situacion actual", "resumen del mercado", "qué está pasando", "que esta pasando")):
+            return _respuesta_resumen_contextual_local(contexto)
+        horizonte = _pregunta_proyeccion_horizonte(low)
+        if horizonte:
+            return _respuesta_contextual_horizonte_local(contexto, horizonte)
         if _pregunta_spot(low):
             return _respuesta_spot_local(contexto, low)
         if _pregunta_datos_ia(low):
