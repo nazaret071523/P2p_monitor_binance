@@ -6155,8 +6155,17 @@ def _respuesta_contextual_horizonte_local(contexto, horizonte):
     ]
     if cobertura is not None or muestras is not None:
         lineas.append(f"Base temporal: {cobertura if cobertura is not None else 'n/d'} h de cobertura y {muestras if muestras is not None else 'n/d'} muestras en la ventana.")
-    if a.get("detalle_tendencia"):
-        lineas.append(f"Lectura general: {a.get('detalle_tendencia')}")
+    # La lectura explicativa debe corresponder al horizonte solicitado.
+    # No reutilizamos detalle_tendencia, porque ese campo describe la lectura
+    # general del motor (históricamente anclada en 7H) y puede contradecir
+    # la dirección independiente del horizonte consultado.
+    if direccion and str(direccion).upper() != "N/D":
+        direccion_txt = str(direccion).upper()
+        cambio = q.get("cambio_pct")
+        if cambio is not None:
+            lineas.append(f"Lectura {horizonte.upper()}: escenario {direccion_txt} con variación central de {pct_text(cambio)}.")
+        else:
+            lineas.append(f"Lectura {horizonte.upper()}: escenario {direccion_txt}.")
     lineas.append("Es una estimación estadística calculada por Venbot; no es un precio garantizado.")
     return "\n".join(lineas)
 
@@ -6431,10 +6440,10 @@ def generar_respuesta_ia(mensaje, historial):
 
     if low in {"hola", "hola!", "hola.", "buenas", "buenas!", "hey", "hey!"}:
         logger.info("AI CHAT: respuesta local inmediata | elapsed=%.2fs", time.monotonic()-t0)
-        return "Hola 👋 Soy Venbot AI. Puedo analizar el mercado P2P de USDT/VES, bancos, tendencia, liquidez y proyección de 7 horas, además de responder preguntas generales."
+        return "Hola 👋 Soy Venbot AI. Puedo analizar el mercado P2P de USDT/VES, bancos, tendencia, liquidez y proyecciones 1H, 3H, 7H y 24H, además de responder preguntas generales."
     if any(k in low for k in ("qué puedes hacer", "que puedes hacer", "para qué sirves", "para que sirves")) and len(low) < 100:
         logger.info("AI CHAT: respuesta local de capacidades | elapsed=%.2fs", time.monotonic()-t0)
-        return "Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenario estadístico a 7 horas."
+        return "Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenarios estadísticos 1H, 3H, 7H y 24H."
 
     market_query = any(k in low for k in (
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
