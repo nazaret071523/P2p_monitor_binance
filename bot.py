@@ -99,7 +99,7 @@ COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10"
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
-BCV_REFRESH_SECONDS = max(60, int(os.getenv("BCV_REFRESH_SECONDS", "300")))
+BCV_REFRESH_SECONDS = max(30, int(os.getenv("BCV_REFRESH_SECONDS", "60")))
 BCV_REQUEST_TIMEOUT = max(3, int(os.getenv("BCV_REQUEST_TIMEOUT", "10")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
@@ -210,6 +210,11 @@ telegram_app = None
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
 _P2P_BANK_AD_CACHE = {}
 collector_task = None
+bcv_task = None
+analysis_precompute_task = None
+ANALYSIS_PRECOMPUTE_INTERVAL_SECONDS = max(30, int(os.getenv("ANALYSIS_PRECOMPUTE_INTERVAL_SECONDS", "60")))
+ANALYSIS_PRECOMPUTE_ENABLED = os.getenv("ANALYSIS_PRECOMPUTE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+ANALYSIS_PRECOMPUTE_LOCK = asyncio.Lock()
 
 # Backtest Quant: ejecución asíncrona para no mantener abierta la petición HTTP.
 QUANT_BACKTEST_EXECUTOR = ThreadPoolExecutor(max_workers=1)
@@ -234,7 +239,7 @@ _AI_CONTEXT_CACHE = {"value": None, "expires": 0.0}
 _CACHE_TTL_ANALYSIS = 20.0
 _CACHE_TTL_HISTORY = 10.0
 _CACHE_TTL_AI = 5.0
-_CACHE_TTL_QUANT = 20.0
+_CACHE_TTL_QUANT = 60.0
 _QUANT_CACHE = {}
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
@@ -864,6 +869,12 @@ def guardar_muestra_db(compra, venta, liquidez_score=0, banco="GENERAL", fecha=N
                     """,
                     (float(compra), float(venta), int(liquidez_score), banco, fecha),
                 )
+        # Una nueva muestra vuelve obsoletos los cálculos derivados de ese banco.
+        try:
+            _QUANT_CACHE.pop(banco or "GENERAL", None)
+            _ANALYSIS_CACHE.pop(banco or "GENERAL", None)
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.exception("Error guardando muestra: %s", e)
@@ -1678,32 +1689,53 @@ def _consultar_fuente_bcv_json():
 
 
 def _consultar_fuente_dolarapi():
-    """Segundo fallback: datos oficiales BCV republicados por DolarAPI."""
-    errores = []
-    usd = eur = 0.0
-    usd_data = eur_data = {}
-    try:
-        r = HTTP.get("https://ve.dolarapi.com/v1/dolares/oficial", timeout=BCV_REQUEST_TIMEOUT)
-        r.raise_for_status()
-        usd_data = r.json()
-        usd = _float_positivo(usd_data.get("promedio")) or _float_positivo(usd_data.get("venta")) or _float_positivo(usd_data.get("compra"))
-    except Exception as e:
-        errores.append(f"USD: {e}")
-    try:
-        r = HTTP.get("https://ve.dolarapi.com/v1/euros/oficial", timeout=BCV_REQUEST_TIMEOUT)
-        r.raise_for_status()
-        eur_data = r.json()
-        eur = _float_positivo(eur_data.get("promedio")) or _float_positivo(eur_data.get("venta")) or _float_positivo(eur_data.get("compra"))
-    except Exception as e:
-        errores.append(f"EUR: {e}")
+    """Fuente de respaldo que DolarApi documenta como alimentada por BCV.
+
+    Se consulta una sola ruta para USD+EUR, reduciendo latencia y conexiones.
+    La API publica fechaActualizacion para saber qué lectura se recibió.
+    """
+    r = HTTP.get("https://ve.dolarapi.com/v1/cotizaciones", timeout=BCV_REQUEST_TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+    rows = data if isinstance(data, list) else (data.get("data") if isinstance(data, dict) else None)
+    if not isinstance(rows, list):
+        raise RuntimeError("DolarAPI: formato de cotizaciones no reconocido")
+    usd_row = next((x for x in rows if str(x.get("moneda") or "").upper() == "USD" or "dólar" in str(x.get("nombre") or "").lower() or "dolar" in str(x.get("nombre") or "").lower()), None)
+    eur_row = next((x for x in rows if str(x.get("moneda") or "").upper() == "EUR" or "euro" in str(x.get("nombre") or "").lower()), None)
+    # En caso de que 'moneda' no venga en la respuesta, conservar búsqueda por nombre.
+    usd = _float_positivo((usd_row or {}).get("promedio")) or _float_positivo((usd_row or {}).get("venta")) or _float_positivo((usd_row or {}).get("compra"))
+    eur = _float_positivo((eur_row or {}).get("promedio")) or _float_positivo((eur_row or {}).get("venta")) or _float_positivo((eur_row or {}).get("compra"))
     if usd <= 0 or eur <= 0:
-        raise RuntimeError(" | ".join(errores) or "DolarAPI sin USD/EUR válidos")
+        raise RuntimeError(f"DolarAPI sin USD/EUR válidos: USD={usd} EUR={eur}")
+    ts = (usd_row or {}).get("fechaActualizacion") or (eur_row or {}).get("fechaActualizacion")
     return {
         "usd": usd,
         "eur": eur,
-        "effective_date": usd_data.get("fecha") or eur_data.get("fecha"),
-        "source_timestamp": usd_data.get("fecha") or eur_data.get("fecha"),
+        "effective_date": str(ts)[:10] if ts else None,
+        "source_timestamp": ts,
     }
+
+
+def _fecha_rango_bcv(value):
+    """Convierte fechas ISO o DD/MM/YYYY a una tupla comparable."""
+    if not value:
+        return (0, 0, 0)
+    text = str(value).strip()
+    m = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", text)
+    if m:
+        return tuple(map(int, m.groups()))
+    m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](20\d{2})", text)
+    if m:
+        d, mo, y = map(int, m.groups())
+        return (y, mo, d)
+    meses = {"enero":1,"febrero":2,"marzo":3,"abril":4,"mayo":5,"junio":6,"julio":7,"agosto":8,"septiembre":9,"setiembre":9,"octubre":10,"noviembre":11,"diciembre":12}
+    m = re.search(r"(\d{1,2})\s+([A-Za-záéíóúñ]+)\s+(20\d{2})", text, re.I)
+    if m:
+        d, name, y = m.groups()
+        mo = meses.get(name.lower())
+        if mo:
+            return (int(y), mo, int(d))
+    return (0, 0, 0)
 
 
 def obtener_tasas_bcv_oficiales():
@@ -1729,34 +1761,51 @@ def obtener_tasas_bcv_oficiales():
 
     fuentes = (
         ("BCV Oficial", _consultar_fuente_bcv_directa),
-        ("BCV Today · datos BCV", _consultar_fuente_bcv_json),
         ("DolarAPI · datos BCV", _consultar_fuente_dolarapi),
+        ("BCV Today · datos BCV", _consultar_fuente_bcv_json),
     )
+    resultados = []
     errores = []
-    for source, getter in fuentes:
-        try:
-            data = getter()
-            usd = _float_positivo(data.get("usd"))
-            eur = _float_positivo(data.get("eur"))
-            if usd <= 0 or eur <= 0:
-                raise RuntimeError("USD/EUR inválidos")
-            value = {
-                "usd": round(usd, 4),
-                "eur": round(eur, 4),
-                "timestamp": now,
-                "source": source,
-                "effective_date": data.get("effective_date"),
-                "source_timestamp": data.get("source_timestamp"),
-            }
-            with BCV_LOCK:
-                ULTIMO_BCV_VALIDO = value
-            logger.info(
-                "BCV actualizado: USD=%.4f EUR=%.4f fuente=%s fecha_valor=%s",
-                usd, eur, source, data.get("effective_date"),
-            )
-            return dict(value)
-        except Exception as e:
-            errores.append(f"{source}: {e}")
+    # Las fuentes se consultan en paralelo: la más lenta no bloquea a las demás.
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futures = {ex.submit(getter): source for source, getter in fuentes}
+        for fut, source in list(futures.items()):
+            try:
+                data = fut.result()
+                usd = _float_positivo(data.get("usd"))
+                eur = _float_positivo(data.get("eur"))
+                if usd <= 0 or eur <= 0:
+                    raise RuntimeError("USD/EUR inválidos")
+                resultados.append((source, data, usd, eur))
+            except Exception as e:
+                errores.append(f"{source}: {e}")
+
+    if resultados:
+        # Primero la fecha de vigencia; en empate, preferimos la fuente oficial.
+        prioridad = {"BCV Oficial": 3, "DolarAPI · datos BCV": 2, "BCV Today · datos BCV": 1}
+        resultados.sort(key=lambda row: (_fecha_rango_bcv(row[1].get("effective_date") or row[1].get("source_timestamp")), prioridad.get(row[0], 0)), reverse=True)
+        source, data, usd, eur = resultados[0]
+        value = {
+            "usd": round(usd, 4),
+            "eur": round(eur, 4),
+            "timestamp": now,
+            "source": source,
+            "effective_date": data.get("effective_date"),
+            "source_timestamp": data.get("source_timestamp"),
+        }
+        with BCV_LOCK:
+            old = dict(ULTIMO_BCV_VALIDO)
+            old_rank = _fecha_rango_bcv(old.get("effective_date") or old.get("source_timestamp"))
+            new_rank = _fecha_rango_bcv(value.get("effective_date") or value.get("source_timestamp"))
+            # No retroceder a una publicación anterior si otra lectura válida ya es más nueva.
+            if old.get("usd", 0) > 0 and new_rank < old_rank:
+                return old
+            ULTIMO_BCV_VALIDO = value
+        logger.info(
+            "BCV actualizado: USD=%.4f EUR=%.4f fuente=%s fecha_valor=%s",
+            usd, eur, source, data.get("effective_date"),
+        )
+        return dict(value)
 
     logger.warning("No fue posible refrescar BCV: %s", " | ".join(errores))
 
@@ -3989,6 +4038,52 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CONFIGURACION_BANCOS[chat_id] = banco
         await _safe_callback_answer(update, f"Filtro cambiado a {banco}")
         await cmd_prediccion(update, context)
+
+
+async def tarea_refresco_bcv():
+    """Mantiene BCV/EUR actualizados de forma independiente del ciclo P2P."""
+    while True:
+        try:
+            await asyncio.to_thread(obtener_tasas_bcv_oficiales)
+        except Exception:
+            logger.exception("Refresco independiente BCV falló")
+        await asyncio.sleep(BCV_REFRESH_SECONDS)
+
+
+async def tarea_precalculo_analisis():
+    """Precalcula una vez por ciclo los resultados para web/Telegram.
+
+    Los usuarios leen estos resultados; no se ejecutan 1..N motores por cada
+    petición. Cada cálculo usa las muestras P2P reales persistidas.
+    """
+    bancos = ("GENERAL", "MERCANTIL", "PROVINCIAL", "BNC")
+    while True:
+        started = time.monotonic()
+        if ANALYSIS_PRECOMPUTE_ENABLED:
+            async with ANALYSIS_PRECOMPUTE_LOCK:
+                for banco in bancos:
+                    try:
+                        mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+                        c = float(mercado.get("compra", 0) or 0)
+                        v = float(mercado.get("venta", 0) or 0)
+                        l = int(mercado.get("liquidez", 0) or 0)
+                        if c <= 0 or v <= 0:
+                            continue
+                        q = _obtener_quant_cache(banco, c, v, l)
+                        if not isinstance(q, dict):
+                            q = await asyncio.to_thread(motor_quant_inteligente, c, v, l, banco)
+                            _guardar_quant_cache(banco, c, v, l, q)
+                        await asyncio.to_thread(
+                            calcular_analisis_monitor,
+                            banco,
+                            q,
+                            mercado,
+                        )
+                        logger.info("[PRECOMPUTE] banco=%s listo", banco)
+                    except Exception:
+                        logger.exception("[PRECOMPUTE] falló banco=%s", banco)
+        elapsed = time.monotonic() - started
+        await asyncio.sleep(max(5.0, ANALYSIS_PRECOMPUTE_INTERVAL_SECONDS - elapsed))
 
 
 # ==========================================
@@ -6389,7 +6484,7 @@ async def telegram_webhook(req: Request):
 
 @app.on_event("startup")
 async def startup_event():
-    global telegram_app, collector_task
+    global telegram_app, collector_task, bcv_task, analysis_precompute_task
     validar_configuracion()
 
     if DATABASE_URL:
@@ -6429,18 +6524,21 @@ async def startup_event():
             logger.info("Webhook Telegram configurado: %s", webhook_url)
 
     if DATABASE_URL:
+        bcv_task = asyncio.create_task(tarea_refresco_bcv())
+        analysis_precompute_task = asyncio.create_task(tarea_precalculo_analisis())
         collector_task = asyncio.create_task(tarea_recoleccion_automatica())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global collector_task, telegram_app
-    if collector_task:
-        collector_task.cancel()
-        try:
-            await collector_task
-        except asyncio.CancelledError:
-            pass
+    global collector_task, bcv_task, analysis_precompute_task, telegram_app
+    for _task in (collector_task, bcv_task, analysis_precompute_task):
+        if _task:
+            _task.cancel()
+            try:
+                await _task
+            except asyncio.CancelledError:
+                pass
     if telegram_app:
         await telegram_app.stop()
         await telegram_app.shutdown()
