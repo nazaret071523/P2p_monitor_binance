@@ -3493,6 +3493,8 @@ def _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=False):
 
 _QUANT_SHARED_LOCKS = {}
 _QUANT_SHARED_LOCKS_GUARD = threading.Lock()
+_QUANT_INFLIGHT = set()
+_QUANT_INFLIGHT_GUARD = threading.Lock()
 # Single-flight global: el motor cuantitativo es CPU-intensivo y en Render
 # ejecutar GENERAL/MERCANTIL/PROVINCIAL/BNC en paralelo provoca contención y
 # dispara artificialmente los tiempos (los logs llegaron a 16-18 s).
@@ -3510,42 +3512,73 @@ def _quant_bank_lock(banco):
         return lock
 
 def _obtener_quant_compartido(banco, compra, venta, liquidez, allow_stale=False):
-    """Single-flight Quant: una sola ejecución pesada por banco y proceso.
+    """Single-flight Quant con reutilización no bloqueante del último resultado.
 
-    La caché se consulta antes y después de los locks. Si existe una lectura
-    reciente (incluso stale dentro de la gracia permitida), se devuelve sin
-    bloquear. Solo cuando hace falta una actualización real se entra al lock
-    por banco y luego al lock global para impedir cálculos Quant simultáneos
-    entre bancos. No altera los datos ni la matemática del motor.
+    Cuando otro hilo ya está calculando el mismo banco, una petición que permita
+    stale puede reutilizar inmediatamente la última predicción disponible, aun
+    cuando haya quedado vencida o el precio haya variado más que el umbral normal.
+    Esto evita que Telegram/estado queden en cola detrás del cálculo pesado.
+    La actualización nueva continúa su curso y el resultado sustituye la caché al
+    finalizar. No altera la matemática del motor.
     """
-    cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
+    key = banco or "GENERAL"
+    cached = _obtener_quant_cache(key, compra, venta, liquidez, allow_stale=allow_stale)
     if isinstance(cached, dict):
         return cached, True
 
-    bank_lock = _quant_bank_lock(banco)
+    # Si el banco ya está en cálculo, devolver el último resultado aunque no
+    # cumpla los umbrales normales de frescura. El llamador puede marcarlo como
+    # stale y refrescar en segundo plano.
+    if allow_stale:
+        with _QUANT_INFLIGHT_GUARD:
+            inflight = key in _QUANT_INFLIGHT
+        if inflight:
+            existing = _QUANT_CACHE.get(key)
+            if isinstance(existing, dict) and isinstance(existing.get("value"), dict):
+                logger.info("[QUANT] stale reutilizado mientras cálculo en curso banco=%s", key)
+                return existing["value"], True
+
+    bank_lock = _quant_bank_lock(key)
     with bank_lock:
-        cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
+        cached = _obtener_quant_cache(key, compra, venta, liquidez, allow_stale=allow_stale)
         if isinstance(cached, dict):
             return cached, True
+
+        if allow_stale:
+            with _QUANT_INFLIGHT_GUARD:
+                inflight = key in _QUANT_INFLIGHT
+            if inflight:
+                existing = _QUANT_CACHE.get(key)
+                if isinstance(existing, dict) and isinstance(existing.get("value"), dict):
+                    logger.info("[QUANT] stale reutilizado mientras cálculo en curso banco=%s", key)
+                    return existing["value"], True
 
         wait_started = time.monotonic()
         with _QUANT_GLOBAL_LOCK:
             waited = time.monotonic() - wait_started
             if waited > 0.05:
-                logger.info("[QUANT] espera single-flight banco=%s waited=%.2fs", banco or "GENERAL", waited)
+                logger.info("[QUANT] espera single-flight banco=%s waited=%.2fs", key, waited)
 
-            # Otro banco pudo haber calentado una lectura equivalente mientras
-            # esperábamos el lock global; volver a comprobar evita trabajo inútil.
-            cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
+            # Si el cálculo de otro hilo terminó mientras esperábamos, reutilizar
+            # el resultado antes de volver a entrar al motor.
+            cached = _obtener_quant_cache(key, compra, venta, liquidez, allow_stale=allow_stale)
             if isinstance(cached, dict):
                 return cached, True
 
-            started = time.monotonic()
-            logger.info("[QUANT] cálculo nuevo banco=%s", banco or "GENERAL")
-            datos = motor_quant_inteligente(compra, venta, liquidez, banco or "GENERAL")
-            _guardar_quant_cache(banco, compra, venta, liquidez, datos)
-            logger.info("[QUANT] cálculo terminado banco=%s elapsed=%.2fs", banco or "GENERAL", time.monotonic()-started)
-            return datos, False
+            # Registrar el cálculo como inflight para que las consultas concurrentes
+            # con allow_stale=True puedan responder con el último resultado disponible.
+            with _QUANT_INFLIGHT_GUARD:
+                _QUANT_INFLIGHT.add(key)
+            try:
+                started = time.monotonic()
+                logger.info("[QUANT] cálculo nuevo banco=%s", key)
+                datos = motor_quant_inteligente(compra, venta, liquidez, key)
+                _guardar_quant_cache(key, compra, venta, liquidez, datos)
+                logger.info("[QUANT] cálculo terminado banco=%s elapsed=%.2fs", key, time.monotonic()-started)
+                return datos, False
+            finally:
+                with _QUANT_INFLIGHT_GUARD:
+                    _QUANT_INFLIGHT.discard(key)
 
 
 def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precomputed_market=None):
