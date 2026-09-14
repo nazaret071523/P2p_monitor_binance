@@ -1047,9 +1047,11 @@
       if (analysisRequestRunning) return;
       analysisRequestRunning = true;
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 30000);
-        if (data && data.ok !== false) {
-          marketState.analysis = data?.analysis && typeof data.analysis === 'object' ? data.analysis : data;
+        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 60000);
+        const analysis = data?.analysis && typeof data.analysis === 'object' ? { ...data.analysis, ok: data.ok } : data;
+        console.info('Venbot /api/analysis recibido', analysis);
+        if (analysis && analysis.ok !== false) {
+          marketState.analysis = analysis;
           analysisLastSuccessfulFetch = new Date();
           renderAIIndicators();
         } else {
@@ -1424,11 +1426,10 @@
     }
 
     function renderAIIndicators() {
-      const raw = marketState.analysis;
-      const a = raw?.analysis && typeof raw.analysis === 'object' ? raw.analysis : raw;
+      const a = marketState.analysis;
       const mode = document.querySelector('.ai-mode-btn.active')?.id?.replace('btn-ai-mode-','') || '1';
-      if (!a || typeof a !== 'object') return;
-      const m = a.metricas || a.metrics || {};
+      if (!a) return;
+      const m = a.metricas || {};
       const horizon = selectedP2PHorizon || '1h';
       const p7 = getP2PProjection(a, horizon);
       const horizonLabel = horizon.toUpperCase();
@@ -1849,10 +1850,7 @@
       await Promise.allSettled([loadPrices(), loadHistory('5m')]);
       // La lectura de mercado no depende de la sesión: solicitarla aquí evita que
       // una validación de cuenta lenta deje el panel en "Esperando lectura".
-      // La ruta puede tardar mientras el motor consulta el histórico; por eso
-      // se reintenta de forma controlada sin borrar la última lectura válida.
       loadAnalysis();
-      setInterval(loadAnalysis, 30000);
       setInterval(loadPrices, 5000);
       setInterval(updateAgoLabel, 1000);
       refreshOnlineCount();
