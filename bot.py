@@ -221,6 +221,8 @@ ONLINE_TTL_SECONDS = max(45, int(os.getenv("ONLINE_TTL_SECONDS", "90")))
 # mientras el usuario está navegando. Los datos siguen siendo reales; solo se
 # reutiliza durante unos segundos la misma lectura.
 _ANALYSIS_CACHE = {}
+_ANALYSIS_REFRESH_LOCK = threading.Lock()
+_ANALYSIS_REFRESH_IN_FLIGHT = set()
 _HISTORY_CACHE = {}
 _AI_CONTEXT_CACHE = {"value": None, "expires": 0.0}
 _CACHE_TTL_ANALYSIS = 20.0
@@ -3549,8 +3551,15 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if update.callback_query:
         await _safe_callback_answer(update)
+        # Confirmación visible inmediata: el cálculo cuantitativo continúa fuera
+        # de la recepción del botón y no deja al usuario sin respuesta.
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="⏳ Recibí tu solicitud. Estoy leyendo la última captura P2P real y preparando el análisis…")
+        except Exception:
+            logger.exception("[TELEGRAM] no se pudo enviar confirmación inmediata")
 
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+    logger.info("[TELEGRAM] predicción iniciada chat=%s banco=%s", chat_id, banco)
     # Telegram debe usar la misma captura persistida que alimenta el monitor.
     # Así no genera otra consulta Binance ni queda desincronizado del frontend.
     mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
@@ -3616,6 +3625,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
     await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+    logger.info("[TELEGRAM] predicción enviada chat=%s banco=%s", chat_id, banco)
 
 
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5194,23 +5204,70 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
     return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
 
 
+def _programar_refresco_analysis(banco="GENERAL"):
+    """Programa una sola actualización pesada por banco; nunca bloquea la respuesta HTTP."""
+    banco = banco or "GENERAL"
+    with _ANALYSIS_REFRESH_LOCK:
+        if banco in _ANALYSIS_REFRESH_IN_FLIGHT:
+            return False
+        _ANALYSIS_REFRESH_IN_FLIGHT.add(banco)
+
+    def _worker():
+        started = time.monotonic()
+        try:
+            logger.info("[ANALYSIS] refresco iniciado banco=%s", banco)
+            result = calcular_analisis_monitor(banco)
+            logger.info("[ANALYSIS] refresco terminado banco=%s elapsed=%.2fs ok=%s", banco, time.monotonic()-started, bool(isinstance(result, dict) and result.get("ok", True)))
+        except Exception:
+            logger.exception("[ANALYSIS] refresco falló banco=%s", banco)
+        finally:
+            with _ANALYSIS_REFRESH_LOCK:
+                _ANALYSIS_REFRESH_IN_FLIGHT.discard(banco)
+
+    asyncio.create_task(asyncio.to_thread(_worker))
+    return True
+
+
 @app.get("/api/analysis")
 async def obtener_analysis_api():
-    """Entrega el análisis P2P sin bloquear el event loop de FastAPI.
-
-    El motor usa consultas históricas y puede tardar mientras Render despierta
-    o PostgreSQL responde. Ejecutarlo en un hilo evita que las demás lecturas
-    públicas queden congeladas y permite que el navegador reciba la respuesta
-    cuando el cálculo termine.
-    """
+    """Entrega el último análisis real disponible sin obligar al móvil a esperar el motor."""
     started = time.monotonic()
-    try:
-        result = await asyncio.to_thread(calcular_analisis_monitor, "GENERAL")
-        logger.info("API /api/analysis completada en %.2fs (ok=%s)", time.monotonic() - started, result.get("ok", True) if isinstance(result, dict) else True)
-        return result
-    except Exception:
-        logger.exception("Error en API /api/analysis")
-        raise
+    banco = "GENERAL"
+    cached = _ANALYSIS_CACHE.get(banco)
+    if cached:
+        expires, value = cached
+        if isinstance(value, dict):
+            if time.monotonic() < expires:
+                logger.info("[ANALYSIS] respuesta cacheada fresca en %.3fs", time.monotonic()-started)
+                return value
+            # Se entrega la última lectura real aunque haya vencido el TTL y se
+            # recalcula en segundo plano. Nunca se inventa una lectura nueva.
+            _programar_refresco_analysis(banco)
+            stale = dict(value)
+            stale["stale"] = True
+            stale["refreshing"] = True
+            logger.info("[ANALYSIS] respuesta cacheada vencida + refresco en segundo plano")
+            return stale
+
+    # Primera carga: no mantener bloqueado el navegador. El recolector puede
+    # estar preparando el análisis; el cliente recibirá la lectura al próximo ciclo.
+    _programar_refresco_analysis(banco)
+    mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+    compra = float(mercado.get("compra", 0) or 0) if isinstance(mercado, dict) else 0.0
+    venta = float(mercado.get("venta", 0) or 0) if isinstance(mercado, dict) else 0.0
+    liquidez = int(mercado.get("liquidez", 0) or 0) if isinstance(mercado, dict) else 0
+    return {
+        "ok": bool(compra > 0 and venta > 0),
+        "pending": True,
+        "refreshing": True,
+        "banco": banco,
+        "tactica": {"estado": "⏳ PREPARANDO LECTURA REAL", "detalle": "El análisis se está calculando con la última captura P2P disponible."},
+        "flujo": {"estado": "⏳ PREPARANDO", "detalle": "Esperando el cálculo cuantitativo sobre datos reales."},
+        "niveles": {"estado": "⏳ PREPARANDO", "detalle": "Los niveles se mostrarán cuando termine el cálculo."},
+        "metricas": {"liquidez": liquidez, "muestras": 0, "calidad_datos": 0, "spread_pct": ((venta-compra)/compra*100.0 if compra else 0.0)},
+        "proyecciones_horizontes": {},
+        "proyeccion_7h": {},
+    }
 
 
 @app.get("/api/history")
