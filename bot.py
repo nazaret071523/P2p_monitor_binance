@@ -3493,6 +3493,12 @@ def _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=False):
 
 _QUANT_SHARED_LOCKS = {}
 _QUANT_SHARED_LOCKS_GUARD = threading.Lock()
+# Single-flight global: el motor cuantitativo es CPU-intensivo y en Render
+# ejecutar GENERAL/MERCANTIL/PROVINCIAL/BNC en paralelo provoca contención y
+# dispara artificialmente los tiempos (los logs llegaron a 16-18 s).
+# Este lock serializa únicamente el cálculo pesado; las lecturas de caché siguen
+# siendo inmediatas y no cambia la matemática del motor.
+_QUANT_GLOBAL_LOCK = threading.Lock()
 
 def _quant_bank_lock(banco):
     key = banco or "GENERAL"
@@ -3504,25 +3510,42 @@ def _quant_bank_lock(banco):
         return lock
 
 def _obtener_quant_compartido(banco, compra, venta, liquidez, allow_stale=False):
-    """Una sola ejecución Quant por banco y lectura real.
+    """Single-flight Quant: una sola ejecución pesada por banco y proceso.
 
-    Evita que Web, Telegram, tracking y el recolector ejecuten simultáneamente
-    el mismo cálculo pesado. No altera los datos ni la matemática del motor.
+    La caché se consulta antes y después de los locks. Si existe una lectura
+    reciente (incluso stale dentro de la gracia permitida), se devuelve sin
+    bloquear. Solo cuando hace falta una actualización real se entra al lock
+    por banco y luego al lock global para impedir cálculos Quant simultáneos
+    entre bancos. No altera los datos ni la matemática del motor.
     """
     cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
     if isinstance(cached, dict):
         return cached, True
-    lock = _quant_bank_lock(banco)
-    with lock:
+
+    bank_lock = _quant_bank_lock(banco)
+    with bank_lock:
         cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
         if isinstance(cached, dict):
             return cached, True
-        started = time.monotonic()
-        logger.info("[QUANT] cálculo nuevo banco=%s", banco or "GENERAL")
-        datos = motor_quant_inteligente(compra, venta, liquidez, banco or "GENERAL")
-        _guardar_quant_cache(banco, compra, venta, liquidez, datos)
-        logger.info("[QUANT] cálculo terminado banco=%s elapsed=%.2fs", banco or "GENERAL", time.monotonic()-started)
-        return datos, False
+
+        wait_started = time.monotonic()
+        with _QUANT_GLOBAL_LOCK:
+            waited = time.monotonic() - wait_started
+            if waited > 0.05:
+                logger.info("[QUANT] espera single-flight banco=%s waited=%.2fs", banco or "GENERAL", waited)
+
+            # Otro banco pudo haber calentado una lectura equivalente mientras
+            # esperábamos el lock global; volver a comprobar evita trabajo inútil.
+            cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
+            if isinstance(cached, dict):
+                return cached, True
+
+            started = time.monotonic()
+            logger.info("[QUANT] cálculo nuevo banco=%s", banco or "GENERAL")
+            datos = motor_quant_inteligente(compra, venta, liquidez, banco or "GENERAL")
+            _guardar_quant_cache(banco, compra, venta, liquidez, datos)
+            logger.info("[QUANT] cálculo terminado banco=%s elapsed=%.2fs", banco or "GENERAL", time.monotonic()-started)
+            return datos, False
 
 
 def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precomputed_market=None):
@@ -3818,7 +3841,7 @@ async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fecha=mercado.get("fecha")
         if fecha and getattr(fecha,"tzinfo",None): age=max(0,(datetime.now(VET)-fecha.astimezone(VET)).total_seconds())
         else: age=None
-        q=await asyncio.to_thread(motor_quant_inteligente,c,v,int(mercado.get("liquidez",0) or 0),banco) if c>0 and v>0 else {}
+        q,_=await asyncio.to_thread(_obtener_quant_compartido,banco,c,v,int(mercado.get("liquidez",0) or 0),True) if c>0 and v>0 else ({}, True)
         perf=await asyncio.to_thread(obtener_prediction_performance,banco,100)
         cov=float(q.get("cobertura_horas",0) or 0)
         cal=q.get("calibracion_24h",{}) or {}
@@ -5350,7 +5373,15 @@ def obtener_quant_v2_api(request: Request, include_spot: bool = Query(True)):
     liq = int(mercado.get("liquidez", 0) or 0)
     if compra <= 0 or venta <= 0:
         return {"ok": False, "error": "Sin lectura P2P válida"}
-    result = QUANT_ENGINE_V2.analyze(compra, venta, liq, "GENERAL", include_spot)
+    result, _ = _obtener_quant_compartido("GENERAL", compra, venta, liq, allow_stale=True)
+    if include_spot:
+        try:
+            result = dict(result)
+            result["spot_context"] = _spot_context_for_quant()
+        except Exception as exc:
+            logger.warning("Contexto Spot no disponible para Quant v2: %s", exc)
+            result = dict(result)
+            result["spot_context"] = {}
     return {"ok": True, **result}
 
 
