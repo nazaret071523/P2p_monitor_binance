@@ -236,6 +236,8 @@ _CACHE_TTL_HISTORY = 10.0
 _CACHE_TTL_AI = 5.0
 _CACHE_TTL_QUANT = 20.0
 _QUANT_CACHE = {}
+TELEGRAM_PREDICTION_IN_FLIGHT = set()
+TELEGRAM_PREDICTION_LOCK = threading.Lock()
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
@@ -1642,41 +1644,15 @@ def _parsear_home_bcv(html):
     return {"usd": usd, "eur": eur, "effective_date": effective_date}
 
 
-def _fecha_rango_bcv(value):
-    """Convierte fechas ISO, DD/MM/YYYY o texto español a (YYYY,MM,DD)."""
-    if not value:
-        return (0, 0, 0)
-    text = str(value).strip()
-    m = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", text)
-    if m:
-        return tuple(map(int, m.groups()))
-    m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](20\d{2})", text)
-    if m:
-        d, mo, y = map(int, m.groups())
-        return (y, mo, d)
-    meses = {"enero":1,"febrero":2,"marzo":3,"abril":4,"mayo":5,"junio":6,
-             "julio":7,"agosto":8,"septiembre":9,"setiembre":9,"octubre":10,
-             "noviembre":11,"diciembre":12}
-    m = re.search(r"(\d{1,2})\s+([A-Za-záéíóúñ]+)\s+(20\d{2})", text, re.I)
-    if m:
-        d, name, y = m.groups()
-        mo = meses.get(name.lower())
-        if mo:
-            return (int(y), mo, int(d))
-    return (0, 0, 0)
-
-
 def _consultar_fuente_bcv_directa():
     """Consulta directamente la publicación pública del Banco Central de Venezuela."""
     r = HTTP.get(
         "https://www.bcv.org.ve/",
-        params={"_": int(time.time())},
         timeout=BCV_REQUEST_TIMEOUT,
         headers={
             "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://venbot.app)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Cache-Control": "no-cache, no-store, max-age=0",
-            "Pragma": "no-cache",
+            "Cache-Control": "no-cache",
         },
     )
     r.raise_for_status()
@@ -1686,14 +1662,49 @@ def _consultar_fuente_bcv_directa():
     return data
 
 
+def _consultar_fuente_bcv_historial_reciente():
+    """Consulta el dataset público que republica BCV y revisa hoy + próximos 3 días.
+
+    Algunas publicaciones del BCV tienen fecha valor del siguiente día hábil, por
+    lo que revisar sólo rate.json puede dejar una tasa anterior durante fines de
+    semana/feriados. Todas las cifras provienen del dataset que declara como
+    fuente al BCV; no se generan valores localmente.
+    """
+    base_url = "https://bcv.today/api/v1/history/{date}.json"
+    hoy = datetime.now(VET).date()
+    candidatos = []
+    for offset in range(0, 4):
+        d = hoy + timedelta(days=offset)
+        try:
+            r = HTTP.get(
+                base_url.format(date=d.isoformat()),
+                params={"_": int(time.time())},
+                timeout=min(BCV_REQUEST_TIMEOUT, 8),
+                headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+            )
+            if r.status_code != 200:
+                continue
+            data = r.json()
+            usd = _float_positivo(data.get("USD"))
+            eur = _float_positivo(data.get("EUR"))
+            if usd <= 0 or eur <= 0:
+                continue
+            effective = data.get("effective_date") or data.get("date") or d.isoformat()
+            candidatos.append({
+                "usd": usd, "eur": eur, "effective_date": effective,
+                "source_timestamp": data.get("updated_at") or data.get("generated_at"),
+            })
+        except Exception:
+            continue
+    if not candidatos:
+        raise RuntimeError("BCV Today histórico no devolvió publicaciones válidas")
+    candidatos.sort(key=lambda x: _fecha_rango_bcv(x.get("effective_date") or x.get("source_timestamp")), reverse=True)
+    return candidatos[0]
+
+
 def _consultar_fuente_bcv_json():
     """Fallback externo que republica datos extraídos del BCV; nunca inventa valores."""
-    r = HTTP.get(
-        "https://bcv.today/api/v1/rate.json",
-        params={"_": int(time.time())},
-        timeout=BCV_REQUEST_TIMEOUT,
-        headers={"Cache-Control": "no-cache"},
-    )
+    r = HTTP.get("https://bcv.today/api/v1/rate.json", timeout=BCV_REQUEST_TIMEOUT)
     r.raise_for_status()
     data = r.json()
     usd = _float_positivo(data.get("USD"))
@@ -1709,29 +1720,19 @@ def _consultar_fuente_bcv_json():
 
 
 def _consultar_fuente_dolarapi():
-    """Fallback: datos oficiales BCV republicados por DolarAPI."""
+    """Segundo fallback: datos oficiales BCV republicados por DolarAPI."""
     errores = []
     usd = eur = 0.0
     usd_data = eur_data = {}
     try:
-        r = HTTP.get(
-            "https://ve.dolarapi.com/v1/dolares/oficial",
-            params={"_": int(time.time())},
-            timeout=BCV_REQUEST_TIMEOUT,
-            headers={"Cache-Control": "no-cache"},
-        )
+        r = HTTP.get("https://ve.dolarapi.com/v1/dolares/oficial", timeout=BCV_REQUEST_TIMEOUT)
         r.raise_for_status()
         usd_data = r.json()
         usd = _float_positivo(usd_data.get("promedio")) or _float_positivo(usd_data.get("venta")) or _float_positivo(usd_data.get("compra"))
     except Exception as e:
         errores.append(f"USD: {e}")
     try:
-        r = HTTP.get(
-            "https://ve.dolarapi.com/v1/euros/oficial",
-            params={"_": int(time.time())},
-            timeout=BCV_REQUEST_TIMEOUT,
-            headers={"Cache-Control": "no-cache"},
-        )
+        r = HTTP.get("https://ve.dolarapi.com/v1/euros/oficial", timeout=BCV_REQUEST_TIMEOUT)
         r.raise_for_status()
         eur_data = r.json()
         eur = _float_positivo(eur_data.get("promedio")) or _float_positivo(eur_data.get("venta")) or _float_positivo(eur_data.get("compra"))
@@ -1748,11 +1749,12 @@ def _consultar_fuente_dolarapi():
 
 
 def obtener_tasas_bcv_oficiales():
-    """Devuelve la publicación BCV más reciente disponible, sin retroceder de fecha.
+    """Devuelve la última publicación real del BCV, con refresco independiente.
 
-    El BCV publica una referencia por fecha de vigencia; no es un ticker. Venbot
-    actualiza la lectura en segundo plano y sólo sustituye una tasa cuando la
-    fuente devuelta es válida y tiene una fecha de vigencia igual o posterior.
+    IMPORTANTE: el BCV publica una tasa oficial por fecha de vigencia; no es una
+    cotización tick-by-tick. Venbot la consulta periódicamente y actualiza
+    inmediatamente cuando cambia la publicación oficial. Nunca se etiqueta una
+    tasa antigua como nueva lectura.
     """
     global ULTIMO_BCV_VALIDO
 
@@ -1769,57 +1771,41 @@ def obtener_tasas_bcv_oficiales():
 
     fuentes = (
         ("BCV Oficial", _consultar_fuente_bcv_directa),
-        ("DolarAPI · datos BCV", _consultar_fuente_dolarapi),
+        ("BCV Today · publicación reciente", _consultar_fuente_bcv_historial_reciente),
         ("BCV Today · datos BCV", _consultar_fuente_bcv_json),
+        ("DolarAPI · datos BCV", _consultar_fuente_dolarapi),
     )
-    resultados = []
     errores = []
-    # Consultar fuentes en paralelo evita quedar atado a una sola fuente lenta.
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        futuros = {ex.submit(getter): source for source, getter in fuentes}
-        for fut, source in futuros.items():
-            try:
-                data = fut.result()
-                usd = _float_positivo(data.get("usd"))
-                eur = _float_positivo(data.get("eur"))
-                if usd <= 0 or eur <= 0:
-                    raise RuntimeError("USD/EUR inválidos")
-                resultados.append((source, data, usd, eur))
-            except Exception as e:
-                errores.append(f"{source}: {e}")
-
-    if resultados:
-        prioridad = {"BCV Oficial": 3, "DolarAPI · datos BCV": 2, "BCV Today · datos BCV": 1}
-        resultados.sort(
-            key=lambda row: (
-                _fecha_rango_bcv(row[1].get("effective_date") or row[1].get("source_timestamp")),
-                prioridad.get(row[0], 0),
-            ),
-            reverse=True,
-        )
-        source, data, usd, eur = resultados[0]
-        value = {
-            "usd": round(usd, 4),
-            "eur": round(eur, 4),
-            "timestamp": now,
-            "source": source,
-            "effective_date": data.get("effective_date"),
-            "source_timestamp": data.get("source_timestamp"),
-        }
-        with BCV_LOCK:
-            old = dict(ULTIMO_BCV_VALIDO)
-            old_rank = _fecha_rango_bcv(old.get("effective_date") or old.get("source_timestamp"))
-            new_rank = _fecha_rango_bcv(value.get("effective_date") or value.get("source_timestamp"))
-            if old.get("usd", 0) > 0 and new_rank < old_rank:
-                return old
-            ULTIMO_BCV_VALIDO = value
-        logger.info(
-            "BCV actualizado: USD=%.4f EUR=%.4f fuente=%s fecha_valor=%s",
-            usd, eur, source, data.get("effective_date"),
-        )
-        return dict(value)
+    for source, getter in fuentes:
+        try:
+            data = getter()
+            usd = _float_positivo(data.get("usd"))
+            eur = _float_positivo(data.get("eur"))
+            if usd <= 0 or eur <= 0:
+                raise RuntimeError("USD/EUR inválidos")
+            value = {
+                "usd": round(usd, 4),
+                "eur": round(eur, 4),
+                "timestamp": now,
+                "source": source,
+                "effective_date": data.get("effective_date"),
+                "source_timestamp": data.get("source_timestamp"),
+            }
+            with BCV_LOCK:
+                ULTIMO_BCV_VALIDO = value
+            logger.info(
+                "BCV actualizado: USD=%.4f EUR=%.4f fuente=%s fecha_valor=%s",
+                usd, eur, source, data.get("effective_date"),
+            )
+            return dict(value)
+        except Exception as e:
+            errores.append(f"{source}: {e}")
 
     logger.warning("No fue posible refrescar BCV: %s", " | ".join(errores))
+
+    # Solo se conserva una lectura previa si no existe una mejor; se marca como
+    # stale mediante timestamp para que la interfaz nunca la confunda con una
+    # captura nueva.
     with BCV_LOCK:
         if ULTIMO_BCV_VALIDO.get("usd", 0) > 0 or ULTIMO_BCV_VALIDO.get("eur", 0) > 0:
             stale = dict(ULTIMO_BCV_VALIDO)
@@ -3754,85 +3740,113 @@ async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⚠️ No pude consultar el estado ahora.")
 
 
+async def _procesar_prediccion_telegram(chat_id, banco, bot_instance):
+    """Procesa una predicción fuera del handler del webhook.
+
+    El webhook sólo recibe/acknowledge el callback. Esta tarea usa la misma captura
+    real y el mismo Quant cache del monitor; no dispara una captura Binance adicional.
+    """
+    started = time.monotonic()
+    try:
+        logger.info("[TELEGRAM] worker predicción iniciado chat=%s banco=%s", chat_id, banco)
+        mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+        c_real = float(mercado.get("compra", 0) or 0)
+        v_real = float(mercado.get("venta", 0) or 0)
+        liquidez = int(mercado.get("liquidez", 0) or 0)
+        if c_real <= 0 or v_real <= 0:
+            c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
+        if c_real <= 0 or v_real <= 0:
+            await bot_instance.send_message(chat_id=chat_id, text="⚠️ No hay una lectura P2P real válida disponible todavía. Intenta nuevamente en unos segundos.")
+            return
+
+        datos = _obtener_quant_cache(banco, c_real, v_real, liquidez)
+        if not isinstance(datos, dict):
+            datos = await asyncio.to_thread(motor_quant_inteligente, c_real, v_real, liquidez, banco)
+            _guardar_quant_cache(banco, c_real, v_real, liquidez, datos)
+
+        ahora = datetime.now(VET)
+        horizonte = 7
+        objetivo = ahora + timedelta(hours=horizonte)
+        spread_actual = v_real - c_real
+        spread_pct = (spread_actual / c_real * 100.0) if c_real else 0.0
+        analisis = _clasificar_spread(spread_actual, c_real)
+        senal_operativa = evaluar_senal_operativa(datos, c_real, v_real)
+
+        cambios = datos.get("cambios", {}) or {}
+        def fmt_change(key):
+            val = cambios.get(key)
+            return "n/d" if val is None else f"{val:+.3f}%"
+
+        texto = (
+            f"🦜 *VENBOT PREDICCIONES // TENDENCIA P2P*\n"
+            f"🏦 *Filtro Banco:* `{banco}`\n"
+            f"──────────────────────────────\n"
+            f"⏱ *Ventana de proyección:* `{ahora.strftime('%I:%M %p')}` ➔ `{objetivo.strftime('%I:%M %p')}`\n\n"
+            f"📊 *PRECIOS P2P ACTUALES (VWAP)*\n"
+            f"• Comprar USDT: `{c_real:.2f} Bs`\n"
+            f"• Vender USDT: `{v_real:.2f} Bs`\n"
+            f"• Spread: `{spread_actual:.2f} Bs` · `{spread_pct:.2f}%`\n\n"
+            f"🔍 *DIAGNÓSTICO DE MERCADO*\n"
+            f"• {analisis}\n"
+            f"• Liquidez: `{datos.get('estado_comunidad','n/d')}`\n"
+            f"• Muestras: `{datos.get('muestras',0)}`\n"
+            f"• Canal 7H: `{datos.get('soporte_7h', datos.get('piso_str','n/d'))}` / `{datos.get('resistencia_7h', datos.get('techo_str','n/d'))}`\n"
+            f"• Volatilidad reciente: `{float(datos.get('volatilidad_pct',0) or 0):.3f}%`\n\n"
+            f"📈 *MOMENTUM MULTI-TEMPORAL*\n"
+            f"• 5 min: `{fmt_change('5m')}`\n"
+            f"• 15 min: `{fmt_change('15m')}`\n"
+            f"• 30 min: `{fmt_change('30m')}`\n"
+            f"• 1 hora: `{fmt_change('1h')}`\n"
+            f"• 3 horas: `{fmt_change('3h')}`\n\n"
+            f"🧭 *NIVELES 7H*\n"
+            f"• Soporte: `{datos.get('soporte_7h', datos.get('piso_str','n/d'))}`\n"
+            f"• Resistencia: `{datos.get('resistencia_7h', datos.get('techo_str','n/d'))}`\n"
+            f"• Posición del rango: `{float(datos.get('posicion_rango_7h',50) or 50):.1f}%`\n\n"
+            f"🔮 *PROYECCIÓN CUANTITATIVA (7H)*\n"
+            f"• Compra estimada: `{datos.get('pred_compra_str','n/d')}`\n"
+            f"• Venta estimada: `{datos.get('pred_venta_str','n/d')}`\n"
+            f"• Tendencia: `{datos.get('tendencia','n/d')}`\n"
+            f"• Calidad de señal: `{datos.get('confianza','n/d')}%`\n"
+            f"• 🎯 Señal operativa: `{senal_operativa.get('label','n/d')}`\n"
+            f"• Lectura operativa: {senal_operativa.get('reason','n/d')}\n"
+            f"• Rango estimado midpoint: `{float(datos.get('forecast_low_mid',0) or 0):.2f} – {float(datos.get('forecast_high_mid',0) or 0):.2f} Bs`\n"
+            f"• Lectura: {datos.get('detalle_tendencia','')}\n\n"
+            f"⚠️ _La proyección es estadística y sirve como referencia; no garantiza el precio futuro._"
+        )
+        teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
+        await bot_instance.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
+        logger.info("[TELEGRAM] predicción enviada chat=%s banco=%s elapsed=%.2fs", chat_id, banco, time.monotonic()-started)
+    except Exception:
+        logger.exception("[TELEGRAM] worker predicción falló chat=%s banco=%s", chat_id, banco)
+        try:
+            await bot_instance.send_message(chat_id=chat_id, text="⚠️ El análisis real no pudo completarse en este ciclo. La captura de mercado continúa y puedes intentarlo nuevamente en unos segundos.")
+        except Exception:
+            logger.exception("[TELEGRAM] mensaje de error no pudo enviarse chat=%s", chat_id)
+    finally:
+        with TELEGRAM_PREDICTION_LOCK:
+            TELEGRAM_PREDICTION_IN_FLIGHT.discard(chat_id)
+
+
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
     if update.callback_query:
         await _safe_callback_answer(update)
-        # Confirmación visible inmediata: el cálculo cuantitativo continúa fuera
-        # de la recepción del botón y no deja al usuario sin respuesta.
+    with TELEGRAM_PREDICTION_LOCK:
+        already = chat_id in TELEGRAM_PREDICTION_IN_FLIGHT
+        if not already:
+            TELEGRAM_PREDICTION_IN_FLIGHT.add(chat_id)
+    if already:
         try:
-            await context.bot.send_message(chat_id=chat_id, text="⏳ Recibí tu solicitud. Estoy leyendo la última captura P2P real y preparando el análisis…")
+            await context.bot.send_message(chat_id=chat_id, text="⏳ Ya estoy procesando tu solicitud con la última lectura real. Te envío el resultado en cuanto termine.")
         except Exception:
-            logger.exception("[TELEGRAM] no se pudo enviar confirmación inmediata")
-
-    banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
-    logger.info("[TELEGRAM] predicción iniciada chat=%s banco=%s", chat_id, banco)
-    # Telegram debe usar la misma captura persistida que alimenta el monitor.
-    # Así no genera otra consulta Binance ni queda desincronizado del frontend.
-    mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
-    c_real = float(mercado.get("compra", 0) or 0)
-    v_real = float(mercado.get("venta", 0) or 0)
-    liquidez = int(mercado.get("liquidez", 0) or 0)
-    if c_real <= 0 or v_real <= 0:
-        c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
-    datos = _obtener_quant_cache(banco, c_real, v_real, liquidez)
-    if not isinstance(datos, dict):
-        datos = await asyncio.to_thread(motor_quant_inteligente, c_real, v_real, liquidez, banco)
-        _guardar_quant_cache(banco, c_real, v_real, liquidez, datos)
-
-    ahora = datetime.now(VET)
-    objetivo = ahora + timedelta(hours=7)
-    spread_actual = v_real - c_real if c_real and v_real else 0.0
-    spread_pct = (spread_actual / c_real * 100.0) if c_real else 0.0
-    analisis = _clasificar_spread(spread_actual, c_real)
-    senal_operativa = evaluar_senal_operativa(datos, c_real, v_real)
-
-    cambios = datos.get("cambios", {})
-    def fmt_change(key):
-        val = cambios.get(key)
-        if val is None:
-            return "n/d"
-        return f"{val:+.3f}%"
-
-    texto = (
-        f"🦜 *VENBOT PREDICCIONES // TENDENCIA P2P*\n"
-        f"🏦 *Filtro Banco:* `{banco}`\n"
-        f"──────────────────────────────\n"
-        f"⏱ *Ventana de proyección:* `{ahora.strftime('%I:%M %p')}` ➔ `{objetivo.strftime('%I:%M %p')}`\n\n"
-        f"📊 *PRECIOS P2P ACTUALES (VWAP)*\n"
-        f"• Comprar USDT: `{c_real:.2f} Bs`\n"
-        f"• Vender USDT: `{v_real:.2f} Bs`\n"
-        f"• Spread: `{spread_actual:.2f} Bs` · `{spread_pct:.2f}%`\n\n"
-        f"🔍 *DIAGNÓSTICO DE MERCADO*\n"
-        f"• {analisis}\n"
-        f"• Liquidez: `{datos['estado_comunidad']}`\n"
-        f"• Muestras: `{datos['muestras']}`\n"
-        f"• Canal 7H: `{datos.get('soporte_7h', datos['piso_str'])}` / `{datos.get('resistencia_7h', datos['techo_str'])}`\n"
-        f"• Volatilidad reciente: `{datos['volatilidad_pct']:.3f}%`\n\n"
-        f"📈 *MOMENTUM MULTI-TEMPORAL*\n"
-        f"• 5 min: `{fmt_change('5m')}`\n"
-        f"• 15 min: `{fmt_change('15m')}`\n"
-        f"• 30 min: `{fmt_change('30m')}`\n"
-        f"• 1 hora: `{fmt_change('1h')}`\n"
-        f"• 3 horas: `{fmt_change('3h')}`\n\n"
-        f"🧭 *NIVELES 7H*\n"
-        f"• Soporte: `{datos.get('soporte_7h', datos['piso_str'])}`\n"
-        f"• Resistencia: `{datos.get('resistencia_7h', datos['techo_str'])}`\n"
-        f"• Posición del rango: `{datos.get('posicion_rango_7h', 50):.1f}%`\n\n"
-        f"🔮 *PROYECCIÓN CUANTITATIVA (7H)*\n"
-        f"• Compra estimada: `{datos['pred_compra_str']}`\n"
-        f"• Venta estimada: `{datos['pred_venta_str']}`\n"
-        f"• Tendencia: `{datos['tendencia']}`\n"
-        f"• Calidad de señal: `{datos['confianza']}%`\n"
-        f"• 🎯 Señal operativa: `{senal_operativa['label']}`\n"
-        f"• Lectura operativa: {senal_operativa['reason']}\n"
-        f"• Rango estimado midpoint: `{datos.get('forecast_low_mid', 0):.2f} – {datos.get('forecast_high_mid', 0):.2f} Bs`\n"
-        f"• Lectura: {datos.get('detalle_tendencia', '')}\n\n"
-        f"⚠️ _La proyección es estadística y sirve como referencia; no garantiza el precio futuro._"
-    )
-    teclado = [[InlineKeyboardButton("⬅️ Volver al Menú", callback_data="cmd_menu")]]
-    await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
-    logger.info("[TELEGRAM] predicción enviada chat=%s banco=%s", chat_id, banco)
+            logger.exception("[TELEGRAM] no se pudo enviar aviso de solicitud duplicada")
+        return
+    try:
+        await context.bot.send_message(chat_id=chat_id, text="⏳ Recibí tu solicitud. Estoy leyendo la última captura P2P real y preparando el análisis…")
+    except Exception:
+        logger.exception("[TELEGRAM] no se pudo enviar confirmación inmediata")
+    asyncio.create_task(_procesar_prediccion_telegram(chat_id, banco, context.bot))
 
 
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4092,6 +4106,28 @@ async def tarea_recoleccion_automatica():
                     await asyncio.to_thread(guardar_mercado_actual, c, v, l, tasas["usd"], tasas["eur"], tasas["source"])
                     mercado = {"compra": c, "venta": v, "liquidez": l, "bcv": tasas["usd"], "eur": tasas["eur"], "fuente_bcv": tasas["source"], "timestamp": now}
 
+            # Prioridad de servicio: primero dejar listo P2P/Quant, porque es la ruta
+            # principal de análisis y Telegram. Spot se ejecuta después y no puede
+            # retrasar la primera lectura P2P del ciclo.
+            if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
+                try:
+                    started_quant = time.monotonic()
+                    datos_quant = await asyncio.to_thread(
+                        motor_quant_inteligente,
+                        mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL"
+                    )
+                    _guardar_quant_cache("GENERAL", mercado["compra"], mercado["venta"], mercado["liquidez"], datos_quant)
+                    # Precalentar el bloque completo del monitor usando la misma lectura
+                    # y el mismo Quant. Así /api/analysis no vuelve a consultar/calcular
+                    # cuando llega la petición del usuario.
+                    try:
+                        await asyncio.to_thread(calcular_analisis_monitor, "GENERAL", datos_quant, mercado)
+                    except Exception as warm_exc:
+                        logger.warning("Precalentamiento de análisis P2P falló: %s", warm_exc)
+                    logger.info("[ANALYSIS] P2P/Quant listo antes de Spot elapsed=%.2fs", time.monotonic()-started_quant)
+                except Exception as quant_exc:
+                    logger.warning("Quant P2P falló en ciclo; Spot seguirá de forma independiente: %s", quant_exc)
+
             global _LAST_SPOT_COLLECTION_TS
             if time.monotonic() - _LAST_SPOT_COLLECTION_TS >= SPOT_REFRESH_SECONDS:
                 try:
@@ -4117,17 +4153,9 @@ async def tarea_recoleccion_automatica():
                     logger.warning("Tracking predictivo Spot falló sin afectar P2P: %s", e)
 
             if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
-                datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
-                _guardar_quant_cache("GENERAL", mercado["compra"], mercado["venta"], mercado["liquidez"], datos)
-                # Precalentar el análisis del monitor en segundo plano usando el
-                # mismo resultado cuantitativo recién calculado. Esto elimina la
-                # segunda ejecución pesada cuando el móvil solicita /api/analysis.
-                cached_analysis = _ANALYSIS_CACHE.get("GENERAL")
-                if not cached_analysis or time.monotonic() >= cached_analysis[0]:
-                    try:
-                        await asyncio.to_thread(calcular_analisis_monitor, "GENERAL", datos, mercado)
-                    except Exception as _analysis_warm_exc:
-                        logger.warning("Precalentamiento de /api/analysis falló: %s", _analysis_warm_exc)
+                datos = _obtener_quant_cache(
+                    "GENERAL", mercado["compra"], mercado["venta"], mercado["liquidez"]
+                ) or {}
                 global _LAST_PREDICTION_TRACKING_TS
                 if PREDICTION_TRACKING_ENABLED:
                     try:
@@ -5412,11 +5440,7 @@ def obtener_prediction_signal_api(request: Request, banco: str = Query("GENERAL"
     mercado=obtener_ultimo_mercado_banco(banco)
     c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
     if c<=0 or v<=0: return {"ok":False,"error":"Sin lectura P2P válida"}
-    q = _obtener_quant_cache(banco, c, v, int(mercado.get("liquidez",0) or 0)) if c > 0 and v > 0 else None
-    if not isinstance(q, dict) and c > 0 and v > 0:
-        q = motor_quant_inteligente(c, v, int(mercado.get("liquidez",0) or 0), banco)
-        _guardar_quant_cache(banco, c, v, int(mercado.get("liquidez",0) or 0), q)
-    q = q or {}
+    q=motor_quant_inteligente(c,v,int(mercado.get("liquidez",0) or 0),banco)
     return {"ok":True,"bank":banco,"signal":evaluar_senal_operativa(q,c,v),"quant":q}
 
 
@@ -5426,11 +5450,7 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
     if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
     mercado=obtener_ultimo_mercado_banco(banco) or {}
     c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
-    q = _obtener_quant_cache(banco, c, v, int(mercado.get("liquidez",0) or 0)) if c > 0 and v > 0 else None
-    if not isinstance(q, dict) and c > 0 and v > 0:
-        q = motor_quant_inteligente(c, v, int(mercado.get("liquidez",0) or 0), banco)
-        _guardar_quant_cache(banco, c, v, int(mercado.get("liquidez",0) or 0), q)
-    q = q or {}
+    q=motor_quant_inteligente(c,v,int(mercado.get("liquidez",0) or 0),banco) if c>0 and v>0 else {}
     perf=obtener_prediction_performance(banco,100)
     spot_perf = obtener_spot_prediction_performance() if SPOT_PREDICTION_TRACKING_ENABLED else {"ok": False, "tracked": 0}
     return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
@@ -5481,13 +5501,25 @@ async def obtener_analysis_api():
             logger.info("[ANALYSIS] respuesta cacheada vencida + refresco en segundo plano")
             return stale
 
-    # Primera carga: no mantener bloqueado el navegador. El recolector puede
-    # estar preparando el análisis; el cliente recibirá la lectura al próximo ciclo.
-    _programar_refresco_analysis(banco)
     mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
     compra = float(mercado.get("compra", 0) or 0) if isinstance(mercado, dict) else 0.0
     venta = float(mercado.get("venta", 0) or 0) if isinstance(mercado, dict) else 0.0
     liquidez = int(mercado.get("liquidez", 0) or 0) if isinstance(mercado, dict) else 0
+
+    # Ruta rápida: si el recolector ya dejó Quant en cache para esta misma lectura,
+    # construimos el análisis compartido sin volver a ejecutar el motor de 30k muestras.
+    cached_q = _obtener_quant_cache(banco, compra, venta, liquidez) if compra > 0 and venta > 0 else None
+    if isinstance(cached_q, dict):
+        try:
+            result = await asyncio.to_thread(calcular_analisis_monitor, banco, cached_q, mercado)
+            logger.info("[ANALYSIS] fallback rápido desde Quant cache ok en %.3fs", time.monotonic()-started)
+            return result
+        except Exception:
+            logger.exception("[ANALYSIS] fallback rápido desde Quant cache falló")
+
+    # Primera carga sin cache: no bloquear al móvil. Un único worker recalcula y el
+    # frontend vuelve a consultar rápidamente hasta recibir el resultado real.
+    _programar_refresco_analysis(banco)
     return {
         "ok": bool(compra > 0 and venta > 0),
         "pending": True,
