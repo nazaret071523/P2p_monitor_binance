@@ -223,9 +223,11 @@ ONLINE_TTL_SECONDS = max(45, int(os.getenv("ONLINE_TTL_SECONDS", "90")))
 _ANALYSIS_CACHE = {}
 _HISTORY_CACHE = {}
 _AI_CONTEXT_CACHE = {"value": None, "expires": 0.0}
-_CACHE_TTL_ANALYSIS = 8.0
+_CACHE_TTL_ANALYSIS = 20.0
 _CACHE_TTL_HISTORY = 10.0
 _CACHE_TTL_AI = 5.0
+_CACHE_TTL_QUANT = 20.0
+_QUANT_CACHE = {}
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
@@ -3199,14 +3201,43 @@ def obtener_ultimo_mercado_banco(banco):
     return {"compra": float(c or 0), "venta": float(v or 0), "liquidez": int(l or 0), "fecha": f}
 
 
-def calcular_analisis_monitor(banco_filtro="GENERAL"):
+def _guardar_quant_cache(banco, compra, venta, liquidez, datos):
+    if not isinstance(datos, dict):
+        return
+    _QUANT_CACHE[banco or "GENERAL"] = {
+        "expires": time.monotonic() + _CACHE_TTL_QUANT,
+        "compra": float(compra or 0),
+        "venta": float(venta or 0),
+        "liquidez": int(liquidez or 0),
+        "value": datos,
+    }
+
+
+def _obtener_quant_cache(banco, compra, venta, liquidez):
+    key = banco or "GENERAL"
+    cached = _QUANT_CACHE.get(key)
+    if not cached or time.monotonic() >= cached.get("expires", 0):
+        return None
+    # Solo reutilizar la predicción cuando corresponde exactamente a la última
+    # lectura persistida. Nunca sustituir precios reales por valores simulados.
+    try:
+        if (abs(float(cached.get("compra", 0)) - float(compra or 0)) > 1e-9 or
+            abs(float(cached.get("venta", 0)) - float(venta or 0)) > 1e-9 or
+            int(cached.get("liquidez", 0) or 0) != int(liquidez or 0)):
+            return None
+    except Exception:
+        return None
+    return cached.get("value")
+
+
+def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precomputed_market=None):
     """Diagnóstico único y compartido por monitor web, IA y Telegram."""
     cache_key = banco_filtro or "GENERAL"
     cached = _ANALYSIS_CACHE.get(cache_key)
     if cached and time.monotonic() < cached[0]:
         return cached[1]
 
-    mercado = obtener_ultimo_mercado_banco(banco_filtro)
+    mercado = precomputed_market if isinstance(precomputed_market, dict) else obtener_ultimo_mercado_banco(banco_filtro)
     compra = float(mercado.get("compra", 0) or 0)
     venta = float(mercado.get("venta", 0) or 0)
     liquidez = int(mercado.get("liquidez", 0) or 0)
@@ -3227,7 +3258,9 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
             "ventanas": {},
         }
 
-    q = motor_quant_inteligente(compra, venta, liquidez, banco_filtro)
+    q = precomputed_q if isinstance(precomputed_q, dict) else _obtener_quant_cache(banco_filtro, compra, venta, liquidez)
+    if not isinstance(q, dict):
+        q = motor_quant_inteligente(compra, venta, liquidez, banco_filtro)
     cambios = q.get("cambios", {}) or {}
     c5 = cambios.get("5m")
     c15 = cambios.get("15m")
@@ -3526,7 +3559,10 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     liquidez = int(mercado.get("liquidez", 0) or 0)
     if c_real <= 0 or v_real <= 0:
         c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
-    datos = await asyncio.to_thread(motor_quant_inteligente, c_real, v_real, liquidez, banco)
+    datos = _obtener_quant_cache(banco, c_real, v_real, liquidez)
+    if not isinstance(datos, dict):
+        datos = await asyncio.to_thread(motor_quant_inteligente, c_real, v_real, liquidez, banco)
+        _guardar_quant_cache(banco, c_real, v_real, liquidez, datos)
 
     ahora = datetime.now(VET)
     objetivo = ahora + timedelta(hours=7)
@@ -3865,6 +3901,16 @@ async def tarea_recoleccion_automatica():
 
             if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
                 datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
+                _guardar_quant_cache("GENERAL", mercado["compra"], mercado["venta"], mercado["liquidez"], datos)
+                # Precalentar el análisis del monitor en segundo plano usando el
+                # mismo resultado cuantitativo recién calculado. Esto elimina la
+                # segunda ejecución pesada cuando el móvil solicita /api/analysis.
+                cached_analysis = _ANALYSIS_CACHE.get("GENERAL")
+                if not cached_analysis or time.monotonic() >= cached_analysis[0]:
+                    try:
+                        await asyncio.to_thread(calcular_analisis_monitor, "GENERAL", datos, mercado)
+                    except Exception as _analysis_warm_exc:
+                        logger.warning("Precalentamiento de /api/analysis falló: %s", _analysis_warm_exc)
                 global _LAST_PREDICTION_TRACKING_TS
                 if PREDICTION_TRACKING_ENABLED:
                     try:
@@ -3873,6 +3919,7 @@ async def tarea_recoleccion_automatica():
                             for _banco, (_c, _v, _l) in resultados.items():
                                 if _c > 0 and _v > 0:
                                     _qtrack = await asyncio.to_thread(motor_quant_inteligente, _c, _v, _l, _banco)
+                                    _guardar_quant_cache(_banco, _c, _v, _l, _qtrack)
                                     await asyncio.to_thread(registrar_prediccion_tracking, _banco, _c, _v, _qtrack)
                             _LAST_PREDICTION_TRACKING_TS = time.monotonic()
                     except Exception as e:
@@ -6099,13 +6146,22 @@ async def ai_chat(payload: AIChatRequest, request: Request):
     return {"ok": True, "answer": respuesta, "model": GEMINI_MODEL if GEMINI_API_KEY else (OPENROUTER_MODEL if OPENROUTER_API_KEY else "not_configured")}
 
 
+async def _procesar_update_telegram(update):
+    try:
+        await telegram_app.process_update(update)
+    except Exception:
+        logger.exception("Error procesando webhook de Telegram")
+
+
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     if not telegram_app:
         return {"ok": False, "error": "Telegram no inicializado"}
     data = await req.json()
     update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
+    # Telegram recibe 200 OK inmediatamente; la predicción pesada continúa en
+    # segundo plano y así evitamos timeouts/reintentos del webhook.
+    asyncio.create_task(_procesar_update_telegram(update))
     return {"ok": True}
 
 
