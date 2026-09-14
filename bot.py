@@ -1645,12 +1645,13 @@ def _parsear_home_bcv(html):
 def _consultar_fuente_bcv_directa():
     """Consulta directamente la publicación pública del Banco Central de Venezuela."""
     r = HTTP.get(
-        "https://www.bcv.org.ve/",
+        "https://www.bcv.org.ve/?_venbot_ts=" + str(int(time.time())),
         timeout=BCV_REQUEST_TIMEOUT,
         headers={
             "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://venbot.app)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
         },
     )
     r.raise_for_status()
@@ -1733,30 +1734,74 @@ def obtener_tasas_bcv_oficiales():
         ("DolarAPI · datos BCV", _consultar_fuente_dolarapi),
     )
     errores = []
-    for source, getter in fuentes:
+
+    def _effective_key(raw):
+        # Normaliza fechas ISO o fechas españolas del BCV, priorizando la fecha
+        # de vigencia más reciente. Si no se puede interpretar, deja la fuente
+        # al final pero no la descarta.
+        if raw is None:
+            return (0, datetime.min.replace(tzinfo=VET))
+        txt = str(raw).strip()
+        try:
+            iso = txt.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(iso)
+            if dt.tzinfo is None:
+                dt = VET.localize(dt)
+            return (2, dt.astimezone(VET))
+        except Exception:
+            pass
+        months = {
+            "enero":1,"febrero":2,"marzo":3,"abril":4,"mayo":5,"junio":6,
+            "julio":7,"agosto":8,"septiembre":9,"setiembre":9,"octubre":10,
+            "noviembre":11,"diciembre":12,
+        }
+        m = re.search(r"(\d{1,2})[\s/-]+([A-Za-zÁÉÍÓÚáéíóú]+)[\s/-]+(\d{4})", txt)
+        if m:
+            day, mon, year = int(m.group(1)), months.get(m.group(2).lower()), int(m.group(3))
+            if mon:
+                try:
+                    return (2, VET.localize(datetime(year, mon, day)))
+                except Exception:
+                    pass
+        m = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", txt)
+        if m:
+            try:
+                return (2, VET.localize(datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))))
+            except Exception:
+                pass
+        return (1, datetime.min.replace(tzinfo=VET))
+
+    candidates = []
+    for priority, (source, getter) in enumerate(fuentes):
         try:
             data = getter()
             usd = _float_positivo(data.get("usd"))
             eur = _float_positivo(data.get("eur"))
             if usd <= 0 or eur <= 0:
                 raise RuntimeError("USD/EUR inválidos")
-            value = {
+            candidates.append({
                 "usd": round(usd, 4),
                 "eur": round(eur, 4),
                 "timestamp": now,
                 "source": source,
                 "effective_date": data.get("effective_date"),
                 "source_timestamp": data.get("source_timestamp"),
-            }
-            with BCV_LOCK:
-                ULTIMO_BCV_VALIDO = value
-            logger.info(
-                "BCV actualizado: USD=%.4f EUR=%.4f fuente=%s fecha_valor=%s",
-                usd, eur, source, data.get("effective_date"),
-            )
-            return dict(value)
+                "_key": (*_effective_key(data.get("effective_date")), -priority),
+            })
         except Exception as e:
             errores.append(f"{source}: {e}")
+
+    if candidates:
+        # La fecha de vigencia manda. Si coincide, preferir fuente oficial.
+        value = max(candidates, key=lambda x: x["_key"]).copy()
+        value.pop("_key", None)
+        with BCV_LOCK:
+            ULTIMO_BCV_VALIDO = value
+        logger.info(
+            "BCV actualizado: USD=%.4f EUR=%.4f fuente=%s fecha_valor=%s",
+            value["usd"], value["eur"], value["source"], value.get("effective_date"),
+        )
+        return dict(value)
 
     logger.warning("No fue posible refrescar BCV: %s", " | ".join(errores))
 
@@ -3199,9 +3244,12 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     manipulacion = detectar_manipulacion_mercado(mids, spreads, mid_actual, spread_actual)
     regimen = clasificar_regimen_quant(returns, drift_h, rango_pct, regression_r2)
     niveles_dinamicos = niveles_dinamicos_quant(recent, mid_actual, volatilidad)
+    # El cálculo principal de producción debe ser determinista y ligero.
+    # El candidato XGBoost se mantiene disponible para validación/offline,
+    # pero no bloquea las peticiones de Web/Telegram ni el recolector.
     proyecciones_horizontes = _proyecciones_multihorizonte_quant(
         fechas, mids, compras, ventas, mid_actual, spread_actual,
-        volatilidad, abs_typical, calibracion_24h,
+        volatilidad, abs_typical, calibracion_24h, use_ml=False,
     )
 
     liquidez = int(liquidez_actual)
@@ -3382,6 +3430,40 @@ def _obtener_quant_cache(banco, compra, venta, liquidez):
     return cached.get("value")
 
 
+_QUANT_SHARED_LOCKS = {}
+_QUANT_SHARED_LOCKS_GUARD = threading.Lock()
+
+def _quant_bank_lock(banco):
+    key = banco or "GENERAL"
+    with _QUANT_SHARED_LOCKS_GUARD:
+        lock = _QUANT_SHARED_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _QUANT_SHARED_LOCKS[key] = lock
+        return lock
+
+def _obtener_quant_compartido(banco, compra, venta, liquidez):
+    """Una sola ejecución Quant por banco y lectura real.
+
+    Evita que Web, Telegram, tracking y el recolector ejecuten simultáneamente
+    el mismo cálculo pesado. No altera los datos ni la matemática del motor.
+    """
+    cached = _obtener_quant_cache(banco, compra, venta, liquidez)
+    if isinstance(cached, dict):
+        return cached, True
+    lock = _quant_bank_lock(banco)
+    with lock:
+        cached = _obtener_quant_cache(banco, compra, venta, liquidez)
+        if isinstance(cached, dict):
+            return cached, True
+        started = time.monotonic()
+        logger.info("[QUANT] cálculo nuevo banco=%s", banco or "GENERAL")
+        datos = motor_quant_inteligente(compra, venta, liquidez, banco or "GENERAL")
+        _guardar_quant_cache(banco, compra, venta, liquidez, datos)
+        logger.info("[QUANT] cálculo terminado banco=%s elapsed=%.2fs", banco or "GENERAL", time.monotonic()-started)
+        return datos, False
+
+
 def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precomputed_market=None):
     """Diagnóstico único y compartido por monitor web, IA y Telegram."""
     cache_key = banco_filtro or "GENERAL"
@@ -3410,9 +3492,10 @@ def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precom
             "ventanas": {},
         }
 
-    q = precomputed_q if isinstance(precomputed_q, dict) else _obtener_quant_cache(banco_filtro, compra, venta, liquidez)
-    if not isinstance(q, dict):
-        q = motor_quant_inteligente(compra, venta, liquidez, banco_filtro)
+    if isinstance(precomputed_q, dict):
+        q = precomputed_q
+    else:
+        q, _ = _obtener_quant_compartido(banco_filtro, compra, venta, liquidez)
     cambios = q.get("cambios", {}) or {}
     c5 = cambios.get("5m")
     c15 = cambios.get("15m")
@@ -3718,10 +3801,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     liquidez = int(mercado.get("liquidez", 0) or 0)
     if c_real <= 0 or v_real <= 0:
         c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
-    datos = _obtener_quant_cache(banco, c_real, v_real, liquidez)
-    if not isinstance(datos, dict):
-        datos = await asyncio.to_thread(motor_quant_inteligente, c_real, v_real, liquidez, banco)
-        _guardar_quant_cache(banco, c_real, v_real, liquidez, datos)
+    datos, _ = await asyncio.to_thread(_obtener_quant_compartido, banco, c_real, v_real, liquidez)
 
     ahora = datetime.now(VET)
     objetivo = ahora + timedelta(hours=7)
@@ -4060,8 +4140,7 @@ async def tarea_recoleccion_automatica():
                     logger.warning("Tracking predictivo Spot falló sin afectar P2P: %s", e)
 
             if mercado and mercado["compra"] > 0 and mercado["venta"] > 0:
-                datos = await asyncio.to_thread(motor_quant_inteligente, mercado["compra"], mercado["venta"], mercado["liquidez"], "GENERAL")
-                _guardar_quant_cache("GENERAL", mercado["compra"], mercado["venta"], mercado["liquidez"], datos)
+                datos, _ = await asyncio.to_thread(_obtener_quant_compartido, "GENERAL", mercado["compra"], mercado["venta"], mercado["liquidez"])
                 # Precalentar el análisis del monitor en segundo plano usando el
                 # mismo resultado cuantitativo recién calculado. Esto elimina la
                 # segunda ejecución pesada cuando el móvil solicita /api/analysis.
@@ -4078,8 +4157,7 @@ async def tarea_recoleccion_automatica():
                         if time.monotonic() - _LAST_PREDICTION_TRACKING_TS >= PREDICTION_TRACKING_INTERVAL_SECONDS:
                             for _banco, (_c, _v, _l) in resultados.items():
                                 if _c > 0 and _v > 0:
-                                    _qtrack = await asyncio.to_thread(motor_quant_inteligente, _c, _v, _l, _banco)
-                                    _guardar_quant_cache(_banco, _c, _v, _l, _qtrack)
+                                    _qtrack, _ = await asyncio.to_thread(_obtener_quant_compartido, _banco, _c, _v, _l)
                                     await asyncio.to_thread(registrar_prediccion_tracking, _banco, _c, _v, _qtrack)
                             _LAST_PREDICTION_TRACKING_TS = time.monotonic()
                     except Exception as e:
