@@ -385,14 +385,14 @@
               <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div>
               <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-emerald-400 font-semibold mt-0.5">Oficial BCV en vivo</p></div>
             </div>
-            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">--,-- Bs/EUR</p><p class="text-[10px] text-slate-500 font-bold">Banco Central de Venezuela</p></div>
+            <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">--,-- Bs/EUR</p><p id="euro-updated" class="text-[10px] text-slate-500 font-bold">BCV · sin lectura</p></div>
           </article>
           <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-blue-500/15">
             <div class="flex items-center gap-3">
               <div class="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400"><i class="fa-solid fa-building-columns"></i></div>
               <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-emerald-400 font-semibold mt-0.5">Oficial BCV en vivo</p></div>
             </div>
-            <div class="text-right"><p id="bcv-rate" class="tabular text-lg font-black text-blue-300">--,-- Bs/USD</p><p id="bcv-gap" class="text-[10px] text-amber-300 font-bold">Brecha P2P: --.--%</p></div>
+            <div class="text-right"><p id="bcv-rate" class="tabular text-lg font-black text-blue-300">--,-- Bs/USD</p><p id="bcv-gap" class="text-[10px] text-amber-300 font-bold">Brecha P2P: --.--%</p><p id="bcv-updated" class="text-[9px] text-slate-500 font-bold">BCV · sin lectura</p></div>
           </article>
         </div>
       </section>
@@ -889,6 +889,13 @@
       document.getElementById('spread-absolute').textContent = `${money(marketState.spread)} Bs / USDT`;
       document.getElementById('bcv-rate').textContent = marketState.bcv > 0 ? `${money(marketState.bcv)} Bs/USD` : 'Sin lectura';
       document.getElementById('euro-rate').textContent = marketState.euro > 0 ? `${money(marketState.euro)} Bs/EUR` : 'Sin lectura';
+      const bcvUpdated = document.getElementById('bcv-updated');
+      const euroUpdated = document.getElementById('euro-updated');
+      const bcvStamp = data.bcv_updated_at ? new Date(data.bcv_updated_at).toLocaleString('es-VE', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : null;
+      const effective = data.bcv_effective_date ? ` · Fecha valor ${data.bcv_effective_date}` : '';
+      const bcvStatus = marketState.bcv > 0 ? `BCV · actualizado ${bcvStamp || 'reciente'}${effective}` : 'BCV · sin lectura';
+      if (bcvUpdated) bcvUpdated.textContent = bcvStatus;
+      if (euroUpdated) euroUpdated.textContent = bcvStatus;
 
       const bcvGap = marketState.bcv > 0
         ? ((marketState.sell - marketState.bcv) / marketState.bcv) * 100
