@@ -671,6 +671,7 @@
           <div id="spot-scenarios" class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400"></div>
           <div id="spot-method" class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400"></div>
         </div>
+        <div id="spot-performance" class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-[10px] text-slate-400"></div>
 
       </section>
 
@@ -1231,6 +1232,7 @@
       const structure=document.getElementById('spot-structure');
       const scenarios=document.getElementById('spot-scenarios');
       const method=document.getElementById('spot-method');
+      const performance=document.getElementById('spot-performance');
       const ent=window.venbotEntitlements?.features || {};
       if(!status || !head || !horizons) return;
       if(!getAuthToken()){ status.textContent='Inicia sesión con un plan VIP para consultar las proyecciones Spot.'; return; }
@@ -1255,10 +1257,25 @@
         };
         setMarketContext('spot', d.asset);
         head.innerHTML=`<div class="bg-slate-950/70 border border-purple-500/20 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Dato observado</span><strong class="block text-lg font-black text-purple-300 mt-1">${fmt(o.price)} <span class="text-[9px] text-slate-500">USDT</span></strong><span class="text-[10px] ${Number(o.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">24H ${signed(o.change_24h_pct)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Tendencia</span><strong class="block text-sm font-black text-slate-100 mt-2">${a.trend_icon} ${a.trend}</strong><span class="text-[9px] text-slate-500">Score ${Number(a.trend_score).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Volatilidad</span><strong class="block text-sm font-black text-slate-100 mt-2">${Number(a.volatility_1h_pct).toFixed(2)}% / 1H</strong><span class="text-[9px] text-slate-500">R² ${Number(a.regression_r2).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Confianza</span><strong class="block text-sm font-black text-purple-300 mt-2">${a.confidence}/100</strong><span class="text-[9px] text-slate-500">Calidad ${a.quality}</span></div>`;
-        horizons.innerHTML=['1h','3h','7h','24h'].map(h=>{const q=p[h]; return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-black text-slate-200 uppercase">Proyección ${h}</span><span class="text-[9px] ${Number(q.change_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">${signed(q.change_pct)}</span></div><strong class="block text-base font-black text-white mt-2">${fmt(q.central)} <span class="text-[9px] text-slate-500">USDT</span></strong><div class="text-[9px] text-slate-500 mt-1">Rango ${fmt(q.low)} – ${fmt(q.high)}</div></div>`}).join('');
+        horizons.innerHTML=['1h','3h','7h','24h'].map(h=>{const q=p[h]; const ch=Number(q.change_pct||0); const dir=Math.abs(ch)<0.08?'RANGO':(ch>0?'ALCISTA':'BAJISTA'); const dirClass=dir==='ALCISTA'?'text-emerald-400':dir==='BAJISTA'?'text-rose-400':'text-amber-400'; return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-black text-slate-200 uppercase">Proyección ${h}</span><span class="text-[9px] ${dirClass} font-black">${dir}</span></div><strong class="block text-base font-black text-white mt-2">${fmt(q.central)} <span class="text-[9px] text-slate-500">USDT</span></strong><div class="flex items-center justify-between gap-2 mt-1"><span class="text-[9px] text-slate-500">Cambio ${signed(q.change_pct)}</span><span class="text-[9px] text-slate-500">Rango ${fmt(q.low)} – ${fmt(q.high)}</span></div></div>`}).join('');
         structure.innerHTML=`<div class="font-black text-slate-200 mb-2">Estructura técnica</div><div>Soporte: <b class="text-slate-200">${fmt(a.support)}</b></div><div>Resistencia: <b class="text-slate-200">${fmt(a.resistance)}</b></div><div>Momentum: <b class="text-slate-200">${Number(a.momentum_score)>=0?'+':''}${Number(a.momentum_score).toFixed(3)}%</b></div>`;
         scenarios.innerHTML=`<div class="font-black text-slate-200 mb-2">Escenarios 24H</div><div>🔴 Bajista: <b class="text-slate-200">${fmt(d.scenarios_24h.bearish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bearish,o.price)})</span></div><div>🟡 Central: <b class="text-slate-200">${fmt(d.scenarios_24h.central)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.central,o.price)})</span></div><div>🟢 Alcista / favorable: <b class="text-slate-200">${fmt(d.scenarios_24h.bullish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bullish,o.price)})</span></div><div class="mt-2 text-slate-500">Los escenarios se comparan con el precio observado; “favorable” no implica necesariamente un precio superior al actual.</div>`;
-        method.innerHTML=`<div class="font-black text-slate-200 mb-2">Cómo calcula Venbot</div><div>${d.method}</div><div class="mt-2 text-slate-500">${a.data_points_5m} velas de 5m · ${a.data_points_1h} velas de 1H.</div>`;
+        method.innerHTML=`<div class="font-black text-slate-200 mb-2">Cómo calcula Venbot</div><div>${d.method}</div><div class="mt-2 text-slate-500">${a.data_points_5m} velas de 5m · ${a.data_points_1h} velas de 1H.</div><div class="mt-1 text-slate-600">Generado: ${new Date(d.generated_at).toLocaleString('es-VE')}</div>`;
+        if(performance){
+          performance.innerHTML='<div class="text-slate-500">Cargando validación de predicciones…</div>';
+          try {
+            const pr=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(symbol)}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+            const pd=await pr.json();
+            if(pr.ok && pd.ok){
+              const horizon=pd.horizon_summary||pd.by_horizon||pd.summary||{};
+              const total=Number(pd.total_evaluated ?? pd.evaluated ?? pd.tracked ?? 0);
+              const correct=Number(pd.direction_correct ?? pd.direction_accuracy_pct ?? NaN);
+              const acc=Number.isFinite(correct)?(correct<=1?correct*100:correct):NaN;
+              const rows=['1h','3h','7h','24h'].map(h=>{const x=horizon[h]||{}; const ev=Number(x.evaluated??x.count??0); const ac=Number(x.direction_accuracy_pct ?? x.accuracy_pct ?? NaN); return `<div><span class="text-slate-600">${h.toUpperCase()}</span> <span class="text-slate-300">${ev} evaluadas</span>${Number.isFinite(ac)?` · <span class="text-slate-300">${ac.toFixed(1)}% dirección</span>`:''}</div>`;}).join('');
+              performance.innerHTML=`<div class="font-black text-slate-200 mb-2">Validación de predicciones Spot</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${rows}</div><div class="mt-2 text-slate-500">Total evaluadas: ${Number.isFinite(total)?total:'n/d'}${Number.isFinite(acc)?` · precisión direccional global: ${acc.toFixed(1)}%`:''}</div>`;
+            } else { performance.innerHTML='<div class="text-slate-500">Aún no hay suficientes evaluaciones reales para mostrar desempeño Spot.</div>'; }
+          } catch(_e){ performance.innerHTML='<div class="text-slate-500">Validación Spot temporalmente no disponible.</div>'; }
+        }
         status.textContent=`${d.asset} analizado con datos reales de Binance · ${new Date(d.generated_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
       } catch(e) {
         status.textContent='No se pudo generar la proyección Spot en este momento.';
