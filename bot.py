@@ -183,6 +183,9 @@ SMART_ALERT_COOLDOWN_SECONDS = max(120, int(os.getenv("SMART_ALERT_COOLDOWN_SECO
 SMART_ALERT_HIGH_SPREAD_PCT = max(0.50, float(os.getenv("SMART_ALERT_HIGH_SPREAD_PCT", "1.50")))
 SMART_ALERT_FAST_MOVE_5M_PCT = max(0.10, float(os.getenv("SMART_ALERT_FAST_MOVE_5M_PCT", "0.35")))
 SMART_ALERT_BREAKOUT_BUFFER_PCT = max(0.01, float(os.getenv("SMART_ALERT_BREAKOUT_BUFFER_PCT", "0.05")))
+SMART_ALERT_LOW_CONFIDENCE = max(20, min(85, int(os.getenv("SMART_ALERT_LOW_CONFIDENCE", "60"))))
+SMART_ALERT_PROJECTION_MOVE_PCT = max(0.10, float(os.getenv("SMART_ALERT_PROJECTION_MOVE_PCT", "0.50")))
+SMART_ALERT_RANGE_EXPANSION_PCT = max(0.10, float(os.getenv("SMART_ALERT_RANGE_EXPANSION_PCT", "0.80")))
 # Calibración Quant 24H: primera fase de ajuste tras acumular al menos un día de datos.
 QUANT_24H_CALIBRATION_ENABLED = os.getenv("QUANT_24H_CALIBRATION_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 QUANT_24H_TREND_WEIGHT_MAX = max(0.0, min(0.25, float(os.getenv("QUANT_24H_TREND_WEIGHT_MAX", "0.12"))))
@@ -821,33 +824,58 @@ def evaluar_alertas_inteligentes(mercado, datos, banco="GENERAL"):
     niveles=datos.get("niveles_dinamicos") or {}
     soporte=float(niveles.get("soporte") or datos.get("soporte_7h") or 0)
     resistencia=float(niveles.get("resistencia") or datos.get("resistencia_7h") or 0)
+    confianza=int(datos.get("confianza") or 0)
     mid=(compra+venta)/2.0
     events=[]
 
+    def emit(event_type, severity, title, message, signature, payload=None):
+        if registrar_evento_alerta(event_type, banco, severity, title, message, signature, payload=payload):
+            events.append((severity, title, message))
+
     if spread_pct >= SMART_ALERT_HIGH_SPREAD_PCT:
-        sig=f"spread_high:{banco}"
         msg=f"Spread elevado en {banco}: {spread_pct:.2f}% (Comprar {compra:.2f} Bs / Vender {venta:.2f} Bs)."
-        if registrar_evento_alerta("spread_high", banco, "warning", "Spread elevado", msg, sig):
-            events.append(("warning", "⚠️ SPREAD ELEVADO", msg))
+        emit("spread_high", "warning", "⚠️ SPREAD ELEVADO", msg, f"spread_high:{banco}", {"spread_pct":spread_pct})
 
     move5=cambios.get("5m")
     if move5 is not None and abs(float(move5)) >= SMART_ALERT_FAST_MOVE_5M_PCT:
-        direction="alcista" if float(move5)>0 else "bajista"
-        sig=f"fast_move_5m:{banco}:{direction}"
-        msg=f"Movimiento rápido de 5m: {float(move5):+.3f}% ({direction}). Comprar {compra:.2f} Bs / Vender {venta:.2f} Bs."
-        if registrar_evento_alerta("fast_move_5m", banco, "warning", "Movimiento rápido", msg, sig):
-            events.append(("warning", "🚨 MOVIMIENTO RÁPIDO", msg))
+        move5=float(move5)
+        direction="alcista" if move5>0 else "bajista"
+        msg=f"Movimiento rápido de 5m: {move5:+.3f}% ({direction}). Comprar {compra:.2f} Bs / Vender {venta:.2f} Bs."
+        emit("fast_move_5m", "warning", "🚨 MOVIMIENTO RÁPIDO", msg, f"fast_move_5m:{banco}:{direction}", {"move_5m_pct":move5})
 
     if soporte > 0 and mid < soporte * (1.0 - SMART_ALERT_BREAKOUT_BUFFER_PCT/100.0):
-        sig=f"break_support:{banco}"
         msg=f"El midpoint {mid:.2f} Bs está por debajo del soporte dinámico {soporte:.2f} Bs."
-        if registrar_evento_alerta("break_support", banco, "critical", "Ruptura de soporte", msg, sig):
-            events.append(("critical", "🔻 RUPTURA DE SOPORTE", msg))
+        emit("break_support", "critical", "🔻 RUPTURA DE SOPORTE", msg, f"break_support:{banco}", {"midpoint":mid,"support":soporte})
     elif resistencia > 0 and mid > resistencia * (1.0 + SMART_ALERT_BREAKOUT_BUFFER_PCT/100.0):
-        sig=f"break_resistance:{banco}"
         msg=f"El midpoint {mid:.2f} Bs está por encima de la resistencia dinámica {resistencia:.2f} Bs."
-        if registrar_evento_alerta("break_resistance", banco, "critical", "Ruptura de resistencia", msg, sig):
-            events.append(("critical", "🔺 RUPTURA DE RESISTENCIA", msg))
+        emit("break_resistance", "critical", "🔺 RUPTURA DE RESISTENCIA", msg, f"break_resistance:{banco}", {"midpoint":mid,"resistance":resistencia})
+
+    if confianza and confianza < SMART_ALERT_LOW_CONFIDENCE:
+        msg=f"La confianza del análisis {banco} cayó a {confianza}/100; la calidad de la lectura requiere mayor cautela."
+        emit("low_confidence", "warning", "🟡 CONFIANZA BAJA", msg, f"low_confidence:{banco}", {"confidence":confianza})
+
+    proys=datos.get("proyecciones_horizontes") or {}
+    q7=proys.get("7h") or {}
+    q24=proys.get("24h") or {}
+    for label, q in (("7H", q7), ("24H", q24)):
+        try:
+            change=float(q.get("cambio_pct"))
+        except (TypeError, ValueError):
+            change=0.0
+        direction=str(q.get("direccion") or "").upper()
+        if abs(change) >= SMART_ALERT_PROJECTION_MOVE_PCT and direction in {"ALCISTA","BAJISTA"}:
+            msg=f"La proyección {label} marca {direction.lower()} con variación central de {change:+.2f}% (actual {mid:.2f} Bs)."
+            emit("projection_shift", "warning", f"📈 CAMBIO DE PROYECCIÓN {label}", msg, f"projection_shift:{banco}:{label}:{direction}", {"horizon":label,"change_pct":change,"direction":direction})
+
+        try:
+            low=float(q.get("rango_mid_min"))
+            high=float(q.get("rango_mid_max"))
+            width_pct=((high-low)/mid*100.0) if mid and high>=low else 0.0
+        except (TypeError, ValueError):
+            width_pct=0.0
+        if width_pct >= SMART_ALERT_RANGE_EXPANSION_PCT:
+            msg=f"El rango estadístico {label} se amplió a {width_pct:.2f}% del midpoint actual; aumenta la incertidumbre del escenario."
+            emit("range_expansion", "warning", f"📊 RANGO AMPLIADO {label}", msg, f"range_expansion:{banco}:{label}", {"horizon":label,"range_width_pct":width_pct})
 
     return events
 
