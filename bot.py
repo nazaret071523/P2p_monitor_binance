@@ -233,8 +233,9 @@ _HISTORY_CACHE = {}
 _AI_CONTEXT_CACHE = {"value": None, "expires": 0.0}
 _CACHE_TTL_ANALYSIS = 20.0
 _CACHE_TTL_HISTORY = 10.0
-_CACHE_TTL_AI = 5.0
-_CACHE_TTL_QUANT = 60.0
+_CACHE_TTL_AI = 15.0
+_CACHE_TTL_QUANT = 90.0
+_QUANT_CACHE_STALE_GRACE_SECONDS = 180.0
 _QUANT_CACHE = {}
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
@@ -3446,12 +3447,16 @@ def _guardar_quant_cache(banco, compra, venta, liquidez, datos):
     }
 
 
-def _obtener_quant_cache(banco, compra, venta, liquidez):
+def _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=False):
     key = banco or "GENERAL"
     cached = _QUANT_CACHE.get(key)
     now = time.monotonic()
-    if not cached or now >= cached.get("expires", 0):
+    if not cached:
         return None
+    expires = float(cached.get("expires", 0) or 0)
+    if now >= expires:
+        if not allow_stale or now >= expires + _QUANT_CACHE_STALE_GRACE_SECONDS:
+            return None
     # Reutilizar una predicción reciente cuando la lectura real solo cambió
     # ligeramente. La interfaz sigue mostrando los precios actuales; el Quant
     # se recalcula antes de tiempo únicamente ante un movimiento material.
@@ -3498,18 +3503,18 @@ def _quant_bank_lock(banco):
             _QUANT_SHARED_LOCKS[key] = lock
         return lock
 
-def _obtener_quant_compartido(banco, compra, venta, liquidez):
+def _obtener_quant_compartido(banco, compra, venta, liquidez, allow_stale=False):
     """Una sola ejecución Quant por banco y lectura real.
 
     Evita que Web, Telegram, tracking y el recolector ejecuten simultáneamente
     el mismo cálculo pesado. No altera los datos ni la matemática del motor.
     """
-    cached = _obtener_quant_cache(banco, compra, venta, liquidez)
+    cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
     if isinstance(cached, dict):
         return cached, True
     lock = _quant_bank_lock(banco)
     with lock:
-        cached = _obtener_quant_cache(banco, compra, venta, liquidez)
+        cached = _obtener_quant_cache(banco, compra, venta, liquidez, allow_stale=allow_stale)
         if isinstance(cached, dict):
             return cached, True
         started = time.monotonic()
@@ -3857,7 +3862,18 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     liquidez = int(mercado.get("liquidez", 0) or 0)
     if c_real <= 0 or v_real <= 0:
         c_real, v_real, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
-    datos, _ = await asyncio.to_thread(_obtener_quant_compartido, banco, c_real, v_real, liquidez)
+    # Telegram prioriza una respuesta rápida: puede reutilizar una lectura
+    # cuantitativa recién vencida durante una ventana corta, siempre que los
+    # precios no hayan cambiado materialmente. Si ocurre, se recalcula en
+    # segundo plano sin bloquear ni duplicar la solicitud del usuario.
+    cache_entry = _QUANT_CACHE.get(banco or "GENERAL")
+    cache_was_stale = bool(cache_entry and time.monotonic() >= float(cache_entry.get("expires", 0) or 0))
+    datos, cache_hit = await asyncio.to_thread(
+        _obtener_quant_compartido, banco, c_real, v_real, liquidez, True
+    )
+    if cache_hit and cache_was_stale:
+        logger.info("[TELEGRAM] Quant stale-cache reutilizado banco=%s; refresco en segundo plano", banco)
+        asyncio.create_task(asyncio.to_thread(_obtener_quant_compartido, banco, c_real, v_real, liquidez))
 
     ahora = datetime.now(VET)
     objetivo = ahora + timedelta(hours=7)
