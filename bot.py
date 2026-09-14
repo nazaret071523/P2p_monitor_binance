@@ -28,6 +28,7 @@ except Exception:
 import pytz
 import psycopg2
 import requests
+from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 import numpy as np
 import xgboost as xgb
@@ -98,6 +99,8 @@ COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10"
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
+BCV_REFRESH_SECONDS = max(60, int(os.getenv("BCV_REFRESH_SECONDS", "300")))
+BCV_REQUEST_TIMEOUT = max(3, int(os.getenv("BCV_REQUEST_TIMEOUT", "10")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 GEMINI_FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
@@ -163,7 +166,10 @@ ULTIMO_BCV_VALIDO = {
     "eur": 0.0,
     "timestamp": None,
     "source": "sin_datos",
+    "effective_date": None,
+    "source_timestamp": None,
 }
+BCV_LOCK = threading.Lock()
 ULTIMO_ESTADO_TENDENCIA = None
 TENDENCIA_CANDIDATA = None
 TENDENCIA_CANDIDATA_CONTEO = 0
@@ -1576,63 +1582,204 @@ def _spot_context_for_quant():
 # ==========================================
 # TASAS BCV
 # ==========================================
+def _normalizar_numero_bcv(value):
+    """Normaliza números del BCV en formato venezolano/europeo."""
+    try:
+        raw = str(value or "").strip().replace("\xa0", "")
+        if not raw:
+            return 0.0
+        # 1.234,5678 -> 1234.5678; 1234,5678 -> 1234.5678
+        if "," in raw and "." in raw:
+            raw = raw.replace(".", "").replace(",", ".")
+        elif "," in raw:
+            raw = raw.replace(",", ".")
+        return _float_positivo(raw)
+    except Exception:
+        return 0.0
+
+
+def _extraer_tasa_desde_bloque_bcv(tag):
+    """Extrae la primera cifra decimal de un bloque pequeño del HTML del BCV."""
+    if not tag:
+        return 0.0
+    text = tag.get_text(" ", strip=True)
+    # El BCV publica normalmente con coma decimal, p.ej. 842,20670000.
+    matches = re.findall(r"(?<!\d)(?:\d{1,3}(?:\.\d{3})+|\d+)(?:[\.,]\d{2,12})", text)
+    for item in matches:
+        value = _normalizar_numero_bcv(item)
+        if value > 0:
+            return value
+    return 0.0
+
+
+def _parsear_home_bcv(html):
+    """Extrae USD/EUR y Fecha Valor desde la página pública del BCV."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    def find_currency(code):
+        node = soup.find(lambda tag: getattr(tag, "name", None) and tag.get_text(" ", strip=True).upper() == code)
+        if not node:
+            return 0.0
+        cur = node
+        for _ in range(5):
+            cur = getattr(cur, "parent", None)
+            if not cur:
+                break
+            value = _extraer_tasa_desde_bloque_bcv(cur)
+            if value > 0:
+                return value
+        return 0.0
+
+    usd = find_currency("USD")
+    eur = find_currency("EUR")
+
+    page_text = soup.get_text(" ", strip=True)
+    effective_date = None
+    m = re.search(r"Fecha\s+Valor\s*:?\s*([^|]+?)(?=\s+(?:USD|EUR|CNY|TRY|RUB)\b|$)", page_text, flags=re.I)
+    if m:
+        effective_date = m.group(1).strip()
+
+    return {"usd": usd, "eur": eur, "effective_date": effective_date}
+
+
+def _consultar_fuente_bcv_directa():
+    """Consulta directamente la publicación pública del Banco Central de Venezuela."""
+    r = HTTP.get(
+        "https://www.bcv.org.ve/",
+        timeout=BCV_REQUEST_TIMEOUT,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://venbot.app)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Cache-Control": "no-cache",
+        },
+    )
+    r.raise_for_status()
+    data = _parsear_home_bcv(r.text)
+    if data["usd"] <= 0 or data["eur"] <= 0:
+        raise RuntimeError(f"BCV HTML sin USD/EUR válidos: USD={data['usd']} EUR={data['eur']}")
+    return data
+
+
+def _consultar_fuente_bcv_json():
+    """Fallback externo que republica datos extraídos del BCV; nunca inventa valores."""
+    r = HTTP.get("https://bcv.today/api/v1/rate.json", timeout=BCV_REQUEST_TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+    usd = _float_positivo(data.get("USD"))
+    eur = _float_positivo(data.get("EUR"))
+    if usd <= 0 or eur <= 0:
+        raise RuntimeError("BCV Today no devolvió USD/EUR válidos")
+    return {
+        "usd": usd,
+        "eur": eur,
+        "effective_date": data.get("effective_date") or data.get("date"),
+        "source_timestamp": data.get("updated_at") or data.get("generated_at"),
+    }
+
+
+def _consultar_fuente_dolarapi():
+    """Segundo fallback: datos oficiales BCV republicados por DolarAPI."""
+    errores = []
+    usd = eur = 0.0
+    usd_data = eur_data = {}
+    try:
+        r = HTTP.get("https://ve.dolarapi.com/v1/dolares/oficial", timeout=BCV_REQUEST_TIMEOUT)
+        r.raise_for_status()
+        usd_data = r.json()
+        usd = _float_positivo(usd_data.get("promedio")) or _float_positivo(usd_data.get("venta")) or _float_positivo(usd_data.get("compra"))
+    except Exception as e:
+        errores.append(f"USD: {e}")
+    try:
+        r = HTTP.get("https://ve.dolarapi.com/v1/euros/oficial", timeout=BCV_REQUEST_TIMEOUT)
+        r.raise_for_status()
+        eur_data = r.json()
+        eur = _float_positivo(eur_data.get("promedio")) or _float_positivo(eur_data.get("venta")) or _float_positivo(eur_data.get("compra"))
+    except Exception as e:
+        errores.append(f"EUR: {e}")
+    if usd <= 0 or eur <= 0:
+        raise RuntimeError(" | ".join(errores) or "DolarAPI sin USD/EUR válidos")
+    return {
+        "usd": usd,
+        "eur": eur,
+        "effective_date": usd_data.get("fecha") or eur_data.get("fecha"),
+        "source_timestamp": usd_data.get("fecha") or eur_data.get("fecha"),
+    }
+
+
 def obtener_tasas_bcv_oficiales():
-    """
-    DolarAPI publica las cotizaciones oficiales BCV en:
-      /v1/dolares/oficial
-      /v1/euros/oficial
-    Conservamos la última lectura real si la fuente falla.
+    """Devuelve la última publicación real del BCV, con refresco independiente.
+
+    IMPORTANTE: el BCV publica una tasa oficial por fecha de vigencia; no es una
+    cotización tick-by-tick. Venbot la consulta periódicamente y actualiza
+    inmediatamente cuando cambia la publicación oficial. Nunca se etiqueta una
+    tasa antigua como nueva lectura.
     """
     global ULTIMO_BCV_VALIDO
 
-    usd = 0.0
-    eur = 0.0
-    source = "DolarAPI/BCV"
+    now = datetime.now(VET)
+    with BCV_LOCK:
+        cached_ts = ULTIMO_BCV_VALIDO.get("timestamp")
+        if cached_ts:
+            try:
+                age = (now - cached_ts.astimezone(VET)).total_seconds() if cached_ts.tzinfo else (now - VET.localize(cached_ts)).total_seconds()
+                if age < BCV_REFRESH_SECONDS and ULTIMO_BCV_VALIDO.get("usd", 0) > 0 and ULTIMO_BCV_VALIDO.get("eur", 0) > 0:
+                    return dict(ULTIMO_BCV_VALIDO)
+            except Exception:
+                pass
+
+    fuentes = (
+        ("BCV Oficial", _consultar_fuente_bcv_directa),
+        ("BCV Today · datos BCV", _consultar_fuente_bcv_json),
+        ("DolarAPI · datos BCV", _consultar_fuente_dolarapi),
+    )
     errores = []
+    for source, getter in fuentes:
+        try:
+            data = getter()
+            usd = _float_positivo(data.get("usd"))
+            eur = _float_positivo(data.get("eur"))
+            if usd <= 0 or eur <= 0:
+                raise RuntimeError("USD/EUR inválidos")
+            value = {
+                "usd": round(usd, 4),
+                "eur": round(eur, 4),
+                "timestamp": now,
+                "source": source,
+                "effective_date": data.get("effective_date"),
+                "source_timestamp": data.get("source_timestamp"),
+            }
+            with BCV_LOCK:
+                ULTIMO_BCV_VALIDO = value
+            logger.info(
+                "BCV actualizado: USD=%.4f EUR=%.4f fuente=%s fecha_valor=%s",
+                usd, eur, source, data.get("effective_date"),
+            )
+            return dict(value)
+        except Exception as e:
+            errores.append(f"{source}: {e}")
 
-    try:
-        r = HTTP.get("https://ve.dolarapi.com/v1/dolares/oficial", timeout=8)
-        r.raise_for_status()
-        data = r.json()
-        usd = _float_positivo(data.get("promedio")) or _float_positivo(data.get("venta")) or _float_positivo(data.get("compra"))
-    except Exception as e:
-        errores.append(f"USD: {e}")
+    logger.warning("No fue posible refrescar BCV: %s", " | ".join(errores))
 
-    try:
-        r = HTTP.get("https://ve.dolarapi.com/v1/euros/oficial", timeout=8)
-        r.raise_for_status()
-        data = r.json()
-        eur = _float_positivo(data.get("promedio")) or _float_positivo(data.get("venta")) or _float_positivo(data.get("compra"))
-    except Exception as e:
-        errores.append(f"EUR: {e}")
+    # Solo se conserva una lectura previa si no existe una mejor; se marca como
+    # stale mediante timestamp para que la interfaz nunca la confunda con una
+    # captura nueva.
+    with BCV_LOCK:
+        if ULTIMO_BCV_VALIDO.get("usd", 0) > 0 or ULTIMO_BCV_VALIDO.get("eur", 0) > 0:
+            stale = dict(ULTIMO_BCV_VALIDO)
+            stale["source"] = f"{stale.get('source', 'BCV')} · última lectura real"
+            return stale
 
-    if usd > 0 and eur > 0:
-        ULTIMO_BCV_VALIDO = {
-            "usd": round(usd, 2),
-            "eur": round(eur, 2),
-            "timestamp": datetime.now(VET),
-            "source": source,
-        }
-        return dict(ULTIMO_BCV_VALIDO)
-
-    if errores:
-        logger.warning("Fallo parcial/total consultando BCV: %s", " | ".join(errores))
-
-    # Nunca inventamos una tasa. Si existe una lectura real anterior, se conserva.
-    if ULTIMO_BCV_VALIDO["usd"] > 0 or ULTIMO_BCV_VALIDO["eur"] > 0:
-        return dict(ULTIMO_BCV_VALIDO)
-
-    # Intentar recuperar la última tasa persistida.
     db = obtener_mercado_actual_db()
     if db and (db["bcv"] > 0 or db["eur"] > 0):
         return {
-            "usd": round(db["bcv"], 2),
-            "eur": round(db["eur"], 2),
+            "usd": round(db["bcv"], 4),
+            "eur": round(db["eur"], 4),
             "timestamp": db["fecha"],
-            "source": db["fuente_bcv"] or "DB",
+            "source": f"{db['fuente_bcv'] or 'DB'} · última lectura real",
+            "effective_date": None,
+            "source_timestamp": None,
         }
-
-    return {"usd": 0.0, "eur": 0.0, "timestamp": None, "source": "sin_datos"}
+    return {"usd": 0.0, "eur": 0.0, "timestamp": None, "source": "sin_datos", "effective_date": None, "source_timestamp": None}
 
 
 # ==========================================
@@ -2118,6 +2265,9 @@ def recolectar_mercado_general():
         "bcv": tasas["usd"],
         "eur": tasas["eur"],
         "fuente_bcv": tasas["source"],
+        "bcv_updated_at": tasas.get("timestamp"),
+        "bcv_effective_date": tasas.get("effective_date"),
+        "bcv_source_timestamp": tasas.get("source_timestamp"),
         "timestamp": datetime.now(VET),
     }
 
@@ -4938,12 +5088,27 @@ def obtener_precios_api(refresh: bool = Query(False)):
         compra = float(mercado.get("compra", 0) or 0)
         venta = float(mercado.get("venta", 0) or 0)
         spread = round(venta - compra, 2)
+        with BCV_LOCK:
+            tasas = dict(ULTIMO_BCV_VALIDO)
+        if not (tasas.get("usd", 0) > 0 and tasas.get("eur", 0) > 0):
+            tasas = {
+                "usd": float(mercado.get("bcv", 0) or 0),
+                "eur": float(mercado.get("eur", 0) or 0),
+                "timestamp": mercado.get("fecha"),
+                "source": mercado.get("fuente_bcv") or "sin_datos",
+                "effective_date": None,
+                "source_timestamp": None,
+            }
         result = {
             "ok": compra > 0 and venta > 0, "compra": round(compra, 2), "venta": round(venta, 2),
             "buy": round(compra, 2), "sell": round(venta, 2), "spread": spread,
             "spread_pct": round((spread/compra)*100, 2) if compra else 0.0,
-            "bcv": round(float(mercado.get("bcv", 0) or 0), 2), "eur": round(float(mercado.get("eur", 0) or 0), 2),
-            "liquidez": int(mercado.get("liquidez", 0) or 0), "fuente_bcv": mercado.get("fuente_bcv") or "DB",
+            "bcv": round(float(tasas.get("usd", 0) or 0), 4), "eur": round(float(tasas.get("eur", 0) or 0), 4),
+            "liquidez": int(mercado.get("liquidez", 0) or 0), "fuente_bcv": tasas.get("source") or mercado.get("fuente_bcv") or "sin_datos",
+            "bcv_updated_at": tasas.get("timestamp").isoformat() if hasattr(tasas.get("timestamp"), "isoformat") else tasas.get("timestamp"),
+            "bcv_effective_date": tasas.get("effective_date"),
+            "bcv_source_timestamp": tasas.get("source_timestamp"),
+            "bcv_stale": "última lectura real" in str(tasas.get("source") or "").lower(),
             "timestamp": fecha.astimezone(VET).isoformat(), "age_seconds": round(age, 1),
             "stale": age > MARKET_MAX_AGE_SECONDS,
             "source": "Binance P2P live" if age <= MARKET_MAX_AGE_SECONDS else "última lectura real",
