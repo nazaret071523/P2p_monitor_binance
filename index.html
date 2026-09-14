@@ -615,7 +615,7 @@
         <div class="rounded-2xl border border-slate-800/80 bg-slate-950/30 p-3 md:p-4 space-y-3">
           <div class="flex items-start justify-between gap-3"><div><h3 class="text-sm md:text-base font-black text-slate-100">Análisis Multihorizonte</h3><p class="text-[11px] text-slate-400 mt-1">Selecciona un horizonte para ver el análisis y métricas estimadas.</p></div><span id="ai-badge-mode" class="text-[9px] font-bold text-emerald-400 uppercase text-right">BINANCE P2P ACTIVO</span></div>
           <div class="grid grid-cols-4 gap-1.5 md:gap-2" role="group" aria-label="Horizonte de proyección P2P">
-            <button type="button" data-p2p-horizon="1h" onclick="selectP2PHorizon('1h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">1H</button>
+            <button type="button" data-p2p-horizon="1h" onclick="selectP2PHorizon('1h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400" aria-pressed="false">1H</button>
             <button type="button" data-p2p-horizon="3h" onclick="selectP2PHorizon('3h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">3H</button>
             <button type="button" data-p2p-horizon="7h" onclick="selectP2PHorizon('7h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-300" aria-pressed="true">7H</button>
             <button type="button" data-p2p-horizon="24h" onclick="selectP2PHorizon('24h')" class="p2p-horizon-btn focus-ring rounded-xl px-2 py-3 text-xs font-black bg-slate-900/70 border border-slate-700 text-slate-400">24H</button>
@@ -1389,8 +1389,12 @@
     let selectedP2PHorizon = '7h';
 
     function selectP2PHorizon(horizon) {
-      selectedP2PHorizon = ['1h','3h','7h','24h'].includes(horizon) ? horizon : '7h';
-      renderP2PHorizon();
+      const next = ['1h','3h','7h','24h'].includes(horizon) ? horizon : '1h';
+      if (next === selectedP2PHorizon) return;
+      selectedP2PHorizon = next;
+      // Cambio local: no hace una nueva petición ni recalcula Quant.
+      // Se actualiza el botón y el panel en el mismo frame.
+      requestAnimationFrame(() => renderP2PHorizon());
     }
 
     function getP2PProjection(analysis, horizon) {
