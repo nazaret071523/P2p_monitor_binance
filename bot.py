@@ -234,7 +234,7 @@ _AI_CONTEXT_CACHE = {"value": None, "expires": 0.0}
 _CACHE_TTL_ANALYSIS = 20.0
 _CACHE_TTL_HISTORY = 10.0
 _CACHE_TTL_AI = 5.0
-_CACHE_TTL_QUANT = 20.0
+_CACHE_TTL_QUANT = 60.0
 _QUANT_CACHE = {}
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
@@ -3449,14 +3449,37 @@ def _guardar_quant_cache(banco, compra, venta, liquidez, datos):
 def _obtener_quant_cache(banco, compra, venta, liquidez):
     key = banco or "GENERAL"
     cached = _QUANT_CACHE.get(key)
-    if not cached or time.monotonic() >= cached.get("expires", 0):
+    now = time.monotonic()
+    if not cached or now >= cached.get("expires", 0):
         return None
-    # Solo reutilizar la predicción cuando corresponde exactamente a la última
-    # lectura persistida. Nunca sustituir precios reales por valores simulados.
+    # Reutilizar una predicción reciente cuando la lectura real solo cambió
+    # ligeramente. La interfaz sigue mostrando los precios actuales; el Quant
+    # se recalcula antes de tiempo únicamente ante un movimiento material.
     try:
-        if (abs(float(cached.get("compra", 0)) - float(compra or 0)) > 1e-9 or
-            abs(float(cached.get("venta", 0)) - float(venta or 0)) > 1e-9 or
-            int(cached.get("liquidez", 0) or 0) != int(liquidez or 0)):
+        cached_compra = float(cached.get("compra", 0) or 0)
+        cached_venta = float(cached.get("venta", 0) or 0)
+        current_compra = float(compra or 0)
+        current_venta = float(venta or 0)
+        cached_mid = (cached_compra + cached_venta) / 2.0
+        current_mid = (current_compra + current_venta) / 2.0
+        if cached_mid <= 0 or current_mid <= 0:
+            return None
+        mid_change_pct = abs(current_mid - cached_mid) / cached_mid * 100.0
+        cached_spread = abs(cached_venta - cached_compra)
+        current_spread = abs(current_venta - current_compra)
+        spread_change_pct = (abs(current_spread - cached_spread) / cached_spread * 100.0) if cached_spread > 0 else 0.0
+        cached_liquidity = int(cached.get("liquidez", 0) or 0)
+        current_liquidity = int(liquidez or 0)
+        liquidity_change_pct = (abs(current_liquidity - cached_liquidity) / cached_liquidity * 100.0) if cached_liquidity > 0 else 0.0
+
+        # Umbrales deliberadamente conservadores: pequeños cambios de la
+        # cotización P2P no fuerzan otro cálculo pesado, pero movimientos
+        # relevantes sí invalidan el cache inmediatamente.
+        if mid_change_pct > 0.20:
+            return None
+        if spread_change_pct > 15.0 and abs(current_spread - cached_spread) > 0.20:
+            return None
+        if liquidity_change_pct > 40.0 and abs(current_liquidity - cached_liquidity) >= 8:
             return None
     except Exception:
         return None
@@ -4692,7 +4715,12 @@ def smart_alerts_evaluate(request: Request):
     mercado = obtener_mercado_actual_db() or {}
     if not mercado:
         return {"ok": False, "error": "Sin mercado real disponible"}
-    datos = motor_quant_inteligente(float(mercado.get("compra") or 0), float(mercado.get("venta") or 0), int(mercado.get("liquidez") or 0), "GENERAL")
+    datos, _ = _obtener_quant_compartido(
+        "GENERAL",
+        float(mercado.get("compra") or 0),
+        float(mercado.get("venta") or 0),
+        int(mercado.get("liquidez") or 0),
+    )
     eventos = evaluar_alertas_inteligentes(mercado, datos, "GENERAL")
     return {"ok": True, "events_created": len(eventos), "events": obtener_eventos_alerta(20, "GENERAL"), "timestamp": datetime.now(VET).isoformat()}
 
@@ -5464,7 +5492,7 @@ def obtener_prediction_signal_api(request: Request, banco: str = Query("GENERAL"
     mercado=obtener_ultimo_mercado_banco(banco)
     c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
     if c<=0 or v<=0: return {"ok":False,"error":"Sin lectura P2P válida"}
-    q=motor_quant_inteligente(c,v,int(mercado.get("liquidez",0) or 0),banco)
+    q,_=_obtener_quant_compartido(banco,c,v,int(mercado.get("liquidez",0) or 0))
     return {"ok":True,"bank":banco,"signal":evaluar_senal_operativa(q,c,v),"quant":q}
 
 
@@ -5474,7 +5502,7 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
     if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
     mercado=obtener_ultimo_mercado_banco(banco) or {}
     c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
-    q=motor_quant_inteligente(c,v,int(mercado.get("liquidez",0) or 0),banco) if c>0 and v>0 else {}
+    q,_=_obtener_quant_compartido(banco,c,v,int(mercado.get("liquidez",0) or 0)) if c>0 and v>0 else {}
     perf=obtener_prediction_performance(banco,100)
     spot_perf = obtener_spot_prediction_performance() if SPOT_PREDICTION_TRACKING_ENABLED else {"ok": False, "tracked": 0}
     return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
