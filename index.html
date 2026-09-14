@@ -1027,23 +1027,32 @@
       }
     }
 
+    let analysisPendingPollTimer = null;
     async function loadAnalysis() {
       if (analysisRequestRunning) return;
       analysisRequestRunning = true;
       try {
-        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 90000);
+        const data = await fetchJSON(`${API_BASE_URL}/api/analysis?t=${Date.now()}`, 15000);
         if (data && data.ok !== false) {
           const normalized = (data.analysis && typeof data.analysis === 'object' && !data.metricas) ? {...data.analysis, ok: data.ok} : data;
           marketState.analysis = normalized;
-          analysisLastSuccessfulFetch = new Date();
+          if (!normalized.pending && (normalized.proyecciones_horizontes || normalized.proyeccion_7h)) {
+            analysisLastSuccessfulFetch = new Date();
+          }
           renderAIIndicators();
+          if (normalized.pending || normalized.refreshing) {
+            if (analysisPendingPollTimer) clearTimeout(analysisPendingPollTimer);
+            analysisPendingPollTimer = setTimeout(() => loadAnalysis(), 1800);
+          }
         } else {
           throw new Error(data?.error || 'Análisis no disponible');
         }
       } catch (error) {
         console.error('Venbot /api/analysis:', error);
-        // No borra la última lectura válida: la interfaz conserva el último estado
-        // mientras el servicio despierta o termina una consulta pesada.
+        // Mantener la última lectura válida. Reintentar suavemente en 3 s para
+        // no dejar el bloque congelado durante un despertar de Render.
+        if (analysisPendingPollTimer) clearTimeout(analysisPendingPollTimer);
+        analysisPendingPollTimer = setTimeout(() => loadAnalysis(), 3000);
       } finally {
         analysisRequestRunning = false;
       }
@@ -1408,6 +1417,16 @@
       const panel = document.getElementById('p2p-horizon-panel');
       const detail = document.getElementById('p2p-horizon-detail');
       const a = marketState.analysis;
+      if (a?.pending || a?.refreshing) {
+        panel.classList.remove('hidden');
+        detail.innerHTML = `<div class="text-sm text-slate-400">⏳ Leyendo la última captura P2P real…</div><div class="text-[10px] text-slate-600 mt-2">El resultado sustituirá esta espera automáticamente cuando termine el cálculo.</div>`;
+        document.querySelectorAll('.p2p-horizon-btn').forEach(btn => {
+          const active = btn.dataset.p2pHorizon === selectedP2PHorizon;
+          btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+          btn.className = `p2p-horizon-btn focus-ring px-2.5 py-1 rounded-lg text-[10px] font-bold ${active ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300' : 'bg-slate-900/70 border border-slate-700 text-slate-400'}`;
+        });
+        return;
+      }
       const q = getP2PProjection(a, selectedP2PHorizon);
       if (!panel || !detail) return;
       panel.classList.toggle('hidden', !a?.proyecciones_horizontes && !a?.proyeccion_7h);
