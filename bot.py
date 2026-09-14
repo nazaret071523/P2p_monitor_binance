@@ -6155,8 +6155,22 @@ def _respuesta_contextual_horizonte_local(contexto, horizonte):
     ]
     if cobertura is not None or muestras is not None:
         lineas.append(f"Base temporal: {cobertura if cobertura is not None else 'n/d'} h de cobertura y {muestras if muestras is not None else 'n/d'} muestras en la ventana.")
-    if a.get("detalle_tendencia"):
-        lineas.append(f"Lectura general: {a.get('detalle_tendencia')}")
+    # La explicación debe corresponder al horizonte solicitado. No reutilizamos
+    # la narrativa global (que puede estar anclada en 7H) para 1H/3H/24H.
+    cambio = q.get("cambio_pct")
+    try:
+        cambio_num = float(cambio)
+    except (TypeError, ValueError):
+        cambio_num = None
+    if direccion and direccion.lower() in {"alcista", "bajista", "rango"}:
+        dir_txt = str(direccion).upper()
+        if cambio_num is None:
+            lectura = f"Lectura {horizonte.upper()}: escenario {dir_txt}."
+        else:
+            lectura = f"Lectura {horizonte.upper()}: escenario {dir_txt} con variación central de {cambio_num:+.2f}%."
+        lineas.append(lectura)
+    else:
+        lineas.append(f"Lectura {horizonte.upper()}: no disponible con suficiente información direccional.")
     lineas.append("Es una estimación estadística calculada por Venbot; no es un precio garantizado.")
     return "\n".join(lineas)
 
@@ -6363,7 +6377,7 @@ def _generador_ai_stream(mensaje, historial):
             yield _stream_event("Hola 👋 Soy Venbot AI. Puedo ayudarte con preguntas generales y, cuando corresponda, analizar los datos reales de P2P y Spot disponibles en Venbot.")
             yield _stream_event(done=True); return
         if any(x in low for x in ("qué puedes hacer", "que puedes hacer", "para qué sirves", "para que sirves")) and len(low) < 100:
-            yield _stream_event("Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenarios estadísticos. También puedo consultar la información Spot disponible en Venbot.")
+            yield _stream_event("Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenarios estadísticos 1H, 3H, 7H y 24H. También puedo consultar la información Spot disponible en Venbot.")
             yield _stream_event(done=True); return
 
         if market_query:
@@ -6431,10 +6445,10 @@ def generar_respuesta_ia(mensaje, historial):
 
     if low in {"hola", "hola!", "hola.", "buenas", "buenas!", "hey", "hey!"}:
         logger.info("AI CHAT: respuesta local inmediata | elapsed=%.2fs", time.monotonic()-t0)
-        return "Hola 👋 Soy Venbot AI. Puedo analizar el mercado P2P de USDT/VES, bancos, tendencia, liquidez y proyección de 7 horas, además de responder preguntas generales."
+        return "Hola 👋 Soy Venbot AI. Puedo analizar el mercado P2P de USDT/VES, bancos, tendencia, liquidez y proyecciones 1H, 3H, 7H y 24H, además de responder preguntas generales."
     if any(k in low for k in ("qué puedes hacer", "que puedes hacer", "para qué sirves", "para que sirves")) and len(low) < 100:
         logger.info("AI CHAT: respuesta local de capacidades | elapsed=%.2fs", time.monotonic()-t0)
-        return "Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenario estadístico a 7 horas."
+        return "Puedo explicar temas, responder preguntas y analizar el P2P USDT/VES con datos reales: precios de compra/venta, Mercantil, Provincial y BNC, liquidez, tendencia, soporte/resistencia y escenarios estadísticos 1H, 3H, 7H y 24H."
 
     market_query = any(k in low for k in (
         "p2p", "usdt", "ves", "comprar", "vender", "precio", "mercado", "spread", "liquidez",
