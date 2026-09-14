@@ -99,7 +99,7 @@ COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10"
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
 MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
-BCV_REFRESH_SECONDS = max(60, int(os.getenv("BCV_REFRESH_SECONDS", "300")))
+BCV_REFRESH_SECONDS = max(60, int(os.getenv("BCV_REFRESH_SECONDS", "60")))
 BCV_REQUEST_TIMEOUT = max(3, int(os.getenv("BCV_REQUEST_TIMEOUT", "10")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
@@ -1678,6 +1678,27 @@ def _consultar_fuente_bcv_json():
     }
 
 
+def _consultar_fuente_bcv_mirror():
+    """Fuente adicional de respaldo que expone la publicación más reciente del BCV.
+    Se usa solo para confirmar/recuperar la misma referencia publicada por el BCV,
+    incluyendo la Fecha Valor futura cuando existe (por ejemplo, tras un feriado).
+    """
+    r = HTTP.get(
+        "https://cablepar.com.ve/proxy_dolar.php?_venbot_ts=" + str(int(time.time())),
+        timeout=BCV_REQUEST_TIMEOUT,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0)",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+    r.raise_for_status()
+    data = _parsear_home_bcv(r.text)
+    if data["usd"] <= 0 or data["eur"] <= 0:
+        raise RuntimeError(f"BCV mirror sin USD/EUR válidos: USD={data['usd']} EUR={data['eur']}")
+    return data
+
+
 def _consultar_fuente_dolarapi():
     """Segundo fallback: datos oficiales BCV republicados por DolarAPI."""
     errores = []
@@ -1730,6 +1751,7 @@ def obtener_tasas_bcv_oficiales():
 
     fuentes = (
         ("BCV Oficial", _consultar_fuente_bcv_directa),
+        ("BCV Mirror · publicación BCV", _consultar_fuente_bcv_mirror),
         ("BCV Today · datos BCV", _consultar_fuente_bcv_json),
         ("DolarAPI · datos BCV", _consultar_fuente_dolarapi),
     )
