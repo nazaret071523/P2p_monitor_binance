@@ -41,6 +41,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.error import BadRequest
 import uvicorn
 
 # ==========================================
@@ -51,6 +52,41 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("venbot")
+
+
+async def _safe_callback_answer(update: Update, *args, **kwargs):
+    """Confirma callbacks de Telegram sin romper el flujo si llegaron tarde.
+
+    Telegram invalida los callback_query antiguos; ese caso no debe abortar
+    la petición principal ni impedir que el bot procese la acción.
+    """
+    query = getattr(update, "callback_query", None)
+    if not query:
+        return False
+    # El dispatcher puede confirmar el mismo callback antes de entrar en
+    # el comando concreto. Evita una segunda llamada a answerCallbackQuery.
+    if getattr(update, "_venbot_callback_acknowledged", False):
+        return True
+    try:
+        # Marcar antes de responder evita una segunda confirmación del mismo
+        # callback cuando el dispatcher entra luego en el handler concreto.
+        try:
+            setattr(update, "_venbot_callback_acknowledged", True)
+        except Exception:
+            pass
+        await query.answer(*args, **kwargs)
+        return True
+    except BadRequest as exc:
+        message = str(exc).lower()
+        if "too old" in message or "response timeout" in message or "query id is invalid" in message:
+            logger.warning("Callback de Telegram expirado; se continúa con la acción: %s", exc)
+            return False
+        logger.exception("Error confirmando callback de Telegram")
+        return False
+    except Exception:
+        logger.exception("Error inesperado confirmando callback de Telegram")
+        return False
+
 
 VET = pytz.timezone("America/Caracas")
 
@@ -3309,6 +3345,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
         "tendencia": q.get("tendencia"),
         "detalle_tendencia": q.get("detalle_tendencia"),
         "manipulacion": manipulacion,
+        "proyecciones_horizontes": q.get("proyecciones_horizontes", {}),
         "proyeccion_7h": {
             "compra": q.get("pred_compra"),
             "venta": q.get("pred_venta"),
@@ -3359,7 +3396,7 @@ def calcular_analisis_monitor(banco_filtro="GENERAL"):
 # ==========================================
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔮 Análisis P2P y Proyección 7H", callback_data="cmd_prediccion")],
+        [InlineKeyboardButton("🔮 Análisis P2P y Proyecciones", callback_data="cmd_prediccion")],
         [InlineKeyboardButton("🛠 Estado del sistema", callback_data="cmd_estado"), InlineKeyboardButton("📊 Rendimiento", callback_data="cmd_rendimiento")],
         [InlineKeyboardButton("💎 Muestra los planes VIP y PREMIUM", callback_data="cmd_suscribir")],
         [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("🔐 Mis credenciales", callback_data="cmd_credenciales")],
@@ -3406,7 +3443,7 @@ async def cmd_miid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "🦜 *VENBOT PREDICCIONES - SISTEMA DE PROTECCIÓN*\nSelecciona una opción del menú táctico:"
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_callback_answer(update)
         if update.callback_query.message:
             await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=obtener_teclado_menu())
     elif update.message:
@@ -3415,7 +3452,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_callback_answer(update)
     try:
         banco=CONFIGURACION_BANCOS.get(update.effective_chat.id,"GENERAL")
         perf=await asyncio.to_thread(obtener_prediction_performance,banco,100)
@@ -3444,7 +3481,7 @@ async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_callback_answer(update)
     try:
         banco = CONFIGURACION_BANCOS.get(update.effective_chat.id, "GENERAL")
         mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
@@ -3477,14 +3514,8 @@ async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-
-    # El callback ya fue confirmado por manejar_botones; informar de inmediato
-    # y ejecutar el cálculo fuera del event loop.
-    if update.callback_query and update.callback_query.message:
-        try:
-            await update.callback_query.message.reply_text("⏳ Preparando la lectura con los últimos datos reales…")
-        except Exception:
-            logger.exception("No se pudo enviar aviso inicial de predicción")
+    if update.callback_query:
+        await _safe_callback_answer(update)
 
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
     # Telegram debe usar la misma captura persistida que alimenta el monitor.
@@ -3554,7 +3585,7 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_callback_answer(update)
     banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
     filas = await asyncio.to_thread(obtener_estadisticas_db, 35, banco)
     buf = await asyncio.to_thread(generar_imagen_grafica_cuantica, filas, banco)
@@ -3575,7 +3606,7 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_callback_answer(update)
     teclado = [
         [InlineKeyboardButton("Mercantil", callback_data="banco_MERCANTIL"), InlineKeyboardButton("Provincial", callback_data="banco_PROVINCIAL")],
         [InlineKeyboardButton("BNC", callback_data="banco_BNC"), InlineKeyboardButton("3 Bancos", callback_data="banco_GENERAL")],
@@ -3598,7 +3629,7 @@ async def _crear_checkout_telegram(chat_id:int,plan_code:str,pay_currency:str):
 
 async def _enviar_checkout_telegram(update:Update,context:ContextTypes.DEFAULT_TYPE,plan_code:str,pay_currency:str):
     chat_id=update.effective_chat.id
-    if update.callback_query: await update.callback_query.answer("Creando orden…")
+    if update.callback_query: await _safe_callback_answer(update, "Creando orden…")
     try:
         account=await _plan_catalogo_para_telegram(chat_id)
         if BILLING_PROVIDER == "manual":
@@ -3692,7 +3723,7 @@ async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     except Exception: logger.exception("Error rechazando orden"); await update.message.reply_text("⚠️ Error rechazando la orden.")
 
 async def cmd_suscribir(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    if update.callback_query: await update.callback_query.answer()
+    if update.callback_query: await _safe_callback_answer(update)
     chat_id=update.effective_chat.id; account=await _plan_catalogo_para_telegram(chat_id); country=DEFAULT_COUNTRY_CODE; policy=_billing_policy(country)
     premium_price=f"{PREMIUM_PRICE_USDT:.2f} USDT" if PREMIUM_PRICE_USDT>0 else "Precio no configurado"; vip_price=f"{VIP_PRICE_USDT:.2f} USDT" if VIP_PRICE_USDT>0 else "Precio no configurado"
     texto=("💎 *PLANES VENBOT*\n\n🆓 *FREE*\n• Monitor P2P y BCV\n• Calculadora y análisis básico\n• 5 consultas IA/día\n• 2 alertas\n\n"+f"⭐ *PREMIUM* — `{premium_price}`\n• Todo FREE\n• IA avanzada\n• 30 consultas IA/día\n• Hasta 10 alertas\n• Historial 30 días\n\n"+f"👑 *VIP* — `{vip_price}`\n• Todo PREMIUM\n• Spot y funciones Quant\n• Predicción avanzada\n• 100 consultas IA/día\n• Hasta 50 alertas\n• Historial 365 días\n\n"+f"🔐 Cuenta: `{account.get('username')}`\n📍 Mercado de cuenta: `{country}`\n\n")
@@ -3723,12 +3754,9 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     data = query.data
     chat_id = update.effective_chat.id
-    # Confirmar el callback antes de cualquier operación pesada. Telegram invalida
-    # los callback_query si la respuesta llega después de su ventana de tiempo.
-    try:
-        await query.answer()
-    except Exception as exc:
-        logger.warning("Callback Telegram expirado; se continúa: %s", exc)
+    # Cada comando delegado confirma su propio callback.
+    # No responder aquí y luego otra vez dentro de cmd_*: Telegram invalida
+    # la segunda respuesta como query duplicada.
     if data == "cmd_estado":
         await cmd_estado(update, context)
     elif data == "cmd_rendimiento":
@@ -3751,17 +3779,19 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _enviar_checkout_telegram(update, context, plan, currency)
         except Exception:
             logger.exception("Error procesando compra Telegram: %s", data)
-            await query.message.reply_text("⚠️ No se pudo crear la orden.")
+            await _safe_callback_answer(update, "No se pudo crear la orden", show_alert=True)
     elif data.startswith("proof_"):
         order_id=data.replace("proof_", "", 1)
         context.user_data["manual_proof_order_id"]=order_id
         context.user_data.pop("manual_proof_file_id",None)
+        await _safe_callback_answer(update)
         await query.message.reply_text(f"📸 *Comprobante para {order_id}*\n\n1. Envíame la captura del pago.\n2. Después envíame el código de referencia en otro mensaje.\n\nNo envíes datos bancarios adicionales ni contraseñas.",parse_mode="Markdown")
     elif data == "cmd_menu":
         await start(update, context)
     elif data.startswith("banco_"):
         banco = data.replace("banco_", "", 1)
         CONFIGURACION_BANCOS[chat_id] = banco
+        await _safe_callback_answer(update, f"Filtro cambiado a {banco}")
         await cmd_prediccion(update, context)
 
 
@@ -5119,15 +5149,21 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
 
 @app.get("/api/analysis")
 async def obtener_analysis_api():
-    """Entrega el análisis sin bloquear el event loop de FastAPI."""
-    inicio = time.monotonic()
+    """Entrega el análisis P2P sin bloquear el event loop de FastAPI.
+
+    El motor usa consultas históricas y puede tardar mientras Render despierta
+    o PostgreSQL responde. Ejecutarlo en un hilo evita que las demás lecturas
+    públicas queden congeladas y permite que el navegador reciba la respuesta
+    cuando el cálculo termine.
+    """
+    started = time.monotonic()
     try:
-        resultado = await asyncio.to_thread(calcular_analisis_monitor, "GENERAL")
-        logger.info("ANALYSIS API completado: ok=%s duracion=%.2fs", resultado.get("ok", True) if isinstance(resultado, dict) else True, time.monotonic() - inicio)
-        return resultado
-    except Exception as exc:
-        logger.exception("ANALYSIS API falló: %s", exc)
-        return {"ok": False, "error": "Análisis temporalmente no disponible"}
+        result = await asyncio.to_thread(calcular_analisis_monitor, "GENERAL")
+        logger.info("API /api/analysis completada en %.2fs (ok=%s)", time.monotonic() - started, result.get("ok", True) if isinstance(result, dict) else True)
+        return result
+    except Exception:
+        logger.exception("Error en API /api/analysis")
+        raise
 
 
 @app.get("/api/history")
