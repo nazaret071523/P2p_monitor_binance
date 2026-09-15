@@ -297,6 +297,13 @@ def inicializar_db():
                     );
                 """)
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_analysis_cache (
+                        banco TEXT PRIMARY KEY,
+                        payload JSONB NOT NULL,
+                        generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS usuarios_p2p (
                         telegram_id BIGINT PRIMARY KEY,
                         username TEXT,
@@ -2748,7 +2755,7 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
         filas = obtener_estadisticas_db(
             limit=50000,
             banco=banco_filtro,
-            desde=query_now - timedelta(hours=120),
+            desde=query_now - timedelta(hours=300),
         )
         logger.info("Backtest histórico cargado: banco=%s muestras=%s", banco_filtro, len(filas))
         series = []
@@ -2844,7 +2851,7 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
                 any_eval=True
             if any_eval: evaluated_origins+=1
 
-        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(coverage_hours,2),"history_required_hours":72,"spacing_minutes":spacing_minutes,"future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"horizons":{}}
+        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(coverage_hours,2),"history_target_hours":300,"history_progress_pct":round(min(100.0, coverage_hours/300.0*100.0),1),"history_required_hours":72,"spacing_minutes":spacing_minutes,"future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"horizons":{}}
         for label,_ in horizons:
             m=metrics[label]; n=m["samples"]
             out["horizons"][label]={"evaluated":n,"mae_ves":round(float(np.mean(m["mae"])),4) if n else None,"mape_pct":round(float(np.mean(m["mape"])),4) if n else None,"rmse_ves":round(float(np.sqrt(np.mean(m["sqe"]))),4) if n else None,"bias_ves":round(float(np.mean(m["bias"])),4) if n else None,"median_abs_error_ves":round(float(np.median(m["mae"])),4) if n else None,"direction_accuracy_pct":round(sum(m["direction"])/len(m["direction"])*100,2) if m["direction"] else None,"direction_evaluated":len(m["direction"]),"interval_coverage_pct":round(sum(m["coverage"])/len(m["coverage"])*100,2) if m["coverage"] else None,"interval_evaluated":len(m["coverage"]),"recent":m["rows"][-5:]}
@@ -3828,6 +3835,19 @@ def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precom
         },
     }
     _ANALYSIS_CACHE[cache_key] = (time.monotonic() + _CACHE_TTL_ANALYSIS, result)
+    if DATABASE_URL:
+        try:
+            with obtener_conexion() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO venbot_analysis_cache (banco, payload, generated_at)
+                        VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (banco) DO UPDATE SET
+                            payload = EXCLUDED.payload,
+                            generated_at = EXCLUDED.generated_at
+                    """, (cache_key, json.dumps(result, ensure_ascii=False)))
+        except Exception as e:
+            logger.warning("No se pudo persistir análisis %s: %s", cache_key, e)
     return result
 
 
@@ -5672,6 +5692,24 @@ def _programar_refresco_analysis(banco="GENERAL"):
     return True
 
 
+def _obtener_analisis_persistido(banco="GENERAL"):
+    if not DATABASE_URL:
+        return None
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT payload FROM venbot_analysis_cache WHERE banco=%s LIMIT 1", (banco,))
+                row = cur.fetchone()
+        if not row:
+            return None
+        payload = row[0]
+        if isinstance(payload, dict):
+            return payload
+        return json.loads(payload) if payload else None
+    except Exception:
+        return None
+
+
 @app.get("/api/analysis")
 async def obtener_analysis_api():
     """Entrega el último análisis real disponible sin obligar al móvil a esperar el motor."""
@@ -5693,8 +5731,23 @@ async def obtener_analysis_api():
             logger.info("[ANALYSIS] respuesta cacheada vencida + refresco en segundo plano")
             return stale
 
-    # Primera carga: no mantener bloqueado el navegador. El recolector puede
-    # estar preparando el análisis; el cliente recibirá la lectura al próximo ciclo.
+    # Tras un reinicio de Render se pierde la caché en memoria. Recuperamos
+    # la última lectura real persistida en PostgreSQL para que el móvil no quede
+    # en blanco/"calculando" mientras se prepara el refresco nuevo.
+    if DATABASE_URL:
+        try:
+            persisted = await asyncio.to_thread(_obtener_analisis_persistido, banco)
+            if isinstance(persisted, dict):
+                _programar_refresco_analysis(banco)
+                stale = dict(persisted)
+                stale["stale"] = True
+                stale["refreshing"] = True
+                logger.info("[ANALYSIS] lectura persistida restaurada tras cache miss")
+                return stale
+        except Exception as e:
+            logger.warning("[ANALYSIS] no se pudo restaurar caché persistida: %s", e)
+
+    # Primera carga sin lectura persistida: no mantener bloqueado el navegador.
     _programar_refresco_analysis(banco)
     mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
     compra = float(mercado.get("compra", 0) or 0) if isinstance(mercado, dict) else 0.0
