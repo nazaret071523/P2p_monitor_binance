@@ -554,13 +554,17 @@ def inicializar_db():
                         shadow_status TEXT,
                         oos_improvement_pct DOUBLE PRECISION,
                         required_oos_improvement_pct DOUBLE PRECISION,
+                        evidence_at TIMESTAMPTZ,
                         generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS shadow_status TEXT;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS oos_improvement_pct DOUBLE PRECISION;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS required_oos_improvement_pct DOUBLE PRECISION;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS evidence_at TIMESTAMPTZ;
                     CREATE INDEX IF NOT EXISTS idx_quant_adaptive_motor_scope_created
                     ON venbot_quant_adaptive_snapshots(motor, scope, generated_at DESC);
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_quant_adaptive_evidence
+                    ON venbot_quant_adaptive_snapshots(motor, scope, horizon, evidence_at);
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
@@ -3495,15 +3499,18 @@ def _coverage_spot():
 def _adaptive_stats_from_rows(rows, mode="p2p"):
     abs_errors=[]; signed_bias=[]; dirs=[]; groups={}
     normalized=[]
+    latest_event_at = None
     for row in rows:
         try:
             if mode=="p2p":
-                pbuy,psell,actual,err,direction,group=row
+                pbuy,psell,actual,err,direction,group,event_at=row
                 pred=(float(pbuy)+float(psell))/2.0
                 observed=None
             else:
-                observed,pred,actual,err,direction,group=row
+                observed,pred,actual,err,direction,group,event_at=row
                 pred=float(pred); observed=float(observed) if observed is not None else None
+            if latest_event_at is None and event_at is not None:
+                latest_event_at = event_at
             actual=float(actual)
             normalized.append({"observed":observed,"pred":pred,"actual":actual,"direction":direction,"group":str(group or "SIN_CLASIFICAR").upper()})
             abs_errors.append(abs(actual-pred)/actual*100.0 if actual else float(err))
@@ -3530,7 +3537,7 @@ def _adaptive_stats_from_rows(rows, mode="p2p"):
         regime_out[g]={"evaluated":info["evaluated"],"direction_accuracy_pct":round(100.0*sum(a)/len(a),1) if a else None,"ready":info["evaluated"]>=10}
     ready = n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and eligible_regimes>=1
     shadow = _build_shadow_candidate(normalized, mode) if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else {"status":"ACUMULANDO_EVIDENCIA"}
-    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":eligible_regimes,"shadow_candidate":shadow}
+    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":eligible_regimes,"shadow_candidate":shadow,"latest_event_at":latest_event_at}
 
 
 def _mae_percent(items):
@@ -3603,7 +3610,7 @@ def _adaptive_p2p_stats(banco="GENERAL", horizon="1h", limit=5000):
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT {pc},{pv},{actual},{err},{direction},regimen FROM venbot_prediction_events WHERE banco=%s AND {actual} IS NOT NULL AND {err} IS NOT NULL ORDER BY created_at DESC LIMIT %s",((banco or "GENERAL").upper(),int(limit)))
+                cur.execute(f"SELECT {pc},{pv},{actual},{err},{direction},regimen,created_at FROM venbot_prediction_events WHERE banco=%s AND {actual} IS NOT NULL AND {err} IS NOT NULL ORDER BY created_at DESC LIMIT %s",((banco or "GENERAL").upper(),int(limit)))
                 return _adaptive_stats_from_rows(cur.fetchall(),"p2p")
     except Exception as e:
         logger.warning("Adaptive P2P stats falló %s %s: %s",banco,horizon,e)
@@ -3622,7 +3629,7 @@ def _adaptive_spot_stats(symbol=None, horizon="1h", limit=5000):
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT observed_price,{pred},{actual},{err},{direction},COALESCE(regimen, trend) FROM venbot_spot_prediction_events WHERE {where} ORDER BY created_at DESC LIMIT %s",tuple(params))
+                cur.execute(f"SELECT observed_price,{pred},{actual},{err},{direction},COALESCE(regimen, trend),created_at FROM venbot_spot_prediction_events WHERE {where} ORDER BY created_at DESC LIMIT %s",tuple(params))
                 return _adaptive_stats_from_rows(cur.fetchall(),"spot")
     except Exception as e:
         logger.warning("Adaptive Spot stats falló %s %s: %s",symbol or "ALL",horizon,e)
@@ -3640,22 +3647,29 @@ def _adaptive_promotion_gate(motor, scope, horizon):
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT readiness, shadow_status, oos_improvement_pct, candidate_bias_factor, evaluated, generated_at
+                    """SELECT readiness, shadow_status, oos_improvement_pct, candidate_bias_factor, evaluated, generated_at, evidence_at
                        FROM venbot_quant_adaptive_snapshots
-                       WHERE motor=%s AND scope=%s AND horizon=%s
+                       WHERE motor=%s AND scope=%s AND horizon=%s AND evidence_at IS NOT NULL
                        ORDER BY generated_at DESC LIMIT %s""",
-                    (str(motor), str(scope), str(horizon), ADAPTIVE_PROMOTION_STABLE_PASSES)
+                    (str(motor), str(scope), str(horizon), ADAPTIVE_PROMOTION_STABLE_PASSES * 4)
                 )
                 rows=cur.fetchall()
         stable=0
         factors=[]
         improvements=[]
+        seen_evidence=set()
         for r in rows:
-            readiness, shadow_status, improvement, factor, evaluated, generated_at = r
+            readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at = r
+            evidence_key = evidence_at.isoformat() if hasattr(evidence_at, "isoformat") else str(evidence_at)
+            if evidence_key in seen_evidence:
+                continue
+            seen_evidence.add(evidence_key)
             if shadow_status == "CANDIDATO_VALIDO" and readiness == "CANDIDATO_EN_SOMBRA" and (improvement is not None and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT) and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON:
                 stable += 1
                 if factor is not None: factors.append(float(factor))
                 if improvement is not None: improvements.append(float(improvement))
+                if stable >= ADAPTIVE_PROMOTION_STABLE_PASSES:
+                    break
             else:
                 break
         if stable < ADAPTIVE_PROMOTION_STABLE_PASSES:
@@ -3673,8 +3687,8 @@ def _adaptive_promotion_gate(motor, scope, horizon):
 def obtener_quant_adaptive_status(symbol=None):
     """Panel de madurez, cobertura y calibración en sombra.
 
-    La V28.2 todavía no modifica predicciones de producción: amplía la
-    observabilidad del aprendizaje y prepara candidatos por régimen.
+    La capa adaptativa amplía la observabilidad del aprendizaje y prepara candidatos por régimen
+    sin modificar por sí sola las predicciones de producción.
     """
     if not DATABASE_URL: return {"ok":False,"error":"database_unavailable"}
     p2p_cov=_coverage_p2p("GENERAL")
@@ -3699,7 +3713,7 @@ def obtener_quant_adaptive_status(symbol=None):
                         cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
                             (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct)
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct")))
+                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
     return status
