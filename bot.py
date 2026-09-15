@@ -500,7 +500,7 @@ def inicializar_db():
                         observed_price DOUBLE PRECISION NOT NULL,
                         pred_1h DOUBLE PRECISION, pred_3h DOUBLE PRECISION,
                         pred_7h DOUBLE PRECISION, pred_24h DOUBLE PRECISION,
-                        trend TEXT, confidence INTEGER, regression_r2 DOUBLE PRECISION,
+                        trend TEXT, regimen TEXT, confidence INTEGER, regression_r2 DOUBLE PRECISION,
                         support DOUBLE PRECISION, resistance DOUBLE PRECISION, volatility_pct DOUBLE PRECISION,
                         evaluated_1h_at TIMESTAMPTZ, evaluated_3h_at TIMESTAMPTZ,
                         evaluated_7h_at TIMESTAMPTZ, evaluated_24h_at TIMESTAMPTZ,
@@ -512,6 +512,7 @@ def inicializar_db():
                         direction_correct_7h BOOLEAN, direction_correct_24h BOOLEAN,
                         payload JSONB
                     );
+                    ALTER TABLE venbot_spot_prediction_events ADD COLUMN IF NOT EXISTS regimen TEXT;
                     CREATE INDEX IF NOT EXISTS idx_spot_prediction_symbol_created
                     ON venbot_spot_prediction_events(symbol, created_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_spot_prediction_due
@@ -1483,11 +1484,11 @@ def registrar_prediccion_spot_tracking(analysis):
                 cur.execute("""
                     INSERT INTO venbot_spot_prediction_events
                     (symbol, observed_price, pred_1h, pred_3h, pred_7h, pred_24h,
-                     trend, confidence, regression_r2, support, resistance, volatility_pct, payload)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     trend, regimen, confidence, regression_r2, support, resistance, volatility_pct, payload)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (
                     analysis.get("symbol"), price, vals["1h"], vals["3h"], vals["7h"], vals["24h"],
-                    metrics.get("trend"), int(metrics.get("confidence", 0) or 0),
+                    metrics.get("trend"), (metrics.get("regimen") or {}).get("regimen") if isinstance(metrics.get("regimen"), dict) else str(metrics.get("regimen") or metrics.get("trend") or "SIN_CLASIFICAR"), int(metrics.get("confidence", 0) or 0),
                     float(metrics.get("regression_r2", 0) or 0),
                     float(metrics.get("support", 0) or 0), float(metrics.get("resistance", 0) or 0),
                     float(metrics.get("volatility_1h_pct", 0) or 0), json.dumps(payload, ensure_ascii=False),
@@ -3497,10 +3498,16 @@ def _adaptive_stats_from_rows(rows, mode="p2p"):
     factor=(1.0+bias/100.0) if bias is not None else None
     if factor is not None: factor=float(np.clip(factor,0.95,1.05))
     regime_out={}
+    eligible_regimes=0
     for g,info in groups.items():
         a=info["direction"]
-        regime_out[g]={"evaluated":info["evaluated"],"direction_accuracy_pct":round(100.0*sum(a)/len(a),1) if a else None}
-    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else "ACUMULANDO","regimes":regime_out}
+        # Un régimen solo se considera informativo para una futura calibración
+        # cuando tiene suficiente evidencia independiente.
+        if info["evaluated"] >= 10:
+            eligible_regimes += 1
+        regime_out[g]={"evaluated":info["evaluated"],"direction_accuracy_pct":round(100.0*sum(a)/len(a),1) if a else None,"ready":info["evaluated"]>=10}
+    ready = n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and eligible_regimes>=1
+    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":eligible_regimes}
 
 
 def _adaptive_p2p_stats(banco="GENERAL", horizon="1h", limit=5000):
@@ -3529,7 +3536,7 @@ def _adaptive_spot_stats(symbol=None, horizon="1h", limit=5000):
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT observed_price,{pred},{actual},{err},{direction},trend FROM venbot_spot_prediction_events WHERE {where} ORDER BY created_at DESC LIMIT %s",tuple(params))
+                cur.execute(f"SELECT observed_price,{pred},{actual},{err},{direction},COALESCE(regimen, trend) FROM venbot_spot_prediction_events WHERE {where} ORDER BY created_at DESC LIMIT %s",tuple(params))
                 return _adaptive_stats_from_rows(cur.fetchall(),"spot")
     except Exception as e:
         logger.warning("Adaptive Spot stats falló %s %s: %s",symbol or "ALL",horizon,e)
@@ -3537,14 +3544,37 @@ def _adaptive_spot_stats(symbol=None, horizon="1h", limit=5000):
 
 
 def obtener_quant_adaptive_status(symbol=None):
-    """Panel de madurez y calibración en sombra. No cambia las predicciones productivas."""
+    """Panel de madurez, cobertura y calibración en sombra.
+
+    La V28.2 todavía no modifica predicciones de producción: amplía la
+    observabilidad del aprendizaje y prepara candidatos por régimen.
+    """
     if not DATABASE_URL: return {"ok":False,"error":"database_unavailable"}
     p2p_cov=_coverage_p2p("GENERAL")
     spot_cov=_coverage_spot()
     hs=("1h","3h","7h","24h")
     p2p_h={h:_adaptive_p2p_stats("GENERAL",h) for h in hs}
     spot_h={h:_adaptive_spot_stats(symbol,h) for h in hs}
-    return {"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,"p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":_adaptive_stage_for_hours(p2p_cov),"horizons":p2p_h,"note":"Candidatos de calibración en sombra; no modifican producción."},"spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":_adaptive_stage_for_hours(spot_cov["median_hours"]),"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"note":"Candidatos de calibración en sombra; no modifican producción."},"generated_at":datetime.now(VET).isoformat()}
+    p2p_stage=_adaptive_stage_for_hours(p2p_cov)
+    spot_stage=_adaptive_stage_for_hours(spot_cov["median_hours"])
+    status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True},
+      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "generated_at":datetime.now(VET).isoformat()}
+    # Persistimos una instantánea liviana para auditoría del aprendizaje.
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                for motor,scope,coverage,stage,hdata in [("P2P","GENERAL",p2p_cov,p2p_stage,p2p_h),("SPOT",symbol or "ALL",spot_cov["median_hours"],spot_stage,spot_h)]:
+                    for h,stats in hdata.items():
+                        cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
+                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA")))
+    except Exception as e:
+        logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
+    return status
 
 
 class QuantEngineV2:
