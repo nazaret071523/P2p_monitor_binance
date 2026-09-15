@@ -509,6 +509,18 @@ def inicializar_db():
                     ON venbot_spot_prediction_events(symbol, created_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_spot_prediction_due
                     ON venbot_spot_prediction_events(created_at DESC, evaluated_24h_at);
+                    CREATE INDEX IF NOT EXISTS idx_spot_pred_pending_1h
+                    ON venbot_spot_prediction_events(symbol, created_at)
+                    WHERE evaluated_1h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_spot_pred_pending_3h
+                    ON venbot_spot_prediction_events(symbol, created_at)
+                    WHERE evaluated_3h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_spot_pred_pending_7h
+                    ON venbot_spot_prediction_events(symbol, created_at)
+                    WHERE evaluated_7h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_spot_pred_pending_24h
+                    ON venbot_spot_prediction_events(symbol, created_at)
+                    WHERE evaluated_24h_at IS NULL;
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
@@ -4331,7 +4343,7 @@ async def tarea_recoleccion_automatica():
             global _LAST_SPOT_PREDICTION_TRACKING_TS
             if SPOT_PREDICTION_TRACKING_ENABLED and time.monotonic() - _LAST_SPOT_PREDICTION_TRACKING_TS >= SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS:
                 try:
-                    await asyncio.to_thread(evaluar_predicciones_spot_pendientes, 200)
+                    await asyncio.to_thread(evaluar_predicciones_spot_pendientes, 50)
                     for _sym in SPOT_SYMBOLS:
                         try:
                             _spot_analysis = await asyncio.to_thread(analizar_spot_predictivo, _sym)
@@ -5469,11 +5481,8 @@ def obtener_spot_prediction_performance_api(request: Request, symbol: Optional[s
     sym = _normalizar_spot_symbol(symbol) if symbol else None
     if sym and sym not in SPOT_SYMBOLS:
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
-    if SPOT_PREDICTION_TRACKING_ENABLED:
-        try:
-            evaluar_predicciones_spot_pendientes(500)
-        except Exception as e:
-            logger.warning("No se pudo refrescar evaluación Spot antes del resumen: %s", e)
+    # La evaluación es un trabajo de fondo programado; este endpoint solo lee métricas
+    # ya calculadas para no bloquear la interfaz ni competir por locks de PostgreSQL.
     return obtener_spot_prediction_performance(sym)
 
 
