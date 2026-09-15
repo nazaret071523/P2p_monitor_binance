@@ -507,6 +507,18 @@
           <div id="quant-backtest-result" class="hidden"></div>
         </section>
 
+        <section id="sec-quant-adaptive" class="glass-card p-4 rounded-2xl border border-purple-500/20 space-y-3">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-brain text-purple-400"></i>Evolución adaptativa de motores</h3><span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span></div>
+              <p class="text-[10px] text-slate-500 mt-1">Cobertura, evaluaciones y sesgos observados. Los candidatos de calibración permanecen en sombra.</p>
+            </div>
+            <button type="button" onclick="loadQuantAdaptiveStatus()" class="shrink-0 rounded-xl bg-purple-500/10 border border-purple-500/25 text-purple-200 text-[10px] font-black px-3 py-2">Actualizar</button>
+          </div>
+          <div id="quant-adaptive-status" class="text-[10px] text-slate-500">Inicia sesión con un plan VIP para consultar la evolución adaptativa.</div>
+          <div id="quant-adaptive-content" class="grid grid-cols-1 md:grid-cols-2 gap-2.5"></div>
+        </section>
+
         <div id="analysis-content-slot"></div>
       </section>
 
@@ -1941,6 +1953,37 @@
 
     window.loadAnalysis = loadAnalysis;
 
+    async function loadQuantAdaptiveStatus() {
+      const status=document.getElementById('quant-adaptive-status');
+      const content=document.getElementById('quant-adaptive-content');
+      if(!status||!content) return;
+      const token=getAuthToken();
+      if(!token){status.textContent='Inicia sesión con un plan VIP para consultar la evolución adaptativa.';content.innerHTML='';return;}
+      status.textContent='Consultando cobertura y evaluaciones reales…';
+      try{
+        const r=await fetch(`${API_BASE_URL}/api/quant/adaptive/status`,{headers:{'X-Venbot-Session':token,'Accept':'application/json'},cache:'no-store'});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(d.detail||'No se pudo cargar la evolución adaptativa');
+        const cards=[];
+        for(const motor of [d.p2p,d.spot]){
+          const st=motor.stage||{};
+          const next=st.next_target_hours;
+          const horizons=Object.entries(motor.horizons||{}).map(([label,v])=>{
+            const evals=Number(v.evaluated||0);
+            const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'—';
+            const bias=Number.isFinite(Number(v.bias_pct))?`${Number(v.bias_pct)>=0?'+':''}${Number(v.bias_pct).toFixed(3)}% sesgo`:'—';
+            const ready=v.readiness==='CANDIDATO_EN_SOMBRA'?' · candidato sombra':'';
+            return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/60 border border-slate-800 px-2.5 py-2"><span class="font-black text-slate-200 uppercase">${label}</span><span class="text-slate-400 text-right">${evals} eval. · ${acc} · ${bias}${ready}</span></div>`;
+          }).join('');
+          const symbolLine=motor.motor==='SPOT'&&motor.by_symbol?`<div class="text-[9px] text-slate-500">Cobertura mediana entre activos · ${Object.keys(motor.by_symbol).length} activos con snapshots.</div>`:'';
+          cards.push(`<div class="rounded-2xl bg-slate-950/60 border border-slate-800 p-3 space-y-2.5"><div class="flex items-center justify-between gap-2"><div class="font-black text-slate-100">Motor ${motor.motor}</div><span class="text-[9px] font-bold text-purple-300 uppercase">Etapa ${st.stage_index||'—'} · ${st.stage||'—'}</span></div><div class="text-[11px] text-slate-300"><b>${Number(motor.coverage_hours||0).toFixed(2)} h</b> históricas${next?` · próxima meta ${next} h`:' · meta máxima alcanzada'}</div><div class="text-[9px] text-slate-500">${next?`A 24 h/día: ${st.eta_days_at_24h_day} días teóricos`:'Sin ETA adicional'} · mínimo ${Number(d.minimum_evaluations_per_horizon||30)} evaluaciones/horizonte.</div>${symbolLine}${horizons}</div>`);
+        }
+        content.innerHTML=cards.join('');
+        status.textContent='Medición adaptativa en sombra: ninguna recomendación modifica aún las predicciones de producción.';
+      }catch(e){status.textContent=e.message||'No se pudo cargar la evolución adaptativa.';content.innerHTML='';}
+    }
+    window.loadQuantAdaptiveStatus=loadQuantAdaptiveStatus;
+
     async function bootVenbot() {
       initTheme();
     initCalculator();
@@ -1959,6 +2002,7 @@
       refreshOnlineCount();
       updateLoginButton();
       await validateExistingSession();
+      loadQuantAdaptiveStatus().catch(()=>{});
       // La primera solicitud ya fue lanzada en paralelo. No la esperamos aquí:
       // así una sesión lenta o el arranque de Foundation no bloquean el panel.
       bootstrapVenbotFoundation();
