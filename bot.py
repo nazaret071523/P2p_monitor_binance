@@ -2525,15 +2525,53 @@ def obtener_precios_binance_p2p(banco_filtro="GENERAL"):
             raw_sell = f_sell.result(timeout=18)
             raw_buy = f_buy.result(timeout=18)
 
-        anuncios_compra_usuario = _seleccionar_anuncios_por_banco(raw_sell, "SELL", banco_filtro)
-        anuncios_venta_usuario = _seleccionar_anuncios_por_banco(raw_buy, "BUY", banco_filtro)
+        # Las consultas generales no garantizan que el anuncio contenga el banco
+        # en sus campos visibles. Para bancos individuales y para GENERAL usamos
+        # el endpoint filtrado por identifier oficial de Binance.
+        if banco_filtro == "GENERAL":
+            bank_raw = {banco: {} for banco in ("MERCANTIL", "PROVINCIAL", "BNC")}
+            with ThreadPoolExecutor(max_workers=6) as bank_ex:
+                futures = {
+                    (banco, trade): bank_ex.submit(_binance_fetch_bank_specific, trade, banco)
+                    for banco in bank_raw
+                    for trade in ("SELL", "BUY")
+                }
+                for (banco, trade), future in futures.items():
+                    try:
+                        bank_raw[banco][trade] = future.result(timeout=10)
+                    except Exception as e:
+                        logger.warning("P2P %s %s no disponible: %s", banco, trade, e)
+                        bank_raw[banco][trade] = []
+            anuncios_compra_usuario = _seleccionar_anuncios_por_banco(
+                raw_sell, "SELL", banco_filtro,
+                bank_raw={b: bank_raw[b].get("SELL", []) for b in bank_raw},
+            )
+            anuncios_venta_usuario = _seleccionar_anuncios_por_banco(
+                raw_buy, "BUY", banco_filtro,
+                bank_raw={b: bank_raw[b].get("BUY", []) for b in bank_raw},
+            )
+        else:
+            bank_sell = _binance_fetch_bank_specific("SELL", banco_filtro)
+            bank_buy = _binance_fetch_bank_specific("BUY", banco_filtro)
+            anuncios_compra_usuario = _seleccionar_anuncios_por_banco(
+                raw_sell, "SELL", banco_filtro, bank_raw={banco_filtro: bank_sell}
+            )
+            anuncios_venta_usuario = _seleccionar_anuncios_por_banco(
+                raw_buy, "BUY", banco_filtro, bank_raw={banco_filtro: bank_buy}
+            )
         compra = calcular_vwap_con_filtro(anuncios_compra_usuario)
         venta = calcular_vwap_con_filtro(anuncios_venta_usuario)
         if compra > 0 and venta > 0:
             liquidez = len(anuncios_compra_usuario) + len(anuncios_venta_usuario)
             ULTIMO_REGISTRO_VALIDO = {"compra": compra, "venta": venta, "timestamp": datetime.now(VET)}
-            logger.info("P2P %s listo: %s anuncios SELL + %s BUY", banco_filtro, len(anuncios_compra_usuario), len(anuncios_venta_usuario))
+            logger.info("P2P %s listo: compra=%.2f venta=%.2f (%s anuncios SELL + %s BUY)", banco_filtro, compra, venta, len(anuncios_compra_usuario), len(anuncios_venta_usuario))
             return round(compra, 2), round(venta, 2), liquidez
+        logger.warning(
+            "P2P %s no disponible: compra=%s venta=%s; no se guardará como muestra ni alimentará Quant/alertas.",
+            banco_filtro,
+            f"{compra:.2f}" if compra > 0 else "N/D",
+            f"{venta:.2f}" if venta > 0 else "N/D",
+        )
     except Exception as e:
         logger.warning("Binance P2P no disponible para %s: %s", banco_filtro, e)
 
