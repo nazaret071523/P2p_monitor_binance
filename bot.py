@@ -245,6 +245,11 @@ ULTIMO_BCV_VALIDO = {
     "source_timestamp": None,
 }
 BCV_LOCK = threading.Lock()
+# Resiliencia de la fuente oficial BCV: si el host remoto presenta un
+# problema temporal de TLS/certificado, no repetimos reintentos ruidosos en
+# cada ciclo. Tras el cooldown se vuelve a probar automáticamente.
+BCV_DIRECT_RETRY_AFTER = 0.0
+BCV_DIRECT_RETRY_COOLDOWN_SECONDS = max(300, int(os.getenv("BCV_DIRECT_RETRY_COOLDOWN_SECONDS", "900")))
 ULTIMO_ESTADO_TENDENCIA = None
 TENDENCIA_CANDIDATA = None
 TENDENCIA_CANDIDATA_CONTEO = 0
@@ -1215,6 +1220,19 @@ _HTTP_ADAPTER = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=1,
 HTTP.mount("https://", _HTTP_ADAPTER)
 HTTP.mount("http://", _HTTP_ADAPTER)
 
+# Sesión independiente para BCV: sin reintentos automáticos de urllib3.
+# Así un fallo de certificado en la fuente oficial cae limpiamente a los
+# respaldos sin generar warnings de retry ni afectar Binance/Spot/P2P.
+_BCV_ADAPTER = HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=0, pool_block=False)
+BCV_HTTP = requests.Session()
+BCV_HTTP.verify = certifi.where()
+BCV_HTTP.headers.update({
+    "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://venbot.app)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+})
+BCV_HTTP.mount("https://", _BCV_ADAPTER)
+BCV_HTTP.mount("http://", _BCV_ADAPTER)
+
 
 def _float_positivo(value):
     try:
@@ -1851,22 +1869,37 @@ def _parsear_home_bcv(html):
 
 
 def _consultar_fuente_bcv_directa():
-    """Consulta directamente la publicación pública del Banco Central de Venezuela."""
-    r = HTTP.get(
-        "https://www.bcv.org.ve/?_venbot_ts=" + str(int(time.time())),
-        timeout=BCV_REQUEST_TIMEOUT,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://venbot.app)",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Cache-Control": "no-cache, no-store, max-age=0",
-            "Pragma": "no-cache",
-        },
-    )
-    r.raise_for_status()
-    data = _parsear_home_bcv(r.text)
-    if data["usd"] <= 0 or data["eur"] <= 0:
-        raise RuntimeError(f"BCV HTML sin USD/EUR válidos: USD={data['usd']} EUR={data['eur']}")
-    return data
+    """Consulta directamente la publicación pública del Banco Central de Venezuela.
+
+    Si la cadena TLS del portal no es confiable desde el runtime, se reporta como
+    fuente no disponible y el orquestador continúa inmediatamente con los
+    respaldos que republican la publicación real del BCV. No se desactiva TLS.
+    """
+    global BCV_DIRECT_RETRY_AFTER
+    now_ts = time.time()
+    if now_ts < BCV_DIRECT_RETRY_AFTER:
+        raise RuntimeError("BCV Oficial temporalmente omitido tras fallo TLS previo; usando respaldo")
+
+    try:
+        r = BCV_HTTP.get(
+            "https://www.bcv.org.ve/?_venbot_ts=" + str(int(now_ts)),
+            timeout=BCV_REQUEST_TIMEOUT,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://venbot.app)",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Cache-Control": "no-cache, no-store, max-age=0",
+                "Pragma": "no-cache",
+            },
+        )
+        r.raise_for_status()
+        data = _parsear_home_bcv(r.text)
+        if data["usd"] <= 0 or data["eur"] <= 0:
+            raise RuntimeError(f"BCV HTML sin USD/EUR válidos: USD={data['usd']} EUR={data['eur']}")
+        BCV_DIRECT_RETRY_AFTER = 0.0
+        return data
+    except requests.exceptions.SSLError as exc:
+        BCV_DIRECT_RETRY_AFTER = now_ts + BCV_DIRECT_RETRY_COOLDOWN_SECONDS
+        raise RuntimeError("BCV Oficial no disponible por verificación TLS; usando respaldo") from exc
 
 
 def _consultar_fuente_bcv_json():
@@ -2019,6 +2052,8 @@ def obtener_tasas_bcv_oficiales():
                 "_key": (*_effective_key(data.get("effective_date")), -priority),
             })
         except Exception as e:
+            if source == "BCV Oficial" and "verificación TLS" in str(e):
+                logger.info("BCV Oficial no disponible temporalmente; continúa con fuente de respaldo")
             errores.append(f"{source}: {e}")
 
     if candidates:
