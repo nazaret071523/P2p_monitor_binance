@@ -1268,7 +1268,8 @@
             const pd=await pr.json();
             if(pr.ok && pd.ok){
               const horizon=pd.horizon_summary||pd.by_horizon||pd.summary||{};
-              const total=Number(pd.total_evaluated ?? pd.evaluated ?? pd.tracked ?? 0);
+              const evaluatedTotal=['1h','3h','7h','24h'].reduce((sum,h)=>sum+Number((horizon[h]||{}).evaluated??0),0);
+              const total=Number.isFinite(evaluatedTotal)?evaluatedTotal:NaN;
               const correct=Number(pd.direction_correct ?? pd.direction_accuracy_pct ?? NaN);
               const acc=Number.isFinite(correct)?(correct<=1?correct*100:correct):NaN;
               const rows=['1h','3h','7h','24h'].map(h=>{const x=horizon[h]||{}; const ev=Number(x.evaluated??x.count??0); const ac=Number(x.direction_accuracy_pct ?? x.accuracy_pct ?? NaN); return `<div><span class="text-slate-600">${h.toUpperCase()}</span> <span class="text-slate-300">${ev} evaluadas</span>${Number.isFinite(ac)?` · <span class="text-slate-300">${ac.toFixed(1)}% dirección</span>`:''}</div>`;}).join('');
