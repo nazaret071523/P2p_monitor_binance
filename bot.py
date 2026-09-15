@@ -10,6 +10,7 @@ import secrets
 import hashlib
 import base64
 import uuid
+from urllib.parse import urlparse
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,7 @@ import matplotlib.dates as mdates
 from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 from telegram.error import BadRequest
@@ -187,10 +189,26 @@ MANUAL_BS_PHONE = os.getenv("MANUAL_BS_PHONE", "").strip()
 MANUAL_BS_ID = os.getenv("MANUAL_BS_ID", "").strip()
 MANUAL_ORDER_EXPIRATION_HOURS = max(1, int(os.getenv("MANUAL_ORDER_EXPIRATION_HOURS", "24")))
 
-# Orígenes separados por coma. Si no se configura, se permite cualquier origen
-# sin credenciales, suficiente para un monitor público.
-ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*").strip()
-ALLOWED_ORIGINS = [x.strip() for x in ALLOWED_ORIGINS_RAW.split(",") if x.strip()] or ["*"]
+# Orígenes separados por coma. En producción, CORS queda cerrado por defecto
+# al propio servicio; se pueden añadir frontends explícitos mediante env.
+ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "").strip()
+VENBOT_FRONTEND_URL = os.getenv("VENBOT_FRONTEND_URL", "").strip().rstrip("/")
+if ALLOWED_ORIGINS_RAW:
+    ALLOWED_ORIGINS = [x.strip().rstrip("/") for x in ALLOWED_ORIGINS_RAW.split(",") if x.strip() and x.strip() != "*"]
+else:
+    _default_origin = (RENDER_EXTERNAL_URL or "https://p2p-monitor-binance.onrender.com").rstrip("/")
+    ALLOWED_ORIGINS = [_default_origin]
+    if VENBOT_FRONTEND_URL and VENBOT_FRONTEND_URL not in ALLOWED_ORIGINS:
+        ALLOWED_ORIGINS.append(VENBOT_FRONTEND_URL)
+ALLOWED_ORIGINS = list(dict.fromkeys(ALLOWED_ORIGINS))
+
+# Hosts permitidos para reducir ataques mediante Host header / DNS rebinding.
+TRUSTED_HOSTS_RAW = os.getenv("TRUSTED_HOSTS", "").strip()
+if TRUSTED_HOSTS_RAW:
+    TRUSTED_HOSTS = [x.strip().split(":", 1)[0] for x in TRUSTED_HOSTS_RAW.split(",") if x.strip()]
+else:
+    _default_host = urlparse(RENDER_EXTERNAL_URL).hostname if RENDER_EXTERNAL_URL else "p2p-monitor-binance.onrender.com"
+    TRUSTED_HOSTS = list(dict.fromkeys([_default_host or "p2p-monitor-binance.onrender.com", "localhost", "127.0.0.1"]))
 
 # Seguridad de producción: defensa en profundidad sin alterar la lógica de mercado.
 SECURITY_STRICT = os.getenv("SECURITY_STRICT", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -5103,6 +5121,8 @@ async def venbot_security_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+    response.headers["X-DNS-Prefetch-Control"] = "off"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Content-Security-Policy"] = (
@@ -5125,7 +5145,7 @@ async def venbot_security_middleware(request: Request, call_next):
         pass
 
     # Datos sensibles y respuestas de autenticación nunca deben cachearse.
-    if path.startswith("/api/auth/") or path.startswith("/api/account/") or path.startswith("/api/billing/"):
+    if path.startswith("/api/auth/") or path.startswith("/api/account/") or path.startswith("/api/billing/") or path == "/api/foundation/config":
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
 
@@ -5138,6 +5158,11 @@ async def venbot_security_middleware(request: Request, call_next):
     return response
 
 
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=TRUSTED_HOSTS,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -5437,10 +5462,12 @@ def foundation_bootstrap(payload: FoundationBootstrapRequest, request: Request):
     }
 
 @app.post("/api/foundation/consent")
-def foundation_consent(payload: ConsentRequest):
+def foundation_consent(payload: ConsentRequest, request: Request):
     if not DATABASE_URL:
         return {"ok": False, "error": "database_not_configured"}
-    _foundation_user(payload.external_user_id)
+    user = _require_session_user(request)
+    if payload.external_user_id != user["external_user_id"]:
+        raise HTTPException(status_code=403, detail="account_owner_mismatch")
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO venbot_consents(external_user_id,consent_type,version,granted) VALUES (%s,%s,%s,%s) ON CONFLICT (external_user_id,consent_type,version) DO UPDATE SET granted=EXCLUDED.granted,created_at=CURRENT_TIMESTAMP""", (payload.external_user_id,payload.consent_type,payload.version,payload.granted))
