@@ -4261,12 +4261,238 @@ def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precom
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔮 Análisis P2P y Proyecciones", callback_data="cmd_prediccion")],
+        [InlineKeyboardButton("💵 Resumen P2P", callback_data="cmd_p2p"), InlineKeyboardButton("📈 Spot VIP", callback_data="cmd_spot_menu")],
+        [InlineKeyboardButton("🔔 Alertas", callback_data="cmd_alertas"), InlineKeyboardButton("🤖 IA Telegram", callback_data="cmd_ia_help")],
         [InlineKeyboardButton("🛠 Estado del sistema", callback_data="cmd_estado"), InlineKeyboardButton("📊 Rendimiento", callback_data="cmd_rendimiento")],
-        [InlineKeyboardButton("💎 Muestra los planes VIP y PREMIUM", callback_data="cmd_suscribir")],
+        [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir")],
         [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("🔐 Mis credenciales", callback_data="cmd_credenciales")],
-        [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
-        [InlineKeyboardButton("🏦 Configurar Filtro de Bancos", callback_data="cmd_bancos")],
+        [InlineKeyboardButton("📊 Gráfica temporal", callback_data="cmd_grafica")],
+        [InlineKeyboardButton("🏦 Configurar bancos", callback_data="cmd_bancos")],
+        [InlineKeyboardButton("📚 Comandos", callback_data="cmd_comandos")],
     ])
+
+
+def _telegram_account_plan(chat_id: int):
+    """Obtiene cuenta y plan efectivo para aplicar permisos al canal Telegram."""
+    account, _ = _create_or_get_telegram_account(chat_id, DEFAULT_COUNTRY_CODE)
+    plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
+    return account, plan
+
+
+def _telegram_plan_allowed(plan: str, minimum: str) -> bool:
+    return PLAN_ORDER[_plan_efectivo(plan)] >= PLAN_ORDER[_plan_efectivo(minimum)]
+
+
+async def cmd_comandos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await _safe_callback_answer(update)
+    texto = (
+        "🦜 *VENBOT · COMANDOS TELEGRAM*\n\n"
+        "*Mercado*\n"
+        "• `/p2p` — resumen P2P del banco seleccionado.\n"
+        "• `/bancos` — cambiar Mercantil, Provincial, BNC o GENERAL.\n"
+        "• `/prediccion` — análisis y proyección P2P.\n"
+        "• `/rendimiento` — métricas históricas de predicción.\n"
+        "• `/spot BTC` — análisis Spot de un activo habilitado (VIP).\n"
+        "\n*Cuenta y servicio*\n"
+        "• `/cuenta` — plan y vencimiento.\n"
+        "• `/alertas` — tus alertas y eventos recientes.\n"
+        "• `/ia pregunta` — consulta a Venbot AI según la cuota de tu plan.\n"
+        "• `/planes` — planes y acceso.\n"
+        "• `/credenciales` — credenciales de la interfaz.\n"
+        "• `/estado` — estado técnico.\n"
+        "• `/grafica` — gráfica temporal.\n"
+        "\nTambién puedes escribir una pregunta de mercado directamente, por ejemplo: `¿Cómo está el P2P ahora?`"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔮 P2P", callback_data="cmd_p2p"), InlineKeyboardButton("📈 Spot", callback_data="cmd_spot_menu")],
+        [InlineKeyboardButton("🔔 Alertas", callback_data="cmd_alertas"), InlineKeyboardButton("🤖 IA", callback_data="cmd_ia_help")],
+        [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")],
+    ])
+    if update.callback_query and update.callback_query.message:
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=kb)
+    else:
+        await update.effective_message.reply_text(texto, parse_mode="Markdown", reply_markup=kb)
+
+
+async def cmd_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await _safe_callback_answer(update)
+    try:
+        chat_id = update.effective_chat.id
+        banco = CONFIGURACION_BANCOS.get(chat_id, "GENERAL")
+        mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+        compra = float(mercado.get("compra", 0) or 0)
+        venta = float(mercado.get("venta", 0) or 0)
+        liquidez = int(mercado.get("liquidez", 0) or 0)
+        if compra <= 0 or venta <= 0:
+            compra, venta, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
+        datos, _ = await asyncio.to_thread(_obtener_quant_compartido, banco, compra, venta, liquidez, True)
+        proys = datos.get("proyecciones_horizontes") or {}
+        lines = [
+            "🦜 *VENBOT · RESUMEN P2P*",
+            f"🏦 Banco: `{banco}`",
+            f"💵 Comprar USDT: `{compra:.2f} Bs`",
+            f"💵 Vender USDT: `{venta:.2f} Bs`",
+            f"↔️ Spread: `{(venta-compra):.2f} Bs`",
+            f"💧 Liquidez: `{datos.get('estado_comunidad','n/d')}`",
+            f"🧠 Tendencia: `{datos.get('tendencia','n/d')}`",
+            f"🎯 Calidad: `{datos.get('confianza','n/d')}%`",
+            "",
+            "*Proyecciones disponibles*",
+        ]
+        for key, label in (("1h","1H"),("3h","3H"),("7h","7H"),("24h","24H")):
+            pr = proys.get(key) or {}
+            c = pr.get("compra")
+            v = pr.get("venta")
+            if c is None or v is None:
+                lines.append(f"• {label}: `no disponible`")
+            else:
+                lines.append(f"• {label}: `{float(c):.2f} / {float(v):.2f} Bs`")
+        lines += [
+            "",
+            f"📚 Muestras: `{datos.get('muestras',0)}` · cobertura: `{float(datos.get('cobertura_horas',0) or 0):.1f} h`",
+            "Los precios observados y las proyecciones están diferenciados; las proyecciones son escenarios estadísticos, no precios garantizados.",
+        ]
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔮 Predicción", callback_data="cmd_prediccion"), InlineKeyboardButton("🏦 Bancos", callback_data="cmd_bancos")],
+            [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")],
+        ])
+        if update.callback_query and update.callback_query.message:
+            await update.callback_query.message.edit_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+        else:
+            await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        logger.exception("Error en /p2p")
+        await update.effective_message.reply_text("⚠️ No pude consultar el P2P ahora. Intenta nuevamente.")
+
+
+async def cmd_spot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await _safe_callback_answer(update)
+    try:
+        chat_id = update.effective_chat.id
+        _account, plan = await asyncio.to_thread(_telegram_account_plan, chat_id)
+        if not _telegram_plan_allowed(plan, "VIP"):
+            await update.effective_message.reply_text("🔒 El análisis Spot y sus proyecciones están disponibles en el plan VIP. Usa /planes para consultar el acceso.")
+            return
+        raw = (context.args[0] if context.args else "BTC").strip().upper()
+        aliases = {"BTC":"BTCUSDT","ETH":"ETHUSDT","SOL":"SOLUSDT","SUI":"SUIUSDT","AAVE":"AAVEUSDT","UNI":"UNIUSDT","KSM":"KSMUSDT","ZEC":"ZECUSDT","XRP":"XRPUSDT"}
+        symbol = aliases.get(raw, raw if raw.endswith("USDT") else raw + "USDT")
+        if symbol not in SPOT_SYMBOLS:
+            raise ValueError("Activo Spot no habilitado")
+        analysis = await asyncio.to_thread(analizar_spot_predictivo, symbol)
+        obs = analysis["observed"]; a = analysis["analysis"]
+        p7 = analysis["projections"]["7h"]; p24 = analysis["projections"]["24h"]
+        texto = (
+            f"📈 *VENBOT · SPOT {symbol.replace('USDT','')}*\n\n"
+            f"Precio observado: `{_money_ia(obs['price'])} USDT` · 24H: `{float(obs.get('change_24h_pct') or 0):+.2f}%`\n"
+            f"Tendencia: `{a['trend']}` · momentum: `{float(a['momentum_score']):+.3f}%`\n"
+            f"Soporte: `{_money_ia(a['support'])}` · resistencia: `{_money_ia(a['resistance'])}`\n"
+            f"Confianza: `{a['confidence']}/100 ({a['quality']})`\n\n"
+            f"🔮 *7H* · central `{_money_ia(p7['central'])}` · rango `{_money_ia(p7['low'])} – {_money_ia(p7['high'])}` · `{p7['change_pct']:+.2f}%`\n"
+            f"🔮 *24H* · central `{_money_ia(p24['central'])}` · rango `{_money_ia(p24['low'])} – {_money_ia(p24['high'])}` · `{p24['change_pct']:+.2f}%`\n\n"
+            "Datos observados y proyecciones están separados. Las proyecciones se calculan con datos Spot reales y no son precios garantizados."
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📈 Cambiar activo", callback_data="cmd_spot_menu")],[InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]])
+        await update.effective_message.reply_text(texto, parse_mode="Markdown", reply_markup=kb)
+    except ValueError:
+        await update.effective_message.reply_text("⚠️ Activo Spot no disponible. Usa `/spot BTC`, `/spot ETH`, `/spot SOL`, `/spot SUI`, `/spot AAVE`, `/spot UNI`, `/spot KSM`, `/spot ZEC` o `/spot XRP`.", parse_mode="Markdown")
+    except Exception:
+        logger.exception("Error en /spot")
+        await update.effective_message.reply_text("⚠️ No pude consultar el análisis Spot ahora.")
+
+
+async def cmd_spot_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await _safe_callback_answer(update)
+    buttons=[]
+    for a in ("BTC","ETH","SOL","SUI","AAVE","UNI","KSM","ZEC","XRP"):
+        buttons.append(InlineKeyboardButton(a, callback_data=f"spot_{a}"))
+    rows=[buttons[i:i+3] for i in range(0,len(buttons),3)]
+    rows.append([InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")])
+    texto="📈 *SPOT VENBOT*\n\nSelecciona un activo para consultar su análisis y proyecciones. El acceso Spot requiere VIP."
+    markup=InlineKeyboardMarkup(rows)
+    if update.callback_query and update.callback_query.message:
+        await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await update.effective_message.reply_text(texto, parse_mode="Markdown", reply_markup=markup)
+
+
+async def cmd_alertas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await _safe_callback_answer(update)
+    try:
+        chat_id=update.effective_chat.id
+        account, plan = await asyncio.to_thread(_telegram_account_plan, chat_id)
+        rules=await asyncio.to_thread(_alert_rules_for_user, account["external_user_id"], True)
+        limit=int(PLAN_LIMITS[_plan_efectivo(plan)]["alerts"])
+        lines=[f"🔔 *VENBOT · ALERTAS*\n\nPlan: `{plan}` · Uso: `{len(rules)}/{limit}`\n"]
+        if rules:
+            for r in rules[:10]:
+                estado="🟢" if r.get("enabled") else "⚪"
+                direction=r.get("direction") or ""
+                target=r.get("target_value")
+                lines.append(f"{estado} `{r.get('banco','GENERAL')}` · {direction} `{_money_ia(target)} Bs` · cooldown `{int(r.get('cooldown_seconds') or 0)//60}m`")
+        else:
+            lines.append("No tienes alertas personales configuradas.")
+        if _telegram_plan_allowed(plan,"PREMIUM"):
+            events=await asyncio.to_thread(obtener_eventos_alerta,10,"GENERAL")
+            lines += ["", "*Eventos inteligentes recientes*"]
+            if events:
+                for e in events[:5]:
+                    lines.append(f"• `{e.get('severity','n/d')}` · {e.get('title','Evento')}" )
+            else:
+                lines.append("• No hay eventos recientes.")
+        else:
+            lines += ["", "Los eventos inteligentes requieren PREMIUM."]
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton("🏦 Gestionar alertas en la web",url=(VENBOT_FRONTEND_URL or RENDER_EXTERNAL_URL or "https://p2p-monitor-binance.onrender.com"))],[InlineKeyboardButton("⬅️ Volver al menú",callback_data="cmd_menu")]])
+        await update.effective_message.reply_text("\n".join(lines),parse_mode="Markdown",reply_markup=kb)
+    except Exception:
+        logger.exception("Error en /alertas")
+        await update.effective_message.reply_text("⚠️ No pude consultar tus alertas ahora.")
+
+
+async def cmd_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await _safe_callback_answer(update)
+    chat_id=update.effective_chat.id
+    try:
+        _account, plan = await asyncio.to_thread(_telegram_account_plan, chat_id)
+        if not _telegram_plan_allowed(plan, "PREMIUM"):
+            await update.effective_message.reply_text("🔒 El canal Telegram de IA está disponible desde PREMIUM. Usa /planes para consultar el acceso.")
+            return
+        question=" ".join(context.args).strip()
+        if not question:
+            await update.effective_message.reply_text("🤖 Usa `/ia` seguido de tu pregunta. Ejemplo: `/ia ¿Cómo está el P2P ahora?`", parse_mode="Markdown")
+            return
+        account=await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
+        quota=await asyncio.to_thread(_consume_ai_quota, account[0] if isinstance(account, tuple) else account)
+        if not quota["allowed"]:
+            await update.effective_message.reply_text(f"⚠️ Alcanzaste la cuota diaria de IA de tu plan (`{quota['limit']}` consultas).", parse_mode="Markdown")
+            return
+        respuesta=await asyncio.to_thread(generar_respuesta_ia, question, [])
+        await update.effective_message.reply_text(respuesta[:3800])
+    except Exception:
+        logger.exception("Error en /ia")
+        await update.effective_message.reply_text("⚠️ Venbot AI no pudo completar la consulta ahora.")
+
+
+async def telegram_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ruta de texto: conserva comprobantes pendientes y permite consultas de mercado."""
+    if context.user_data.get("manual_proof_order_id"):
+        await recibir_comprobante(update, context)
+        return
+    text=(update.message.text or "").strip() if update.message else ""
+    low=text.lower()
+    query_markers=("p2p","usdt","precio","mercado","comprar","vender","spread","banco","mercantil","provincial","bnc","spot","btc","eth","sol","tendencia","proyección","proyeccion","predicción","prediccion","7h","24h","datos","hola","buenas","qué puedes hacer","que puedes hacer")
+    if not text or len(text)<2 or not any(m in low for m in query_markers):
+        return
+    # Reutiliza la misma IA/contexto/fallback del producto, sin crear un motor paralelo.
+    class _Args:
+        def __init__(self, args): self.args=args
+    context.args=text.split()
+    await cmd_ia(update, context)
 
 
 async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4656,6 +4882,20 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cmd_bancos(update, context)
     elif data == "cmd_suscribir":
         await cmd_suscribir(update, context)
+    elif data == "cmd_p2p":
+        await cmd_p2p(update, context)
+    elif data == "cmd_alertas":
+        await cmd_alertas(update, context)
+    elif data == "cmd_comandos":
+        await cmd_comandos(update, context)
+    elif data == "cmd_spot_menu":
+        await cmd_spot_menu(update, context)
+    elif data == "cmd_ia_help":
+        await _safe_callback_answer(update)
+        await update.effective_message.reply_text("🤖 Usa `/ia` seguido de tu pregunta. Ejemplo: `/ia ¿Cómo está el P2P ahora?`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📚 Ver comandos", callback_data="cmd_comandos")],[InlineKeyboardButton("⬅️ Volver al menú",callback_data="cmd_menu")]]))
+    elif data.startswith("spot_"):
+        context.args=[data.replace("spot_", "", 1)]
+        await cmd_spot(update, context)
     elif data.startswith("buy_"):
         try:
             _, plan, currency = data.split("_", 2)
@@ -7355,21 +7595,30 @@ async def startup_event():
     if TELEGRAM_BOT_TOKEN:
         telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
         telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CommandHandler("menu", start))
         telegram_app.add_handler(CommandHandler("miid", cmd_miid))
         telegram_app.add_handler(CommandHandler("cuenta", cmd_cuenta))
         telegram_app.add_handler(CommandHandler("credenciales", cmd_credenciales))
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_app.add_handler(CommandHandler("p2p", cmd_p2p))
+        telegram_app.add_handler(CommandHandler("resumen", cmd_p2p))
+        telegram_app.add_handler(CommandHandler("mercado", cmd_p2p))
+        telegram_app.add_handler(CommandHandler("spot", cmd_spot))
         telegram_app.add_handler(CommandHandler("estado", cmd_estado))
         telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
         telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("grafica", cmd_grafica))
         telegram_app.add_handler(CommandHandler("bancos", cmd_bancos))
+        telegram_app.add_handler(CommandHandler("alertas", cmd_alertas))
+        telegram_app.add_handler(CommandHandler("comandos", cmd_comandos))
+        telegram_app.add_handler(CommandHandler("help", cmd_comandos))
+        telegram_app.add_handler(CommandHandler("ia", cmd_ia))
         telegram_app.add_handler(CommandHandler("suscribir", cmd_suscribir))
         telegram_app.add_handler(CommandHandler("planes", cmd_suscribir))
         telegram_app.add_handler(CommandHandler("pagos", cmd_pagos))
         telegram_app.add_handler(CommandHandler("aprobar", cmd_aprobar))
         telegram_app.add_handler(CommandHandler("rechazar", cmd_rechazar))
-        telegram_app.add_handler(MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), recibir_comprobante))
+        telegram_app.add_handler(MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), telegram_text_router))
         telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
 
         await telegram_app.initialize()
