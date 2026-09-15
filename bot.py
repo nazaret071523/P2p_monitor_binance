@@ -52,6 +52,42 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
+
+class _SecretRedactionFilter(logging.Filter):
+    """Redact known secrets from every log record before it reaches a handler."""
+    _PLACEHOLDER = "[REDACTED]"
+
+    def filter(self, record):
+        try:
+            message = record.getMessage()
+            secrets_to_redact = [
+                os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+                os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "").strip(),
+                os.getenv("DATABASE_URL", "").strip(),
+                os.getenv("GEMINI_API_KEY", "").strip(),
+                os.getenv("OPENROUTER_API_KEY", "").strip(),
+                os.getenv("BILLING_WEBHOOK_SECRET", "").strip(),
+            ]
+            for secret in secrets_to_redact:
+                if secret and len(secret) >= 6:
+                    message = message.replace(secret, self._PLACEHOLDER)
+            record.msg = message
+            record.args = ()
+        except Exception:
+            # Logging must never be allowed to break application startup.
+            pass
+        return True
+
+_secret_redaction_filter = _SecretRedactionFilter()
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(_secret_redaction_filter)
+
+# httpx/httpcore log request URLs at INFO; lower them so credential-bearing
+# Telegram API URLs are not emitted during normal operation. The global
+# redaction filter above remains the final safety net.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 logger = logging.getLogger("venbot")
 
 
