@@ -2794,13 +2794,17 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
         spacing_minutes = max(60, min(int(spacing_minutes), 24 * 60))
         spacing = timedelta(minutes=spacing_minutes)
         prehistory = timedelta(hours=72)
-        # Solo necesitamos 72H de historia previa + 24H de futuro.
-        # Cargar una ventana acotada evita recorrer innecesariamente toda la tabla.
+        # El indicador de validación usa una meta fija de 300H, pero la
+        # ventana de lectura necesita margen para absorber gaps y no hacer
+        # que la cobertura aparente baje solo porque una muestra quedó fuera
+        # del borde temporal. El backtest sigue limitando su objetivo a 300H.
         query_now = datetime.now(VET)
+        validation_target_hours = 300
+        validation_buffer_hours = 60
         filas = obtener_estadisticas_db(
             limit=50000,
             banco=banco_filtro,
-            desde=query_now - timedelta(hours=300),
+            desde=query_now - timedelta(hours=validation_target_hours + validation_buffer_hours),
         )
         logger.info("Backtest histórico cargado: banco=%s muestras=%s", banco_filtro, len(filas))
         series = []
@@ -2896,7 +2900,8 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
                 any_eval=True
             if any_eval: evaluated_origins+=1
 
-        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(coverage_hours,2),"history_target_hours":300,"history_progress_pct":round(min(100.0, coverage_hours/300.0*100.0),1),"history_required_hours":72,"spacing_minutes":spacing_minutes,"future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"horizons":{}}
+        reported_coverage_hours = min(float(coverage_hours), float(validation_target_hours))
+        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(reported_coverage_hours,2),"history_coverage_actual_hours":round(coverage_hours,2),"history_target_hours":validation_target_hours,"history_progress_pct":round(min(100.0, coverage_hours/validation_target_hours*100.0),1),"history_required_hours":72,"spacing_minutes":spacing_minutes,"future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"horizons":{}}
         for label,_ in horizons:
             m=metrics[label]; n=m["samples"]
             out["horizons"][label]={"evaluated":n,"mae_ves":round(float(np.mean(m["mae"])),4) if n else None,"mape_pct":round(float(np.mean(m["mape"])),4) if n else None,"rmse_ves":round(float(np.sqrt(np.mean(m["sqe"]))),4) if n else None,"bias_ves":round(float(np.mean(m["bias"])),4) if n else None,"median_abs_error_ves":round(float(np.median(m["mae"])),4) if n else None,"direction_accuracy_pct":round(sum(m["direction"])/len(m["direction"])*100,2) if m["direction"] else None,"direction_evaluated":len(m["direction"]),"interval_coverage_pct":round(sum(m["coverage"])/len(m["coverage"])*100,2) if m["coverage"] else None,"interval_evaluated":len(m["coverage"]),"recent":m["rows"][-5:]}
