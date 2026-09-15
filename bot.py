@@ -29,6 +29,7 @@ except Exception:
 import pytz
 import psycopg2
 import requests
+import certifi
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 import numpy as np
@@ -1201,6 +1202,9 @@ def evaluar_calidad_datos_quant(filas, now=None):
 # HTTP AUXILIAR
 # ==========================================
 HTTP = requests.Session()
+# Usar explícitamente el bundle CA de certifi para evitar fallos de cadena de confianza
+# en fuentes HTTPS auxiliares sin desactivar la verificación TLS.
+HTTP.verify = certifi.where()
 HTTP.headers.update({
     "User-Agent": "Mozilla/5.0 (compatible; Venbot/2.0; +https://render.com)",
     "Accept": "application/json,text/plain,*/*",
@@ -3785,8 +3789,8 @@ def obtener_quant_adaptive_status(symbol=None):
                     for h,stats in hdata.items():
                         shadow=stats.get("shadow_candidate") or {}
                         cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                             (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
