@@ -217,6 +217,7 @@ ADAPTIVE_STAGES = ("BASE", "ADAPTATIVO", "REGIMENES", "ML_COMPARATIVO", "MADUREZ
 # Nunca se aplica automáticamente a producción: primero exige mejora fuera de muestra.
 ADAPTIVE_SHADOW_TRAIN_RATIO = min(0.8, max(0.5, float(os.getenv("ADAPTIVE_SHADOW_TRAIN_RATIO", "0.6"))))
 ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT = max(0.5, float(os.getenv("ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT", "2.0")))
+ADAPTIVE_PROMOTION_STABLE_PASSES = max(2, int(os.getenv("ADAPTIVE_PROMOTION_STABLE_PASSES", "2")))
 _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
@@ -550,8 +551,14 @@ def inicializar_db():
                         p75_abs_error_pct DOUBLE PRECISION,
                         candidate_bias_factor DOUBLE PRECISION,
                         readiness TEXT NOT NULL DEFAULT 'ACUMULANDO',
+                        shadow_status TEXT,
+                        oos_improvement_pct DOUBLE PRECISION,
+                        required_oos_improvement_pct DOUBLE PRECISION,
                         generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS shadow_status TEXT;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS oos_improvement_pct DOUBLE PRECISION;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS required_oos_improvement_pct DOUBLE PRECISION;
                     CREATE INDEX IF NOT EXISTS idx_quant_adaptive_motor_scope_created
                     ON venbot_quant_adaptive_snapshots(motor, scope, generated_at DESC);
                 """)
@@ -3622,6 +3629,47 @@ def _adaptive_spot_stats(symbol=None, horizon="1h", limit=5000):
         return {"evaluated":0,"readiness":"TEMPORALMENTE_NO_DISPONIBLE"}
 
 
+
+def _adaptive_promotion_gate(motor, scope, horizon):
+    """Gate conservador de promoción: requiere validación OOS estable en dos snapshots consecutivos.
+    Nunca activa producción por sí solo; solo indica si un candidato está listo para revisión/promoción.
+    """
+    if not DATABASE_URL:
+        return {"status":"SIN_DATOS","stable_passes":0,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES}
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT readiness, shadow_status, oos_improvement_pct, candidate_bias_factor, evaluated, generated_at
+                       FROM venbot_quant_adaptive_snapshots
+                       WHERE motor=%s AND scope=%s AND horizon=%s
+                       ORDER BY generated_at DESC LIMIT %s""",
+                    (str(motor), str(scope), str(horizon), ADAPTIVE_PROMOTION_STABLE_PASSES)
+                )
+                rows=cur.fetchall()
+        stable=0
+        factors=[]
+        improvements=[]
+        for r in rows:
+            readiness, shadow_status, improvement, factor, evaluated, generated_at = r
+            if shadow_status == "CANDIDATO_VALIDO" and readiness == "CANDIDATO_EN_SOMBRA" and (improvement is not None and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT) and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON:
+                stable += 1
+                if factor is not None: factors.append(float(factor))
+                if improvement is not None: improvements.append(float(improvement))
+            else:
+                break
+        if stable < ADAPTIVE_PROMOTION_STABLE_PASSES:
+            return {"status":"BLOQUEADO","stable_passes":stable,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"reason":"Se requieren validaciones OOS consecutivas y estables antes de promover."}
+        factor_avg=float(np.mean(factors)) if factors else None
+        factor_spread=(max(factors)-min(factors)) if len(factors)>1 else 0.0
+        stable_factor=factor_spread <= 0.003
+        if not stable_factor:
+            return {"status":"BLOQUEADO","stable_passes":stable,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"reason":"El factor candidato cambió demasiado entre mediciones; continúa en sombra.","factor_spread":round(factor_spread,6)}
+        return {"status":"LISTO_PARA_REVISION","stable_passes":stable,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"candidate_factor":round(factor_avg,6) if factor_avg is not None else None,"oos_improvement_avg_pct":round(float(np.mean(improvements)),2) if improvements else None,"production_change":"DISABLED_REVIEW_REQUIRED"}
+    except Exception as e:
+        logger.warning("Adaptive promotion gate falló %s %s %s: %s", motor, scope, horizon, e)
+        return {"status":"TEMPORALMENTE_NO_DISPONIBLE","stable_passes":0,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES}
+
 def obtener_quant_adaptive_status(symbol=None):
     """Panel de madurez, cobertura y calibración en sombra.
 
@@ -3637,9 +3685,9 @@ def obtener_quant_adaptive_status(symbol=None):
     p2p_stage=_adaptive_stage_for_hours(p2p_cov)
     spot_stage=_adaptive_stage_for_hours(spot_cov["median_hours"])
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
-      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT},
-      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"note":"Candidatos de calibración en sombra; no modifican producción."},
-      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES},
+      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
       "generated_at":datetime.now(VET).isoformat()}
     # Persistimos una instantánea liviana para auditoría del aprendizaje.
     try:
@@ -3647,10 +3695,11 @@ def obtener_quant_adaptive_status(symbol=None):
             with conn.cursor() as cur:
                 for motor,scope,coverage,stage,hdata in [("P2P","GENERAL",p2p_cov,p2p_stage,p2p_h),("SPOT",symbol or "ALL",spot_cov["median_hours"],spot_stage,spot_h)]:
                     for h,stats in hdata.items():
+                        shadow=stats.get("shadow_candidate") or {}
                         cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA")))
+                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct")))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
     return status
