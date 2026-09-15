@@ -1452,7 +1452,13 @@ def registrar_prediccion_spot_tracking(analysis):
 
 
 def _buscar_snapshot_spot_futuro(symbol, objetivo, tolerance_minutes=None):
-    """Busca solo snapshots posteriores al horizonte objetivo; no usa datos previos."""
+    """Obtiene el precio real posterior al horizonte.
+
+    Primero usa snapshots persistidos de Venbot. Si no existe uno en la ventana,
+    consulta klines públicos de Binance para evitar que una predicción antigua
+    quede eternamente pendiente por falta de un snapshot local. Nunca usa datos
+    anteriores al objetivo para evaluar la predicción.
+    """
     if not DATABASE_URL:
         return None
     tol = int(tolerance_minutes or SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES)
@@ -1465,11 +1471,29 @@ def _buscar_snapshot_spot_futuro(symbol, objetivo, tolerance_minutes=None):
                     ORDER BY fecha ASC LIMIT 1
                 """, (symbol, objetivo, objetivo + timedelta(minutes=tol)))
                 row = cur.fetchone()
-                if not row:
-                    return None
-                return {"price": float(row[0]), "fecha": row[1]}
+                if row:
+                    return {"price": float(row[0]), "fecha": row[1]}
+
+        # Fallback auditable: datos públicos históricos de Binance.
+        sym = _normalizar_spot_symbol(symbol)
+        start_ms = int(objetivo.timestamp() * 1000)
+        end_ms = int((objetivo + timedelta(minutes=tol)).timestamp() * 1000)
+        r = HTTP.get(
+            f"{SPOT_BASE_URL}/api/v3/klines",
+            params={"symbol": sym, "interval": "1m", "startTime": start_ms, "endTime": end_ms, "limit": min(1000, tol + 2)},
+            timeout=SPOT_REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        data = r.json() or []
+        if not data:
+            return None
+        k = data[0]
+        # close de la primera vela iniciada en/tras el objetivo.
+        close = float(k[4])
+        fecha = datetime.fromtimestamp(float(k[6]) / 1000.0, tz=timezone.utc).astimezone(VET)
+        return {"price": close, "fecha": fecha, "source": "Binance Spot public klines"}
     except Exception as e:
-        logger.warning("No se pudo buscar snapshot Spot futuro %s: %s", symbol, e)
+        logger.warning("No se pudo buscar precio Spot futuro %s: %s", symbol, e)
         return None
 
 
@@ -1487,7 +1511,8 @@ def evaluar_predicciones_spot_pendientes(limit=200):
                            pred_1h, pred_3h, pred_7h, pred_24h,
                            evaluated_1h_at, evaluated_3h_at, evaluated_7h_at, evaluated_24h_at
                     FROM venbot_spot_prediction_events
-                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '72 hours'
+                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+                      AND (evaluated_1h_at IS NULL OR evaluated_3h_at IS NULL OR evaluated_7h_at IS NULL OR evaluated_24h_at IS NULL)
                     ORDER BY created_at ASC LIMIT %s
                 """, (int(limit),))
                 rows = cur.fetchall()
@@ -1518,6 +1543,8 @@ def evaluar_predicciones_spot_pendientes(limit=200):
                         }[label]
                         cur.execute(f"UPDATE venbot_spot_prediction_events SET {col[0]}=%s, {col[1]}=%s, {col[2]}=%s, {col[3]}=%s WHERE id=%s", (future["fecha"], actual, error_pct, direction_correct, pid))
                         total += 1
+        if total:
+            logger.info("[SPOT TRACKING] evaluaciones nuevas=%s", total)
         return {"evaluated": total}
     except Exception as e:
         logger.warning("Evaluación de predicciones Spot falló: %s", e)
@@ -5422,6 +5449,11 @@ def obtener_spot_prediction_performance_api(request: Request, symbol: Optional[s
     sym = _normalizar_spot_symbol(symbol) if symbol else None
     if sym and sym not in SPOT_SYMBOLS:
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    if SPOT_PREDICTION_TRACKING_ENABLED:
+        try:
+            evaluar_predicciones_spot_pendientes(500)
+        except Exception as e:
+            logger.warning("No se pudo refrescar evaluación Spot antes del resumen: %s", e)
     return obtener_spot_prediction_performance(sym)
 
 
