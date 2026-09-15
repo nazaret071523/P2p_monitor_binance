@@ -3825,7 +3825,23 @@ def obtener_quant_adaptive_status(symbol=None):
                         shadow=stats.get("shadow_candidate") or {}
                         cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
                             (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
+                                coverage_hours=EXCLUDED.coverage_hours,
+                                stage=EXCLUDED.stage,
+                                target_hours=EXCLUDED.target_hours,
+                                evaluated=EXCLUDED.evaluated,
+                                mae_pct=EXCLUDED.mae_pct,
+                                bias_pct=EXCLUDED.bias_pct,
+                                direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,
+                                p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,
+                                candidate_bias_factor=EXCLUDED.candidate_bias_factor,
+                                readiness=EXCLUDED.readiness,
+                                shadow_status=EXCLUDED.shadow_status,
+                                oos_improvement_pct=EXCLUDED.oos_improvement_pct,
+                                required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,
+                                generated_at=CURRENT_TIMESTAMP
+                            """,
                             (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
