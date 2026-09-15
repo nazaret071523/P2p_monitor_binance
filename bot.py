@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
@@ -93,6 +93,7 @@ VET = pytz.timezone("America/Caracas")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_WEBHOOK_SECRET_TOKEN = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "").strip()
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
@@ -154,6 +155,14 @@ MANUAL_ORDER_EXPIRATION_HOURS = max(1, int(os.getenv("MANUAL_ORDER_EXPIRATION_HO
 # sin credenciales, suficiente para un monitor público.
 ALLOWED_ORIGINS_RAW = os.getenv("ALLOWED_ORIGINS", "*").strip()
 ALLOWED_ORIGINS = [x.strip() for x in ALLOWED_ORIGINS_RAW.split(",") if x.strip()] or ["*"]
+
+# Seguridad de producción: defensa en profundidad sin alterar la lógica de mercado.
+SECURITY_STRICT = os.getenv("SECURITY_STRICT", "true").strip().lower() in {"1", "true", "yes", "on"}
+SECURITY_MAX_BODY_BYTES = max(256_000, int(os.getenv("SECURITY_MAX_BODY_BYTES", "1500000")))
+SECURITY_RATE_WINDOW_SECONDS = max(10, int(os.getenv("SECURITY_RATE_WINDOW_SECONDS", "60")))
+SECURITY_RATE_MAX_REQUESTS = max(60, int(os.getenv("SECURITY_RATE_MAX_REQUESTS", "240")))
+SECURITY_LOGIN_RATE_WINDOW_SECONDS = max(60, int(os.getenv("SECURITY_LOGIN_RATE_WINDOW_SECONDS", "900")))
+SECURITY_LOGIN_RATE_MAX_REQUESTS = max(5, int(os.getenv("SECURITY_LOGIN_RATE_MAX_REQUESTS", "15")))
 
 # Solo se usan si todavía no existe ninguna lectura real.
 ULTIMO_REGISTRO_VALIDO = {
@@ -4989,9 +4998,110 @@ class AlertRuleUpdateRequest(BaseModel):
     enabled: Optional[bool] = None
 
 # ==========================================
+# SEGURIDAD HTTP / API
+# ==========================================
+_SECURITY_RATE_LOCK = threading.Lock()
+_SECURITY_RATE_BUCKETS = {}
+_SECURITY_LOGIN_BUCKETS = {}
+
+
+def _client_ip(request: Request) -> str:
+    # No confiar en X-Forwarded-For por defecto: solo usamos la IP entregada
+    # por el socket, evitando que el cliente falsifique el identificador del límite.
+    try:
+        return (request.client.host if request.client else "unknown") or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _rate_allowed(bucket: dict, key: str, limit: int, window: int) -> bool:
+    now = time.monotonic()
+    with _SECURITY_RATE_LOCK:
+        start, count = bucket.get(key, (now, 0))
+        if now - start >= window:
+            start, count = now, 0
+        count += 1
+        bucket[key] = (start, count)
+        # Limpieza acotada para no dejar crecer el diccionario indefinidamente.
+        if len(bucket) > 5000:
+            cutoff = now - window
+            stale = [k for k, (st, _) in bucket.items() if st < cutoff]
+            for k in stale[:2000]:
+                bucket.pop(k, None)
+        return count <= limit
+
+
+# ==========================================
 # FASTAPI
 # ==========================================
 app = FastAPI(title="Venbot API", version="2.0")
+
+
+@app.middleware("http")
+async def venbot_security_middleware(request: Request, call_next):
+    # Límite de tamaño para evitar cuerpos gigantes contra endpoints JSON.
+    try:
+        content_length = int(request.headers.get("content-length", "0") or 0)
+    except Exception:
+        content_length = 0
+    if content_length > SECURITY_MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"ok": False, "error": "request_body_too_large"})
+
+    ip = _client_ip(request)
+    path = request.url.path
+
+    # Rate limiting conservador: muy por encima del patrón normal de polling
+    # de Venbot para no interferir con precios, histórico o heartbeat.
+    if not _rate_allowed(_SECURITY_RATE_BUCKETS, ip, SECURITY_RATE_MAX_REQUESTS, SECURITY_RATE_WINDOW_SECONDS):
+        return JSONResponse(status_code=429, content={"ok": False, "error": "rate_limited"}, headers={"Retry-After": str(SECURITY_RATE_WINDOW_SECONDS)})
+
+    # Login: límite adicional por IP para reducir fuerza bruta.
+    if path == "/api/auth/login":
+        if not _rate_allowed(_SECURITY_LOGIN_BUCKETS, ip, SECURITY_LOGIN_RATE_MAX_REQUESTS, SECURITY_LOGIN_RATE_WINDOW_SECONDS):
+            return JSONResponse(status_code=429, content={"ok": False, "error": "login_rate_limited"}, headers={"Retry-After": str(SECURITY_LOGIN_RATE_WINDOW_SECONDS)})
+
+    response = await call_next(request)
+
+    # Cabeceras de endurecimiento.
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net data:; "
+        "img-src 'self' data: blob: https:; "
+        "connect-src 'self' https: wss:; "
+        "worker-src 'self' blob:; "
+    )
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # Evita filtrar detalles de infraestructura por la cabecera Server.
+    try:
+        del response.headers["server"]
+    except Exception:
+        pass
+
+    # Datos sensibles y respuestas de autenticación nunca deben cachearse.
+    if path.startswith("/api/auth/") or path.startswith("/api/account/") or path.startswith("/api/billing/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+
+    # Strict mode: el servidor avisa si el webhook no tiene secreto configurado.
+    if SECURITY_STRICT and path == "/webhook" and not TELEGRAM_WEBHOOK_SECRET_TOKEN:
+        # No bloqueamos aquí para preservar compatibilidad en instalaciones que aún
+        # no han añadido la variable; el endpoint lo reportará en logs.
+        logger.warning("SEGURIDAD: TELEGRAM_WEBHOOK_SECRET_TOKEN no configurado; el webhook Telegram queda sin autenticación de secreto")
+
+    return response
+
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -7155,6 +7265,10 @@ async def _procesar_update_telegram(update):
 async def telegram_webhook(req: Request):
     if not telegram_app:
         return {"ok": False, "error": "Telegram no inicializado"}
+    if TELEGRAM_WEBHOOK_SECRET_TOKEN:
+        supplied = req.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not supplied or not secrets.compare_digest(supplied, TELEGRAM_WEBHOOK_SECRET_TOKEN):
+            raise HTTPException(status_code=401, detail="telegram_webhook_unauthorized")
     data = await req.json()
     update = Update.de_json(data, telegram_app.bot)
     # Telegram recibe 200 OK inmediatamente; la predicción pesada continúa en
@@ -7201,8 +7315,11 @@ async def startup_event():
         if RENDER_EXTERNAL_URL:
             webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
             await telegram_app.bot.delete_webhook(drop_pending_updates=False)
-            await telegram_app.bot.set_webhook(url=webhook_url)
-            logger.info("Webhook Telegram configurado: %s", webhook_url)
+            webhook_kwargs = {"url": webhook_url}
+            if TELEGRAM_WEBHOOK_SECRET_TOKEN:
+                webhook_kwargs["secret_token"] = TELEGRAM_WEBHOOK_SECRET_TOKEN
+            await telegram_app.bot.set_webhook(**webhook_kwargs)
+            logger.info("Webhook Telegram configurado de forma segura: secret_token=%s", bool(TELEGRAM_WEBHOOK_SECRET_TOKEN))
 
     if DATABASE_URL:
         collector_task = asyncio.create_task(tarea_recoleccion_automatica())
