@@ -197,7 +197,9 @@ if ALLOWED_ORIGINS_RAW:
     ALLOWED_ORIGINS = [x.strip().rstrip("/") for x in ALLOWED_ORIGINS_RAW.split(",") if x.strip() and x.strip() != "*"]
 else:
     _default_origin = (RENDER_EXTERNAL_URL or "https://p2p-monitor-binance.onrender.com").rstrip("/")
-    ALLOWED_ORIGINS = [_default_origin]
+    # Producción: el frontend público actual vive en Vercel y consume este backend en Render.
+    # Mantener ambos orígenes explícitos evita que el navegador bloquee los preflight OPTIONS.
+    ALLOWED_ORIGINS = [_default_origin, "https://p2p-monitor-binance.vercel.app"]
     if VENBOT_FRONTEND_URL and VENBOT_FRONTEND_URL not in ALLOWED_ORIGINS:
         ALLOWED_ORIGINS.append(VENBOT_FRONTEND_URL)
 ALLOWED_ORIGINS = list(dict.fromkeys(ALLOWED_ORIGINS))
