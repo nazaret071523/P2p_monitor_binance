@@ -3430,11 +3430,16 @@ def _adaptive_stage_for_hours(coverage_hours):
         h=max(0.0,float(coverage_hours or 0.0))
     except Exception:
         h=0.0
+    # Cada hito abre la siguiente etapa.
+    # 0-<300h  -> BASE
+    # 300-<720h -> ADAPTATIVO
+    # 720-<1440h -> REGIMENES
+    # 1440-<2160h -> ML_COMPARATIVO
+    # 2160h+ -> MADUREZ
     if h < 300: idx=0
-    elif h < 720: idx=0
-    elif h < 1440: idx=1
-    elif h < 2160: idx=2
-    elif h < 4320: idx=3
+    elif h < 720: idx=1
+    elif h < 1440: idx=2
+    elif h < 2160: idx=3
     else: idx=4
     next_target=next((x for x in ADAPTIVE_TARGET_HOURS if h < x), None)
     return {
