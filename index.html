@@ -1267,13 +1267,13 @@
             const pr=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(symbol)}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
             const pd=await pr.json();
             if(pr.ok && pd.ok){
-              const horizon=pd.horizon_summary||pd.by_horizon||pd.summary||{};
+              const horizon=pd.horizons||pd.horizon_summary||pd.by_horizon||pd.summary||{};
               const evaluatedTotal=['1h','3h','7h','24h'].reduce((sum,h)=>sum+Number((horizon[h]||{}).evaluated??0),0);
               const total=Number.isFinite(evaluatedTotal)?evaluatedTotal:NaN;
               const correct=Number(pd.direction_correct ?? pd.direction_accuracy_pct ?? NaN);
               const acc=Number.isFinite(correct)?(correct<=1?correct*100:correct):NaN;
               const rows=['1h','3h','7h','24h'].map(h=>{const x=horizon[h]||{}; const ev=Number(x.evaluated??x.count??0); const ac=Number(x.direction_accuracy_pct ?? x.accuracy_pct ?? NaN); return `<div><span class="text-slate-600">${h.toUpperCase()}</span> <span class="text-slate-300">${ev} evaluadas</span>${Number.isFinite(ac)?` · <span class="text-slate-300">${ac.toFixed(1)}% dirección</span>`:''}</div>`;}).join('');
-              performance.innerHTML=`<div class="font-black text-slate-200 mb-2">Validación de predicciones Spot</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${rows}</div><div class="mt-2 text-slate-500">Total evaluadas: ${Number.isFinite(total)?total:'n/d'}${Number.isFinite(acc)?` · precisión direccional global: ${acc.toFixed(1)}%`:''}</div>`;
+              performance.innerHTML=`<div class="font-black text-slate-200 mb-2">Validación de predicciones Spot</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${rows}</div><div class="mt-2 text-slate-500">Total evaluaciones por horizonte: ${Number.isFinite(total)?total:'n/d'}${Number.isFinite(acc)?` · precisión direccional global: ${acc.toFixed(1)}%`:''}</div>`;
             } else { performance.innerHTML='<div class="text-slate-500">Aún no hay suficientes evaluaciones reales para mostrar desempeño Spot.</div>'; }
           } catch(_e){ performance.innerHTML='<div class="text-slate-500">Validación Spot temporalmente no disponible.</div>'; }
         }
