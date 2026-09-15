@@ -206,6 +206,13 @@ PREDICTION_EVAL_TOLERANCE_MINUTES = max(2, int(os.getenv("PREDICTION_EVAL_TOLERA
 SPOT_PREDICTION_TRACKING_ENABLED = os.getenv("SPOT_PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS = max(300, int(os.getenv("SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS", "300")))
 SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES = max(5, int(os.getenv("SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES", "20")))
+
+# Quant Adaptive Learning v1: medición y candidatos de calibración en sombra.
+# No modifica las predicciones de producción en esta etapa.
+ADAPTIVE_LEARNING_ENABLED = os.getenv("ADAPTIVE_LEARNING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+ADAPTIVE_MIN_EVAL_PER_HORIZON = max(20, int(os.getenv("ADAPTIVE_MIN_EVAL_PER_HORIZON", "30")))
+ADAPTIVE_TARGET_HOURS = (300, 720, 1440, 2160, 4320)
+ADAPTIVE_STAGES = ("BASE", "ADAPTATIVO", "REGIMENES", "ML_COMPARATIVO", "MADUREZ")
 _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
@@ -521,6 +528,27 @@ def inicializar_db():
                     CREATE INDEX IF NOT EXISTS idx_spot_pred_pending_24h
                     ON venbot_spot_prediction_events(symbol, created_at)
                     WHERE evaluated_24h_at IS NULL;
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_quant_adaptive_snapshots (
+                        id BIGSERIAL PRIMARY KEY,
+                        motor TEXT NOT NULL,
+                        scope TEXT NOT NULL DEFAULT 'GENERAL',
+                        horizon TEXT,
+                        coverage_hours DOUBLE PRECISION NOT NULL DEFAULT 0,
+                        stage TEXT NOT NULL,
+                        target_hours INTEGER NOT NULL,
+                        evaluated INTEGER NOT NULL DEFAULT 0,
+                        mae_pct DOUBLE PRECISION,
+                        bias_pct DOUBLE PRECISION,
+                        direction_accuracy_pct DOUBLE PRECISION,
+                        p75_abs_error_pct DOUBLE PRECISION,
+                        candidate_bias_factor DOUBLE PRECISION,
+                        readiness TEXT NOT NULL DEFAULT 'ACUMULANDO',
+                        generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quant_adaptive_motor_scope_created
+                    ON venbot_quant_adaptive_snapshots(motor, scope, generated_at DESC);
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
@@ -3390,6 +3418,135 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
     }
 
 
+
+def _adaptive_stage_for_hours(coverage_hours):
+    """Determina madurez usando horas observadas; nunca inventa cobertura."""
+    try:
+        h=max(0.0,float(coverage_hours or 0.0))
+    except Exception:
+        h=0.0
+    if h < 300: idx=0
+    elif h < 720: idx=0
+    elif h < 1440: idx=1
+    elif h < 2160: idx=2
+    elif h < 4320: idx=3
+    else: idx=4
+    next_target=next((x for x in ADAPTIVE_TARGET_HOURS if h < x), None)
+    return {
+        "stage_index":idx+1,
+        "stage":ADAPTIVE_STAGES[idx],
+        "milestone_hours":ADAPTIVE_TARGET_HOURS[idx],
+        "next_target_hours":next_target,
+        "progress_to_next_pct":round(100.0 if next_target is None else min(100.0,h/next_target*100.0),1),
+        "eta_days_at_24h_day":None if next_target is None else round(max(0.0,next_target-h)/24.0,2),
+    }
+
+
+def _coverage_p2p(banco="GENERAL"):
+    if not DATABASE_URL: return 0.0
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT MIN(fecha), MAX(fecha) FROM muestras_p2p WHERE banco=%s",((banco or "GENERAL").upper(),))
+                lo,hi=cur.fetchone() or (None,None)
+        return max(0.0,(hi-lo).total_seconds()/3600.0) if lo and hi else 0.0
+    except Exception as e:
+        logger.warning("Cobertura histórica P2P no disponible: %s",e)
+        return 0.0
+
+
+def _coverage_spot():
+    if not DATABASE_URL: return {"median_hours":0.0,"by_symbol":{}}
+    out={}
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT symbol,MIN(fecha),MAX(fecha),COUNT(*) FROM spot_market_snapshots GROUP BY symbol ORDER BY symbol")
+                for sym,lo,hi,n in cur.fetchall():
+                    out[str(sym)]={"coverage_hours":round(max(0.0,(hi-lo).total_seconds()/3600.0) if lo and hi else 0.0,2),"snapshots":int(n or 0)}
+    except Exception as e:
+        logger.warning("Cobertura histórica Spot no disponible: %s",e)
+    vals=[v["coverage_hours"] for v in out.values() if v.get("coverage_hours",0)>0]
+    return {"median_hours":round(float(np.median(vals)),2) if vals else 0.0,"by_symbol":out}
+
+
+def _adaptive_stats_from_rows(rows, mode="p2p"):
+    abs_errors=[]; signed_bias=[]; dirs=[]; groups={}
+    for row in rows:
+        try:
+            if mode=="p2p":
+                pbuy,psell,actual,err,direction,group=row
+                pred=(float(pbuy)+float(psell))/2.0
+            else:
+                observed,pred,actual,err,direction,group=row
+                pred=float(pred)
+            actual=float(actual)
+            abs_errors.append(abs(actual-pred)/actual*100.0 if actual else float(err))
+            signed_bias.append((actual-pred)/pred*100.0 if pred else 0.0)
+            if direction is not None: dirs.append(bool(direction))
+            g=str(group or "SIN_CLASIFICAR").upper()
+            groups.setdefault(g,{"evaluated":0,"direction":[]})["evaluated"]+=1
+            if direction is not None: groups[g]["direction"].append(bool(direction))
+        except Exception:
+            continue
+    n=len(abs_errors)
+    bias=float(np.mean(signed_bias)) if signed_bias else None
+    mae=float(np.mean(abs_errors)) if abs_errors else None
+    p75=float(np.percentile(abs_errors,75)) if abs_errors else None
+    acc=(100.0*sum(dirs)/len(dirs)) if dirs else None
+    factor=(1.0+bias/100.0) if bias is not None else None
+    if factor is not None: factor=float(np.clip(factor,0.95,1.05))
+    regime_out={}
+    for g,info in groups.items():
+        a=info["direction"]
+        regime_out[g]={"evaluated":info["evaluated"],"direction_accuracy_pct":round(100.0*sum(a)/len(a),1) if a else None}
+    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else "ACUMULANDO","regimes":regime_out}
+
+
+def _adaptive_p2p_stats(banco="GENERAL", horizon="1h", limit=5000):
+    cols={"1h":("pred_compra_1h","pred_venta_1h","actual_mid_1h","error_pct_1h","direction_correct_1h"),"3h":("pred_compra_3h","pred_venta_3h","actual_mid_3h","error_pct_3h","direction_correct_3h"),"7h":("pred_compra_7h","pred_venta_7h","actual_mid_7h","error_pct_7h","direction_correct_7h"),"24h":("pred_compra_24h","pred_venta_24h","actual_mid_24h","error_pct_24h","direction_correct_24h")}.get(horizon)
+    if not cols or not DATABASE_URL: return {"evaluated":0,"readiness":"SIN_DATOS"}
+    pc,pv,actual,err,direction=cols
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT {pc},{pv},{actual},{err},{direction},regimen FROM venbot_prediction_events WHERE banco=%s AND {actual} IS NOT NULL AND {err} IS NOT NULL ORDER BY created_at DESC LIMIT %s",((banco or "GENERAL").upper(),int(limit)))
+                return _adaptive_stats_from_rows(cur.fetchall(),"p2p")
+    except Exception as e:
+        logger.warning("Adaptive P2P stats falló %s %s: %s",banco,horizon,e)
+        return {"evaluated":0,"readiness":"TEMPORALMENTE_NO_DISPONIBLE"}
+
+
+def _adaptive_spot_stats(symbol=None, horizon="1h", limit=5000):
+    mapping={"1h":("pred_1h","actual_1h","error_pct_1h","direction_correct_1h"),"3h":("pred_3h","actual_3h","error_pct_3h","direction_correct_3h"),"7h":("pred_7h","actual_7h","error_pct_7h","direction_correct_7h"),"24h":("pred_24h","actual_24h","error_pct_24h","direction_correct_24h")}
+    if horizon not in mapping or not DATABASE_URL: return {"evaluated":0,"readiness":"SIN_DATOS"}
+    pred,actual,err,direction=mapping[horizon]
+    conditions=[f"{actual} IS NOT NULL",f"{err} IS NOT NULL"]; params=[]
+    if symbol:
+        conditions.insert(0,"symbol=%s"); params.append(symbol.upper())
+    params.append(int(limit))
+    where=" AND ".join(conditions)
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT observed_price,{pred},{actual},{err},{direction},trend FROM venbot_spot_prediction_events WHERE {where} ORDER BY created_at DESC LIMIT %s",tuple(params))
+                return _adaptive_stats_from_rows(cur.fetchall(),"spot")
+    except Exception as e:
+        logger.warning("Adaptive Spot stats falló %s %s: %s",symbol or "ALL",horizon,e)
+        return {"evaluated":0,"readiness":"TEMPORALMENTE_NO_DISPONIBLE"}
+
+
+def obtener_quant_adaptive_status(symbol=None):
+    """Panel de madurez y calibración en sombra. No cambia las predicciones productivas."""
+    if not DATABASE_URL: return {"ok":False,"error":"database_unavailable"}
+    p2p_cov=_coverage_p2p("GENERAL")
+    spot_cov=_coverage_spot()
+    hs=("1h","3h","7h","24h")
+    p2p_h={h:_adaptive_p2p_stats("GENERAL",h) for h in hs}
+    spot_h={h:_adaptive_spot_stats(symbol,h) for h in hs}
+    return {"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,"p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":_adaptive_stage_for_hours(p2p_cov),"horizons":p2p_h,"note":"Candidatos de calibración en sombra; no modifican producción."},"spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":_adaptive_stage_for_hours(spot_cov["median_hours"]),"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"note":"Candidatos de calibración en sombra; no modifican producción."},"generated_at":datetime.now(VET).isoformat()}
+
+
 class QuantEngineV2:
     """Compatibilidad explícita para el endpoint Quant v2.
 
@@ -5484,6 +5641,15 @@ def obtener_spot_prediction_performance_api(request: Request, symbol: Optional[s
     # La evaluación es un trabajo de fondo programado; este endpoint solo lee métricas
     # ya calculadas para no bloquear la interfaz ni competir por locks de PostgreSQL.
     return obtener_spot_prediction_performance(sym)
+
+
+@app.get("/api/quant/adaptive/status")
+def obtener_quant_adaptive_status_api(request: Request, symbol: Optional[str] = Query(None)):
+    _require_plan_user(request, "VIP")
+    sym = _normalizar_spot_symbol(symbol) if symbol else None
+    if sym and sym not in SPOT_SYMBOLS:
+        raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    return obtener_quant_adaptive_status(sym)
 
 
 @app.get("/api/quant/v2")
