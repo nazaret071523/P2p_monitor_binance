@@ -138,6 +138,16 @@ TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
 # Fase 8: canal de alertas públicas y límites defensivos para el bot de usuarios.
 # Si no se configura el chat FREE, se reutiliza TELEGRAM_ALERT_CHAT_ID.
 TELEGRAM_FREE_ALERT_CHAT_ID = os.getenv("TELEGRAM_FREE_ALERT_CHAT_ID", "").strip() or TELEGRAM_ALERT_CHAT_ID
+# Fase 10: puerta de entrada de la comunidad Telegram. Los IDs son opcionales
+# durante desarrollo; cuando se configuran, solo esos chats reciben comandos
+# comunitarios. Nunca se guardan tokens aquí.
+TELEGRAM_COMMUNITY_CHAT_ID = os.getenv("TELEGRAM_COMMUNITY_CHAT_ID", "").strip()
+TELEGRAM_ALERTS_CHAT_ID = os.getenv("TELEGRAM_ALERTS_CHAT_ID", "").strip() or TELEGRAM_ALERT_CHAT_ID
+TELEGRAM_REGISTRATION_CHAT_ID = os.getenv("TELEGRAM_REGISTRATION_CHAT_ID", "").strip()
+TELEGRAM_PREMIUM_CHAT_ID = os.getenv("TELEGRAM_PREMIUM_CHAT_ID", "").strip()
+TELEGRAM_VIP_CHAT_ID = os.getenv("TELEGRAM_VIP_CHAT_ID", "").strip()
+TELEGRAM_SUPPORT_CHAT_ID = os.getenv("TELEGRAM_SUPPORT_CHAT_ID", "").strip()
+TELEGRAM_ADMIN_USER_IDS = {x.strip() for x in os.getenv("TELEGRAM_ADMIN_USER_IDS", "").split(",") if x.strip()}
 TELEGRAM_PRIVATE_ONLY_COMMANDS = os.getenv("TELEGRAM_PRIVATE_ONLY_COMMANDS", "true").strip().lower() in {"1", "true", "yes", "on"}
 TELEGRAM_RATE_WINDOW_SECONDS = max(10, int(os.getenv("TELEGRAM_RATE_WINDOW_SECONDS", "30")))
 TELEGRAM_RATE_MAX_COMMANDS = max(3, int(os.getenv("TELEGRAM_RATE_MAX_COMMANDS", "8")))
@@ -546,12 +556,14 @@ def inicializar_db():
                     CREATE TABLE IF NOT EXISTS venbot_telegram_audit (
                         id BIGSERIAL PRIMARY KEY,
                         telegram_chat_id BIGINT NOT NULL,
+                        telegram_user_id BIGINT,
                         event_type TEXT NOT NULL,
                         plan_code TEXT,
                         command TEXT,
                         allowed BOOLEAN NOT NULL DEFAULT TRUE,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     );
+                    ALTER TABLE venbot_telegram_audit ADD COLUMN IF NOT EXISTS telegram_user_id BIGINT;
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_telegram_audit_chat_created
@@ -4389,18 +4401,115 @@ def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precom
 # ==========================================
 # TELEGRAM
 # ==========================================
+def _telegram_actor_id(update: Update) -> int | None:
+    user = getattr(update, "effective_user", None)
+    uid = getattr(user, "id", None)
+    return int(uid) if uid is not None else None
+
+
+def _telegram_chat_id(update: Update) -> int | None:
+    chat = getattr(update, "effective_chat", None)
+    cid = getattr(chat, "id", None)
+    return int(cid) if cid is not None else None
+
+
+def _community_chat_map() -> dict[int, str]:
+    mapping: dict[int, str] = {}
+    for role, raw in (
+        ("community", TELEGRAM_COMMUNITY_CHAT_ID),
+        ("alerts", TELEGRAM_ALERTS_CHAT_ID),
+        ("registration", TELEGRAM_REGISTRATION_CHAT_ID),
+        ("premium", TELEGRAM_PREMIUM_CHAT_ID),
+        ("vip", TELEGRAM_VIP_CHAT_ID),
+        ("support", TELEGRAM_SUPPORT_CHAT_ID),
+    ):
+        if raw:
+            try:
+                mapping[int(raw)] = role
+            except ValueError:
+                logger.warning("Chat ID Telegram inválido para %s", role)
+    return mapping
+
+
+class CommunityRouter:
+    """Gateway único de autorización/ruteo para los chats de la comunidad.
+
+    La respuesta de un comando sigue saliendo por el chat que lo invocó;
+    el router solo decide si ese chat puede usar el comando y qué plan debe
+    validar el handler existente.
+    """
+    ADMIN_ONLY = {"/pagos", "/aprobar", "/rechazar"}
+    UNIVERSAL = {"/ayuda", "/help", "/miid"}
+    REGISTRATION = {"/start", "/planes", "/suscribir", "/miplan", "/cuenta", "/credenciales"}
+    PUBLIC = {"/estado", "/rendimiento"}
+    PREMIUM = {"/p2p", "/prediccion", "/precision", "/grafica", "/bancos", "/alertas", "/alerta", "/activaralerta", "/pausaralerta", "/eliminaralerta"}
+
+    def role_for_chat(self, chat_id: int | None) -> str | None:
+        if chat_id is None:
+            return None
+        return _community_chat_map().get(int(chat_id))
+
+    def is_admin_user(self, user_id: int | None) -> bool:
+        return bool(user_id is not None and str(user_id) in TELEGRAM_ADMIN_USER_IDS)
+
+    def command_allowed(self, update: Update, command: str, private_only: bool = True) -> tuple[bool, str]:
+        chat = getattr(update, "effective_chat", None)
+        chat_type = getattr(chat, "type", None)
+        chat_id = _telegram_chat_id(update)
+        user_id = _telegram_actor_id(update)
+        normalized = (command or "").split("@", 1)[0].lower()
+
+        if normalized in self.ADMIN_ONLY:
+            if chat_type != "private" or not self.is_admin_user(user_id):
+                return False, "admin_only"
+            return True, "private_admin"
+
+        if chat_type == "private":
+            # Fase 10: el bot NO es una puerta pública por privado.
+            # Solo propietario/administradores autorizados pueden operar allí.
+            if self.is_admin_user(user_id):
+                return True, "private_admin"
+            return False, "private_admin_required"
+
+        if normalized in self.UNIVERSAL:
+            return True, self.role_for_chat(chat_id) or "bootstrap"
+        role = self.role_for_chat(chat_id)
+        if role is None:
+            return False, "community_chat_not_configured"
+        if normalized in self.PUBLIC:
+            return role in {"community", "alerts", "registration", "premium", "vip", "support"}, role
+        if normalized in self.REGISTRATION:
+            return role in {"community", "registration", "support"}, role
+        if normalized in self.PREMIUM:
+            return role in {"premium", "vip", "community"}, role
+        # Comandos todavía no migrados a Fase 10: no abrirlos por defecto en grupos.
+        return False, "command_not_scoped"
+
+    def account_identity(self, update: Update) -> int | None:
+        """En grupos usa Telegram User ID como identidad de cuenta personal.
+
+        En privado user_id y chat_id coinciden para chats 1:1, por lo que la
+        semántica histórica de venbot_users.telegram_chat_id se conserva.
+        """
+        return _telegram_actor_id(update) or _telegram_chat_id(update)
+
+
+COMMUNITY_ROUTER = CommunityRouter()
+
+
 def _telegram_private_ok(update: Update) -> bool:
-    """Protege comandos sensibles para que no se ejecuten en grupos."""
-    if not TELEGRAM_PRIVATE_ONLY_COMMANDS:
+    """Compatibilidad con Fase 9: privada o chat comunitario autorizado."""
+    allowed, _ = COMMUNITY_ROUTER.command_allowed(update, "", private_only=True)
+    if allowed:
         return True
     chat = getattr(update, "effective_chat", None)
     return bool(chat and getattr(chat, "type", None) == "private")
 
 
 def _telegram_rate_allowed(update: Update, command: str = "message") -> bool:
-    """Límite defensivo por chat para evitar spam y abuso de comandos."""
-    chat = getattr(update, "effective_chat", None)
-    chat_id = getattr(chat, "id", None)
+    """Límite defensivo por chat y auditoría con actor Telegram."""
+    chat_id = _telegram_chat_id(update)
+    actor_id = _telegram_actor_id(update)
     if chat_id is None:
         return False
     now = time.monotonic()
@@ -4424,21 +4533,32 @@ def _telegram_rate_allowed(update: Update, command: str = "message") -> bool:
             with obtener_conexion() as conn:
                 with conn.cursor() as cur:
                     plan = None
-                    cur.execute("SELECT plan_code FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (key,))
+                    identity = int(actor_id or key)
+                    cur.execute("SELECT plan_code FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (identity,))
                     row = cur.fetchone()
                     if row:
                         plan = _plan_efectivo(row[0])
-                    cur.execute("INSERT INTO venbot_telegram_audit(telegram_chat_id,event_type,plan_code,command,allowed) VALUES(%s,%s,%s,%s,%s)", (key, "rate_check", plan, command[:80], allowed))
+                    cur.execute("INSERT INTO venbot_telegram_audit(telegram_chat_id,telegram_user_id,event_type,plan_code,command,allowed) VALUES(%s,%s,%s,%s,%s,%s)", (key, actor_id, "rate_check", plan, command[:80], allowed))
         except Exception:
             logger.debug("No se pudo registrar auditoría Telegram", exc_info=True)
     return allowed
 
 
 async def _telegram_guard(update: Update, context: ContextTypes.DEFAULT_TYPE, command: str, private_only: bool = True) -> bool:
-    if private_only and not _telegram_private_ok(update):
-        msg = "🔐 Este comando está disponible únicamente en el chat privado de Venbot."
+    allowed_scope, reason = COMMUNITY_ROUTER.command_allowed(update, command, private_only=private_only)
+    if not allowed_scope:
+        if reason == "admin_only":
+            msg = "🔐 Comando reservado al administrador de Venbot."
+        elif reason == "community_chat_not_configured":
+            msg = "🔐 Este chat todavía no está habilitado para Venbot."
+        elif reason == "command_not_scoped":
+            msg = "ℹ️ Este comando todavía no está habilitado en este espacio."
+        elif reason == "private_admin_required":
+            msg = "🔐 El acceso privado al bot está restringido al administrador de Venbot."
+        else:
+            msg = "🔐 Este comando está disponible en el espacio autorizado de Venbot."
         if getattr(update, "callback_query", None):
-            await _safe_callback_answer(update, "Disponible en chat privado", show_alert=True)
+            await _safe_callback_answer(update, msg[:190], show_alert=True)
         elif getattr(update, "effective_message", None):
             await update.effective_message.reply_text(msg)
         return False
@@ -4473,7 +4593,7 @@ async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/miplan", private_only=True):
         return
     try:
-        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
         exp = account.get("plan_expires_at")
         exp_text = exp.astimezone(VET).strftime("%d/%m/%Y %H:%M") if exp else "sin vencimiento"
@@ -4493,7 +4613,7 @@ async def cmd_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/p2p", private_only=True):
         return
     try:
-        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
         if PLAN_ORDER[plan] < PLAN_ORDER["PREMIUM"]:
             await update.effective_message.reply_text("⭐ /p2p requiere PREMIUM o VIP. Usa /planes para consultar el acceso.")
@@ -4529,7 +4649,7 @@ async def cmd_alertas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/alertas", private_only=True):
         return
     try:
-        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
         rules = await asyncio.to_thread(_alert_rules_for_user, account["external_user_id"])
         limit = int(PLAN_LIMITS[plan]["alerts"])
@@ -4559,7 +4679,7 @@ def obtener_teclado_menu():
     ])
 
 async def _telegram_alert_account(update: Update):
-    return await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+    return await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
 
 
 async def cmd_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4676,7 +4796,7 @@ async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id = update.effective_chat.id
     try:
-        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         exp = account.get("plan_expires_at")
         exp_text = exp.astimezone(VET).strftime("%d/%m/%Y") if exp else "No definido"
         texto = f"👤 *Mi cuenta Venbot*\n\n🔐 Usuario: `{account.get('username')}`\n💎 Plan: *{_plan_vigente(account.get('plan_code'), account.get('plan_expires_at'))}*\n📅 Vencimiento: `{exp_text}`\n\nUsa /credenciales para generar tus credenciales de acceso a la interfaz."
@@ -4693,7 +4813,7 @@ async def cmd_credenciales(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id = update.effective_chat.id
     try:
-        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         credentials = await asyncio.to_thread(_set_new_password, account["external_user_id"])
         texto = f"🔐 *Credenciales Venbot*\n\nUsuario: `{credentials['username']}`\nContraseña: `{credentials['password']}`\n\n⚠️ Guarda estas credenciales. La contraseña se entrega por Telegram y se almacena en Venbot únicamente como hash.\n\nEn la interfaz pulsa *Entrar* para iniciar sesión."
         teclado = InlineKeyboardMarkup([[InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],[InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]])
@@ -4708,7 +4828,11 @@ async def cmd_credenciales(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_miid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
-        await update.message.reply_text(f"🆔 Tu ID de chat de Telegram es: {update.effective_chat.id}\nÚsalo en Venbot para recibir tus alertas personales.")
+        await update.message.reply_text(
+            f"🆔 Chat ID: {update.effective_chat.id}\n"
+            f"👤 User ID: {getattr(update.effective_user, 'id', 'n/d')}\n"
+            "Usa estos datos solo para la configuración de Venbot; no compartas el token del bot."
+        )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "🦜 *VENBOT PREDICCIONES - SISTEMA DE PROTECCIÓN*\nSelecciona una opción del menú táctico:"
@@ -4924,9 +5048,12 @@ async def _crear_checkout_telegram(chat_id:int,plan_code:str,pay_currency:str):
 
 async def _enviar_checkout_telegram(update:Update,context:ContextTypes.DEFAULT_TYPE,plan_code:str,pay_currency:str):
     chat_id=update.effective_chat.id
+    if getattr(update.effective_chat, "type", None) != "private":
+        await _safe_callback_answer(update, "Los pagos se gestionan en el chat privado de Venbot.", show_alert=True)
+        return
     if update.callback_query: await _safe_callback_answer(update, "Creando orden…")
     try:
-        account=await _plan_catalogo_para_telegram(chat_id)
+        account=await _plan_catalogo_para_telegram(COMMUNITY_ROUTER.account_identity(update))
         if BILLING_PROVIDER == "manual":
             order=await asyncio.to_thread(_create_manual_billing_order,account["external_user_id"],chat_id,plan_code,pay_currency)
             currency=pay_currency.upper()
@@ -4951,7 +5078,7 @@ async def recibir_comprobante(update:Update,context:ContextTypes.DEFAULT_TYPE):
     chat_id=update.effective_chat.id
     order_id=context.user_data.get("manual_proof_order_id")
     if not order_id: return
-    account=await _plan_catalogo_para_telegram(chat_id)
+    account=await _plan_catalogo_para_telegram(COMMUNITY_ROUTER.account_identity(update))
     external_id=account["external_user_id"]
     if update.message and update.message.photo:
         file_id=update.message.photo[-1].file_id
@@ -5021,7 +5148,7 @@ async def cmd_suscribir(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/planes", private_only=True):
         return
     if update.callback_query: await _safe_callback_answer(update)
-    chat_id=update.effective_chat.id; account=await _plan_catalogo_para_telegram(chat_id); country=DEFAULT_COUNTRY_CODE; policy=_billing_policy(country)
+    chat_id=update.effective_chat.id; account=await _plan_catalogo_para_telegram(COMMUNITY_ROUTER.account_identity(update)); country=DEFAULT_COUNTRY_CODE; policy=_billing_policy(country)
     premium_price=f"{PREMIUM_PRICE_USDT:.2f} USDT" if PREMIUM_PRICE_USDT>0 else "Precio no configurado"; vip_price=f"{VIP_PRICE_USDT:.2f} USDT" if VIP_PRICE_USDT>0 else "Precio no configurado"
     texto=("💎 *PLANES VENBOT*\n\n🆓 *FREE*\n• Monitor P2P y BCV\n• Calculadora y análisis básico\n• 5 consultas IA/día\n• 2 alertas\n\n"+f"⭐ *PREMIUM* — `{premium_price}`\n• Todo FREE\n• IA avanzada\n• 30 consultas IA/día\n• Hasta 10 alertas\n• Historial 30 días\n\n"+f"👑 *VIP* — `{vip_price}`\n• Todo PREMIUM\n• Spot y funciones Quant\n• Predicción avanzada\n• 100 consultas IA/día\n• Hasta 50 alertas\n• Historial 365 días\n\n"+f"🔐 Cuenta: `{account.get('username')}`\n📍 Mercado de cuenta: `{country}`\n\n")
     if BILLING_PROVIDER == "manual":
@@ -5078,6 +5205,9 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.exception("Error procesando compra Telegram: %s", data)
             await _safe_callback_answer(update, "No se pudo crear la orden", show_alert=True)
     elif data.startswith("proof_"):
+        if getattr(update.effective_chat, "type", None) != "private":
+            await _safe_callback_answer(update, "Los comprobantes se envían en el chat privado de Venbot.", show_alert=True)
+            return
         order_id=data.replace("proof_", "", 1)
         context.user_data["manual_proof_order_id"]=order_id
         context.user_data.pop("manual_proof_file_id",None)
@@ -5191,7 +5321,7 @@ async def tarea_recoleccion_automatica():
                         try:
                             alerta_texto = f"{titulo}\n• {msg}\n• Señal estadística; no garantiza un resultado futuro."
                             await telegram_app.bot.send_message(
-                                chat_id=TELEGRAM_FREE_ALERT_CHAT_ID,
+                                chat_id=TELEGRAM_ALERTS_CHAT_ID,
                                 text=alerta_texto[:TELEGRAM_MESSAGE_MAX_LENGTH],
                             )
                         except Exception as e:
