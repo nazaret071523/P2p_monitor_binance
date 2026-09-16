@@ -4458,6 +4458,9 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Mercado P2P: /p2p\n"
         "Predicción: /prediccion\n"
         "Alertas: /alertas\n"
+        "Crear alerta: /alerta GENERAL venta 960\n"
+        "Pausar/activar: /pausaralerta 12 · /activaralerta 12\n"
+        "Eliminar: /eliminaralerta 12\n"
         "Estado: /estado\n"
         "Rendimiento: /rendimiento\n\n"
         "🔐 Los comandos de cuenta, alertas, pagos y consultas privadas deben realizarse en el chat privado de Venbot.\n"
@@ -4554,6 +4557,118 @@ def obtener_teclado_menu():
         [InlineKeyboardButton("📊 Gráfica de Protección Temporal", callback_data="cmd_grafica")],
         [InlineKeyboardButton("🏦 Configurar Filtro de Bancos", callback_data="cmd_bancos")],
     ])
+
+async def _telegram_alert_account(update: Update):
+    return await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+
+
+async def cmd_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Crea una alerta personal segura sin exponer el chat_id al usuario."""
+    if not await _telegram_guard(update, context, "/alerta", private_only=True):
+        return
+    if not DATABASE_URL:
+        await update.effective_message.reply_text("⚠️ Las alertas requieren la base de datos activa.")
+        return
+    args = list(context.args or [])
+    if len(args) != 3:
+        await update.effective_message.reply_text(
+            "Uso: /alerta <BANCO> <COMPRA|VENTA> <PRECIO>\nEjemplo: /alerta GENERAL venta 960"
+        )
+        return
+    banco = (args[0] or "GENERAL").upper()
+    direccion_txt = (args[1] or "").lower()
+    try:
+        target = float(args[2].replace(",", "."))
+    except ValueError:
+        await update.effective_message.reply_text("⚠️ El precio debe ser numérico.")
+        return
+    if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"} or target <= 0:
+        await update.effective_message.reply_text("⚠️ Banco o precio no válido.")
+        return
+    direction = "above" if direccion_txt in {"venta", "sell", "above", ">="} else "below" if direccion_txt in {"compra", "buy", "below", "<="} else ""
+    if not direction:
+        await update.effective_message.reply_text("⚠️ Usa COMPRA para una condición ≤ o VENTA para una condición ≥.")
+        return
+    try:
+        account, _ = await _telegram_alert_account(update)
+        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
+        limit = int(PLAN_LIMITS[plan]["alerts"])
+        count = await asyncio.to_thread(_alert_rule_count, account["external_user_id"])
+        if count >= limit:
+            await update.effective_message.reply_text(f"🔒 Alcanzaste el límite de {limit} alertas de tu plan {plan}.")
+            return
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO venbot_alert_rules(external_user_id,banco,rule_type,target_value,direction,enabled,cooldown_seconds,telegram_chat_id)\n                    VALUES(%s,%s,'price_target',%s,%s,TRUE,%s,%s) RETURNING id""",
+                    (account["external_user_id"], banco, target, direction, SMART_ALERT_COOLDOWN_SECONDS, int(update.effective_chat.id)),
+                )
+                rid = int(cur.fetchone()[0])
+        op = "≥" if direction == "above" else "≤"
+        await update.effective_message.reply_text(
+            f"✅ *Alerta creada*\n\nID: `{rid}`\nBanco: `{banco}`\nCondición: {'Vender USDT' if direction == 'above' else 'Comprar USDT'} {op} `{target:.2f} Bs`\nCooldown: `{SMART_ALERT_COOLDOWN_SECONDS}s`",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        logger.exception("Error creando alerta Telegram")
+        await update.effective_message.reply_text("⚠️ No pude crear la alerta ahora.")
+
+
+async def _set_alert_enabled(update: Update, context: ContextTypes.DEFAULT_TYPE, enabled: bool):
+    command = "/activaralerta" if enabled else "/pausaralerta"
+    if not await _telegram_guard(update, context, command, private_only=True):
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text(f"Uso: {command} <ID>")
+        return
+    rid = int(context.args[0])
+    try:
+        account, _ = await _telegram_alert_account(update)
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE venbot_alert_rules SET enabled=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s AND external_user_id=%s RETURNING id",
+                    (enabled, rid, account["external_user_id"]),
+                )
+                row = cur.fetchone()
+        if not row:
+            await update.effective_message.reply_text("⚠️ Alerta no encontrada.")
+            return
+        await update.effective_message.reply_text(f"✅ Alerta `{rid}` {'activada' if enabled else 'pausada'}.", parse_mode="Markdown")
+    except Exception:
+        logger.exception("Error cambiando estado de alerta Telegram")
+        await update.effective_message.reply_text("⚠️ No pude actualizar la alerta.")
+
+
+async def cmd_activar_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _set_alert_enabled(update, context, True)
+
+
+async def cmd_pausar_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _set_alert_enabled(update, context, False)
+
+
+async def cmd_eliminar_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/eliminaralerta", private_only=True):
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Uso: /eliminaralerta <ID>")
+        return
+    rid = int(context.args[0])
+    try:
+        account, _ = await _telegram_alert_account(update)
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM venbot_alert_rules WHERE id=%s AND external_user_id=%s RETURNING id", (rid, account["external_user_id"]))
+                row = cur.fetchone()
+        if not row:
+            await update.effective_message.reply_text("⚠️ Alerta no encontrada.")
+            return
+        await update.effective_message.reply_text(f"🗑️ Alerta `{rid}` eliminada.", parse_mode="Markdown")
+    except Exception:
+        logger.exception("Error eliminando alerta Telegram")
+        await update.effective_message.reply_text("⚠️ No pude eliminar la alerta.")
+
 
 
 async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5012,18 +5127,14 @@ async def tarea_recoleccion_automatica():
             for banco in ("GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"):
                 c, v, l = calcular_desde_raw(banco)
                 resultados[banco] = (c, v, l)
-                c_txt = f"{c:.2f}" if c > 0 else "N/D"
-                v_txt = f"{v:.2f}" if v > 0 else "N/D"
-                logger.info("P2P %s listo: %s compra / %s venta / %s anuncios", banco, c_txt, v_txt, l)
+                logger.info("P2P %s listo: %.2f compra / %.2f venta / %s anuncios", banco, c, v, l)
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
-                if banco == "GENERAL" and c > 0 and v > 0:
+                if banco == "GENERAL":
                     tasas = await asyncio.to_thread(obtener_tasas_bcv_oficiales)
                     now = datetime.now(VET)
                     await asyncio.to_thread(guardar_mercado_actual, c, v, l, tasas["usd"], tasas["eur"], tasas["source"])
                     mercado = {"compra": c, "venta": v, "liquidez": l, "bcv": tasas["usd"], "eur": tasas["eur"], "fuente_bcv": tasas["source"], "timestamp": now}
-                elif banco == "GENERAL":
-                    logger.warning("P2P GENERAL no disponible: no se actualiza mercado_actual ni se alimentan datos con precio incompleto.")
 
             global _LAST_SPOT_COLLECTION_TS
             if time.monotonic() - _LAST_SPOT_COLLECTION_TS >= SPOT_REFRESH_SECONDS:
@@ -7668,6 +7779,10 @@ async def startup_event():
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
         telegram_app.add_handler(CommandHandler("p2p", cmd_p2p))
         telegram_app.add_handler(CommandHandler("alertas", cmd_alertas))
+        telegram_app.add_handler(CommandHandler("alerta", cmd_alerta))
+        telegram_app.add_handler(CommandHandler("activaralerta", cmd_activar_alerta))
+        telegram_app.add_handler(CommandHandler("pausaralerta", cmd_pausar_alerta))
+        telegram_app.add_handler(CommandHandler("eliminaralerta", cmd_eliminar_alerta))
         telegram_app.add_handler(CommandHandler("estado", cmd_estado))
         telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
         telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
