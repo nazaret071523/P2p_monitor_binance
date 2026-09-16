@@ -135,6 +135,13 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_WEBHOOK_SECRET_TOKEN = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "").strip()
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 TELEGRAM_ALERT_CHAT_ID = os.getenv("TELEGRAM_ALERT_CHAT_ID", "").strip()
+# Fase 8: canal de alertas públicas y límites defensivos para el bot de usuarios.
+# Si no se configura el chat FREE, se reutiliza TELEGRAM_ALERT_CHAT_ID.
+TELEGRAM_FREE_ALERT_CHAT_ID = os.getenv("TELEGRAM_FREE_ALERT_CHAT_ID", "").strip() or TELEGRAM_ALERT_CHAT_ID
+TELEGRAM_PRIVATE_ONLY_COMMANDS = os.getenv("TELEGRAM_PRIVATE_ONLY_COMMANDS", "true").strip().lower() in {"1", "true", "yes", "on"}
+TELEGRAM_RATE_WINDOW_SECONDS = max(10, int(os.getenv("TELEGRAM_RATE_WINDOW_SECONDS", "30")))
+TELEGRAM_RATE_MAX_COMMANDS = max(3, int(os.getenv("TELEGRAM_RATE_MAX_COMMANDS", "8")))
+TELEGRAM_MESSAGE_MAX_LENGTH = max(2000, int(os.getenv("TELEGRAM_MESSAGE_MAX_LENGTH", "12000")))
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
@@ -302,6 +309,8 @@ _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
 telegram_app = None
+_TELEGRAM_RATE_BUCKET = {}
+_TELEGRAM_RATE_LOCK = threading.Lock()
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
 _P2P_BANK_AD_CACHE = {}
 collector_task = None
@@ -532,6 +541,21 @@ def inicializar_db():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_alert_rules_user_enabled
                     ON venbot_alert_rules(external_user_id, enabled);
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_telegram_audit (
+                        id BIGSERIAL PRIMARY KEY,
+                        telegram_chat_id BIGINT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        plan_code TEXT,
+                        command TEXT,
+                        allowed BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_venbot_telegram_audit_chat_created
+                    ON venbot_telegram_audit(telegram_chat_id, created_at DESC);
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_prediction_events (
@@ -4362,6 +4386,165 @@ def calcular_analisis_monitor(banco_filtro="GENERAL", precomputed_q=None, precom
 # ==========================================
 # TELEGRAM
 # ==========================================
+# ==========================================
+# TELEGRAM
+# ==========================================
+def _telegram_private_ok(update: Update) -> bool:
+    """Protege comandos sensibles para que no se ejecuten en grupos."""
+    if not TELEGRAM_PRIVATE_ONLY_COMMANDS:
+        return True
+    chat = getattr(update, "effective_chat", None)
+    return bool(chat and getattr(chat, "type", None) == "private")
+
+
+def _telegram_rate_allowed(update: Update, command: str = "message") -> bool:
+    """Límite defensivo por chat para evitar spam y abuso de comandos."""
+    chat = getattr(update, "effective_chat", None)
+    chat_id = getattr(chat, "id", None)
+    if chat_id is None:
+        return False
+    now = time.monotonic()
+    key = int(chat_id)
+    with _TELEGRAM_RATE_LOCK:
+        bucket = _TELEGRAM_RATE_BUCKET.setdefault(key, [])
+        cutoff = now - TELEGRAM_RATE_WINDOW_SECONDS
+        bucket[:] = [t for t in bucket if t >= cutoff]
+        if len(bucket) >= TELEGRAM_RATE_MAX_COMMANDS:
+            allowed = False
+        else:
+            bucket.append(now)
+            allowed = True
+        if len(_TELEGRAM_RATE_BUCKET) > 5000:
+            stale_before = now - (TELEGRAM_RATE_WINDOW_SECONDS * 4)
+            stale = [k for k, vals in _TELEGRAM_RATE_BUCKET.items() if not vals or vals[-1] < stale_before]
+            for k in stale[:2000]:
+                _TELEGRAM_RATE_BUCKET.pop(k, None)
+    if DATABASE_URL and command and command != "message":
+        try:
+            with obtener_conexion() as conn:
+                with conn.cursor() as cur:
+                    plan = None
+                    cur.execute("SELECT plan_code FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (key,))
+                    row = cur.fetchone()
+                    if row:
+                        plan = _plan_efectivo(row[0])
+                    cur.execute("INSERT INTO venbot_telegram_audit(telegram_chat_id,event_type,plan_code,command,allowed) VALUES(%s,%s,%s,%s,%s)", (key, "rate_check", plan, command[:80], allowed))
+        except Exception:
+            logger.debug("No se pudo registrar auditoría Telegram", exc_info=True)
+    return allowed
+
+
+async def _telegram_guard(update: Update, context: ContextTypes.DEFAULT_TYPE, command: str, private_only: bool = True) -> bool:
+    if private_only and not _telegram_private_ok(update):
+        msg = "🔐 Este comando está disponible únicamente en el chat privado de Venbot."
+        if getattr(update, "callback_query", None):
+            await _safe_callback_answer(update, "Disponible en chat privado", show_alert=True)
+        elif getattr(update, "effective_message", None):
+            await update.effective_message.reply_text(msg)
+        return False
+    if not _telegram_rate_allowed(update, command):
+        if getattr(update, "effective_message", None):
+            await update.effective_message.reply_text("⏳ Demasiadas solicitudes en poco tiempo. Espera unos segundos y vuelve a intentarlo.")
+        return False
+    return True
+
+
+async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/ayuda", private_only=False):
+        return
+    texto = (
+        "🦜 *VENBOT · AYUDA TELEGRAM*\n\n"
+        "Consultas generales: /cuenta /miplan /planes\n"
+        "Mercado P2P: /p2p\n"
+        "Predicción: /prediccion\n"
+        "Alertas: /alertas\n"
+        "Estado: /estado\n"
+        "Rendimiento: /rendimiento\n\n"
+        "🔐 Los comandos de cuenta, alertas, pagos y consultas privadas deben realizarse en el chat privado de Venbot.\n"
+        "⚠️ Las proyecciones son estadísticas y no garantizan resultados futuros."
+    )
+    await update.effective_message.reply_text(texto, parse_mode="Markdown")
+
+
+async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/miplan", private_only=True):
+        return
+    try:
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
+        exp = account.get("plan_expires_at")
+        exp_text = exp.astimezone(VET).strftime("%d/%m/%Y %H:%M") if exp else "sin vencimiento"
+        texto = (f"💎 *MI PLAN VENBOT*\n\n"
+                 f"Plan: *{plan}*\n"
+                 f"Vencimiento: `{exp_text}`\n"
+                 f"Usuario: `{account.get('username')}`\n\n"
+                 "Usa /planes para ver precios y modalidades disponibles.")
+        await update.effective_message.reply_text(texto, parse_mode="Markdown")
+    except Exception:
+        logger.exception("Error en /miplan")
+        await update.effective_message.reply_text("⚠️ No pude consultar tu plan ahora.")
+
+
+async def cmd_p2p(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Consulta P2P avanzada reutilizando la captura persistida de Venbot."""
+    if not await _telegram_guard(update, context, "/p2p", private_only=True):
+        return
+    try:
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
+        if PLAN_ORDER[plan] < PLAN_ORDER["PREMIUM"]:
+            await update.effective_message.reply_text("⭐ /p2p requiere PREMIUM o VIP. Usa /planes para consultar el acceso.")
+            return
+        banco = CONFIGURACION_BANCOS.get(update.effective_chat.id, "GENERAL")
+        mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+        compra = float(mercado.get("compra") or 0)
+        venta = float(mercado.get("venta") or 0)
+        liquidez = int(mercado.get("liquidez") or 0)
+        if compra <= 0 or venta <= 0:
+            compra, venta, liquidez = await asyncio.to_thread(obtener_precios_binance_p2p, banco)
+        if compra <= 0 or venta <= 0:
+            await update.effective_message.reply_text(f"⚠️ P2P {banco}: datos reales no disponibles en este momento.")
+            return
+        datos, _ = await asyncio.to_thread(_obtener_quant_compartido, banco, compra, venta, liquidez, True)
+        texto = (f"📊 *VENBOT · P2P*\n"
+                 f"🏦 Banco: `{banco}`\n"
+                 f"💵 Comprar USDT: `{compra:.2f} Bs`\n"
+                 f"💵 Vender USDT: `{venta:.2f} Bs`\n"
+                 f"📐 Spread: `{(venta-compra):.2f} Bs` · `{((venta-compra)/compra*100):.2f}%`\n"
+                 f"📈 Tendencia: `{datos.get('tendencia','n/d')}`\n"
+                 f"🎯 Confianza: `{datos.get('confianza','n/d')}/100`\n"
+                 f"🔮 Proyección 7H: `{datos.get('pred_compra_str','n/d')}` / `{datos.get('pred_venta_str','n/d')}`\n"
+                 f"📦 Liquidez: `{datos.get('estado_comunidad','n/d')}`\n\n"
+                 "⚠️ Lectura estadística; no garantiza un resultado futuro.")
+        await update.effective_message.reply_text(texto, parse_mode="Markdown")
+    except Exception:
+        logger.exception("Error en /p2p")
+        await update.effective_message.reply_text("⚠️ No pude consultar el P2P ahora.")
+
+
+async def cmd_alertas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/alertas", private_only=True):
+        return
+    try:
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, update.effective_chat.id, DEFAULT_COUNTRY_CODE)
+        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
+        rules = await asyncio.to_thread(_alert_rules_for_user, account["external_user_id"])
+        limit = int(PLAN_LIMITS[plan]["alerts"])
+        if not rules:
+            texto = f"🔔 *MIS ALERTAS*\n\nNo tienes alertas configuradas.\nLímite de tu plan: `{limit}`.\n\nDesde la app puedes crear alertas personalizadas."
+        else:
+            lines=[f"🔔 *MIS ALERTAS · {plan}*", f"Uso: `{len(rules)}/{limit}`", ""]
+            for r in rules[:limit]:
+                estado="🟢" if r.get("enabled") else "⚪"
+                op="≥" if r.get("direction")=="above" else "≤"
+                lines.append(f"{estado} #{r['id']} · {r['banco']} · {op} {float(r['target_value']):.2f} Bs · {'activa' if r.get('enabled') else 'pausada'}")
+            texto="\n".join(lines)
+        await update.effective_message.reply_text(texto, parse_mode="Markdown")
+    except Exception:
+        logger.exception("Error en /alertas")
+        await update.effective_message.reply_text("⚠️ No pude consultar tus alertas ahora.")
+
+
 def obtener_teclado_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔮 Análisis P2P y Proyecciones", callback_data="cmd_prediccion")],
@@ -4374,6 +4557,8 @@ def obtener_teclado_menu():
 
 
 async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/cuenta", private_only=True):
+        return
     chat_id = update.effective_chat.id
     try:
         account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
@@ -4389,6 +4574,8 @@ async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No pude consultar tu cuenta ahora. Intenta nuevamente.")
 
 async def cmd_credenciales(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/credenciales", private_only=True):
+        return
     chat_id = update.effective_chat.id
     try:
         account, _ = await asyncio.to_thread(_create_or_get_telegram_account, chat_id, DEFAULT_COUNTRY_CODE)
@@ -4481,6 +4668,8 @@ async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/prediccion", private_only=True):
+        return
     chat_id = update.effective_chat.id
     if update.callback_query:
         await _safe_callback_answer(update)
@@ -4570,6 +4759,8 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/grafica", private_only=True):
+        return
     chat_id = update.effective_chat.id
     if update.callback_query:
         await _safe_callback_answer(update)
@@ -4592,6 +4783,8 @@ async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/bancos", private_only=True):
+        return
     if update.callback_query:
         await _safe_callback_answer(update)
     teclado = [
@@ -4710,6 +4903,8 @@ async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     except Exception: logger.exception("Error rechazando orden"); await update.message.reply_text("⚠️ Error rechazando la orden.")
 
 async def cmd_suscribir(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/planes", private_only=True):
+        return
     if update.callback_query: await _safe_callback_answer(update)
     chat_id=update.effective_chat.id; account=await _plan_catalogo_para_telegram(chat_id); country=DEFAULT_COUNTRY_CODE; policy=_billing_policy(country)
     premium_price=f"{PREMIUM_PRICE_USDT:.2f} USDT" if PREMIUM_PRICE_USDT>0 else "Precio no configurado"; vip_price=f"{VIP_PRICE_USDT:.2f} USDT" if VIP_PRICE_USDT>0 else "Precio no configurado"
@@ -4876,12 +5071,13 @@ async def tarea_recoleccion_automatica():
                 tendencia = datos["tendencia"]
                 manip = datos.get("manipulacion") or {}
                 nuevos_eventos = await asyncio.to_thread(evaluar_alertas_inteligentes, mercado, datos, "GENERAL")
-                if nuevos_eventos and TELEGRAM_ALERT_CHAT_ID and telegram_app:
+                if nuevos_eventos and TELEGRAM_FREE_ALERT_CHAT_ID and telegram_app:
                     for severity, titulo, msg in nuevos_eventos:
                         try:
+                            alerta_texto = f"{titulo}\n• {msg}\n• Señal estadística; no garantiza un resultado futuro."
                             await telegram_app.bot.send_message(
-                                chat_id=TELEGRAM_ALERT_CHAT_ID,
-                                text=f"{titulo}\n• {msg}\n• Señal estadística; no garantiza un resultado futuro.",
+                                chat_id=TELEGRAM_FREE_ALERT_CHAT_ID,
+                                text=alerta_texto[:TELEGRAM_MESSAGE_MAX_LENGTH],
                             )
                         except Exception as e:
                             logger.warning("No se pudo enviar alerta inteligente a Telegram: %s", e)
@@ -7459,10 +7655,15 @@ async def startup_event():
     if TELEGRAM_BOT_TOKEN:
         telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).updater(None).build()
         telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CommandHandler("ayuda", cmd_ayuda))
+        telegram_app.add_handler(CommandHandler("help", cmd_ayuda))
         telegram_app.add_handler(CommandHandler("miid", cmd_miid))
+        telegram_app.add_handler(CommandHandler("miplan", cmd_miplan))
         telegram_app.add_handler(CommandHandler("cuenta", cmd_cuenta))
         telegram_app.add_handler(CommandHandler("credenciales", cmd_credenciales))
         telegram_app.add_handler(CommandHandler("prediccion", cmd_prediccion))
+        telegram_app.add_handler(CommandHandler("p2p", cmd_p2p))
+        telegram_app.add_handler(CommandHandler("alertas", cmd_alertas))
         telegram_app.add_handler(CommandHandler("estado", cmd_estado))
         telegram_app.add_handler(CommandHandler("rendimiento", cmd_rendimiento))
         telegram_app.add_handler(CommandHandler("precision", cmd_prediccion))
