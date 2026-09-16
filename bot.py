@@ -443,6 +443,7 @@ def inicializar_db():
                     ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS username TEXT;
                     ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
                     ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS telegram_chat_id BIGINT;
+                    ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS telegram_user_id BIGINT;
                     ALTER TABLE venbot_users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ;
                 """)
                 cur.execute("""
@@ -450,8 +451,25 @@ def inicializar_db():
                     ON venbot_users(username) WHERE username IS NOT NULL;
                 """)
                 cur.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_venbot_users_telegram
-                    ON venbot_users(telegram_chat_id) WHERE telegram_chat_id IS NOT NULL;
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_venbot_users_telegram_user
+                    ON venbot_users(telegram_user_id) WHERE telegram_user_id IS NOT NULL;
+                    -- Fase 10.7: migra identidades históricas inequívocas.
+                    -- Solo se copian valores positivos y no duplicados del campo legacy.
+                    UPDATE venbot_users u
+                    SET telegram_user_id = u.telegram_chat_id
+                    WHERE u.telegram_user_id IS NULL
+                      AND u.telegram_chat_id IS NOT NULL
+                      AND u.telegram_chat_id > 0
+                      AND NOT EXISTS (
+                          SELECT 1 FROM venbot_users x
+                          WHERE x.telegram_user_id = u.telegram_chat_id
+                            AND x.external_user_id <> u.external_user_id
+                      )
+                      AND (
+                          SELECT COUNT(*) FROM venbot_users y
+                          WHERE y.telegram_chat_id = u.telegram_chat_id
+                      ) = 1;
+
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_sessions (
@@ -4497,10 +4515,10 @@ class CommunityRouter:
         return False, "command_not_scoped"
 
     def account_identity(self, update: Update) -> int | None:
-        """En grupos usa Telegram User ID como identidad de cuenta personal.
+        """Usa Telegram User ID como identidad canónica de cuenta personal.
 
-        En privado user_id y chat_id coinciden para chats 1:1, por lo que la
-        semántica histórica de venbot_users.telegram_chat_id se conserva.
+        telegram_chat_id se mantiene como compatibilidad histórica/destino 1:1;
+        los grupos nunca se usan como identidad de cuenta.
         """
         return _telegram_actor_id(update) or _telegram_chat_id(update)
 
@@ -4545,7 +4563,7 @@ def _telegram_rate_allowed(update: Update, command: str = "message") -> bool:
                 with conn.cursor() as cur:
                     plan = None
                     identity = int(actor_id or key)
-                    cur.execute("SELECT plan_code FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (identity,))
+                    cur.execute("SELECT plan_code FROM venbot_users WHERE telegram_user_id=%s LIMIT 1", (identity,))
                     row = cur.fetchone()
                     if row:
                         plan = _plan_efectivo(row[0])
@@ -5439,7 +5457,7 @@ async def _telegram_account_by_user_id(user_id: int):
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT external_user_id,username,plan_code,status,plan_expires_at FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (int(user_id),))
+                cur.execute("SELECT external_user_id,username,plan_code,status,plan_expires_at FROM venbot_users WHERE telegram_user_id=%s LIMIT 1", (int(user_id),))
                 row = cur.fetchone()
         if not row:
             return None
@@ -5531,7 +5549,13 @@ async def _reconcile_paid_group_access():
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT telegram_chat_id,plan_code,status,plan_expires_at FROM venbot_users WHERE telegram_chat_id IS NOT NULL AND (plan_code IN ('PREMIUM','VIP') OR status <> 'active')")
+                cur.execute("""
+                    SELECT COALESCE(telegram_user_id, telegram_chat_id) AS tg_user_id,
+                           plan_code,status,plan_expires_at
+                    FROM venbot_users
+                    WHERE COALESCE(telegram_user_id, telegram_chat_id) IS NOT NULL
+                      AND (plan_code IN ('PREMIUM','VIP') OR status <> 'active')
+                """)
                 rows = cur.fetchall()
         for tg_id, raw_plan, status, exp in rows:
             plan = _plan_vigente(raw_plan, exp) if status == "active" else "FREE"
@@ -5890,15 +5914,31 @@ def _verify_password(password: str, stored: str) -> bool:
 def _new_venbot_credentials() -> tuple[str, str]:
     return "VEN-" + secrets.token_hex(4).upper(), secrets.token_urlsafe(9)
 
-def _create_or_get_telegram_account(chat_id: int, country_code: str = "VE"):
+def _create_or_get_telegram_account(telegram_user_id: int, country_code: str = "VE"):
+    """Resuelve una cuenta por Telegram User ID, nunca por el chat/grupo.
+
+    telegram_chat_id queda como campo legacy/destino 1:1 para compatibilidad.
+    telegram_user_id es la identidad canónica de la cuenta Telegram.
+    """
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="database_not_configured")
+    if telegram_user_id is None:
+        raise HTTPException(status_code=400, detail="telegram_user_id_required")
+    user_id = int(telegram_user_id)
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT external_user_id,username,plan_code,status,plan_expires_at FROM venbot_users WHERE telegram_chat_id=%s LIMIT 1", (int(chat_id),))
+            cur.execute("""
+                SELECT external_user_id,username,plan_code,status,plan_expires_at
+                FROM venbot_users
+                WHERE telegram_user_id=%s
+                LIMIT 1
+            """, (user_id,))
             row = cur.fetchone()
             if row:
+                logger.info("[TELEGRAM IDENTITY] resolved user_id=%s external_user_id=%s username=%s plan=%s source=telegram_user_id",
+                            user_id, row[0], row[1], row[2])
                 return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), None
+
             external_id = str(uuid.uuid4())
             username = None
             for _ in range(8):
@@ -5909,8 +5949,23 @@ def _create_or_get_telegram_account(chat_id: int, country_code: str = "VE"):
                     break
             if not username:
                 raise RuntimeError("No se pudo generar username Venbot")
-            cur.execute("""INSERT INTO venbot_users(external_user_id,country_code,username,telegram_chat_id) VALUES (%s,%s,%s,%s) RETURNING external_user_id,username,plan_code,status,plan_expires_at""", (external_id, (country_code or DEFAULT_COUNTRY_CODE).upper()[:8], username, int(chat_id)))
+
+            cur.execute("""
+                INSERT INTO venbot_users(
+                    external_user_id,country_code,username,telegram_chat_id,telegram_user_id
+                )
+                VALUES (%s,%s,%s,%s,%s)
+                RETURNING external_user_id,username,plan_code,status,plan_expires_at
+            """, (
+                external_id,
+                (country_code or DEFAULT_COUNTRY_CODE).upper()[:8],
+                username,
+                user_id,
+                user_id,
+            ))
             row = cur.fetchone()
+            logger.info("[TELEGRAM IDENTITY] created user_id=%s external_user_id=%s username=%s plan=%s",
+                        user_id, row[0], row[1], row[2])
     return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), None
 
 def _set_new_password(external_user_id: str):
