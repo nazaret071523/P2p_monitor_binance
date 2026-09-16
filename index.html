@@ -710,7 +710,16 @@
           <p>Venbot no custodia fondos, no ejecuta operaciones ni procesa pagos. El análisis de mercado es informativo y no constituye asesoramiento financiero personalizado.</p>
         </article>
 
+        <article class="glass-card p-4 rounded-2xl border border-emerald-500/20 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-lg"><i class="fa-solid fa-headset"></i></div>
+            <div><h3 class="font-bold text-slate-100 text-sm">Soporte Venbot</h3><p class="text-[11px] text-slate-400">Atención y ayuda oficial.</p></div>
+          </div>
+          <a id="support-email-link" href="mailto:soportevenbot@gmail.com" class="focus-ring bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0">Contactar soporte <i class="fa-solid fa-envelope"></i></a>
+        </article>
+
         <div class="flex items-center justify-center gap-6 py-2 text-slate-400 text-sm font-bold">
+          <a id="community-social-link" href="#" target="_blank" rel="noopener noreferrer" class="hover:text-sky-400 transition flex items-center gap-1.5"><i class="fa-brands fa-telegram"></i> Comunidad</a>
           <a href="#" aria-disabled="true" title="Próximamente" onclick="event.preventDefault()" class="opacity-60 hover:text-slate-300 transition flex items-center gap-1.5"><i class="fa-brands fa-x-twitter"></i> X</a>
           <a href="https://www.instagram.com/venbotquant/" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-instagram"></i> Instagram</a>
           <a href="https://www.tiktok.com/@venbotquant" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
@@ -1628,7 +1637,7 @@
       } catch(e) {}
     }
     async function loadCommunityLinks(){
-      try{ const r=await fetch(`${API_BASE_URL}/`); const d=await r.json(); const c=d.community||{}; const top=document.getElementById('community-top-link'), link=document.getElementById('community-link'); if(c.url){top.href=c.url;link.href=c.url;} else {top.removeAttribute('href'); link.removeAttribute('href');} }catch(e){}
+      try{ const r=await fetch(`${API_BASE_URL}/`); const d=await r.json(); const c=d.community||{}; const top=document.getElementById('community-top-link'), link=document.getElementById('community-link'), social=document.getElementById('community-social-link'), support=document.getElementById('support-email-link'); if(c.url){top.href=c.url;link.href=c.url;if(social) social.href=c.url;} else {top.removeAttribute('href'); link.removeAttribute('href');if(social) social.removeAttribute('href');} if(support && c.support_url) support.href=c.support_url; }catch(e){}
     }
 
     function openLoginModal(){ document.getElementById('loginModal').classList.remove('hidden'); const token=getAuthToken(); if(token&&window.venbotUser) renderAccountModal(window.venbotUser); else { renderAccountModal(null); document.getElementById('login-username').focus(); } }
