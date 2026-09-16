@@ -5012,14 +5012,18 @@ async def tarea_recoleccion_automatica():
             for banco in ("GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"):
                 c, v, l = calcular_desde_raw(banco)
                 resultados[banco] = (c, v, l)
-                logger.info("P2P %s listo: %.2f compra / %.2f venta / %s anuncios", banco, c, v, l)
+                c_txt = f"{c:.2f}" if c > 0 else "N/D"
+                v_txt = f"{v:.2f}" if v > 0 else "N/D"
+                logger.info("P2P %s listo: %s compra / %s venta / %s anuncios", banco, c_txt, v_txt, l)
                 if c > 0 and v > 0:
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
-                if banco == "GENERAL":
+                if banco == "GENERAL" and c > 0 and v > 0:
                     tasas = await asyncio.to_thread(obtener_tasas_bcv_oficiales)
                     now = datetime.now(VET)
                     await asyncio.to_thread(guardar_mercado_actual, c, v, l, tasas["usd"], tasas["eur"], tasas["source"])
                     mercado = {"compra": c, "venta": v, "liquidez": l, "bcv": tasas["usd"], "eur": tasas["eur"], "fuente_bcv": tasas["source"], "timestamp": now}
+                elif banco == "GENERAL":
+                    logger.warning("P2P GENERAL no disponible: no se actualiza mercado_actual ni se alimentan datos con precio incompleto.")
 
             global _LAST_SPOT_COLLECTION_TS
             if time.monotonic() - _LAST_SPOT_COLLECTION_TS >= SPOT_REFRESH_SECONDS:
