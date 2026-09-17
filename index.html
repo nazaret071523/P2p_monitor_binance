@@ -834,7 +834,7 @@
         <div><label class="block font-semibold text-slate-300 mb-1">Banco</label><select id="alert-bank" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200"><option value="GENERAL">GENERAL · 3 bancos</option><option value="MERCANTIL">Mercantil</option><option value="PROVINCIAL">Provincial</option><option value="BNC">BNC</option></select></div>
         <div><label class="block font-semibold text-slate-300 mb-1">Tipo de Operación P2P</label><select id="alert-type" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200"><option value="sell">Vender USDT cuando supere...</option><option value="buy">Comprar USDT cuando baje de...</option></select></div>
         <div><label class="block font-semibold text-slate-300 mb-1">Precio Objetivo (Bs)</label><input id="alert-target-price" type="number" step="0.01" placeholder="Ej. 970.00" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-bold text-white"></div>
-        <div><label class="block font-semibold text-slate-300 mb-1">ID de chat de Telegram</label><input id="alert-contact" type="number" placeholder="Ej. 123456789" class="focus-ring w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white"><p class="text-[9px] text-slate-500 mt-1">En Telegram escribe <b>/miid</b> al bot Venbot para obtener tu ID.</p></div>
+        <div class="rounded-xl bg-slate-950/70 border border-slate-800 p-2.5 text-[9px] text-slate-400"><span class="font-semibold text-slate-200">Destino de la alerta:</span> tu Telegram privado vinculado a esta cuenta. No necesitas introducir ni compartir un ID de chat.</div>
         <div class="rounded-xl bg-slate-950/70 border border-slate-800 p-2.5 text-[9px] text-slate-400">Las alertas se guardan en Venbot y se ejecutan desde el servidor. No dependen de que tengas esta página abierta.</div>
         <div id="alert-limit-msg" class="text-[10px] text-slate-400"></div>
         <div id="alert-status-msg" class="text-[10px] text-emerald-400 font-semibold hidden"></div>
@@ -1903,18 +1903,18 @@
 
     async function saveAlertConfig() {
       const target = Number(document.getElementById('alert-target-price').value || 0);
-      const contact = document.getElementById('alert-contact').value.trim();
       const type = document.getElementById('alert-type').value;
       const banco = document.getElementById('alert-bank').value;
       const msg = document.getElementById('alert-status-msg');
       if (!target || target <= 0) { msg.textContent = '⚠️ Indica un precio objetivo válido.'; msg.className='text-[10px] text-amber-300 font-semibold'; msg.classList.remove('hidden'); return; }
-      if (!/^[-]?\d+$/.test(contact)) { msg.textContent = '⚠️ Necesitas un ID numérico de Telegram. Usa /miid en Venbot.'; msg.className='text-[10px] text-amber-300 font-semibold'; msg.classList.remove('hidden'); return; }
+      // El servidor resuelve el único destino permitido: el Telegram privado
+      // vinculado a la cuenta autenticada. El cliente nunca elige otro chat.
       try {
         const token=getAuthToken();
         if(!token) throw new Error('Inicia sesión para crear alertas personales.');
         const r = await fetch(`${API_BASE_URL}/api/alerts/rules`, {
           method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json','X-Venbot-Session':token},
-          body: JSON.stringify({ banco, target_value:target, direction:type === 'sell' ? 'above' : 'below', telegram_chat_id:Number(contact), cooldown_seconds:1800 })
+          body: JSON.stringify({ banco, target_value:target, direction:type === 'sell' ? 'above' : 'below', cooldown_seconds:1800 })
         });
         const d = await r.json();
         if (!r.ok) {
