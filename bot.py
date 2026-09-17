@@ -43,7 +43,7 @@ from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat, BotCommandScopeChatAdministrators, BotCommandScopeChatMember
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat, BotCommandScopeChatAdministrators, BotCommandScopeChatMember, BotCommandScopeAllPrivateChats
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ChatMemberHandler, ChatJoinRequestHandler, ContextTypes, filters
 from telegram.error import BadRequest
 import uvicorn
@@ -148,6 +148,7 @@ TELEGRAM_PREMIUM_CHAT_ID = os.getenv("TELEGRAM_PREMIUM_CHAT_ID", "").strip()
 TELEGRAM_VIP_CHAT_ID = os.getenv("TELEGRAM_VIP_CHAT_ID", "").strip()
 TELEGRAM_SUPPORT_CHAT_ID = os.getenv("TELEGRAM_SUPPORT_CHAT_ID", "").strip()
 TELEGRAM_ADMIN_USER_IDS = {x.strip() for x in os.getenv("TELEGRAM_ADMIN_USER_IDS", "").split(",") if x.strip()}
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "IANaza_bot").strip().lstrip("@").split("?")[0]
 TELEGRAM_ACCESS_RECONCILE_SECONDS = max(60, int(os.getenv("TELEGRAM_ACCESS_RECONCILE_SECONDS", "300")))
 TELEGRAM_PRIVATE_ONLY_COMMANDS = os.getenv("TELEGRAM_PRIVATE_ONLY_COMMANDS", "true").strip().lower() in {"1", "true", "yes", "on"}
 TELEGRAM_RATE_WINDOW_SECONDS = max(10, int(os.getenv("TELEGRAM_RATE_WINDOW_SECONDS", "30")))
@@ -4490,23 +4491,30 @@ class CommunityRouter:
             return True, "private_admin"
 
         if chat_type == "private":
-            # Fase 10: el bot NO es una puerta pública por privado.
-            # Solo propietario/administradores autorizados pueden operar allí.
-            if self.is_admin_user(user_id):
-                return True, "private_admin"
-            return False, "private_admin_required"
+            # El chat privado es el espacio personal de cada usuario.
+            # Cada handler valida cuenta y plan antes de ejecutar la función.
+            return True, "private_user"
 
         if normalized in self.UNIVERSAL:
-            return True, self.role_for_chat(chat_id) or "bootstrap"
+            role = self.role_for_chat(chat_id)
+            if role is None:
+                return False, "community_chat_not_configured"
+            return True, role
         role = self.role_for_chat(chat_id)
         if role is None:
             return False, "community_chat_not_configured"
+        if normalized in {"/miplan", "/cuenta", "/credenciales", "/vincular", "/registrar",
+                          "/p2p", "/prediccion", "/precision", "/grafica", "/bancos",
+                          "/alertas", "/alerta", "/activaralerta", "/pausaralerta", "/eliminaralerta",
+                          "/spot", "/escenarios", "/activos",
+                          "/soporte", "/problema", "/contactar", "/cancelar"}:
+            return False, "private_required"
         if normalized in self.PUBLIC:
             return role in {"community", "alerts", "registration", "premium", "vip", "support"}, role
         if normalized in self.REGISTRATION:
             return role in {"community", "registration", "support"}, role
         if normalized in self.PREMIUM:
-            return role in {"premium", "vip", "community"}, role
+            return role in {"premium", "vip"}, role
         if normalized in self.VIP:
             return role in {"vip"}, role
         if normalized in self.SUPPORT:
@@ -4524,6 +4532,26 @@ class CommunityRouter:
 
 
 COMMUNITY_ROUTER = CommunityRouter()
+
+
+def _telegram_private_link() -> str | None:
+    runtime_username = getattr(getattr(telegram_app, "bot", None), "username", None) if telegram_app else None
+    username = (runtime_username or TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
+    return f"https://t.me/{username}?start=private" if username else None
+
+
+def _private_redirect_markup() -> InlineKeyboardMarkup:
+    url = _telegram_private_link()
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔐 Abrir mi chat privado con Venbot", url=url)]]) if url else InlineKeyboardMarkup([])
+
+
+def _private_redirect_text(command: str = "") -> str:
+    extra = f" para {command}" if command else ""
+    return (
+        f"🔐 *Consulta privada{extra}*\n\n"
+        "Para proteger tu información, esta función debe ejecutarse en tu chat privado con Venbot.\n\n"
+        "Tu cuenta, plan, credenciales, pagos, alertas personales y análisis individuales no se muestran en grupos."
+    )
 
 
 def _telegram_private_ok(update: Update) -> bool:
@@ -4582,8 +4610,19 @@ async def _telegram_guard(update: Update, context: ContextTypes.DEFAULT_TYPE, co
             msg = "🔐 Este chat todavía no está habilitado para Venbot."
         elif reason == "command_not_scoped":
             msg = "ℹ️ Este comando todavía no está habilitado en este espacio."
+        elif reason == "private_required":
+            msg = _private_redirect_text(command)
+            if getattr(update, "callback_query", None):
+                await _safe_callback_answer(update, "Abrir chat privado", show_alert=True)
+                try:
+                    await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode="Markdown", reply_markup=_private_redirect_markup())
+                except Exception:
+                    logger.exception("No se pudo enviar redirección privada")
+            elif getattr(update, "effective_message", None):
+                await update.effective_message.reply_text(msg, parse_mode="Markdown", reply_markup=_private_redirect_markup())
+            return False
         elif reason == "private_admin_required":
-            msg = "🔐 El acceso privado al bot está restringido al administrador de Venbot."
+            msg = "🔐 Comando reservado al administrador de Venbot."
         else:
             msg = "🔐 Este comando está disponible en el espacio autorizado de Venbot."
         if getattr(update, "callback_query", None):
@@ -4602,57 +4641,23 @@ async def _telegram_guard(update: Update, context: ContextTypes.DEFAULT_TYPE, co
 # FASE 10.3 · MENÚS, REGISTRO Y SOPORTE
 # ------------------------------------------
 TELEGRAM_MENU_COMMANDS = {
-    "community": [
-        ("start", "Iniciar / registro"),
-        ("ayuda", "Ayuda y opciones"),
-        ("planes", "Planes Venbot"),
-        ("p2p", "Mercado P2P"),
-        ("prediccion", "Predicción"),
-        ("estado", "Estado del sistema"),
-        ("rendimiento", "Rendimiento"),
-        ("soporte", "Soporte"),
+    "private": [
+        ("start", "Menú principal"), ("ayuda", "Ayuda"), ("miplan", "Mi plan"),
+        ("cuenta", "Mi cuenta"), ("credenciales", "Credenciales"), ("planes", "Planes"),
+        ("p2p", "Análisis P2P"), ("prediccion", "Predicción"), ("grafica", "Gráfica"),
+        ("bancos", "Bancos"), ("alertas", "Mis alertas"), ("alerta", "Crear alerta"),
+        ("activaralerta", "Activar alerta"), ("pausaralerta", "Pausar alerta"), ("eliminaralerta", "Eliminar alerta"),
+        ("spot", "Spot"), ("escenarios", "Escenarios"), ("activos", "Activos Spot"),
+        ("soporte", "Soporte"), ("problema", "Reportar problema"), ("contactar", "Contactar soporte"),
+        ("estado", "Estado"), ("rendimiento", "Rendimiento"), ("cancelar", "Cancelar"),
     ],
-    "registration": [
-        ("start", "Iniciar registro"),
-        ("registrar", "Registrar cuenta"),
-        ("vincular", "Vincular cuenta"),
-        ("planes", "Ver planes"),
-        ("miplan", "Consultar mi plan"),
-        ("cuenta", "Mi cuenta"),
-        ("credenciales", "Generar credenciales"),
-        ("soporte", "Soporte"),
-    ],
-    "premium": [
-        ("ayuda", "Ayuda Premium"),
-        ("p2p", "Análisis P2P"),
-        ("prediccion", "Predicción P2P"),
-        ("precision", "Precisión"),
-        ("grafica", "Gráfica"),
-        ("bancos", "Bancos"),
-        ("alertas", "Mis alertas"),
-        ("miplan", "Mi plan"),
-        ("soporte", "Soporte"),
-    ],
-    "vip": [
-        ("ayuda", "Ayuda VIP"),
-        ("p2p", "Análisis P2P"),
-        ("prediccion", "Predicción P2P"),
-        ("spot", "Spot predictivo"),
-        ("escenarios", "Escenarios Spot"),
-        ("activos", "Activos Spot"),
-        ("alertas", "Mis alertas"),
-        ("miplan", "Mi plan"),
-        ("soporte", "Soporte"),
-    ],
-    "support": [
-        ("soporte", "Centro de soporte"),
-        ("problema", "Reportar problema"),
-        ("contactar", "Contactar soporte"),
-        ("estado", "Estado del sistema"),
-        ("planes", "Planes"),
-        ("miplan", "Mi plan"),
-    ],
+    "community": [("start", "Abrir Venbot"), ("ayuda", "Ayuda"), ("planes", "Planes"), ("estado", "Estado"), ("soporte", "Soporte privado")],
+    "registration": [("start", "Abrir Venbot"), ("registrar", "Registrarme"), ("vincular", "Vincular cuenta"), ("planes", "Ver planes"), ("soporte", "Soporte privado")],
+    "premium": [("start", "Abrir menú"), ("p2p", "Análisis P2P privado"), ("prediccion", "Predicción privada"), ("alertas", "Mis alertas"), ("miplan", "Mi plan"), ("soporte", "Soporte privado")],
+    "vip": [("start", "Abrir menú"), ("p2p", "Análisis P2P privado"), ("prediccion", "Predicción privada"), ("spot", "Spot privado"), ("escenarios", "Escenarios privados"), ("activos", "Activos Spot"), ("miplan", "Mi plan"), ("soporte", "Soporte privado")],
+    "support": [("start", "Abrir menú"), ("soporte", "Centro de soporte"), ("problema", "Reportar problema"), ("contactar", "Contactar soporte"), ("estado", "Estado")],
 }
+
 
 
 def _telegram_command_objects(role: str) -> list[BotCommand]:
@@ -4668,6 +4673,11 @@ async def _configure_telegram_command_menus(bot):
         "vip": TELEGRAM_VIP_CHAT_ID,
         "support": TELEGRAM_SUPPORT_CHAT_ID,
     }
+    try:
+        await bot.set_my_commands(_telegram_command_objects("private"), scope=BotCommandScopeAllPrivateChats())
+        logger.info("Menú Telegram privado configurado")
+    except Exception as e:
+        logger.warning("No se pudo configurar menú Telegram privado: %s", e)
     for role, raw in chat_roles.items():
         if not raw:
             continue
@@ -4890,12 +4900,27 @@ async def cmd_spot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_soporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Punto de entrada de soporte dentro de la comunidad."""
-    if not await _telegram_guard(update, context, "/soporte", private_only=False):
+    """Soporte: orientación general en grupos y atención personal en privado."""
+    chat_type = getattr(update.effective_chat, "type", None)
+    if chat_type != "private":
+        # Nunca pedimos que el usuario publique su incidencia o datos personales
+        # dentro de un grupo. La conversación de soporte se lleva al 1:1.
+        if getattr(update, "callback_query", None):
+            await _safe_callback_answer(update, "Abrir soporte privado", show_alert=True)
+        msg = (
+            "🛠️ *SOPORTE PRIVADO*\n\n"
+            "Para proteger tu información, los casos personales, pagos, comprobantes y datos de cuenta se atienden únicamente en tu chat privado con Venbot."
+        )
+        if getattr(update, "effective_message", None):
+            await update.effective_message.reply_text(
+                msg, parse_mode="Markdown", reply_markup=_private_redirect_markup()
+            )
+        return
+    if not await _telegram_guard(update, context, "/soporte", private_only=True):
         return
     texto = (
-        "🛠️ *VENBOT · SOPORTE*\n\n"
-        "Describe brevemente el problema que tienes y el espacio donde ocurrió.\n\n"
+        "🛠️ *VENBOT · SOPORTE PRIVADO*\n\n"
+        "Describe brevemente el problema que tienes y la función donde ocurrió.\n\n"
         "No envíes contraseñas, tokens, claves API ni datos bancarios.\n"
         "Para pagos o comprobantes, utiliza únicamente el flujo oficial indicado por Venbot."
     )
@@ -5120,6 +5145,8 @@ async def cmd_credenciales(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_miid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if getattr(update.effective_chat, "type", None) != "private" or not COMMUNITY_ROUTER.is_admin_user(_telegram_actor_id(update)):
+        return
     if update.message:
         await update.message.reply_text(
             f"🆔 Chat ID: {update.effective_chat.id}\n"
@@ -5130,45 +5157,38 @@ async def cmd_miid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/start", private_only=False):
         return
+    chat_type = getattr(update.effective_chat, "type", None)
     account = None
-    try:
-        identity = COMMUNITY_ROUTER.account_identity(update)
-        if identity is not None and DATABASE_URL:
-            account, _ = await asyncio.to_thread(_create_or_get_telegram_account, identity, DEFAULT_COUNTRY_CODE)
-    except Exception:
-        logger.exception("No se pudo preparar cuenta desde /start")
-    role = COMMUNITY_ROUTER.role_for_chat(_telegram_chat_id(update))
-    if account:
-        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
+    if chat_type == "private":
+        try:
+            identity = COMMUNITY_ROUTER.account_identity(update)
+            if identity is not None and DATABASE_URL:
+                account, _ = await asyncio.to_thread(_create_or_get_telegram_account, identity, DEFAULT_COUNTRY_CODE)
+        except Exception:
+            logger.exception("No se pudo preparar cuenta desde /start")
+
+    if chat_type == "private":
+        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at")) if account else "FREE"
         texto = (
-            "🦜 *VENBOT · MENÚ PRINCIPAL*\n\n"
-            f"👤 Usuario: `{account.get('username')}`\n"
-            f"💎 Plan actual: *{plan}*\n\n"
-            "Usa los botones o el menú de comandos de Telegram para consultar Venbot. "
-            "Cada función validará automáticamente tu chat y tu plan."
+            "🦜 *VENBOT · CHAT PRIVADO*\n\n"
+            + (f"👤 Usuario: `{account.get('username')}`\n💎 Plan actual: *{plan}*\n\n" if account else "")
+            + "Este es tu espacio personal. Aquí tus datos, pagos, alertas y consultas no se muestran en los grupos."
         )
-    else:
-        texto = (
-            "👋 *Bienvenido/a a VENBOT*\n\n"
-            "Para comenzar, entra en *Registro y Planes* y usa /registrar.\n"
-            "Después podrás consultar tus funciones y plan."
-        )
-    botones = []
-    role = COMMUNITY_ROUTER.role_for_chat(_telegram_chat_id(update))
-    if account:
-        plan_actual = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
         botones = [
             [InlineKeyboardButton("📊 P2P", callback_data="cmd_p2p"), InlineKeyboardButton("🔮 Predicción", callback_data="cmd_prediccion")],
             [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir"), InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],
+            [InlineKeyboardButton("🔐 Credenciales", callback_data="cmd_credenciales"), InlineKeyboardButton("🚨 Mis alertas", callback_data="cmd_alertas")],
         ]
-        if role == "vip" or plan_actual == "VIP":
+        if plan == "VIP":
             botones.insert(1, [InlineKeyboardButton("🟣 Spot", callback_data="cmd_spot"), InlineKeyboardButton("🎯 Escenarios", callback_data="cmd_escenarios")])
         botones.append([InlineKeyboardButton("🛠 Soporte", callback_data="cmd_soporte")])
     else:
-        botones = [
-            [InlineKeyboardButton("📝 Registrarme", callback_data="cmd_registrar"), InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir")],
-            [InlineKeyboardButton("🛠 Soporte", callback_data="cmd_soporte")],
-        ]
+        texto = (
+            "🦜 *VENBOT · COMUNIDAD*\n\n"
+            "Este espacio es para conversación e información general.\n\n"
+            "🔐 Las consultas de cuenta, pagos, credenciales, alertas personales y análisis individuales se realizan en tu chat privado con Venbot."
+        )
+        botones = [[InlineKeyboardButton("🔐 Abrir mi chat privado", url=_telegram_private_link() or "https://t.me/")], [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir"), InlineKeyboardButton("🛠 Soporte", url=VENBOT_SUPPORT_URL or "mailto:soportevenbot@gmail.com")]]
     markup = InlineKeyboardMarkup(botones)
     if update.callback_query:
         await _safe_callback_answer(update)
@@ -5604,6 +5624,18 @@ async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     except Exception: logger.exception("Error rechazando orden"); await update.message.reply_text("⚠️ Error rechazando la orden.")
 
 async def cmd_suscribir(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    if getattr(update.effective_chat, "type", None) != "private":
+        if update.callback_query:
+            await _safe_callback_answer(update)
+        texto = (
+            "💎 *PLANES VENBOT*\n\n"
+            "🆓 *FREE* · P2P y BCV, calculadora y análisis básico.\n"
+            f"⭐ *PREMIUM* · `{PREMIUM_PRICE_USDT:.2f} USDT` · funciones Premium.\n"
+            f"👑 *VIP* · `{VIP_PRICE_USDT:.2f} USDT` · Spot, Quant y predicción avanzada.\n\n"
+            "🔐 Para registrarte, pagar o consultar tu cuenta, abre tu chat privado con Venbot."
+        )
+        await update.effective_message.reply_text(texto, parse_mode="Markdown", reply_markup=_private_redirect_markup())
+        return
     if not await _telegram_guard(update, context, "/planes", private_only=True):
         return
     if update.callback_query: await _safe_callback_answer(update)
@@ -6289,18 +6321,51 @@ def _alert_rule_count(external_user_id):
             cur.execute("SELECT COUNT(*) FROM venbot_alert_rules WHERE external_user_id=%s", (external_user_id,))
             return int(cur.fetchone()[0] or 0)
 
+def _telegram_private_delivery_id(external_user_id):
+    """Devuelve únicamente el destino Telegram privado vinculado a la cuenta."""
+    if not DATABASE_URL or not external_user_id:
+        return None
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT telegram_user_id, telegram_chat_id
+                   FROM venbot_users
+                   WHERE external_user_id=%s
+                   LIMIT 1""",
+                (external_user_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    telegram_user_id, telegram_chat_id = row
+    if telegram_user_id is not None and int(telegram_user_id) > 0:
+        return int(telegram_user_id)
+    if telegram_chat_id is not None and int(telegram_chat_id) > 0:
+        return int(telegram_chat_id)
+    return None
+
 async def _evaluar_alertas_personales():
     if not DATABASE_URL or not telegram_app:
         return 0
     ahora = datetime.now(VET)
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("""SELECT id, external_user_id, banco, target_value, direction, cooldown_seconds, telegram_chat_id, last_triggered_at
-                          FROM venbot_alert_rules WHERE enabled=TRUE AND telegram_chat_id IS NOT NULL
-                          ORDER BY id ASC""")
+            # El destino de una alerta personal se resuelve desde la cuenta
+            # autenticada, nunca desde un chat_id arbitrario guardado por el cliente.
+            cur.execute("""
+                SELECT r.id, r.external_user_id, r.banco, r.target_value, r.direction,
+                       r.cooldown_seconds, r.telegram_chat_id, r.last_triggered_at,
+                       COALESCE(u.telegram_user_id, CASE WHEN u.telegram_chat_id > 0 THEN u.telegram_chat_id END) AS owner_telegram_id
+                FROM venbot_alert_rules r
+                JOIN venbot_users u ON u.external_user_id = r.external_user_id
+                WHERE r.enabled=TRUE
+                  AND COALESCE(u.telegram_user_id, CASE WHEN u.telegram_chat_id > 0 THEN u.telegram_chat_id END) IS NOT NULL
+                ORDER BY r.id ASC
+            """)
             rules = cur.fetchall()
     disparadas = 0
-    for rid, external_user_id, banco, target, direction, cooldown, chat_id, last_triggered in rules:
+    for rid, external_user_id, banco, target, direction, cooldown, stored_chat_id, last_triggered, owner_telegram_id in rules:
+        chat_id = int(owner_telegram_id)
         mercado = obtener_ultimo_mercado_banco(str(banco).upper())
         compra = float(mercado.get("compra") or 0)
         venta = float(mercado.get("venta") or 0)
@@ -6329,7 +6394,7 @@ async def _evaluar_alertas_personales():
                       f"• Señal informativa; no garantiza un resultado futuro."))
             with obtener_conexion() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE venbot_alert_rules SET last_triggered_at=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (ahora, rid))
+                    cur.execute("UPDATE venbot_alert_rules SET telegram_chat_id=%s, last_triggered_at=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (chat_id, ahora, rid))
             disparadas += 1
             logger.info("Alerta personal disparada: rule=%s user=%s banco=%s", rid, external_user_id, banco)
         except Exception as e:
@@ -6355,11 +6420,14 @@ def alert_rule_create(payload: AlertRuleCreateRequest, request: Request):
     direction = _validar_direccion_alerta(payload.direction)
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="database_not_configured")
+    telegram_target = _telegram_private_delivery_id(external_user_id)
+    if telegram_target is None:
+        raise HTTPException(status_code=400, detail="telegram_private_not_linked")
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO venbot_alert_rules(external_user_id,banco,rule_type,target_value,direction,enabled,cooldown_seconds,telegram_chat_id)
                            VALUES(%s,%s,'price_target',%s,%s,TRUE,%s,%s)
-                           RETURNING id""", (external_user_id,banco,payload.target_value,direction,payload.cooldown_seconds,payload.telegram_chat_id))
+                           RETURNING id""", (external_user_id,banco,payload.target_value,direction,payload.cooldown_seconds,telegram_target))
             rid = int(cur.fetchone()[0])
     return {"ok": True, "id": rid, "rules": _alert_rules_for_user(external_user_id)}
 
@@ -6378,7 +6446,12 @@ def alert_rule_update(rule_id: int, payload: AlertRuleUpdateRequest, request: Re
             if payload.banco is not None: fields.append("banco=%s"); vals.append(_validar_alerta_banco(payload.banco))
             if payload.target_value is not None: fields.append("target_value=%s"); vals.append(payload.target_value)
             if payload.direction is not None: fields.append("direction=%s"); vals.append(_validar_direccion_alerta(payload.direction))
-            if payload.telegram_chat_id is not None: fields.append("telegram_chat_id=%s"); vals.append(payload.telegram_chat_id)
+            if payload.telegram_chat_id is not None:
+                telegram_target = _telegram_private_delivery_id(external_user_id)
+                if telegram_target is None or int(payload.telegram_chat_id) != int(telegram_target):
+                    raise HTTPException(status_code=403, detail="telegram_destination_must_match_account")
+                # El destino válido pertenece a la cuenta y no puede cambiarse
+                # hacia otro usuario desde el navegador.
             if payload.cooldown_seconds is not None: fields.append("cooldown_seconds=%s"); vals.append(payload.cooldown_seconds)
             if payload.enabled is not None: fields.append("enabled=%s"); vals.append(payload.enabled)
             fields.append("updated_at=CURRENT_TIMESTAMP")
