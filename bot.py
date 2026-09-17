@@ -154,6 +154,10 @@ TELEGRAM_PRIVATE_ONLY_COMMANDS = os.getenv("TELEGRAM_PRIVATE_ONLY_COMMANDS", "tr
 TELEGRAM_RATE_WINDOW_SECONDS = max(10, int(os.getenv("TELEGRAM_RATE_WINDOW_SECONDS", "30")))
 TELEGRAM_RATE_MAX_COMMANDS = max(3, int(os.getenv("TELEGRAM_RATE_MAX_COMMANDS", "8")))
 TELEGRAM_MESSAGE_MAX_LENGTH = max(2000, int(os.getenv("TELEGRAM_MESSAGE_MAX_LENGTH", "12000")))
+# Fase 11: publicación automática por nivel. 3600s (1 hora) por defecto;
+# 1800s (30 min) es el mínimo permitido. No requiere consultas manuales del usuario.
+TELEGRAM_AUTO_PREDICTIONS_ENABLED = os.getenv("TELEGRAM_AUTO_PREDICTIONS_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS = max(1800, int(os.getenv("TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS", "3600")))
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
@@ -324,6 +328,7 @@ telegram_app = None
 _TELEGRAM_RATE_BUCKET = {}
 _TELEGRAM_RATE_LOCK = threading.Lock()
 _LAST_TELEGRAM_ACCESS_RECONCILE_TS = 0.0
+_LAST_TELEGRAM_AUTO_PREDICTIONS_TS = 0.0
 _P2P_BANK_METHOD_CACHE = {"methods": {}, "expires": 0.0}
 _P2P_BANK_AD_CACHE = {}
 collector_task = None
@@ -4463,12 +4468,14 @@ class CommunityRouter:
     validar el handler existente.
     """
     ADMIN_ONLY = {"/pagos", "/aprobar", "/rechazar"}
-    UNIVERSAL = {"/ayuda", "/help", "/miid"}
-    REGISTRATION = {"/start", "/registrar", "/vincular", "/planes", "/suscribir", "/miplan", "/cuenta", "/credenciales"}
-    PUBLIC = {"/estado", "/rendimiento"}
-    PREMIUM = {"/p2p", "/prediccion", "/precision", "/grafica", "/bancos", "/alertas", "/alerta", "/activaralerta", "/pausaralerta", "/eliminaralerta"}
-    VIP = {"/spot", "/escenarios", "/activos"}
-    SUPPORT = {"/soporte", "/problema", "/contactar", "/cancelar"}
+    UNIVERSAL = {"/ayuda", "/help"}
+    PERSONAL = {"/miplan", "/cuenta", "/credenciales", "/alertas", "/alerta", "/activaralerta", "/pausaralerta", "/eliminaralerta", "/soporte", "/problema", "/contactar", "/cancelar"}
+    PUBLIC = {"/estado"}
+    AUTO_MARKET = {"/p2p", "/prediccion", "/precision", "/spot", "/escenarios", "/activos", "/bancos", "/rendimiento"}
+    GRAPH = {"/grafica"}
+    REGISTRATION = {"/start", "/planes", "/suscribir"}
+    ACCOUNT_REGISTRATION = {"/registrar", "/vincular"}
+    SUPPORT = {"/soporte", "/problema", "/contactar"}
 
     def role_for_chat(self, chat_id: int | None) -> str | None:
         if chat_id is None:
@@ -4491,8 +4498,11 @@ class CommunityRouter:
             return True, "private_admin"
 
         if chat_type == "private":
-            # El chat privado es el espacio personal de cada usuario.
-            # Cada handler valida cuenta y plan antes de ejecutar la función.
+            # Privado: solo cuenta, privacidad, pagos y soporte personal.
+            if normalized in self.GRAPH:
+                return (True, "private_admin") if self.is_admin_user(user_id) else (False, "admin_only")
+            if normalized in self.AUTO_MARKET or normalized in self.PUBLIC:
+                return False, "market_use_monitor"
             return True, "private_user"
 
         if normalized in self.UNIVERSAL:
@@ -4503,20 +4513,18 @@ class CommunityRouter:
         role = self.role_for_chat(chat_id)
         if role is None:
             return False, "community_chat_not_configured"
-        if normalized in {"/miplan", "/cuenta", "/credenciales", "/vincular", "/registrar",
-                          "/p2p", "/prediccion", "/precision", "/grafica", "/bancos",
-                          "/alertas", "/alerta", "/activaralerta", "/pausaralerta", "/eliminaralerta",
-                          "/spot", "/escenarios", "/activos",
-                          "/soporte", "/problema", "/contactar", "/cancelar"}:
+        if normalized in self.PERSONAL:
             return False, "private_required"
+        if normalized in self.GRAPH:
+            return False, "admin_only"
         if normalized in self.PUBLIC:
-            return role in {"community", "alerts", "registration", "premium", "vip", "support"}, role
+            return role in {"community", "registration", "premium", "vip", "support"}, role
+        if normalized in self.ACCOUNT_REGISTRATION:
+            return role in {"registration"}, role
         if normalized in self.REGISTRATION:
-            return role in {"community", "registration", "support"}, role
-        if normalized in self.PREMIUM:
-            return role in {"premium", "vip"}, role
-        if normalized in self.VIP:
-            return role in {"vip"}, role
+            return role in {"community", "registration", "premium", "vip", "support"}, role
+        if normalized in self.AUTO_MARKET:
+            return False, "market_automatic"
         if normalized in self.SUPPORT:
             return role in {"support", "community", "registration"}, role
         # Comandos todavía no migrados a Fase 10: no abrirlos por defecto en grupos.
@@ -4621,6 +4629,16 @@ async def _telegram_guard(update: Update, context: ContextTypes.DEFAULT_TYPE, co
             elif getattr(update, "effective_message", None):
                 await update.effective_message.reply_text(msg, parse_mode="Markdown", reply_markup=_private_redirect_markup())
             return False
+        elif reason == "market_automatic":
+            msg = (
+                "🤖 Esta función se publica automáticamente en Telegram según tu categoría.\n\n"
+                "📊 Para consultas completas y en tiempo real utiliza el Monitor Venbot."
+            )
+        elif reason == "market_use_monitor":
+            msg = (
+                "📊 El chat privado está reservado para cuenta, plan, pagos, alertas, privacidad y soporte.\n\n"
+                "Para mercado, predicciones, Spot y análisis utiliza la Comunidad o el Monitor."
+            )
         elif reason == "private_admin_required":
             msg = "🔐 Comando reservado al administrador de Venbot."
         else:
@@ -4641,23 +4659,20 @@ async def _telegram_guard(update: Update, context: ContextTypes.DEFAULT_TYPE, co
 # FASE 10.3 · MENÚS, REGISTRO Y SOPORTE
 # ------------------------------------------
 TELEGRAM_MENU_COMMANDS = {
+    # Privado = únicamente cuenta, plan, privacidad y soporte.
     "private": [
         ("start", "Menú principal"), ("ayuda", "Ayuda"), ("miplan", "Mi plan"),
         ("cuenta", "Mi cuenta"), ("credenciales", "Credenciales"), ("planes", "Planes"),
-        ("p2p", "Análisis P2P"), ("prediccion", "Predicción"), ("grafica", "Gráfica"),
-        ("bancos", "Bancos"), ("alertas", "Mis alertas"), ("alerta", "Crear alerta"),
+        ("alertas", "Mis alertas"), ("alerta", "Crear alerta"),
         ("activaralerta", "Activar alerta"), ("pausaralerta", "Pausar alerta"), ("eliminaralerta", "Eliminar alerta"),
-        ("spot", "Spot"), ("escenarios", "Escenarios"), ("activos", "Activos Spot"),
         ("soporte", "Soporte"), ("problema", "Reportar problema"), ("contactar", "Contactar soporte"),
-        ("estado", "Estado"), ("rendimiento", "Rendimiento"), ("cancelar", "Cancelar"),
     ],
-    "community": [("start", "Abrir Venbot"), ("ayuda", "Ayuda"), ("planes", "Planes"), ("estado", "Estado"), ("soporte", "Soporte privado")],
-    "registration": [("start", "Abrir Venbot"), ("registrar", "Registrarme"), ("vincular", "Vincular cuenta"), ("planes", "Ver planes"), ("soporte", "Soporte privado")],
-    "premium": [("start", "Abrir menú"), ("p2p", "Análisis P2P privado"), ("prediccion", "Predicción privada"), ("alertas", "Mis alertas"), ("miplan", "Mi plan"), ("soporte", "Soporte privado")],
-    "vip": [("start", "Abrir menú"), ("p2p", "Análisis P2P privado"), ("prediccion", "Predicción privada"), ("spot", "Spot privado"), ("escenarios", "Escenarios privados"), ("activos", "Activos Spot"), ("miplan", "Mi plan"), ("soporte", "Soporte privado")],
-    "support": [("start", "Abrir menú"), ("soporte", "Centro de soporte"), ("problema", "Reportar problema"), ("contactar", "Contactar soporte"), ("estado", "Estado")],
+    "community": [("start", "Abrir Venbot"), ("ayuda", "Ayuda"), ("planes", "Planes"), ("estado", "Estado")],
+    "registration": [("start", "Abrir Venbot"), ("planes", "Ver planes"), ("registrar", "Registrarme"), ("soporte", "Soporte privado")],
+    "premium": [("start", "Abrir Venbot"), ("ayuda", "Ayuda"), ("planes", "Planes"), ("estado", "Estado"), ("soporte", "Soporte privado")],
+    "vip": [("start", "Abrir Venbot"), ("ayuda", "Ayuda"), ("planes", "Planes"), ("estado", "Estado"), ("soporte", "Soporte privado")],
+    "support": [("start", "Abrir Venbot"), ("ayuda", "Ayuda"), ("planes", "Planes"), ("estado", "Estado"), ("soporte", "Centro de soporte"), ("contactar", "Contactar soporte")],
 }
-
 
 
 def _telegram_command_objects(role: str) -> list[BotCommand]:
@@ -4692,7 +4707,16 @@ async def _configure_telegram_command_menus(bot):
 
 
 async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _telegram_guard(update, context, "/registrar", private_only=False):
+    if getattr(update.effective_chat, "type", None) != "private":
+        if not await _telegram_guard(update, context, "/registrar", private_only=False):
+            return
+        await update.effective_message.reply_text(
+            "🔐 El registro se completa en tu chat privado con Venbot.\n\n"
+            "No se muestran datos de cuenta en grupos.",
+            parse_mode="Markdown", reply_markup=_private_redirect_markup()
+        )
+        return
+    if not await _telegram_guard(update, context, "/registrar", private_only=True):
         return
     try:
         identity = COMMUNITY_ROUTER.account_identity(update)
@@ -4719,7 +4743,16 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_vincular(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _telegram_guard(update, context, "/vincular", private_only=False):
+    if getattr(update.effective_chat, "type", None) != "private":
+        if not await _telegram_guard(update, context, "/vincular", private_only=False):
+            return
+        await update.effective_message.reply_text(
+            "🔗 La vinculación se completa en tu chat privado con Venbot.\n\n"
+            "No se muestran datos de cuenta en grupos.",
+            parse_mode="Markdown", reply_markup=_private_redirect_markup()
+        )
+        return
+    if not await _telegram_guard(update, context, "/vincular", private_only=True):
         return
     texto = (
         "🔗 *VINCULAR CUENTA VENBOT*\n\n"
@@ -4820,22 +4853,30 @@ async def telegram_nuevo_miembro(update: Update, context: ContextTypes.DEFAULT_T
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/ayuda", private_only=False):
         return
-    texto = (
-        "🦜 *VENBOT · AYUDA TELEGRAM*\n\n"
-        "Consultas generales: /cuenta /miplan /planes\n"
-        "Mercado P2P: /p2p\n"
-        "Spot VIP: /spot [BTC|ETH|SOL|SUI|AAVE|UNI|KSM|ZEC|XRP]\n"
-        "Soporte: /soporte\n"
-        "Predicción: /prediccion\n"
-        "Alertas: /alertas\n"
-        "Crear alerta: /alerta GENERAL venta 960\n"
-        "Pausar/activar: /pausaralerta 12 · /activaralerta 12\n"
-        "Eliminar: /eliminaralerta 12\n"
-        "Estado: /estado\n"
-        "Rendimiento: /rendimiento\n\n"
-        "🔐 Los comandos de cuenta, alertas, pagos y consultas privadas deben realizarse en el chat privado de Venbot.\n"
-        "⚠️ Las proyecciones son estadísticas y no garantizan resultados futuros."
-    )
+    chat_type = getattr(update.effective_chat, "type", None)
+    if chat_type == "private":
+        texto = (
+            "🦜 *VENBOT · AYUDA PRIVADA*\n\n"
+            "👤 Cuenta: /cuenta\n"
+            "💎 Mi plan: /miplan\n"
+            "🔐 Credenciales: /credenciales\n"
+            "🔔 Mis alertas: /alertas\n"
+            "💳 Planes y pagos: /planes\n"
+            "🛠 Soporte: /soporte\n\n"
+            "📊 El mercado, predicciones, P2P, Spot y gráficas se consultan fuera del privado, principalmente en el Monitor Venbot."
+        )
+    else:
+        texto = (
+            "🦜 *VENBOT · AYUDA COMUNIDAD*\n\n"
+            "🔮 Las predicciones se publican automáticamente según tu categoría.\n"
+            "🆓 FREE → Comunidad general.\n"
+            "⭐ PREMIUM → zona Premium.\n"
+            "👑 VIP → zona VIP.\n\n"
+            "📊 Para análisis completos utiliza el Monitor Venbot.\n"
+            "🔐 Cuenta, pagos, credenciales y privacidad → chat privado.\n"
+            "🛠 Problemas → soporte privado.\n\n"
+            "⚠️ Las proyecciones son estadísticas y no garantizan resultados futuros."
+        )
     await update.effective_message.reply_text(texto, parse_mode="Markdown")
 
 
@@ -5175,20 +5216,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             + "Este es tu espacio personal. Aquí tus datos, pagos, alertas y consultas no se muestran en los grupos."
         )
         botones = [
-            [InlineKeyboardButton("📊 P2P", callback_data="cmd_p2p"), InlineKeyboardButton("🔮 Predicción", callback_data="cmd_prediccion")],
-            [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir"), InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],
+            [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("💎 Mi plan", callback_data="cmd_suscribir")],
             [InlineKeyboardButton("🔐 Credenciales", callback_data="cmd_credenciales"), InlineKeyboardButton("🚨 Mis alertas", callback_data="cmd_alertas")],
+            [InlineKeyboardButton("🛡️ Privacidad", callback_data="cmd_soporte")],
+            [InlineKeyboardButton("🛠 Soporte", callback_data="cmd_soporte")],
         ]
-        if plan == "VIP":
-            botones.insert(1, [InlineKeyboardButton("🟣 Spot", callback_data="cmd_spot"), InlineKeyboardButton("🎯 Escenarios", callback_data="cmd_escenarios")])
-        botones.append([InlineKeyboardButton("🛠 Soporte", callback_data="cmd_soporte")])
     else:
         texto = (
             "🦜 *VENBOT · COMUNIDAD*\n\n"
-            "Este espacio es para conversación e información general.\n\n"
-            "🔐 Las consultas de cuenta, pagos, credenciales, alertas personales y análisis individuales se realizan en tu chat privado con Venbot."
+            "Este espacio es para conversación, información general y publicaciones automáticas.\n\n"
+            "🔮 Las predicciones FREE se publican automáticamente cada hora.\n"
+            "⭐ PREMIUM y 👑 VIP reciben contenido automático en su zona correspondiente.\n\n"
+            "📊 Para análisis completos utiliza el Monitor Venbot.\n"
+            "🔐 Cuenta, pagos, credenciales, privacidad y soporte personal se atienden únicamente en el chat privado."
         )
-        botones = [[InlineKeyboardButton("🔐 Abrir mi chat privado", url=_telegram_private_link() or "https://t.me/")], [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir"), InlineKeyboardButton("🛠 Soporte", url=VENBOT_SUPPORT_URL or "mailto:soportevenbot@gmail.com")]]
+        botones = [
+            [InlineKeyboardButton("🔐 Abrir mi chat privado", url=_telegram_private_link() or "https://t.me/")],
+            [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir")],
+        ]
+        if VENBOT_FRONTEND_URL:
+            botones.append([InlineKeyboardButton("📊 Abrir Monitor Venbot", url=VENBOT_FRONTEND_URL)])
+        botones.append([InlineKeyboardButton("🛠 Soporte", url=VENBOT_SUPPORT_URL or "mailto:soportevenbot@gmail.com")])
     markup = InlineKeyboardMarkup(botones)
     if update.callback_query:
         await _safe_callback_answer(update)
@@ -5199,6 +5247,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/rendimiento", private_only=False):
+        return
     if update.callback_query:
         await _safe_callback_answer(update)
     try:
@@ -5228,6 +5278,8 @@ async def cmd_rendimiento(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _telegram_guard(update, context, "/estado", private_only=False):
+        return
     if update.callback_query:
         await _safe_callback_answer(update)
     try:
@@ -5352,6 +5404,12 @@ async def cmd_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_grafica(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if getattr(update.effective_chat, "type", None) != "private" or not COMMUNITY_ROUTER.is_admin_user(_telegram_actor_id(update)):
+        if getattr(update, "callback_query", None):
+            await _safe_callback_answer(update, "Gráfica reservada al administrador", show_alert=True)
+        elif getattr(update, "effective_message", None):
+            await update.effective_message.reply_text("🔐 La gráfica está reservada al administrador de Venbot durante su fase de construcción.")
+        return
     if not await _telegram_guard(update, context, "/grafica", private_only=True):
         return
     chat_id = update.effective_chat.id
@@ -5714,6 +5772,113 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
+# TELEGRAM · PUBLICACIÓN AUTOMÁTICA POR PLAN
+# ==========================================
+async def _generar_resumen_telegram_automatico(banco: str = "GENERAL"):
+    mercado = await asyncio.to_thread(obtener_ultimo_mercado_banco, banco)
+    c_real = float(mercado.get("compra") or 0)
+    v_real = float(mercado.get("venta") or 0)
+    liquidez = int(mercado.get("liquidez") or 0)
+    if c_real <= 0 or v_real <= 0:
+        return None
+    datos, _ = await asyncio.to_thread(_obtener_quant_compartido, banco, c_real, v_real, liquidez)
+    return {"c": c_real, "v": v_real, "liquidez": liquidez, "datos": datos, "mercado": mercado}
+
+
+def _texto_auto_free(resumen):
+    d = resumen["datos"]
+    c = resumen["c"]; v = resumen["v"]
+    return (
+        "🔮 *VENBOT · ACTUALIZACIÓN FREE*\n\n"
+        f"🏦 GENERAL\n"
+        f"💵 Comprar: `{c:.2f} Bs`\n"
+        f"💵 Vender: `{v:.2f} Bs`\n"
+        f"📐 Spread: `{(v-c):.2f} Bs`\n"
+        f"📈 Tendencia: `{d.get('tendencia','n/d')}`\n"
+        f"🎯 Confianza: `{d.get('confianza','n/d')}/100`\n"
+        f"🔮 Proyección 7H: `{d.get('pred_compra_str','n/d')}` / `{d.get('pred_venta_str','n/d')}`\n\n"
+        "📊 Para análisis completo y datos en tiempo real, utiliza el Monitor Venbot.\n"
+        "⏱ Próxima actualización automática: 1 hora.\n\n"
+        "⚠️ Proyección estadística; no garantiza resultados futuros."
+    )
+
+
+def _texto_auto_premium(resumen):
+    d = resumen["datos"]; c = resumen["c"]; v = resumen["v"]
+    return (
+        "⭐ *VENBOT · ACTUALIZACIÓN PREMIUM*\n\n"
+        f"🏦 GENERAL\n"
+        f"💵 Comprar/Vender: `{c:.2f} / {v:.2f} Bs`\n"
+        f"📐 Spread: `{(v-c):.2f} Bs`\n"
+        f"📈 Tendencia: `{d.get('tendencia','n/d')}`\n"
+        f"🎯 Confianza: `{d.get('confianza','n/d')}/100`\n"
+        f"🔮 7H: `{d.get('pred_compra_str','n/d')}` / `{d.get('pred_venta_str','n/d')}`\n"
+        f"🧭 Soporte/Resistencia: `{d.get('soporte_7h', d.get('piso_str','n/d'))}` / `{d.get('resistencia_7h', d.get('techo_str','n/d'))}`\n"
+        f"📦 Liquidez: `{d.get('estado_comunidad','n/d')}`\n\n"
+        "📊 Análisis completo, historial y escenarios: Monitor Venbot.\n"
+        "⏱ Próxima actualización automática: 1 hora.\n\n"
+        "⚠️ Lectura estadística; no garantiza resultados futuros."
+    )
+
+
+async def _texto_auto_vip(resumen):
+    d = resumen["datos"]; c = resumen["c"]; v = resumen["v"]
+    lines = [
+        "👑 *VENBOT · PULSO VIP*", "",
+        f"🏦 P2P GENERAL · Comprar/Vender: `{c:.2f} / {v:.2f} Bs`",
+        f"📈 Tendencia P2P: `{d.get('tendencia','n/d')}` · Confianza `{d.get('confianza','n/d')}/100`",
+        f"🔮 Proyección 7H: `{d.get('pred_compra_str','n/d')}` / `{d.get('pred_venta_str','n/d')}`",
+    ]
+    try:
+        spot = await asyncio.to_thread(obtener_spot_predicciones_contexto)
+        preferred = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        picked = [(sym, spot[sym]) for sym in preferred if sym in spot]
+        if picked:
+            lines.append("")
+            lines.append("🟣 *SPOT · RESUMEN AUTOMÁTICO*")
+            for sym, item in picked:
+                label = sym.replace("USDT", "")
+                lines.append(f"• {label}: `{item.get('price',0):.4f}` · 24H `{item.get('change_24h_pct',0):+.2f}%` · 24H→ `{item.get('projection_24h',0):.4f}`")
+        else:
+            lines.extend(["", "🟣 SPOT: datos predictivos en actualización."])
+    except Exception:
+        lines.extend(["", "🟣 SPOT: datos predictivos en actualización."])
+    lines.extend(["", "📊 9 activos, horizontes 1H/3H/7H/24H y análisis Quant completo en Monitor VIP.", "⏱ Próxima actualización automática: 1 hora.", "", "⚠️ Proyección estadística; no garantiza resultados futuros."])
+    return "\n".join(lines)
+
+
+async def _publicar_predicciones_telegram_automaticas():
+    global _LAST_TELEGRAM_AUTO_PREDICTIONS_TS
+    if not (TELEGRAM_AUTO_PREDICTIONS_ENABLED and telegram_app):
+        return
+    now_mono = time.monotonic()
+    if (now_mono - _LAST_TELEGRAM_AUTO_PREDICTIONS_TS) < TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS:
+        return
+    if not TELEGRAM_COMMUNITY_CHAT_ID:
+        return
+    try:
+        resumen = await _generar_resumen_telegram_automatico("GENERAL")
+        if not resumen:
+            return
+        targets = []
+        if TELEGRAM_COMMUNITY_CHAT_ID:
+            targets.append(("FREE", int(TELEGRAM_COMMUNITY_CHAT_ID), _texto_auto_free(resumen)))
+        if TELEGRAM_PREMIUM_CHAT_ID.lstrip("-").isdigit():
+            targets.append(("PREMIUM", int(TELEGRAM_PREMIUM_CHAT_ID), _texto_auto_premium(resumen)))
+        if TELEGRAM_VIP_CHAT_ID.lstrip("-").isdigit():
+            targets.append(("VIP", int(TELEGRAM_VIP_CHAT_ID), await _texto_auto_vip(resumen)))
+        for plan, chat_id, text in targets:
+            try:
+                await telegram_app.bot.send_message(chat_id=chat_id, text=text[:TELEGRAM_MESSAGE_MAX_LENGTH], parse_mode="Markdown")
+                logger.info("[TELEGRAM AUTO] publicación %s enviada chat=%s", plan, chat_id)
+            except Exception as e:
+                logger.warning("[TELEGRAM AUTO] no se pudo publicar %s chat=%s: %s", plan, chat_id, e)
+        _LAST_TELEGRAM_AUTO_PREDICTIONS_TS = now_mono
+    except Exception:
+        logger.exception("[TELEGRAM AUTO] fallo de publicación automática")
+
+
+# ==========================================
 # RECOLECCIÓN
 # ==========================================
 async def tarea_recoleccion_automatica():
@@ -5856,6 +6021,11 @@ async def tarea_recoleccion_automatica():
                     motivos = "; ".join(manip.get("motivos", [])[:3])
                     extra = f"\n• Anomalía: `{motivos}`" if motivos else ""
                     await telegram_app.bot.send_message(chat_id=TELEGRAM_ALERTS_CHAT_ID, text=(f"{tipo}\n• Tendencia: `{tendencia}`\n• Comprar USDT: `{mercado['compra']:.2f} Bs`\n• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra + "\n• El cambio de tendencia requiere confirmación y cooldown para evitar falsas oscilaciones." if not debe_alertar_anomalia else f"{tipo}\n• Tendencia: `{tendencia}`\n• Comprar USDT: `{mercado['compra']:.2f} Bs`\n• Vender USDT: `{mercado['venta']:.2f} Bs`" + extra + "\n• La anomalía es una señal estadística y no prueba manipulación intencional."), parse_mode="Markdown")
+
+                try:
+                    await _publicar_predicciones_telegram_automaticas()
+                except Exception:
+                    logger.warning("[TELEGRAM AUTO] publicación omitida en este ciclo", exc_info=True)
         except asyncio.CancelledError:
             raise
         except Exception as e:
