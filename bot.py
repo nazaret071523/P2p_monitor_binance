@@ -7397,6 +7397,59 @@ def _billing_activate_account(payload: BillingWebhookRequest):
             cur.execute("INSERT INTO venbot_billing_events(external_user_id,country_code,plan_code,provider,external_reference,event_type,status,payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", (external_id, payload.country_code.upper(), plan, payload.provider, payload.external_reference, event, "processed", json.dumps(payload.payload or {})))
     return {"ok": True, "idempotent": False, "external_user_id": external_id, "username": username, "telegram_chat_id": tg_id, "plan": _plan_efectivo(new_plan), "plan_expires_at": new_exp.isoformat() if new_exp else None}
 
+def _require_developer_session(request: Request):
+    user = _require_session_user(request)
+    if not _is_developer_account(user):
+        raise HTTPException(status_code=403, detail="developer_only")
+    return user
+
+
+@app.get("/api/admin/predictive/p2p")
+def admin_predictive_p2p(
+    request: Request,
+    banco: str = Query("GENERAL"),
+    limit: int = Query(1200, ge=100, le=5000),
+):
+    """Lectura administrativa de P2P para la nueva visualización.
+
+    Es una capa aditiva: reutiliza el análisis productivo existente y solo lo
+    expone a una sesión autenticada vinculada al administrador.
+    """
+    _require_developer_session(request)
+    bank = (banco or "GENERAL").upper().strip()
+    if bank not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
+        bank = "GENERAL"
+    analysis = calcular_analisis_monitor(bank)
+    filas = obtener_estadisticas_db(limit=int(limit), banco=bank)
+    history = []
+    for c, v, l, f in filas:
+        try:
+            ts = f.isoformat() if hasattr(f, "isoformat") else str(f)
+            history.append({"timestamp": ts, "compra": float(c or 0), "venta": float(v or 0), "liquidez": int(l or 0)})
+        except Exception:
+            continue
+    performance = obtener_prediction_performance(bank, min(1000, max(100, int(limit)))) if DATABASE_URL else {"ok": False}
+    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance}
+
+
+@app.get("/api/admin/predictive/spot")
+def admin_predictive_spot(
+    request: Request,
+    symbol: str = Query("BTCUSDT"),
+    interval: str = Query("1h", pattern="^(5m|15m|30m|1h|4h|1d)$"),
+    limit: int = Query(250, ge=50, le=500),
+):
+    """Lectura administrativa de Spot para la nueva visualización."""
+    _require_developer_session(request)
+    sym = _normalizar_spot_symbol(symbol)
+    if sym not in SPOT_SYMBOLS:
+        raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    prediction = analizar_spot_predictivo(sym)
+    candles = obtener_spot_klines(sym, interval, limit)
+    performance = obtener_spot_prediction_performance(sym)
+    return {"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance}
+
+
 @app.get("/api/plans")
 def api_plans(request: Request):
     country = _country_from_request(request)
