@@ -257,7 +257,7 @@
       .venbot-ai-fab::before,.venbot-ai-fab::after{animation:none!important}
     }
 
-  </style>
+  .adv-timeline-node{border:1px solid rgba(51,65,85,.78);background:linear-gradient(180deg,rgba(15,23,42,.88),rgba(2,6,23,.72));border-radius:.9rem;padding:.55rem .65rem;min-width:0}.adv-timeline-node .t{color:#64748b;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.adv-timeline-node .v{margin-top:.2rem;color:#f8fafc;font-size:12px;font-weight:900;font-variant-numeric:tabular-nums}.adv-timeline-node .r{margin-top:.15rem;color:#64748b;font-size:8px;font-weight:700}.adv-chart-note{color:#64748b;font-size:8px;font-weight:700}</style>
 
 <style id="venbot-neural-approved">
 .venbot-neural{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:58px;height:58px;filter:drop-shadow(0 0 16px rgba(0,153,255,.38)) drop-shadow(0 0 28px rgba(0,217,255,.14));animation:neuralFloat 4.4s ease-in-out infinite}
@@ -828,7 +828,9 @@
                   <div><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot</h3><p class="text-[9px] text-slate-500 mt-1">La línea sólida representa observaciones; la línea punteada representa proyección.</p></div>
                   <div class="flex items-center gap-3 text-[9px] text-slate-500"><span><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección</span><span><i class="fa-solid fa-ruler-combined text-slate-400 mr-1"></i>Rango</span></div>
                 </div>
-                <div class="relative h-[18rem] md:h-[28rem] w-full rounded-xl overflow-hidden bg-slate-950/40"><canvas id="advancedPredictiveChart"></canvas></div>
+                <div class="relative h-[20rem] md:h-[32rem] w-full rounded-xl overflow-hidden bg-slate-950/70 border border-slate-800/70"><canvas id="advancedPredictiveChart"></canvas></div>
+                <div class="mt-3 flex items-center justify-between gap-2"><div class="adv-chart-note"><i class="fa-solid fa-route text-cyan-300 mr-1"></i> T0 → horizonte: la curva futura representa la trayectoria central entregada por el motor y la franja representa su rango.</div><div id="adv-t0-label" class="text-[8px] uppercase tracking-[0.16em] font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">T0 · ahora</div></div>
+                <div id="adv-timeline-strip" class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2"></div>
               </div>
 
               <aside class="space-y-3">
@@ -2285,36 +2287,54 @@
     return m ? Number(m[1]) : NaN;
   }
   function advChartOptions(yLabel){
-    return {responsive:true,maintainAspectRatio:false,parsing:false,animation:false,interaction:{intersect:false,mode:'index'},plugins:{legend:{display:false},tooltip:{padding:10,backgroundColor:'rgba(2,6,23,.96)',borderColor:'rgba(148,163,184,.2)',borderWidth:1,titleColor:'#e2e8f0',bodyColor:'#cbd5e1',callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${advMoney(ctx.raw?.y, yLabel==='USDT'?4:2)} ${yLabel}`}}},scales:{x:{type:'linear',ticks:{color:'#64748b',maxTicksLimit:8,font:{size:9},callback:(v)=>new Date(v).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})},grid:{color:'rgba(51,65,85,.12)'}},y:{position:'right',ticks:{color:'#64748b',maxTicksLimit:7,font:{size:9},callback:(v)=>advMoney(v,yLabel==='USDT'?4:2)},grid:{color:'rgba(51,65,85,.12)'}}}};
+    return {responsive:true,maintainAspectRatio:false,parsing:false,animation:{duration:320},interaction:{intersect:false,mode:'index'},plugins:{legend:{display:false},tooltip:{padding:11,displayColors:true,backgroundColor:'rgba(2,6,23,.98)',borderColor:'rgba(96,165,250,.22)',borderWidth:1,titleColor:'#f8fafc',bodyColor:'#cbd5e1',callbacks:{title:(items)=>{const x=items?.[0]?.raw?.x; const meta=items?.[0]?.chart?._venbotMeta||{}; if(!Number.isFinite(Number(x))) return ''; const anchor=Number(meta.anchor); if(Number.isFinite(anchor)){const hours=(Number(x)-anchor)/3600000; if(Math.abs(hours)<0.01) return 'AHORA · T0'; return hours>0?`T+${Math.round(hours)}H`:'HISTÓRICO';} return new Date(Number(x)).toLocaleString('es-VE');},label:(ctx)=>`${ctx.dataset.label}: ${advMoney(ctx.raw?.y, yLabel==='USDT'?4:2)} ${yLabel}`}}},scales:{x:{type:'linear',ticks:{color:'#64748b',maxTicksLimit:9,font:{size:9},callback:(v)=>new Date(v).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})},grid:{color:'rgba(51,65,85,.12)',drawBorder:false}},y:{position:'right',ticks:{color:'#64748b',maxTicksLimit:8,font:{size:9},callback:(v)=>advMoney(v,yLabel==='USDT'?4:2)},grid:{color:'rgba(51,65,85,.11)',drawBorder:false}}}};
+  }
+  const advPredictivePlugin={id:'venbotPredictiveOverlay',beforeDatasetsDraw(chart){
+    const meta=chart._venbotMeta||{}; const xScale=chart.scales?.x; if(!xScale||!Number.isFinite(meta.anchor)) return;
+    const x0=xScale.getPixelForValue(meta.anchor); const area=chart.chartArea; const ctx=chart.ctx; if(!area) return;
+    ctx.save();
+    ctx.fillStyle='rgba(139,92,246,.055)'; ctx.fillRect(x0,area.top,Math.max(0,area.right-x0),area.bottom-area.top);
+    ctx.setLineDash([6,5]); ctx.strokeStyle='rgba(96,165,250,.7)'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(x0,area.top); ctx.lineTo(x0,area.bottom); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle='#93c5fd'; ctx.font='900 9px system-ui,sans-serif'; ctx.fillText('AHORA',Math.min(x0+6,area.right-42),area.top+13);
+    ctx.restore();
+  },afterDatasetsDraw(chart){
+    const meta=chart._venbotMeta||{}; const xScale=chart.scales?.x, yScale=chart.scales?.y; if(!xScale||!yScale||!Array.isArray(meta.forecast)) return;
+    const ctx=chart.ctx; const area=chart.chartArea; ctx.save();
+    meta.forecast.filter(p=>!p.anchor && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y))).forEach(p=>{
+      const px=xScale.getPixelForValue(p.x), py=yScale.getPixelForValue(p.y); const hours=Math.round((Number(p.x)-meta.anchor)/3600000); const label=hours>0?`+${hours}H`:'';
+      if(px<area.left||px>area.right||py<area.top||py>area.bottom) return;
+      ctx.beginPath(); ctx.arc(px,py,4.3,0,Math.PI*2); ctx.fillStyle='#c084fc'; ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.fillStyle='#e9d5ff'; ctx.font='900 8px system-ui,sans-serif'; ctx.textAlign='center'; ctx.fillText(label,px,Math.max(area.top+12,py-10));
+    });
+    ctx.restore();
+  }};
+  function advRenderTimeline(rows, unit){
+    const box=document.getElementById('adv-timeline-strip'); if(!box) return;
+    box.innerHTML=rows.filter(r=>r&&r.h).map(r=>{const d=advNum(r.change), cls=advDirectionClass(r.direction); const hh=advHorizonHours(r.h); const label=Number.isFinite(hh)?`T+${hh}H`:advHorizonLabel(r.h); return `<div class="adv-timeline-node"><div class="flex items-center justify-between gap-2"><span class="t">${advEsc(label)}</span><span class="adv-pill ${cls}">${advPct(d)}</span></div><div class="v">${advMoney(r.central,unit==='USDT'?4:2)} ${advEsc(unit)}</div><div class="r">Rango ${advMoney(r.low,unit==='USDT'?4:2)} – ${advMoney(r.high,unit==='USDT'?4:2)} · ${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'confianza n/d'}</div></div>`}).join('');
   }
   function advRenderChart(points, forecast, unit){
     const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
     advDestroyChart();
-    const hist = Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))):[];
-    let proj = Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))):[];
+    const hist=Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
+    let proj=Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
+    const anchor=hist.length?Number(hist[hist.length-1].x):(proj.length?Number(proj[0].x):Date.now());
+    const currentY=hist.length?Number(hist[hist.length-1].y):(proj.length?Number(proj[0].y):NaN);
+    if(Number.isFinite(currentY)) proj=[{x:anchor,y:currentY,low:currentY,high:currentY,anchor:true},...proj.filter(p=>Number(p.x)>anchor)];
     if(!proj.length){
-      const empty=canvas.getContext('2d');
-      advancedChart=new Chart(empty,{type:'line',data:{datasets:[{label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2,tension:.18,fill:false}]},options:advChartOptions(unit)});
+      advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets:[{label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2.2,tension:.24,fill:false}]},options:advChartOptions(unit),plugins:[advPredictivePlugin]});
       return;
     }
-    const anchor = hist.length ? Number(hist[hist.length-1].x) : Date.now();
-    const currentY = hist.length ? Number(hist[hist.length-1].y) : Number(proj[0].y);
-    // El primer punto de la proyección es T0 (ahora), para unir visualmente
-    // el histórico real con la trayectoria futura del motor.
-    proj = [{x:anchor,y:currentY,low:currentY,high:currentY,anchor:true}, ...proj.sort((a,b)=>Number(a.x)-Number(b.x))];
-    const lower = proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)));
-    const upper = proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)));
+    const lower=proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y))); const upper=proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
     const datasets=[
-      {label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2,tension:.18,fill:false},
-      {label:'Proyección Venbot',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.08)',borderDash:[7,5],pointRadius:proj.map(p=>p.anchor?5:3),pointBackgroundColor:'#c084fc',pointBorderColor:'#0f172a',pointBorderWidth:1,borderWidth:3,tension:.18,fill:false},
+      {label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.04)',pointRadius:0,borderWidth:2.5,tension:.2,fill:false},
+      {label:'Proyección Venbot',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.08)',borderDash:[9,5],pointRadius:proj.map(p=>p.anchor?6:3.5),pointHoverRadius:7,borderWidth:3.1,tension:.19,fill:false},
+      {label:'Rango inferior',data:lower,borderColor:'rgba(192,132,252,.32)',borderDash:[3,4],pointRadius:0,borderWidth:1.1,fill:false},
+      {label:'Rango superior',data:upper,borderColor:'rgba(192,132,252,.32)',borderDash:[3,4],pointRadius:0,borderWidth:1.1,backgroundColor:'rgba(192,132,252,.12)',fill:'-1'}
     ];
-    if(lower.length && upper.length){
-      datasets.push(
-        {label:'Rango inferior',data:lower,borderColor:'rgba(148,163,184,.26)',borderDash:[2,4],pointRadius:0,borderWidth:1,fill:false},
-        {label:'Rango de proyección',data:upper,borderColor:'rgba(192,132,252,.24)',borderDash:[2,4],pointRadius:0,borderWidth:1,backgroundColor:'rgba(192,132,252,.10)',fill:'-1'}
-      );
-    }
-    advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit)});
+    advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit),plugins:[advPredictivePlugin]});
+    advancedChart._venbotMeta={anchor,forecast:proj};
+    advancedChart.update('none');
+    const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(anchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`;
   }
   function advRenderHorizonCards(rows, unit){
     const box=document.getElementById('adv-horizon-cards'); if(!box) return;
@@ -2333,7 +2353,7 @@
     const labels=['1h','3h','7h','24h'];
     box.innerHTML=`<table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción central</th><th class="py-2 pr-3">Evaluadas</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{const x=horizonObj[h]||{}; return `<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${advHorizonLabel(h)}</td><td class="py-2 pr-3 text-purple-300">${projections[h]?advMoney(projections[h].central,4):'n/d'} USDT</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'}</td><td class="py-2 text-slate-300">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'%':'n/d'}</td></tr>`}).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">Activo: ${advEsc(symbol)} · métricas leídas del Spot Prediction Tracking.</p>`;
   }
-  function advResetDetails(){ ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; }
+  function advResetDetails(){ ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; }
   function advProjectionRowsP2P(analysis){
     const src=analysis?.proyecciones_horizontes||{};
     return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza};});
@@ -2359,8 +2379,8 @@
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
     advRenderHorizonCards(proj,'Bs'); advRenderChart(hist,forecast,'Bs');
-    const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=a.metricas||{}; sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
-    const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(metric.muestras))?Number(metric.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(metric.cobertura_horas,2)} h</strong></div>`;}
+    const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
+    const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
     advRenderTraceP2P(perf,a.proyecciones_horizontes||{},advancedP2PBank);
     advSetStatus(`P2P ${advancedP2PBank} · ${periodConfig.label} de histórico real + proyección cuantitativa · ${new Date().toLocaleTimeString('es-VE')}`,'ok');
   }
