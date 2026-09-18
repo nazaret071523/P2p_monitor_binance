@@ -5608,12 +5608,32 @@ async def _create_paid_group_invite(plan: str):
         logger.warning("No se pudo crear invitación protegida %s: %s", plan, e)
         return None, str(e)
 
-async def _send_paid_group_access(telegram_user_id: int, plan: str):
-    """Envía acceso a las zonas que corresponden al plan activo.
+_TELEGRAM_ACCESS_INVITE_COOLDOWN_SECONDS = max(900, int(os.getenv("TELEGRAM_ACCESS_INVITE_COOLDOWN_SECONDS", "86400")))
+_TELEGRAM_ACCESS_LAST_INVITE = {}
 
-    PREMIUM -> grupo Premium.
-    VIP -> grupo Premium + grupo VIP.
-    El usuario completa el ingreso mediante solicitud; el bot valida y aprueba.
+
+def _telegram_member_is_active(member) -> bool:
+    status = getattr(member, "status", None)
+    if status in {"member", "administrator", "creator"}:
+        return True
+    return bool(getattr(member, "is_member", False))
+
+
+async def _telegram_user_in_chat(chat_id: int, telegram_user_id: int) -> bool:
+    try:
+        member = await telegram_app.bot.get_chat_member(chat_id=chat_id, user_id=telegram_user_id)
+        return _telegram_member_is_active(member)
+    except Exception as exc:
+        logger.debug("No se pudo verificar membresía user=%s chat=%s: %s", telegram_user_id, chat_id, exc)
+        return False
+
+
+async def _send_paid_group_access(telegram_user_id: int, plan: str):
+    """Provisiona acceso solo a las zonas que corresponden al plan activo.
+
+    No envía invitaciones si el usuario ya es miembro. Un mismo acceso faltante
+    queda protegido por un cooldown para evitar spam de invitaciones durante la
+    reconciliación periódica.
     """
     if not telegram_app or not telegram_user_id:
         return
@@ -5630,26 +5650,38 @@ async def _send_paid_group_access(telegram_user_id: int, plan: str):
         if not target or not str(target).lstrip("-").isdigit():
             logger.warning("Acceso %s no configurado para user=%s", label_key, telegram_user_id)
             continue
+        chat_id = int(target)
+        if await _telegram_user_in_chat(chat_id, int(telegram_user_id)):
+            continue
+        cooldown_key = (int(telegram_user_id), label_key)
+        now_mono = time.monotonic()
+        if (now_mono - _TELEGRAM_ACCESS_LAST_INVITE.get(cooldown_key, 0.0)) < _TELEGRAM_ACCESS_INVITE_COOLDOWN_SECONDS:
+            continue
         try:
             invite, err = await _create_paid_group_invite(label_key)
             if invite:
                 label = "PREMIUM 🔵" if label_key == "PREMIUM" else "VIP 🟣"
                 buttons.append([InlineKeyboardButton(f"Entrar a {label}", url=invite)])
+                _TELEGRAM_ACCESS_LAST_INVITE[cooldown_key] = now_mono
+                logger.info("[TELEGRAM ACCESS] invitación enviada user=%s plan=%s zona=%s", telegram_user_id, plan, label_key)
             else:
                 logger.warning("No se pudo crear invitación %s user=%s error=%s", label_key, telegram_user_id, err)
         except Exception:
             logger.exception("Error preparando acceso %s user=%s", label_key, telegram_user_id)
 
     if buttons:
-        await telegram_app.bot.send_message(
-            chat_id=int(telegram_user_id),
-            text=(f"🔓 *Acceso {plan} disponible*\n\n"
-                  "Tu plan activo habilita las zonas correspondientes.\n"
-                  "Pulsa el botón y solicita entrar; Venbot validará automáticamente tu plan.\n"
-                  "La membresía permanece vinculada a tu plan activo."),
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
+        try:
+            await telegram_app.bot.send_message(
+                chat_id=int(telegram_user_id),
+                text=(f"🔓 *Acceso {plan} disponible*\n\n"
+                      "Tu plan activo habilita las zonas correspondientes.\n"
+                      "Pulsa el botón y solicita entrar; Venbot validará automáticamente tu plan.\n"
+                      "La membresía permanece vinculada a tu plan activo."),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        except Exception:
+            logger.exception("No se pudo enviar el acceso privado user=%s plan=%s", telegram_user_id, plan)
 
 async def telegram_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     req = getattr(update, "chat_join_request", None)
@@ -5702,9 +5734,19 @@ async def _reconcile_paid_group_access():
                       AND (plan_code IN ('PREMIUM','VIP') OR status <> 'active')
                 """)
                 rows = cur.fetchall()
+
         for tg_id, raw_plan, status, exp in rows:
-            plan = _plan_vigente(raw_plan, exp) if status == "active" else "FREE"
             tg_id = int(tg_id)
+            plan = _plan_vigente(raw_plan, exp) if status == "active" else "FREE"
+
+            # Aprovisiona lo que corresponde incluso a cuentas activas desde antes
+            # del último despliegue. _send_paid_group_access evita duplicados por membresía.
+            if PLAN_ORDER[plan] >= PLAN_ORDER["PREMIUM"]:
+                try:
+                    await _send_paid_group_access(tg_id, plan)
+                except Exception:
+                    logger.exception("No se pudo aprovisionar acceso user=%s plan=%s", tg_id, plan)
+
             targets = []
             if "PREMIUM" in group_targets and PLAN_ORDER[plan] < PLAN_ORDER["PREMIUM"]:
                 targets.append(group_targets["PREMIUM"])
@@ -6168,6 +6210,13 @@ def _plan_vigente(plan, expires_at=None):
         return plan
     return plan
 
+def _is_developer_account(user):
+    """Devuelve True solo si la cuenta autenticada está vinculada a un Telegram User ID administrativo."""
+    if not user:
+        return False
+    tg_id = user.get("telegram_user_id")
+    return bool(tg_id is not None and str(tg_id) in TELEGRAM_ADMIN_USER_IDS)
+
 def _billing_policy(country):
     return BILLING_POLICY.get((country or DEFAULT_COUNTRY_CODE).upper(), BILLING_POLICY["DEFAULT"])
 
@@ -6277,12 +6326,12 @@ def _account_from_session(token: str):
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("""SELECT u.external_user_id,u.username,u.country_code,u.plan_code,u.status,u.plan_expires_at,s.expires_at FROM venbot_sessions s JOIN venbot_users u ON u.external_user_id=s.external_user_id WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>CURRENT_TIMESTAMP AND u.status='active' LIMIT 1""", (token_hash,))
+            cur.execute("""SELECT u.external_user_id,u.username,u.country_code,u.plan_code,u.status,u.plan_expires_at,u.telegram_user_id,s.expires_at FROM venbot_sessions s JOIN venbot_users u ON u.external_user_id=s.external_user_id WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>CURRENT_TIMESTAMP AND u.status='active' LIMIT 1""", (token_hash,))
             row = cur.fetchone()
             if not row:
                 return None
             cur.execute("UPDATE venbot_sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=%s", (token_hash,))
-    return dict(zip(["external_user_id","username","country_code","plan_code","status","plan_expires_at","session_expires_at"], row))
+    return dict(zip(["external_user_id","username","country_code","plan_code","status","plan_expires_at","telegram_user_id","session_expires_at"], row))
 
 def _create_session(external_user_id: str):
     token = secrets.token_urlsafe(48)
@@ -6771,22 +6820,22 @@ def auth_login(payload: LoginRequest, request: Request):
         raise HTTPException(status_code=429, detail="Demasiados intentos de inicio de sesión. Intenta nuevamente más tarde.")
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT external_user_id,username,password_hash,country_code,plan_code,status,plan_expires_at FROM venbot_users WHERE username=%s LIMIT 1", (payload.username.strip(),))
+            cur.execute("SELECT external_user_id,username,password_hash,country_code,plan_code,status,plan_expires_at,telegram_user_id FROM venbot_users WHERE username=%s LIMIT 1", (payload.username.strip(),))
             row = cur.fetchone()
     if not row or not row[2] or not _verify_password(payload.password, row[2]) or row[5] != "active":
         bucket.append(now_mono)
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
     _AUTH_LOGIN_ATTEMPTS.pop(client_key, None)
     token, expires = _create_session(row[0])
-    user = dict(zip(["external_user_id","username","password_hash","country_code","plan_code","status","plan_expires_at"], row))
-    return {"ok": True, "session_token": token, "expires_at": expires.isoformat(), "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_vigente(user["plan_code"], user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
+    user = dict(zip(["external_user_id","username","password_hash","country_code","plan_code","status","plan_expires_at","telegram_user_id"], row))
+    return {"ok": True, "session_token": token, "expires_at": expires.isoformat(), "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_vigente(user["plan_code"], user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None, "is_developer": _is_developer_account(user)}, "entitlements": _foundation_entitlements(user)}
 
 @app.post("/api/auth/me")
 def auth_me(payload: SessionRequest):
     user = _account_from_session(payload.session_token)
     if not user:
         raise HTTPException(status_code=401, detail="session_expired")
-    return {"ok": True, "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_vigente(user["plan_code"], user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None}, "entitlements": _foundation_entitlements(user)}
+    return {"ok": True, "user": {"external_user_id": user["external_user_id"], "username": user["username"], "country_code": user["country_code"], "plan": _plan_vigente(user["plan_code"], user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user["plan_expires_at"].isoformat() if user["plan_expires_at"] else None, "is_developer": _is_developer_account(user)}, "entitlements": _foundation_entitlements(user)}
 
 @app.post("/api/auth/logout")
 def auth_logout(payload: SessionRequest):
@@ -6818,7 +6867,7 @@ def foundation_bootstrap(payload: FoundationBootstrapRequest, request: Request):
     policy = _billing_policy(user.get("country_code"))
     return {
         "ok": True,
-        "user": {"external_user_id": user["external_user_id"], "username": user.get("username"), "country_code": user["country_code"], "plan": _plan_vigente(user.get("plan_code"), user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user.get("plan_expires_at").isoformat() if user.get("plan_expires_at") else None},
+        "user": {"external_user_id": user["external_user_id"], "username": user.get("username"), "country_code": user["country_code"], "plan": _plan_vigente(user.get("plan_code"), user.get("plan_expires_at")), "status": user["status"], "plan_expires_at": user.get("plan_expires_at").isoformat() if user.get("plan_expires_at") else None, "is_developer": _is_developer_account(user)},
         "authenticated": bool(authenticated),
         "entitlements": ent,
         "billing": {"external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
