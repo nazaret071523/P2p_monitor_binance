@@ -5933,7 +5933,7 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if banco not in valid_banks or horizonte not in allowed_horizons:
             await _safe_callback_answer(update, "Opción no disponible para esta categoría.", show_alert=True)
             return
-        if not await _telegram_rate_allowed(update, f"auto:{plan}:{banco}:{horizonte}"):
+        if not _telegram_rate_allowed(update, f"auto:{plan}:{banco}:{horizonte}"):
             await _safe_callback_answer(update, "Espera unos segundos antes de cambiar de consulta.", show_alert=True)
             return
         try:
