@@ -93,6 +93,10 @@
 /* v31.3: bloques técnicos solo para el desarrollador; se reubican debajo del análisis de usuario. */
 [data-developer-only="true"]{display:none!important}
 [data-developer-only="true"].developer-visible{display:block!important}
+[data-developer-only="true"]{display:none!important}
+.adv-metric-card{min-width:0;border:1px solid rgba(51,65,85,.7);background:rgba(2,6,23,.58);border-radius:.9rem;padding:.7rem .75rem;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+.adv-metric-card span{display:block;color:#64748b;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.adv-metric-card strong{display:block;margin-top:.35rem;color:#f8fafc;font-size:14px;font-weight:900;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.adv-metric-card small{display:block;margin-top:.2rem;color:#475569;font-size:8px;font-weight:700}.adv-kind-btn,.adv-bank-btn,.adv-period-btn{background:rgba(15,23,42,.72);border-color:rgba(51,65,85,.85);color:#94a3b8}.adv-kind-btn.active{background:rgba(34,211,238,.11);border-color:rgba(34,211,238,.35);color:#67e8f9}.adv-bank-btn.active,.adv-period-btn.active{background:rgba(59,130,246,.10);border-color:rgba(96,165,250,.35);color:#93c5fd}.adv-horizon-row{border:1px solid rgba(51,65,85,.7);background:rgba(2,6,23,.48);border-radius:.8rem;padding:.6rem .65rem}.adv-horizon-row strong{color:#f8fafc;font-weight:900}.adv-pill{font-size:8px;font-weight:900;border-radius:999px;padding:.2rem .45rem}.adv-pill.up{color:#6ee7b7;background:rgba(16,185,129,.09);border:1px solid rgba(16,185,129,.2)}.adv-pill.down{color:#fda4af;background:rgba(244,63,94,.09);border:1px solid rgba(244,63,94,.2)}.adv-pill.flat{color:#fcd34d;background:rgba(245,158,11,.09);border:1px solid rgba(245,158,11,.2)}
+
 /* En Inicio NO mostramos la gráfica: la gráfica vive en Análisis. */
 #venbot-market-view #sec-p2p-chart{display:none!important}
 /* IA: el bloque de análisis se conserva dentro de Análisis; el chat sigue siendo flotante/modal. */
@@ -572,6 +576,19 @@
           <h2 class="text-xl md:text-2xl font-black text-white mt-1">Más</h2>
           <p class="text-[10px] text-slate-500 mt-1">Comunidad, cuenta, soporte y opciones legales siguen en el menú secundario.</p>
         </div>
+        <div data-developer-only="true" id="advanced-graphs-launcher" class="hidden glass-card p-4 md:p-5 rounded-2xl border border-cyan-500/20 space-y-3 mt-4">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-start gap-3 min-w-0">
+              <div class="w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-300 shrink-0"><i class="fa-solid fa-wave-square"></i></div>
+              <div><p class="text-[9px] text-cyan-300 font-black uppercase tracking-[0.18em]">Solo desarrollador</p><h3 class="text-sm md:text-base font-black text-white mt-1">Centro Predictivo Venbot</h3><p class="text-[10px] text-slate-500 mt-1">Gráficas avanzadas P2P y Spot · datos reales · proyección · escenarios · validación.</p></div>
+            </div>
+            <span class="text-[8px] font-black uppercase text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full shrink-0">ADMIN</span>
+          </div>
+          <button type="button" onclick="openAdvancedGraphs()" class="w-full focus-ring rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/15 text-cyan-200 px-4 py-3 text-xs font-black flex items-center justify-between transition">
+            <span><i class="fa-solid fa-chart-line mr-2"></i>Abrir gráficas avanzadas</span><i class="fa-solid fa-arrow-up-right-from-square"></i>
+          </button>
+          <p class="text-[9px] text-slate-600">No modifica los motores P2P, Spot, Quant ni Tracking; esta fase solo añade visualización sobre datos existentes.</p>
+        </div>
         <div id="community-content-slot"></div>
       </section>
 
@@ -756,6 +773,92 @@
   </div>
 
     <!-- Menú informativo y legal -->
+    <div id="advancedGraphsModal" class="hidden fixed inset-0 z-[95] bg-black/90 backdrop-blur-md p-2 md:p-4 overflow-y-auto">
+      <div class="max-w-[1500px] mx-auto min-h-full flex items-start justify-center py-2 md:py-4">
+        <section class="w-full glass-card rounded-2xl border border-cyan-500/20 shadow-2xl overflow-hidden fade-up">
+          <header class="px-4 py-3 md:px-5 md:py-4 border-b border-slate-800 bg-slate-950/80 sticky top-0 z-10">
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[9px] font-black uppercase tracking-[0.2em] text-cyan-300">Venbot Predictive Command Center</p>
+                <h2 class="text-base md:text-xl font-black text-white mt-1">Gráficas avanzadas · <span id="adv-graph-kind-label">P2P</span></h2>
+                <p class="text-[10px] text-slate-500 mt-1">Visualización administrativa sobre datos reales de los motores productivos.</p>
+              </div>
+              <button type="button" onclick="closeAdvancedGraphs()" class="focus-ring w-10 h-10 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center shrink-0"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+          </header>
+
+          <div class="p-3 md:p-5 space-y-4">
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-xl p-1">
+                <button type="button" id="adv-tab-p2p" onclick="setAdvancedGraphKind('p2p')" class="adv-kind-btn focus-ring rounded-lg px-3 py-2 text-[10px] font-black">P2P</button>
+                <button type="button" id="adv-tab-spot" onclick="setAdvancedGraphKind('spot')" class="adv-kind-btn focus-ring rounded-lg px-3 py-2 text-[10px] font-black">SPOT</button>
+              </div>
+              <div id="adv-p2p-bank-controls" class="flex flex-wrap items-center gap-1.5">
+                <button type="button" data-adv-bank="GENERAL" onclick="setAdvancedP2PBank('GENERAL')" class="adv-bank-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">GENERAL</button>
+                <button type="button" data-adv-bank="MERCANTIL" onclick="setAdvancedP2PBank('MERCANTIL')" class="adv-bank-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">MERCANTIL</button>
+                <button type="button" data-adv-bank="PROVINCIAL" onclick="setAdvancedP2PBank('PROVINCIAL')" class="adv-bank-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">PROVINCIAL</button>
+                <button type="button" data-adv-bank="BNC" onclick="setAdvancedP2PBank('BNC')" class="adv-bank-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">BNC</button>
+              </div>
+              <select id="adv-spot-symbol" onchange="setAdvancedSpotSymbol(this.value)" class="hidden focus-ring bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-2 text-[10px] font-black text-slate-200">
+                <option>BTCUSDT</option><option>ETHUSDT</option><option>SOLUSDT</option><option>SUIUSDT</option><option>AAVEUSDT</option><option>UNIUSDT</option><option>KSMUSDT</option><option>ZECUSDT</option><option>XRPUSDT</option>
+              </select>
+              <div class="ml-auto flex items-center gap-1.5">
+                <button type="button" data-adv-period="24h" onclick="setAdvancedPeriod('24h')" class="adv-period-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">24H</button>
+                <button type="button" data-adv-period="7d" onclick="setAdvancedPeriod('7d')" class="adv-period-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">7D</button>
+                <button type="button" data-adv-period="30d" onclick="setAdvancedPeriod('30d')" class="adv-period-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">30D</button>
+                <button type="button" onclick="loadAdvancedGraphs()" class="focus-ring w-9 h-9 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-cyan-300" title="Actualizar"><i class="fa-solid fa-rotate-right text-[10px]"></i></button>
+              </div>
+            </div>
+
+            <div id="adv-graph-status" class="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-500">Preparando datos…</div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+              <div class="adv-metric-card"><span>Actual</span><strong id="adv-m-current">n/d</strong><small id="adv-m-current-unit">Bs</small></div>
+              <div class="adv-metric-card"><span>Proyección</span><strong id="adv-m-projection">n/d</strong><small id="adv-m-projection-h">24H</small></div>
+              <div class="adv-metric-card"><span>Cambio</span><strong id="adv-m-change">n/d</strong><small>horizonte</small></div>
+              <div class="adv-metric-card"><span>Rango</span><strong id="adv-m-range">n/d</strong><small>estimado</small></div>
+              <div class="adv-metric-card"><span>Confianza</span><strong id="adv-m-confidence">n/d</strong><small>/100</small></div>
+              <div class="adv-metric-card"><span>Regresión</span><strong id="adv-m-r2">n/d</strong><small>R²</small></div>
+              <div class="adv-metric-card"><span>Validación</span><strong id="adv-m-evaluated">n/d</strong><small>evaluadas</small></div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-3">
+              <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot</h3><p class="text-[9px] text-slate-500 mt-1">La línea sólida representa observaciones; la línea punteada representa proyección.</p></div>
+                  <div class="flex items-center gap-3 text-[9px] text-slate-500"><span><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección</span><span><i class="fa-solid fa-ruler-combined text-slate-400 mr-1"></i>Rango</span></div>
+                </div>
+                <div class="relative h-[18rem] md:h-[28rem] w-full rounded-xl overflow-hidden bg-slate-950/40"><canvas id="advancedPredictiveChart"></canvas></div>
+              </div>
+
+              <aside class="space-y-3">
+                <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
+                  <div class="flex items-center justify-between gap-2"><h3 class="text-xs font-black text-white">Proyección por horizonte</h3><span class="text-[8px] font-black uppercase tracking-wider text-slate-500">Motor real</span></div>
+                  <div id="adv-horizon-cards" class="space-y-2 mt-3"></div>
+                </div>
+                <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
+                  <h3 class="text-xs font-black text-white">Escenarios y estructura</h3>
+                  <div id="adv-scenarios" class="mt-3 space-y-2 text-[10px]"></div>
+                </div>
+                <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
+                  <h3 class="text-xs font-black text-white">Validación de predicciones</h3>
+                  <div id="adv-validation" class="mt-3 space-y-2 text-[10px]"></div>
+                </div>
+              </aside>
+            </div>
+
+            <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
+              <div class="flex items-center justify-between gap-2 mb-3"><div><h3 class="text-xs md:text-sm font-black text-white">Trazabilidad de la predicción</h3><p class="text-[9px] text-slate-500 mt-1">Venbot conserva la separación entre predicción y resultado real cuando el tracking ya ha evaluado el horizonte.</p></div><span class="text-[8px] uppercase font-black text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">T0 → resultado</span></div>
+              <div id="adv-trace-table" class="overflow-x-auto"></div>
+            </div>
+
+            <div class="rounded-xl border border-amber-500/15 bg-amber-500/5 px-3 py-2 text-[9px] text-slate-500 leading-relaxed">
+              <i class="fa-solid fa-circle-info text-amber-300 mr-1"></i> La visualización muestra resultados y métricas entregados por los motores de Venbot. No representa una garantía de precio, rentabilidad ni precisión perfecta.
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
     <div id="loginModal" class="fixed inset-0 z-[90] bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4" onclick="if(event.target===this) closeLoginModal()">
       <div class="glass-card w-full max-w-sm rounded-2xl border border-emerald-500/30 p-5 shadow-2xl space-y-4 fade-up">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -2132,6 +2235,149 @@
 
 <script>
 (function(){
+  let advancedGraphKind = 'p2p';
+  let advancedP2PBank = 'GENERAL';
+  let advancedSpotSymbol = 'BTCUSDT';
+  let advancedPeriod = '24h';
+  let advancedChart = null;
+  let advancedBusy = false;
+
+  const advEsc = (value) => String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
+  const advNum = (value) => Number.isFinite(Number(value)) ? Number(value) : NaN;
+  const advMoney = (value, decimals=2) => { const n=advNum(value); return Number.isFinite(n) ? n.toLocaleString('es-VE',{minimumFractionDigits:decimals,maximumFractionDigits:decimals}) : 'n/d'; };
+  const advPct = (value) => { const n=advNum(value); return Number.isFinite(n) ? `${n>=0?'+':''}${n.toFixed(2)}%` : 'n/d'; };
+  const advHorizonLabel = h => String(h).toUpperCase();
+  const advDirectionClass = dir => String(dir||'').toUpperCase()==='ALCISTA' ? 'up' : String(dir||'').toUpperCase()==='BAJISTA' ? 'down' : 'flat';
+  const advDirectionText = dir => advEsc(dir || 'SIN LECTURA');
+
+  function advHeaders(){
+    const token = getAuthToken();
+    const h = {'Accept':'application/json'};
+    if(token) h['X-Venbot-Session']=token;
+    return h;
+  }
+  async function advFetch(url){
+    const r=await fetch(url,{headers:advHeaders(),cache:'no-store'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(typeof d.detail==='string'?d.detail:(d.error||`HTTP ${r.status}`));
+    return d;
+  }
+  function advSetStatus(text, tone='normal'){
+    const el=document.getElementById('adv-graph-status'); if(!el) return;
+    el.className='rounded-xl border px-3 py-2 text-[10px] '+(tone==='ok'?'border-emerald-500/20 bg-emerald-500/5 text-emerald-300':tone==='error'?'border-rose-500/20 bg-rose-500/5 text-rose-300':'border-slate-800 bg-slate-950/60 text-slate-500');
+    el.textContent=text;
+  }
+  function advSetText(id,value){const el=document.getElementById(id); if(el) el.textContent=value;}
+  function advSetKindUI(){
+    document.querySelectorAll('.adv-kind-btn').forEach(b=>b.classList.toggle('active', b.id===`adv-tab-${advancedGraphKind}`));
+    const p2p=document.getElementById('adv-p2p-bank-controls'), spot=document.getElementById('adv-spot-symbol');
+    if(p2p) p2p.classList.toggle('hidden', advancedGraphKind!=='p2p');
+    if(spot) spot.classList.toggle('hidden', advancedGraphKind!=='spot');
+    advSetText('adv-graph-kind-label', advancedGraphKind==='p2p'?'P2P':'Spot');
+  }
+  function advSetButtons(){
+    document.querySelectorAll('[data-adv-bank]').forEach(b=>b.classList.toggle('active', b.dataset.advBank===advancedP2PBank));
+    document.querySelectorAll('[data-adv-period]').forEach(b=>b.classList.toggle('active', b.dataset.advPeriod===advancedPeriod));
+  }
+  function advDestroyChart(){ if(advancedChart){ advancedChart.destroy(); advancedChart=null; } }
+  function advChartOptions(yLabel){
+    return {responsive:true,maintainAspectRatio:false,parsing:false,animation:false,interaction:{intersect:false,mode:'index'},plugins:{legend:{display:false},tooltip:{padding:10,backgroundColor:'rgba(2,6,23,.96)',borderColor:'rgba(148,163,184,.2)',borderWidth:1,titleColor:'#e2e8f0',bodyColor:'#cbd5e1',callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${advMoney(ctx.raw?.y, yLabel==='USDT'?4:2)} ${yLabel}`}}},scales:{x:{type:'linear',ticks:{color:'#64748b',maxTicksLimit:8,font:{size:9},callback:(v)=>new Date(v).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})},grid:{color:'rgba(51,65,85,.12)'}},y:{position:'right',ticks:{color:'#64748b',maxTicksLimit:7,font:{size:9},callback:(v)=>advMoney(v,yLabel==='USDT'?4:2)},grid:{color:'rgba(51,65,85,.12)'}}}};
+  }
+  function advRenderChart(points, forecast, unit){
+    const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
+    advDestroyChart();
+    const hist = Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))):[];
+    const proj = Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))):[];
+    const lower = proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
+    const upper = proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
+    const datasets=[{label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2,tension:.18,fill:false},{label:'Proyección',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.05)',borderDash:[7,5],pointRadius:3,pointBackgroundColor:'#c084fc',borderWidth:2,tension:.2,fill:false}];
+    if(lower.length && upper.length){ datasets.push({label:'Límite inferior',data:lower,borderColor:'rgba(148,163,184,.28)',borderDash:[2,4],pointRadius:0,borderWidth:1,fill:false},{label:'Límite superior',data:upper,borderColor:'rgba(148,163,184,.28)',borderDash:[2,4],pointRadius:0,borderWidth:1,fill:false}); }
+    advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit)});
+  }
+  function advRenderHorizonCards(rows, unit){
+    const box=document.getElementById('adv-horizon-cards'); if(!box) return;
+    box.innerHTML=rows.map(r=>{const c=advNum(r.change), cls=advDirectionClass(r.direction); return `<div class="adv-horizon-row"><div class="flex items-center justify-between gap-2"><div><span class="text-[8px] uppercase text-slate-500 font-black">${advHorizonLabel(r.h)}</span><strong class="block text-sm mt-1">${advMoney(r.central,unit==='USDT'?4:2)} ${advEsc(unit)}</strong></div><span class="adv-pill ${cls}">${advPct(c)}</span></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div><span class="text-slate-600">Rango</span><strong class="block mt-0.5 text-slate-300">${advMoney(r.low,unit==='USDT'?4:2)} – ${advMoney(r.high,unit==='USDT'?4:2)}</strong></div><div><span class="text-slate-600">Confianza</span><strong class="block mt-0.5 text-slate-300">${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'n/d'}</strong></div></div></div>`}).join('') || '<div class="text-slate-600">Sin proyecciones disponibles.</div>';
+  }
+  function advRenderTraceP2P(perf, projections, bank){
+    const box=document.getElementById('adv-trace-table'); if(!box) return;
+    const horizonObj=perf?.horizons||perf?.by_horizon||perf?.summary||{};
+    const labels=['1h','3h','7h','24h'];
+    const rows=labels.map(h=>{const x=horizonObj[h]||{}; return {h,eval:x.evaluated??x.count,mae:x.mae_ves??x.mae,error:x.mape_pct??x.error_pct,acc:x.direction_accuracy_pct??x.accuracy_pct};});
+    box.innerHTML=`<table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción central</th><th class="py-2 pr-3">Evaluadas</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${rows.map(r=>`<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${advHorizonLabel(r.h)}</td><td class="py-2 pr-3 text-purple-300">${projections[r.h]?advMoney(projections[r.h].midpoint):'n/d'} Bs</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(r.eval))?r.eval:'n/d'}</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(r.error))?advMoney(r.error,2)+'%':Number.isFinite(Number(r.mae))?advMoney(r.mae,2)+' Bs':'n/d'}</td><td class="py-2 text-slate-300">${Number.isFinite(Number(r.acc))?advMoney(r.acc,1)+'%':'n/d'}</td></tr>`).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">Banco: ${advEsc(bank)} · métricas leídas del Prediction Tracking. La ausencia de una métrica se muestra como n/d.</p>`;
+  }
+  function advRenderTraceSpot(perf, projections, symbol){
+    const box=document.getElementById('adv-trace-table'); if(!box) return;
+    const horizonObj=perf?.horizons||perf?.horizon_summary||perf?.by_horizon||perf?.summary||{};
+    const labels=['1h','3h','7h','24h'];
+    box.innerHTML=`<table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción central</th><th class="py-2 pr-3">Evaluadas</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{const x=horizonObj[h]||{}; return `<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${advHorizonLabel(h)}</td><td class="py-2 pr-3 text-purple-300">${projections[h]?advMoney(projections[h].central,4):'n/d'} USDT</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'}</td><td class="py-2 text-slate-300">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'%':'n/d'}</td></tr>`}).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">Activo: ${advEsc(symbol)} · métricas leídas del Spot Prediction Tracking.</p>`;
+  }
+  function advResetDetails(){ ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; }
+  function advProjectionRowsP2P(analysis){
+    const src=analysis?.proyecciones_horizontes||{};
+    return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza};});
+  }
+  function advProjectionRowsSpot(d){
+    const src=d?.projections||{};
+    return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.central,low:q.low,high:q.high,change:q.change_pct,direction:Math.abs(Number(q.change_pct||0))<0.08?'RANGO':Number(q.change_pct)>0?'ALCISTA':'BAJISTA',confidence:q.confidence};});
+  }
+  async function loadAdvancedP2P(){
+    const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=1200&t=${Date.now()}`);
+    const a=d.analysis||{}; const perf=d.performance||{};
+    const proj=advProjectionRowsP2P(a);
+    const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
+    const hist=periodConfig.rows.map(r=>({x:new Date(r.timestamp).getTime(),y:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.y>0);
+    const now=Date.now();
+    const forecast=proj.map(r=>({x:now+Number(r.h)*3600000,y:Number(r.central),low:Number(r.low),high:Number(r.high)}));
+    const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
+    const m=a.metricas||{};
+    const current=hist.length?hist[hist.length-1].y:((Number(m.compra)||Number(marketState.buy))+(Number(m.venta)||Number(marketState.sell)))/2;
+    advSetText('adv-m-current',`${advMoney(current)} Bs`); advSetText('adv-m-current-unit',`${advancedP2PBank} · midpoint`);
+    advSetText('adv-m-projection',`${advMoney(selected?.central)} Bs`); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change));
+    advSetText('adv-m-range',selected?`${advMoney(selected.low)}–${advMoney(selected.high)}`:'n/d'); advSetText('adv-m-confidence',selected&&Number.isFinite(Number(selected.confidence))?advMoney(selected.confidence,0):'n/d');
+    advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
+    const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
+    advRenderHorizonCards(proj,'Bs'); advRenderChart(hist,forecast,'Bs');
+    const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=a.metricas||{}; sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
+    const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(metric.muestras))?Number(metric.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(metric.cobertura_horas,2)} h</strong></div>`;}
+    advRenderTraceP2P(perf,a.proyecciones_horizontes||{},advancedP2PBank);
+    advSetStatus(`P2P ${advancedP2PBank} · ${periodConfig.label} de histórico real + proyección cuantitativa · ${new Date().toLocaleTimeString('es-VE')}`,'ok');
+  }
+  async function loadAdvancedSpot(){
+    const rangeCfg = advancedPeriod==='24h' ? {interval:'1h',limit:80} : advancedPeriod==='7d' ? {interval:'1h',limit:180} : {interval:'4h',limit:220};
+    const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/spot?symbol=${encodeURIComponent(advancedSpotSymbol)}&interval=${rangeCfg.interval}&limit=${rangeCfg.limit}&t=${Date.now()}`);
+    const pred=d.prediction||{}; const o=pred.observed||{}; const a=pred.analysis||{}; const proj=advProjectionRowsSpot(pred); const perf=d.performance||{};
+    const points=(d.candles||[]).map(c=>({x:Number(c.open_time||c.timestamp||c.time),y:Number(c.close)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+    const forecast=proj.map(r=>({x:Date.now()+Number(r.h)*3600000,y:Number(r.central),low:Number(r.low),high:Number(r.high)}));
+    const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
+    advSetText('adv-m-current',advMoney(o.price,4)); advSetText('adv-m-current-unit','USDT'); advSetText('adv-m-projection',advMoney(selected?.central,4)); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change)); advSetText('adv-m-range',selected?`${advMoney(selected.low,4)}–${advMoney(selected.high,4)}`:'n/d'); advSetText('adv-m-confidence',Number.isFinite(Number(a.confidence))?advMoney(a.confidence,0):'n/d'); advSetText('adv-m-r2',Number.isFinite(Number(a.regression_r2))?advMoney(a.regression_r2,3):'n/d');
+    const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number(perf?.horizons?.[hz]?.evaluated??0),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
+    advRenderHorizonCards(proj,'USDT'); advRenderChart(points,forecast,'USDT');
+    const sbox=document.getElementById('adv-scenarios'); if(sbox){const sc=pred.scenarios_24h||{}; sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.trend)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(a.support,4)} USDT</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(a.resistance,4)} USDT</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Escenario 24H</span><strong class="block mt-1">Bajista ${advMoney(sc.bearish,4)} · Central ${advMoney(sc.central,4)} · Alcista ${advMoney(sc.bullish,4)}</strong></div>`;}
+    const vbox=document.getElementById('adv-validation'); if(vbox){const hz=perf?.horizons||{}; vbox.innerHTML=['1h','3h','7h','24h'].map(hzKey=>{const x=hz[hzKey]||{};return `<div class="adv-horizon-row"><div class="flex items-center justify-between"><span class="font-black text-slate-300">${hzKey.toUpperCase()}</span><span class="text-slate-500">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'} evaluadas</span></div><strong class="block mt-1">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'% dirección':'n/d'}</strong></div>`}).join('');}
+    advRenderTraceSpot(perf,pred.projections||{},advancedSpotSymbol);
+    advSetStatus(`${advancedSpotSymbol} · ${advancedPeriod.toUpperCase()} de histórico real + proyección Venbot · ${new Date(pred.generated_at||Date.now()).toLocaleTimeString('es-VE')}`,'ok');
+  }
+  window.openAdvancedGraphs=async function(){
+    if(!window.venbotUser?.is_developer){alert('🔐 Centro Predictivo reservado al administrador de Venbot.');return;}
+    const modal=document.getElementById('advancedGraphsModal'); if(!modal) return; modal.classList.remove('hidden'); document.body.classList.add('overflow-hidden'); advSetKindUI(); advSetButtons(); await loadAdvancedGraphs();
+  };
+  window.closeAdvancedGraphs=function(){ const modal=document.getElementById('advancedGraphsModal'); if(modal) modal.classList.add('hidden'); document.body.classList.remove('overflow-hidden'); advDestroyChart(); };
+  window.setAdvancedGraphKind=async function(kind){advancedGraphKind=kind==='spot'?'spot':'p2p';advSetKindUI();advSetButtons();await loadAdvancedGraphs();};
+  window.setAdvancedP2PBank=async function(bank){advancedP2PBank=['GENERAL','MERCANTIL','PROVINCIAL','BNC'].includes(bank)?bank:'GENERAL';advSetButtons();await loadAdvancedGraphs();};
+  window.setAdvancedSpotSymbol=async function(symbol){advancedSpotSymbol=['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'].includes(symbol)?symbol:'BTCUSDT';await loadAdvancedGraphs();};
+  window.setAdvancedPeriod=async function(p){advancedPeriod=['24h','7d','30d'].includes(p)?p:'24h';advSetButtons();await loadAdvancedGraphs();};
+  window.loadAdvancedGraphs=async function(){
+    if(advancedBusy) return; advancedBusy=true; advResetDetails(); advSetStatus('Cargando datos reales…');
+    try{
+      if(advancedGraphKind==='spot' && !window.venbotUser?.is_developer) throw new Error('Acceso reservado al administrador.');
+      if(advancedGraphKind==='p2p') await loadAdvancedP2P(); else await loadAdvancedSpot();
+    }catch(e){console.error('Venbot centro predictivo:',e);advSetStatus(`No se pudo cargar la gráfica avanzada: ${e.message||'error temporal'}`,'error');}
+    finally{advancedBusy=false;}
+  };
+})();
+</script>
+<script>
+(function(){
   const host=document.getElementById('venbot-route-host');
   const market=document.getElementById('venbot-market-view');
   const analysis=document.getElementById('venbot-analysis-view');
@@ -2149,7 +2395,7 @@
   const contextMap={market:'Mercado P2P · USDT / VES',analysis:'Análisis P2P · Tendencia y predicción',spot:'Spot · Predicción y proyección',alerts:'Alertas de precio P2P',international:'Mercado Internacional',more:'Comunidad · Cuenta · Soporte'};
   function applyDeveloperOnly(){
     const visible = !!window.venbotUser?.is_developer;
-    [quantBacktest, quantAdaptive].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
+    [quantBacktest, quantAdaptive, document.getElementById('advanced-graphs-launcher')].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
   }
   window.applyVenbotDeveloperUI = applyDeveloperOnly;
   function place(){
