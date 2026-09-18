@@ -798,7 +798,7 @@
   <div id="aiChatModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="glass-card w-full max-w-lg rounded-2xl border border-indigo-500/30 flex flex-col h-[500px] shadow-2xl overflow-hidden fade-up">
       <div class="p-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-        <div class="flex items-center gap-2"><span class="venbot-neural-mini" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><ellipse class="neural-orbit" cx="32" cy="32" rx="27" ry="11"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="23" ry="8"/><path class="neural-back" d="M32 8 L49 19 L45 45 L32 55 L19 45 L15 19 Z"/><path class="neural-left" d="M32 8 L32 55 L19 45 L15 19 Z"/><path class="neural-right" d="M32 8 L49 19 L45 45 L32 55 Z"/><path class="neural-face" d="M32 13 L44 22 L41 41 L32 48 L23 41 L20 22 Z"/><circle class="neural-core" cx="32" cy="31" r="10"/><path class="neural-v" d="M24 23 L29 23 L32 34 L35 23 L40 23 L35 41 L29 41 Z"/><circle class="neural-node" cx="32" cy="16" r="1.6"/></svg></span><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI</h3><p class="text-[10px] text-emerald-400 font-semibold">Copiloto conversacional · mercado + preguntas generales</p></div></div>
+        <div class="flex items-center gap-2"><span class="venbot-neural-mini" aria-label="Venbot Neural IA"><svg class="venbot-neural-svg" viewBox="0 0 64 64" role="img" aria-hidden="true"><ellipse class="neural-orbit" cx="32" cy="32" rx="27" ry="11"/><ellipse class="neural-orbit2" cx="32" cy="32" rx="23" ry="8"/><path class="neural-back" d="M32 8 L49 19 L45 45 L32 55 L19 45 L15 19 Z"/><path class="neural-left" d="M32 8 L32 55 L19 45 L15 19 Z"/><path class="neural-right" d="M32 8 L49 19 L45 45 L32 55 Z"/><path class="neural-face" d="M32 13 L44 22 L41 41 L32 48 L23 41 L20 22 Z"/><circle class="neural-core" cx="32" cy="31" r="10"/><path class="neural-v" d="M24 23 L29 23 L32 34 L35 23 L40 23 L35 41 L29 41 Z"/><circle class="neural-node" cx="32" cy="16" r="1.6"/></svg></span><div><h3 class="font-extrabold text-xs text-white">Chat en directo · Venbot AI</h3><p class="ai-plan-subtitle text-[10px] text-emerald-400 font-semibold">P2P FREE · horizonte 1H · 5 consultas/día</p></div></div>
         <div class="flex items-center gap-1.5">
           <button id="ai-voice-toggle" type="button" onclick="toggleAIVoice()" class="focus-ring w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition" title="Activar/desactivar voz"><i class="fa-solid fa-volume-high text-xs"></i></button>
           <button id="ai-voice-stop" type="button" onclick="stopAIVoice()" class="focus-ring w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition" title="Detener voz"><i class="fa-solid fa-stop text-xs"></i></button>
@@ -1483,6 +1483,7 @@
         btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
       });
       if (typeof renderP2PHorizon === 'function') renderP2PHorizon();
+      applyAIPlanUI();
       if (typeof window.applyVenbotDeveloperUI === 'function') window.applyVenbotDeveloperUI();
     }
 
@@ -1702,7 +1703,29 @@
         document.getElementById('menu-online-count').textContent = n;
       } catch(e) {}
     }
-    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Inicia sesión para usar Venbot AI. Tu plan FREE incluye 5 consultas al día.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); }
+    function getAIGuestId() {
+      let id = localStorage.getItem('venbot-ai-guest-id');
+      if (!id) { id = (crypto.randomUUID ? crypto.randomUUID() : 'guest-' + Date.now() + '-' + Math.random().toString(36).slice(2)); localStorage.setItem('venbot-ai-guest-id', id); }
+      return id;
+    }
+    function applyAIPlanUI() {
+      const plan = getFrontendPlan();
+      document.querySelectorAll('.ai-quick-chip[data-ai-horizon]').forEach(btn => {
+        const horizon = btn.dataset.aiHorizon;
+        const ok = allowedP2PHorizons(plan).includes(horizon);
+        btn.classList.toggle('hidden', !ok);
+        btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
+      });
+      const title = document.querySelector('#aiChatModal h3');
+      const subtitle = document.querySelector('#aiChatModal .ai-plan-subtitle');
+      const input = document.getElementById('ai-user-input');
+      if (title) title.textContent = plan === 'VIP' ? 'Chat en directo · Venbot AI VIP' : plan === 'PREMIUM' ? 'Chat en directo · Venbot AI Premium' : 'Chat en directo · Venbot AI FREE';
+      if (subtitle) subtitle.textContent = plan === 'VIP' ? 'P2P + Spot · 1H / 3H / 7H / 24H' : plan === 'PREMIUM' ? 'P2P Premium · 1H / 3H / 7H' : 'P2P FREE · horizonte 1H · 5 consultas/día';
+      if (input) input.placeholder = plan === 'FREE' ? 'Pregunta sobre P2P y proyección 1H...' : 'Escribe o habla con Venbot...';
+      const generalChip = document.querySelector('.ai-quick-row .ai-quick-chip:not([data-ai-horizon])');
+      if (generalChip) generalChip.classList.toggle('hidden', plan === 'FREE');
+    }
+    function handleAIClick() { applyAIPlanUI(); document.getElementById('aiChatModal').classList.remove('hidden'); }
     function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
     function openAlertsModal() {
       document.getElementById('alertsModal').classList.remove('hidden');
@@ -1835,12 +1858,13 @@
       chat.scrollTop = chat.scrollHeight;
       try {
         const token = getAuthToken();
-        if (!token) throw new Error('AUTH_REQUIRED');
+        const headers = {'Content-Type':'application/json','Accept':'text/event-stream'};
+        if (token) headers['X-Venbot-Session'] = token; else headers['X-Venbot-Guest-ID'] = getAIGuestId();
         const controller = new AbortController();
         const aiTimer = setTimeout(() => controller.abort(), 45000);
         const response = await fetch(`${API_BASE_URL}/api/ai/chat/stream`, {
           method: 'POST',
-          headers: {'Content-Type':'application/json','Accept':'text/event-stream','X-Venbot-Session':token},
+          headers,
           body: JSON.stringify({ message: text, history: aiConversation.slice(0, -1).slice(-8) }),
           signal: controller.signal
         });
@@ -1848,7 +1872,7 @@
         if (!response.ok) {
           let detail = '';
           try { const d = await response.json(); detail = typeof d?.detail === 'string' ? d.detail : (d?.detail?.error || ''); } catch (_) {}
-          if (response.status === 401 || response.status === 403 || detail === 'auth_required') throw new Error('AUTH_REQUIRED');
+          if (response.status === 401 || response.status === 403) throw new Error('AUTH_REQUIRED');
           if (response.status === 429 || detail === 'ai_daily_limit') throw new Error('AI_LIMIT');
           throw new Error(`HTTP ${response.status}`);
         }
