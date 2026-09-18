@@ -6075,11 +6075,36 @@ async def _texto_auto_por_plan(plan: str, resumen: dict, banco: str, horizonte: 
     return "\n".join(lines)
 
 
-def _teclado_auto_publicacion(plan: str, banco: str, horizonte: str) -> InlineKeyboardMarkup:
-    """Teclado de navegación de una publicación automática.
+def _telegram_auto_button(text: str, *, callback_data: str | None = None, url: str | None = None) -> dict:
+    """Construye un botón inline como JSON explícito y lo valida.
+
+    Telegram exige que un InlineKeyboardButton tenga exactamente una acción
+    además de su texto. Para evitar que una capa de serialización convierta
+    accidentalmente el botón en un simple objeto {"text": ...}, el teclado
+    automático se envía como diccionario JSON nativo.
+    """
+    action_count = int(callback_data is not None) + int(url is not None)
+    if action_count != 1:
+        raise ValueError("Un botón inline automático debe tener exactamente una acción")
+    button = {"text": str(text)}
+    if callback_data is not None:
+        value = str(callback_data)
+        if not value or len(value.encode("utf-8")) > 64:
+            raise ValueError("callback_data fuera de rango Telegram (1-64 bytes)")
+        button["callback_data"] = value
+    else:
+        value = str(url)
+        if not value:
+            raise ValueError("URL inline vacía")
+        button["url"] = value
+    return button
+
+
+def _teclado_auto_publicacion(plan: str, banco: str, horizonte: str) -> dict:
+    """Teclado JSON de navegación de una publicación automática.
 
     Solo ofrece los bancos disponibles y los horizontes que corresponden a la
-    categoría del chat. El botón no expone datos personales.
+    categoría del chat. Cada botón se valida antes de llegar al Bot API.
     """
     plan = (plan or "FREE").upper().strip()
     banco = (banco or "GENERAL").upper().strip()
@@ -6092,18 +6117,36 @@ def _teclado_auto_publicacion(plan: str, banco: str, horizonte: str) -> InlineKe
         ("BNC", "🏦 BNC"),
     ):
         mark = "✅ " if key == banco else ""
-        bank_buttons.append(InlineKeyboardButton(f"{mark}{label}", callback_data=f"auto_{plan}_{key}_{horizonte}"))
+        bank_buttons.append(
+            _telegram_auto_button(
+                f"{mark}{label}",
+                callback_data=f"auto_{plan}_{key}_{horizonte}",
+            )
+        )
     rows = [bank_buttons[:2], bank_buttons[2:]]
     horizon_buttons = []
     for key in _telegram_auto_allowed_horizons(plan):
         mark = "✅ " if key == horizonte else ""
-        horizon_buttons.append(InlineKeyboardButton(f"{mark}{_telegram_auto_horizon_label(key)}", callback_data=f"auto_{plan}_{banco}_{key}"))
+        horizon_buttons.append(
+            _telegram_auto_button(
+                f"{mark}{_telegram_auto_horizon_label(key)}",
+                callback_data=f"auto_{plan}_{banco}_{key}",
+            )
+        )
     if horizon_buttons:
         rows.append(horizon_buttons)
     rows.append([
-        InlineKeyboardButton("🌐 Abrir Monitor Venbot", url=VENBOT_FRONTEND_URL),
+        _telegram_auto_button("🌐 Abrir Monitor Venbot", url=VENBOT_FRONTEND_URL),
     ])
-    return InlineKeyboardMarkup(rows)
+
+    # Defensa adicional: nunca permitir que el teclado llegue con un botón
+    # que tenga solo text o varias acciones simultáneas.
+    for row in rows:
+        for button in row:
+            action_keys = [k for k in ("url", "callback_data", "web_app", "login_url", "switch_inline_query", "switch_inline_query_current_chat", "switch_inline_query_chosen_chat", "callback_game", "pay", "copy_text") if k in button]
+            if len(action_keys) != 1:
+                raise ValueError(f"Botón inline inválido: {button}")
+    return {"inline_keyboard": rows}
 
 
 # Compatibilidad con funciones antiguas; mantienen el mismo contrato textual.
@@ -6148,14 +6191,45 @@ async def _publicar_predicciones_telegram_automaticas():
             try:
                 text = await _texto_auto_por_plan(plan, resumen, "GENERAL", horizon)
                 markup = _teclado_auto_publicacion(plan, "GENERAL", horizon)
-                await telegram_app.bot.send_message(
-                    chat_id=chat_id,
-                    text=text[:TELEGRAM_MESSAGE_MAX_LENGTH],
-                    parse_mode="Markdown",
-                    reply_markup=markup,
-                )
-                sent += 1
-                logger.info("[TELEGRAM AUTO] publicación %s enviada chat=%s horizonte=%s", plan, chat_id, _telegram_auto_horizon_label(horizon))
+                try:
+                    await telegram_app.bot.send_message(
+                        chat_id=chat_id,
+                        text=text[:TELEGRAM_MESSAGE_MAX_LENGTH],
+                        parse_mode="Markdown",
+                        reply_markup=markup,
+                    )
+                    sent += 1
+                    logger.info(
+                        "[TELEGRAM AUTO] publicación %s enviada chat=%s horizonte=%s botones=validos",
+                        plan, chat_id, _telegram_auto_horizon_label(horizon),
+                    )
+                except Exception as e:
+                    # Protección de entrega: si Telegram rechaza exclusivamente el markup,
+                    # no perder la publicación. El mensaje se reintenta sin teclado y se deja
+                    # evidencia clara para corregir el markup en el siguiente parche.
+                    if "text buttons are not allowed" in str(e).lower() or "can't parse inlinekeyboardbutton" in str(e).lower():
+                        logger.warning(
+                            "[TELEGRAM AUTO] markup rechazado %s chat=%s: %s; reintentando sin teclado",
+                            plan, chat_id, e,
+                        )
+                        try:
+                            await telegram_app.bot.send_message(
+                                chat_id=chat_id,
+                                text=text[:TELEGRAM_MESSAGE_MAX_LENGTH],
+                                parse_mode="Markdown",
+                            )
+                            sent += 1
+                            logger.info(
+                                "[TELEGRAM AUTO] publicación %s enviada sin teclado por fallback chat=%s horizonte=%s",
+                                plan, chat_id, _telegram_auto_horizon_label(horizon),
+                            )
+                            continue
+                        except Exception as fallback_error:
+                            logger.warning(
+                                "[TELEGRAM AUTO] fallback sin teclado también falló %s chat=%s: %s",
+                                plan, chat_id, fallback_error,
+                            )
+                    raise
             except Exception as e:
                 logger.warning("[TELEGRAM AUTO] no se pudo publicar %s chat=%s: %s", plan, chat_id, e)
         if sent == len(targets):
