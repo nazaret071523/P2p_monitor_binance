@@ -2280,6 +2280,10 @@
     document.querySelectorAll('[data-adv-period]').forEach(b=>b.classList.toggle('active', b.dataset.advPeriod===advancedPeriod));
   }
   function advDestroyChart(){ if(advancedChart){ advancedChart.destroy(); advancedChart=null; } }
+  function advHorizonHours(h){
+    const m=String(h??'').trim().toLowerCase().match(/([0-9]+(?:\.[0-9]+)?)/);
+    return m ? Number(m[1]) : NaN;
+  }
   function advChartOptions(yLabel){
     return {responsive:true,maintainAspectRatio:false,parsing:false,animation:false,interaction:{intersect:false,mode:'index'},plugins:{legend:{display:false},tooltip:{padding:10,backgroundColor:'rgba(2,6,23,.96)',borderColor:'rgba(148,163,184,.2)',borderWidth:1,titleColor:'#e2e8f0',bodyColor:'#cbd5e1',callbacks:{label:(ctx)=>`${ctx.dataset.label}: ${advMoney(ctx.raw?.y, yLabel==='USDT'?4:2)} ${yLabel}`}}},scales:{x:{type:'linear',ticks:{color:'#64748b',maxTicksLimit:8,font:{size:9},callback:(v)=>new Date(v).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})},grid:{color:'rgba(51,65,85,.12)'}},y:{position:'right',ticks:{color:'#64748b',maxTicksLimit:7,font:{size:9},callback:(v)=>advMoney(v,yLabel==='USDT'?4:2)},grid:{color:'rgba(51,65,85,.12)'}}}};
   }
@@ -2287,11 +2291,29 @@
     const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
     advDestroyChart();
     const hist = Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))):[];
-    const proj = Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))):[];
-    const lower = proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
-    const upper = proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
-    const datasets=[{label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2,tension:.18,fill:false},{label:'Proyección',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.05)',borderDash:[7,5],pointRadius:3,pointBackgroundColor:'#c084fc',borderWidth:2,tension:.2,fill:false}];
-    if(lower.length && upper.length){ datasets.push({label:'Límite inferior',data:lower,borderColor:'rgba(148,163,184,.28)',borderDash:[2,4],pointRadius:0,borderWidth:1,fill:false},{label:'Límite superior',data:upper,borderColor:'rgba(148,163,184,.28)',borderDash:[2,4],pointRadius:0,borderWidth:1,fill:false}); }
+    let proj = Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))):[];
+    if(!proj.length){
+      const empty=canvas.getContext('2d');
+      advancedChart=new Chart(empty,{type:'line',data:{datasets:[{label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2,tension:.18,fill:false}]},options:advChartOptions(unit)});
+      return;
+    }
+    const anchor = hist.length ? Number(hist[hist.length-1].x) : Date.now();
+    const currentY = hist.length ? Number(hist[hist.length-1].y) : Number(proj[0].y);
+    // El primer punto de la proyección es T0 (ahora), para unir visualmente
+    // el histórico real con la trayectoria futura del motor.
+    proj = [{x:anchor,y:currentY,low:currentY,high:currentY,anchor:true}, ...proj.sort((a,b)=>Number(a.x)-Number(b.x))];
+    const lower = proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)));
+    const upper = proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)));
+    const datasets=[
+      {label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2,tension:.18,fill:false},
+      {label:'Proyección Venbot',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.08)',borderDash:[7,5],pointRadius:proj.map(p=>p.anchor?5:3),pointBackgroundColor:'#c084fc',pointBorderColor:'#0f172a',pointBorderWidth:1,borderWidth:3,tension:.18,fill:false},
+    ];
+    if(lower.length && upper.length){
+      datasets.push(
+        {label:'Rango inferior',data:lower,borderColor:'rgba(148,163,184,.26)',borderDash:[2,4],pointRadius:0,borderWidth:1,fill:false},
+        {label:'Rango de proyección',data:upper,borderColor:'rgba(192,132,252,.24)',borderDash:[2,4],pointRadius:0,borderWidth:1,backgroundColor:'rgba(192,132,252,.10)',fill:'-1'}
+      );
+    }
     advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit)});
   }
   function advRenderHorizonCards(rows, unit){
@@ -2327,7 +2349,7 @@
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=periodConfig.rows.map(r=>({x:new Date(r.timestamp).getTime(),y:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.y>0);
     const now=Date.now();
-    const forecast=proj.map(r=>({x:now+Number(r.h)*3600000,y:Number(r.central),low:Number(r.low),high:Number(r.high)}));
+    const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?now+hrs*3600000:NaN,y:Number(r.central),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
     const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
     const m=a.metricas||{};
     const current=hist.length?hist[hist.length-1].y:((Number(m.compra)||Number(marketState.buy))+(Number(m.venta)||Number(marketState.sell)))/2;
@@ -2347,7 +2369,7 @@
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/spot?symbol=${encodeURIComponent(advancedSpotSymbol)}&interval=${rangeCfg.interval}&limit=${rangeCfg.limit}&t=${Date.now()}`);
     const pred=d.prediction||{}; const o=pred.observed||{}; const a=pred.analysis||{}; const proj=advProjectionRowsSpot(pred); const perf=d.performance||{};
     const points=(d.candles||[]).map(c=>({x:Number(c.open_time||c.timestamp||c.time),y:Number(c.close)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
-    const forecast=proj.map(r=>({x:Date.now()+Number(r.h)*3600000,y:Number(r.central),low:Number(r.low),high:Number(r.high)}));
+    const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?Date.now()+hrs*3600000:NaN,y:Number(r.central),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
     const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
     advSetText('adv-m-current',advMoney(o.price,4)); advSetText('adv-m-current-unit','USDT'); advSetText('adv-m-projection',advMoney(selected?.central,4)); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change)); advSetText('adv-m-range',selected?`${advMoney(selected.low,4)}–${advMoney(selected.high,4)}`:'n/d'); advSetText('adv-m-confidence',Number.isFinite(Number(a.confidence))?advMoney(a.confidence,0):'n/d'); advSetText('adv-m-r2',Number.isFinite(Number(a.regression_r2))?advMoney(a.regression_r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number(perf?.horizons?.[hz]?.evaluated??0),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
