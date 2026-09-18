@@ -90,6 +90,9 @@
 #venbot-analysis-view #sec-p2p-chart{scroll-margin-top:0}
 #venbot-analysis-view #sec-gemini{scroll-margin-top:0}
 #venbot-market-view #sec-calculadora{margin-top:1rem}
+/* v31.3: bloques técnicos solo para el desarrollador; se reubican debajo del análisis de usuario. */
+[data-developer-only="true"]{display:none!important}
+[data-developer-only="true"].developer-visible{display:block!important}
 /* En Inicio NO mostramos la gráfica: la gráfica vive en Análisis. */
 #venbot-market-view #sec-p2p-chart{display:none!important}
 /* IA: el bloque de análisis se conserva dentro de Análisis; el chat sigue siendo flotante/modal. */
@@ -492,7 +495,7 @@
           <p class="text-[10px] text-slate-500 mt-1">Gráfica, flujo, niveles y proyección en una pantalla dedicada.</p>
         </div>
 
-        <section id="sec-quant-backtest" class="glass-card p-4 rounded-2xl border border-indigo-500/20 space-y-3">
+        <section id="sec-quant-backtest" data-developer-only="true" class="glass-card p-4 rounded-2xl border border-indigo-500/20 space-y-3">
           <div class="flex items-start justify-between gap-3">
             <div>
               <div class="flex items-center gap-2">
@@ -507,7 +510,7 @@
           <div id="quant-backtest-result" class="hidden"></div>
         </section>
 
-        <section id="sec-quant-adaptive" class="glass-card p-4 rounded-2xl border border-purple-500/20 space-y-3">
+        <section id="sec-quant-adaptive" data-developer-only="true" class="glass-card p-4 rounded-2xl border border-purple-500/20 space-y-3">
           <div class="flex items-start justify-between gap-3">
             <div>
               <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-brain text-purple-400"></i>Evolución adaptativa de motores</h3><span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span></div>
@@ -769,7 +772,7 @@
           <div class="font-bold text-white">Cuenta activa</div><div>Usuario: <span id="logged-account-user" class="font-mono text-emerald-300"></span></div><div>Plan: <span id="logged-account-plan" class="font-bold text-emerald-300"></span></div><div>Vence: <span id="logged-account-exp" class="font-mono"></span></div>
           <button type="button" onclick="logoutVenbot()" class="mt-1 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-2 rounded-xl">Cerrar sesión</button>
         </div>
-        <p class="text-[10px] leading-relaxed text-slate-500">¿No tienes credenciales? El bot oficial de Venbot las genera mediante <code>/credenciales</code> en Telegram.</p>
+        <p class="text-[10px] leading-relaxed text-slate-500">🆓 FREE no necesita credenciales. El inicio de sesión está disponible para cuentas PREMIUM y VIP.</p>
       </div>
     </div>
 
@@ -808,10 +811,10 @@
       <div class="p-3 bg-slate-900/90 border-t border-slate-800 space-y-2">
         <div class="ai-quick-row mb-2 flex items-center gap-1.5 overflow-x-auto pb-0.5" aria-label="Consultas rápidas de Venbot AI">
           <button type="button" onclick="sendAIQuickMessage('Situación actual del mercado')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">Situación</button>
-          <button type="button" onclick="sendAIQuickMessage('Dame la proyección 1H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">1H</button>
-          <button type="button" onclick="sendAIQuickMessage('Dame la proyección 3H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">3H</button>
-          <button type="button" onclick="sendAIQuickMessage('Dame la proyección 7H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">7H</button>
-          <button type="button" onclick="sendAIQuickMessage('Dame la proyección 24H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">24H</button>
+          <button type="button" data-ai-horizon="1h" onclick="sendAIQuickMessage('Dame la proyección 1H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">1H</button>
+          <button type="button" data-ai-horizon="3h" onclick="sendAIQuickMessage('Dame la proyección 3H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">3H</button>
+          <button type="button" data-ai-horizon="7h" onclick="sendAIQuickMessage('Dame la proyección 7H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">7H</button>
+          <button type="button" data-ai-horizon="24h" onclick="sendAIQuickMessage('Dame la proyección 24H')" class="ai-quick-chip focus-ring shrink-0 rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-1.5 text-[9px] font-bold text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 transition">24H</button>
         </div>
         <div class="flex items-center gap-2">
           <button id="ai-mic-btn" type="button" onclick="toggleAIListening()" class="focus-ring w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition" title="Hablar con Venbot"><i class="fa-solid fa-microphone"></i></button>
@@ -1444,10 +1447,54 @@
       await loadHistory(period);
     }
 
-    let selectedP2PHorizon = '7h';
+    function getFrontendPlan() {
+      const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
+      return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
+    }
+
+    function allowedP2PHorizons(plan = getFrontendPlan()) {
+      if (plan === 'VIP') return ['1h','3h','7h','24h'];
+      if (plan === 'PREMIUM') return ['1h','3h','7h'];
+      return ['1h'];
+    }
+
+    function preferredP2PHorizon(plan = getFrontendPlan()) {
+      if (plan === 'VIP') return '7h';
+      if (plan === 'PREMIUM') return '3h';
+      return '1h';
+    }
+
+    function applyPlanHorizonUI() {
+      const plan = getFrontendPlan();
+      const allowed = allowedP2PHorizons(plan);
+      if (!allowed.includes(selectedP2PHorizon)) selectedP2PHorizon = preferredP2PHorizon(plan);
+      document.querySelectorAll('.p2p-horizon-btn').forEach(btn=>{
+        const horizon = btn.dataset.p2pHorizon;
+        const ok = allowed.includes(horizon);
+        btn.classList.toggle('hidden', !ok);
+        btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
+        btn.tabIndex = ok ? 0 : -1;
+      });
+      const quickMap = {'1h':'1h','3h':'3h','7h':'7h','24h':'24h'};
+      document.querySelectorAll('.ai-quick-chip[data-ai-horizon]').forEach(btn=>{
+        const horizon = quickMap[btn.dataset.aiHorizon] || btn.dataset.aiHorizon;
+        const ok = allowed.includes(horizon);
+        btn.classList.toggle('hidden', !ok);
+        btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
+      });
+      if (typeof renderP2PHorizon === 'function') renderP2PHorizon();
+      if (typeof window.applyVenbotDeveloperUI === 'function') window.applyVenbotDeveloperUI();
+    }
+
+    let selectedP2PHorizon = '1h';
 
     function selectP2PHorizon(horizon) {
       const next = ['1h','3h','7h','24h'].includes(horizon) ? horizon : '1h';
+      if (!allowedP2PHorizons().includes(next)) {
+        selectedP2PHorizon = preferredP2PHorizon();
+        requestAnimationFrame(() => renderP2PHorizon());
+        return;
+      }
       if (next === selectedP2PHorizon) return;
       selectedP2PHorizon = next;
       // Cambio local: no hace una nueva petición ni recalcula Quant.
@@ -1473,6 +1520,8 @@
       const panel = document.getElementById('p2p-horizon-panel');
       const detail = document.getElementById('p2p-horizon-detail');
       const a = marketState.analysis;
+      const allowed = allowedP2PHorizons();
+      if (!allowed.includes(selectedP2PHorizon)) selectedP2PHorizon = preferredP2PHorizon();
       const q = getP2PProjection(a, selectedP2PHorizon);
       if (!panel || !detail) return;
       panel.classList.toggle('hidden', !a?.proyecciones_horizontes && !a?.proyeccion_7h);
@@ -1615,7 +1664,7 @@
     async function validateExistingSession() {
       const token=getAuthToken(); if(!token) return null;
       try { const r=await fetch(`${API_BASE_URL}/api/auth/me`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})});
-        if(!r.ok) throw new Error('expired'); const d=await r.json(); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotEntitlements=d.entitlements||null; window.venbotUser=d.user; updateLoginButton(); loadSpotMarket(); return d.user;
+        if(!r.ok) throw new Error('expired'); const d=await r.json(); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotEntitlements=d.entitlements||null; window.venbotUser=d.user; updateLoginButton(); applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); loadSpotMarket(); return d.user;
       } catch(e){ localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); updateLoginButton(); return null; }
     }
     async function submitLogin() {
@@ -1623,17 +1672,17 @@
       if(!username||!password){showLoginStatus('Introduce usuario y contraseña.');return;}
       const btn=document.getElementById('login-submit'); btn.disabled=true; btn.textContent='Verificando...';
       try { const r=await fetch(`${API_BASE_URL}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})}); const d=await r.json();
-        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); renderAccountModal(d.user); loadSpotMarket(); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
+        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); applyPlanHorizonUI(); renderAccountModal(d.user); loadSpotMarket(); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
       } catch(e){ showLoginStatus(e.message||'Credenciales inválidas.'); } finally { btn.disabled=false; btn.textContent='Iniciar sesión'; }
     }
-    async function logoutVenbot(){ const token=getAuthToken(); try{ if(token) await fetch(`${API_BASE_URL}/api/auth/logout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})}); }catch(e){} localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); window.venbotUser=null; updateLoginButton(); renderAccountModal(null); closeLoginModal(); location.reload(); }
+    async function logoutVenbot(){ const token=getAuthToken(); try{ if(token) await fetch(`${API_BASE_URL}/api/auth/logout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})}); }catch(e){} localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); window.venbotUser=null; window.venbotEntitlements=null; applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); updateLoginButton(); renderAccountModal(null); closeLoginModal(); location.reload(); }
     async function bootstrapVenbotFoundation() {
       try {
         const sid = getOnlineSessionId(); const token=getAuthToken();
         const country = (localStorage.getItem('venbot-country') || 'VE').toUpperCase();
         const headers={'Content-Type':'application/json','X-Venbot-Country':country}; if(token) headers['X-Venbot-Session']=token;
         const r = await fetch(`${API_BASE_URL}/api/foundation/bootstrap`, {method:'POST', headers, body:JSON.stringify({external_user_id:sid, country_code:country})});
-        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton(); loadSpotMarket();
+        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton(); applyPlanHorizonUI(); loadSpotMarket();
       } catch(e) {}
     }
     async function loadCommunityLinks(){
@@ -2003,6 +2052,7 @@
     async function bootVenbot() {
       initTheme();
     initCalculator();
+      applyPlanHorizonUI();
       if (!API_BASE_URL || API_BASE_URL.includes('TU-SERVICIO')) {
         setSyncState(false, 'configura URL Render');
         console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
@@ -2067,19 +2117,29 @@
   const more=document.getElementById('venbot-more-view');
   const chart=document.getElementById('sec-p2p-chart');
   const gemini=document.getElementById('sec-gemini');
+  const quantBacktest=document.getElementById('sec-quant-backtest');
+  const quantAdaptive=document.getElementById('sec-quant-adaptive');
   const spotOriginal=document.getElementById('sec-spot');
   const alertsOriginal=document.getElementById('sec-alertas');
   const communityOriginal=document.getElementById('sec-comunidad');
   const contextMap={market:'Mercado P2P · USDT / VES',analysis:'Análisis P2P · Tendencia y predicción',spot:'Spot · Predicción y proyección',alerts:'Alertas de precio P2P',international:'Mercado Internacional',more:'Comunidad · Cuenta · Soporte'};
+  function applyDeveloperOnly(){
+    const visible = !!window.venbotUser?.is_developer;
+    [quantBacktest, quantAdaptive].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
+  }
+  window.applyVenbotDeveloperUI = applyDeveloperOnly;
   function place(){
     if(chart) document.querySelector('#analysis-content-slot').appendChild(chart);
     if(gemini) document.querySelector('#analysis-content-slot').appendChild(gemini);
+    if(quantBacktest) document.querySelector('#analysis-content-slot').appendChild(quantBacktest);
+    if(quantAdaptive) document.querySelector('#analysis-content-slot').appendChild(quantAdaptive);
     if(spotOriginal) document.querySelector('#spot-content-slot').appendChild(spotOriginal);
     if(alertsOriginal) document.querySelector('#alerts-content-slot').appendChild(alertsOriginal);
     if(communityOriginal) document.querySelector('#community-content-slot').appendChild(communityOriginal);
   }
   window.venbotRoute=function(key){
     place();
+    applyDeveloperOnly();
     const views={market,analysis,spot,alerts,international:intl,more};
     Object.values(views).forEach(v=>v&&v.classList.remove('active'));
     (views[key]||market).classList.add('active');
