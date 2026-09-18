@@ -711,15 +711,6 @@ def inicializar_db():
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_venbot_users_plan ON venbot_users(plan_code, status);
                 """)
-                # FREE no utiliza credenciales. También se revocan credenciales de
-                # cuentas cuyo plan ya venció; al volver a un plan pagado pueden
-                # generarse nuevas credenciales desde Telegram.
-                cur.execute("""
-                    UPDATE venbot_users
-                    SET password_hash=NULL, updated_at=CURRENT_TIMESTAMP
-                    WHERE plan_code='FREE'
-                       OR (plan_expires_at IS NOT NULL AND plan_expires_at <= CURRENT_TIMESTAMP);
-                """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_billing_orders (
                         id BIGSERIAL PRIMARY KEY, order_id TEXT UNIQUE NOT NULL, external_user_id TEXT NOT NULL, telegram_chat_id BIGINT,
@@ -4476,7 +4467,7 @@ class CommunityRouter:
     el router solo decide si ese chat puede usar el comando y qué plan debe
     validar el handler existente.
     """
-    ADMIN_ONLY = {"/pagos", "/aprobar", "/rechazar"}
+    ADMIN_ONLY = {"/pagos", "/aprobar", "/rechazar", "/cancelarpago"}
     UNIVERSAL = {"/ayuda", "/help"}
     PERSONAL = {"/miplan", "/cuenta", "/credenciales", "/alertas", "/alerta", "/activaralerta", "/pausaralerta", "/eliminaralerta", "/soporte", "/problema", "/contactar", "/cancelar"}
     PUBLIC = {"/estado"}
@@ -4688,8 +4679,20 @@ def _telegram_command_objects(role: str) -> list[BotCommand]:
     return [BotCommand(command, description) for command, description in TELEGRAM_MENU_COMMANDS.get(role, [])]
 
 
+TELEGRAM_ADMIN_MENU = [
+    ("start", "Menú principal"), ("ayuda", "Ayuda"),
+    ("miplan", "Mi plan"), ("cuenta", "Mi cuenta"), ("credenciales", "Credenciales"),
+    ("planes", "Planes"), ("alertas", "Mis alertas"), ("alerta", "Crear alerta"),
+    ("activaralerta", "Activar alerta"), ("pausaralerta", "Pausar alerta"),
+    ("eliminaralerta", "Eliminar alerta"), ("soporte", "Soporte"),
+    ("problema", "Reportar problema"), ("contactar", "Contactar soporte"),
+    ("pagos", "Pagos pendientes"), ("aprobar", "Aprobar orden"),
+    ("rechazar", "Rechazar orden"), ("cancelarpago", "Cancelar pago"),
+    ("miid", "ID de Telegram"), ("grafica", "Gráfica interna"),
+]
+
 async def _configure_telegram_command_menus(bot):
-    """Publica menús de comandos por chat. Los controles de plan siguen en backend."""
+    """Publica menús por espacio y un menú administrativo exclusivo para el desarrollador."""
     chat_roles = {
         "community": TELEGRAM_COMMUNITY_CHAT_ID,
         "registration": TELEGRAM_REGISTRATION_CHAT_ID,
@@ -4702,6 +4705,28 @@ async def _configure_telegram_command_menus(bot):
         logger.info("Menú Telegram privado configurado")
     except Exception as e:
         logger.warning("No se pudo configurar menú Telegram privado: %s", e)
+
+    # El desarrollador recibe un menú administrativo separado. Los comandos
+    # sensibles siguen protegidos por _is_billing_admin/CommunityRouter aunque
+    # el menú aparezca en su chat privado.
+    admin_scope_ids = set()
+    if BILLING_ADMIN_TELEGRAM_CHAT_ID and str(BILLING_ADMIN_TELEGRAM_CHAT_ID).lstrip("-").isdigit():
+        admin_scope_ids.add(int(BILLING_ADMIN_TELEGRAM_CHAT_ID))
+    for raw_id in TELEGRAM_ADMIN_USER_IDS:
+        try:
+            admin_scope_ids.add(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    for admin_chat_id in sorted(admin_scope_ids):
+        try:
+            await bot.set_my_commands(
+                _telegram_command_objects("private") + [BotCommand(c, d) for c, d in TELEGRAM_ADMIN_MENU if c not in {x[0] for x in TELEGRAM_MENU_COMMANDS["private"]}],
+                scope=BotCommandScopeChat(chat_id=admin_chat_id),
+            )
+            logger.info("Menú Telegram ADMIN configurado chat=%s", admin_chat_id)
+        except Exception as e:
+            logger.warning("No se pudo configurar menú Telegram ADMIN chat=%s: %s", admin_chat_id, e)
+
     for role, raw in chat_roles.items():
         if not raw:
             continue
@@ -4730,7 +4755,7 @@ async def cmd_registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         identity = COMMUNITY_ROUTER.account_identity(update)
         account, created = await asyncio.to_thread(_create_or_get_telegram_account, identity, DEFAULT_COUNTRY_CODE)
-        if not created:
+        if created is None:
             texto = (
                 "✅ *Tu cuenta Venbot ya está registrada.*\n\n"
                 f"👤 Usuario: `{account.get('username')}`\n"
@@ -4893,13 +4918,7 @@ async def cmd_miplan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/miplan", private_only=True):
         return
     try:
-        account = await asyncio.to_thread(_telegram_account_for_user_id, _telegram_actor_id(update))
-        if not account:
-            await update.effective_message.reply_text(
-                "📝 Aún no tienes una cuenta Venbot registrada.\n\n"
-                "Usa /registrar para crear tu registro FREE. No necesitas contraseña para utilizar el Monitor FREE."
-            )
-            return
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
         exp = account.get("plan_expires_at")
         exp_text = exp.astimezone(VET).strftime("%d/%m/%Y %H:%M") if exp else "sin vencimiento"
@@ -4919,10 +4938,7 @@ async def cmd_spot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/spot", private_only=True):
         return
     try:
-        account = await asyncio.to_thread(_telegram_account_for_user_id, _telegram_actor_id(update))
-        if not account:
-            await update.effective_message.reply_text("📝 Primero registra tu cuenta con /registrar. Las alertas personales quedan vinculadas a tu registro de Telegram.")
-            return
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
         if PLAN_ORDER[plan] < PLAN_ORDER["VIP"]:
             await update.effective_message.reply_text("🟣 /spot requiere plan VIP activo. Usa /planes para consultar el acceso.")
@@ -5056,7 +5072,7 @@ def obtener_teclado_menu():
     ])
 
 async def _telegram_alert_account(update: Update):
-    return await asyncio.to_thread(_telegram_account_for_user_id, _telegram_actor_id(update))
+    return await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
 
 
 async def cmd_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5087,10 +5103,7 @@ async def cmd_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("⚠️ Usa COMPRA para una condición ≤ o VENTA para una condición ≥.")
         return
     try:
-        account = await _telegram_alert_account(update)
-        if not account:
-            await update.effective_message.reply_text("📝 Primero registra tu cuenta con /registrar para crear alertas personales.")
-            return
+        account, _ = await _telegram_alert_account(update)
         plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
         limit = int(PLAN_LIMITS[plan]["alerts"])
         count = await asyncio.to_thread(_alert_rule_count, account["external_user_id"])
@@ -5123,10 +5136,7 @@ async def _set_alert_enabled(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return
     rid = int(context.args[0])
     try:
-        account = await _telegram_alert_account(update)
-        if not account:
-            await update.effective_message.reply_text("📝 Primero registra tu cuenta con /registrar para gestionar alertas personales.")
-            return
+        account, _ = await _telegram_alert_account(update)
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -5159,10 +5169,7 @@ async def cmd_eliminar_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     rid = int(context.args[0])
     try:
-        account = await _telegram_alert_account(update)
-        if not account:
-            await update.effective_message.reply_text("📝 Primero registra tu cuenta con /registrar para gestionar alertas personales.")
-            return
+        account, _ = await _telegram_alert_account(update)
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM venbot_alert_rules WHERE id=%s AND external_user_id=%s RETURNING id", (rid, account["external_user_id"]))
@@ -5180,63 +5187,46 @@ async def cmd_eliminar_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def cmd_cuenta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/cuenta", private_only=True):
         return
+    chat_id = update.effective_chat.id
     try:
-        account = await asyncio.to_thread(_telegram_account_for_user_id, _telegram_actor_id(update))
-        if not account:
-            texto = (
-                "📝 *CUENTA VENBOT*\n\n"
-                "Aún no tienes un registro asociado a Telegram.\n\n"
-                "Puedes usar el Monitor FREE sin iniciar sesión. Para conservar tu registro en Venbot y poder comprar PREMIUM/VIP cuando lo decidas, usa /registrar."
-            )
-            markup = InlineKeyboardMarkup([[InlineKeyboardButton("📝 Registrarme", callback_data="cmd_registrar")], [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]])
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
+        exp = account.get("plan_expires_at")
+        exp_text = exp.astimezone(VET).strftime("%d/%m/%Y") if exp else "No definido"
+        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
+        texto = f"👤 *Mi cuenta Venbot*\n\n🔐 Usuario: `{account.get('username')}`\n💎 Plan: *{plan}*\n📅 Vencimiento: `{exp_text}`"
+        if plan == "FREE":
+            texto += "\n\n🆓 Tu acceso FREE al Monitor no requiere credenciales."
         else:
-            exp = account.get("plan_expires_at")
-            plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
-            exp_text = exp.astimezone(VET).strftime("%d/%m/%Y") if exp else "No definido"
-            texto = (
-                f"👤 *Mi cuenta Venbot*\n\n"
-                f"🔐 Usuario: `{account.get('username')}`\n"
-                f"💎 Plan: *{plan}*\n"
-                f"📅 Vencimiento: `{exp_text}`"
-            )
-            rows = []
-            if plan in {"PREMIUM", "VIP"}:
-                rows.append([InlineKeyboardButton("🔐 Credenciales", callback_data="cmd_credenciales")])
-            rows.extend([[InlineKeyboardButton("💎 Mi plan", callback_data="cmd_suscribir")], [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]])
-            markup = InlineKeyboardMarkup(rows)
+            texto += "\n\n🔐 Tus credenciales de acceso están disponibles en /credenciales."
+        buttons = []
+        if plan in {"PREMIUM", "VIP"}:
+            buttons.append(InlineKeyboardButton("🔐 Credenciales", callback_data="cmd_credenciales"))
+        buttons.append(InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu"))
+        markup = InlineKeyboardMarkup([buttons])
         if update.callback_query and update.callback_query.message:
             await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=markup)
         else:
-            await update.effective_message.reply_text(texto, parse_mode="Markdown", reply_markup=markup)
+            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=markup)
     except Exception:
         logger.exception("Error en /cuenta")
-        await update.effective_message.reply_text("⚠️ No pude consultar tu cuenta ahora. Intenta nuevamente.")
+        await update.message.reply_text("⚠️ No pude consultar tu cuenta ahora. Intenta nuevamente.")
 
 async def cmd_credenciales(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/credenciales", private_only=True):
         return
+    chat_id = update.effective_chat.id
     try:
-        account = await asyncio.to_thread(_telegram_account_for_user_id, _telegram_actor_id(update))
-        if not account:
-            await update.effective_message.reply_text("📝 Primero registra tu cuenta con /registrar. El Monitor FREE no necesita credenciales.")
-            return
-        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
-        if plan not in {"PREMIUM", "VIP"}:
-            await update.effective_message.reply_text(
-                "🔐 Las credenciales de inicio de sesión están reservadas para cuentas PREMIUM y VIP.\n\n"
-                "🆓 Con FREE puedes utilizar el Monitor básico sin iniciar sesión. Usa /planes para consultar las modalidades."
-            )
-            return
+        account, _ = await asyncio.to_thread(_create_or_get_telegram_account, COMMUNITY_ROUTER.account_identity(update), DEFAULT_COUNTRY_CODE)
         credentials = await asyncio.to_thread(_set_new_password, account["external_user_id"])
         texto = f"🔐 *Credenciales Venbot*\n\nUsuario: `{credentials['username']}`\nContraseña: `{credentials['password']}`\n\n⚠️ Guarda estas credenciales. La contraseña se entrega por Telegram y se almacena en Venbot únicamente como hash.\n\nEn la interfaz pulsa *Entrar* para iniciar sesión."
         teclado = InlineKeyboardMarkup([[InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta")],[InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]])
         if update.callback_query and update.callback_query.message:
             await update.callback_query.message.edit_text(texto, parse_mode="Markdown", reply_markup=teclado)
         else:
-            await update.effective_message.reply_text(texto, parse_mode="Markdown", reply_markup=teclado)
+            await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=teclado)
     except Exception:
         logger.exception("Error en /credenciales")
-        await update.effective_message.reply_text("⚠️ No pude generar tus credenciales ahora. Intenta nuevamente.")
+        await update.message.reply_text("⚠️ No pude generar tus credenciales ahora. Intenta nuevamente.")
 
 
 async def cmd_miid(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5253,40 +5243,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/start", private_only=False):
         return
     chat_type = getattr(update.effective_chat, "type", None)
+    account = None
     if chat_type == "private":
-        account = await asyncio.to_thread(_telegram_account_for_user_id, _telegram_actor_id(update))
-        if account:
-            plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at"))
-            texto = (
-                "🦜 *VENBOT · CHAT PRIVADO*\n\n"
-                f"👤 Usuario: `{account.get('username')}`\n"
-                f"💎 Plan actual: *{plan}*\n\n"
-                "Este espacio está reservado para cuenta, plan, pagos, alertas, privacidad y soporte personal.\n\n"
-                "📊 Mercado, predicciones, P2P, Spot y análisis → Comunidad / Monitor.\n"
-                "🆓 El Monitor FREE no necesita credenciales.\n"
-                "🔐 Las credenciales de acceso se habilitan únicamente para PREMIUM y VIP."
-            )
-            botones = [
-                [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("💎 Mi plan", callback_data="cmd_suscribir")],
-                [InlineKeyboardButton("🚨 Mis alertas", callback_data="cmd_alertas")],
-                *([[InlineKeyboardButton("🔐 Credenciales", callback_data="cmd_credenciales")]] if plan in {"PREMIUM", "VIP"} else []),
-                [InlineKeyboardButton("🛡️ Privacidad", callback_data="cmd_soporte")],
-                [InlineKeyboardButton("🛠 Soporte", callback_data="cmd_soporte")],
-            ]
-        else:
-            texto = (
-                "🦜 *VENBOT · CHAT PRIVADO*\n\n"
-                "Tu espacio personal para registro, planes, pagos, privacidad y soporte.\n\n"
-                "📝 Usa /registrar para crear tu registro FREE.\n"
-                "🆓 El Monitor FREE funciona sin iniciar sesión.\n"
-                "🔐 Las credenciales de acceso solo existen para cuentas PREMIUM/VIP activas."
-            )
-            botones = [
-                [InlineKeyboardButton("📝 Registrarme", callback_data="cmd_registrar")],
-                [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir")],
-                [InlineKeyboardButton("🛡️ Privacidad", callback_data="cmd_soporte")],
-                [InlineKeyboardButton("🛠 Soporte", callback_data="cmd_soporte")],
-            ]
+        try:
+            identity = COMMUNITY_ROUTER.account_identity(update)
+            if identity is not None and DATABASE_URL:
+                account, _ = await asyncio.to_thread(_create_or_get_telegram_account, identity, DEFAULT_COUNTRY_CODE)
+        except Exception:
+            logger.exception("No se pudo preparar cuenta desde /start")
+
+    if chat_type == "private":
+        plan = _plan_vigente(account.get("plan_code"), account.get("plan_expires_at")) if account else "FREE"
+        texto = (
+            "🦜 *VENBOT · CHAT PRIVADO*\n\n"
+            + (f"👤 Usuario: `{account.get('username')}`\n💎 Plan actual: *{plan}*\n\n" if account else "")
+            + "Este es tu espacio personal. Aquí tus datos, pagos, alertas y consultas no se muestran en los grupos."
+        )
+        botones = [
+            [InlineKeyboardButton("👤 Mi cuenta", callback_data="cmd_cuenta"), InlineKeyboardButton("💎 Mi plan", callback_data="cmd_suscribir")],
+            [InlineKeyboardButton("🔐 Credenciales", callback_data="cmd_credenciales"), InlineKeyboardButton("🚨 Mis alertas", callback_data="cmd_alertas")],
+            [InlineKeyboardButton("🛡️ Privacidad", callback_data="cmd_soporte")],
+            [InlineKeyboardButton("🛠 Soporte", callback_data="cmd_soporte")],
+        ]
     else:
         texto = (
             "🦜 *VENBOT · COMUNIDAD*\n\n"
@@ -5294,11 +5272,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔮 Las predicciones FREE se publican automáticamente cada hora.\n"
             "⭐ PREMIUM y 👑 VIP reciben contenido automático en su zona correspondiente.\n\n"
             "📊 Para análisis completos utiliza el Monitor Venbot.\n"
-            "🆓 El Monitor FREE no necesita iniciar sesión.\n"
-            "🔐 Cuenta, pagos, privacidad y soporte personal se atienden únicamente en el chat privado."
+            "🔐 Cuenta, pagos, credenciales, privacidad y soporte personal se atienden únicamente en el chat privado."
         )
         botones = [
-            [InlineKeyboardButton("📝 Registrarme", url=_telegram_private_link() or "https://t.me/")],
             [InlineKeyboardButton("🔐 Abrir mi chat privado", url=_telegram_private_link() or "https://t.me/")],
             [InlineKeyboardButton("💎 Planes", callback_data="cmd_suscribir")],
         ]
@@ -5520,11 +5496,8 @@ async def cmd_bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(teclado))
 
 
-async def _plan_catalogo_para_telegram(telegram_user_id: int):
-    account = await _telegram_account_by_user_id(int(telegram_user_id))
-    if not account:
-        raise HTTPException(status_code=400, detail="Primero registra tu cuenta Venbot con /registrar")
-    return account
+async def _plan_catalogo_para_telegram(chat_id: int):
+    account,_=await asyncio.to_thread(_create_or_get_telegram_account,chat_id,DEFAULT_COUNTRY_CODE); return account
 
 async def _crear_checkout_telegram(chat_id:int,plan_code:str,pay_currency:str):
     account=await _plan_catalogo_para_telegram(chat_id); return await asyncio.to_thread(_create_billing_order,account["external_user_id"],chat_id,plan_code,pay_currency)
@@ -5636,24 +5609,47 @@ async def _create_paid_group_invite(plan: str):
         return None, str(e)
 
 async def _send_paid_group_access(telegram_user_id: int, plan: str):
+    """Envía acceso a las zonas que corresponden al plan activo.
+
+    PREMIUM -> grupo Premium.
+    VIP -> grupo Premium + grupo VIP.
+    El usuario completa el ingreso mediante solicitud; el bot valida y aprueba.
+    """
     if not telegram_app or not telegram_user_id:
         return
     plan = _plan_efectivo(plan)
     if plan not in {"PREMIUM", "VIP"}:
         return
-    invite, err = await _create_paid_group_invite(plan)
-    if invite:
-        label = "PREMIUM 🔵" if plan == "PREMIUM" else "VIP 🟣"
+
+    targets = [("PREMIUM", TELEGRAM_PREMIUM_CHAT_ID)]
+    if plan == "VIP":
+        targets.append(("VIP", TELEGRAM_VIP_CHAT_ID))
+
+    buttons = []
+    for label_key, target in targets:
+        if not target or not str(target).lstrip("-").isdigit():
+            logger.warning("Acceso %s no configurado para user=%s", label_key, telegram_user_id)
+            continue
+        try:
+            invite, err = await _create_paid_group_invite(label_key)
+            if invite:
+                label = "PREMIUM 🔵" if label_key == "PREMIUM" else "VIP 🟣"
+                buttons.append([InlineKeyboardButton(f"Entrar a {label}", url=invite)])
+            else:
+                logger.warning("No se pudo crear invitación %s user=%s error=%s", label_key, telegram_user_id, err)
+        except Exception:
+            logger.exception("Error preparando acceso %s user=%s", label_key, telegram_user_id)
+
+    if buttons:
         await telegram_app.bot.send_message(
             chat_id=int(telegram_user_id),
-            text=(f"🔓 *Acceso {label} disponible*\n\n"
-                  "El acceso se valida al solicitar entrada. No compartas este enlace.\n"
+            text=(f"🔓 *Acceso {plan} disponible*\n\n"
+                  "Tu plan activo habilita las zonas correspondientes.\n"
+                  "Pulsa el botón y solicita entrar; Venbot validará automáticamente tu plan.\n"
                   "La membresía permanece vinculada a tu plan activo."),
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"Entrar a {label}", url=invite)]])
+            reply_markup=InlineKeyboardMarkup(buttons)
         )
-    else:
-        logger.warning("Acceso pagado no enviado plan=%s error=%s", plan, err)
 
 async def telegram_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     req = getattr(update, "chat_join_request", None)
@@ -5738,6 +5734,30 @@ async def cmd_aprobar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     except HTTPException as e: await update.message.reply_text(f"⚠️ {e.detail}")
     except Exception: logger.exception("Error aprobando orden"); await update.message.reply_text("⚠️ Error aprobando la orden.")
 
+async def cmd_cancelarpago(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    """Cancela/rechaza una orden manual desde el menú del desarrollador."""
+    chat_id=update.effective_chat.id
+    if not _is_billing_admin(chat_id):
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /cancelarpago VB-... motivo")
+        return
+    reason=" ".join(context.args[1:]).strip() or "Pago cancelado por el administrador"
+    try:
+        result=await asyncio.to_thread(_reject_manual_order,context.args[0].strip(),chat_id,reason)
+        await update.message.reply_text(f"↩️ Orden `{result['order_id']}` cancelada.",parse_mode="Markdown")
+        tg=result.get("telegram_chat_id")
+        if tg and telegram_app:
+            try:
+                await telegram_app.bot.send_message(chat_id=int(tg),text=f"⚠️ *Pago cancelado*\n\nOrden: `{result['order_id']}`\nMotivo: {reason}\n\nPuedes volver a /planes si deseas generar una nueva orden.",parse_mode="Markdown")
+            except Exception:
+                logger.debug("No se pudo notificar cancelación al usuario", exc_info=True)
+    except HTTPException as e:
+        await update.message.reply_text(f"⚠️ {e.detail}")
+    except Exception:
+        logger.exception("Error cancelando orden")
+        await update.message.reply_text("⚠️ Error cancelando la orden.")
+
 async def cmd_rechazar(update:Update,context:ContextTypes.DEFAULT_TYPE):
     chat_id=update.effective_chat.id
     if not _is_billing_admin(chat_id): return
@@ -5768,16 +5788,10 @@ async def cmd_suscribir(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if not await _telegram_guard(update, context, "/planes", private_only=True):
         return
     if update.callback_query: await _safe_callback_answer(update)
-    chat_id=update.effective_chat.id; account=await _telegram_account_by_user_id(COMMUNITY_ROUTER.account_identity(update)); country=DEFAULT_COUNTRY_CODE; policy=_billing_policy(country)
+    chat_id=update.effective_chat.id; account=await _plan_catalogo_para_telegram(COMMUNITY_ROUTER.account_identity(update)); country=DEFAULT_COUNTRY_CODE; policy=_billing_policy(country)
     premium_price=f"{PREMIUM_PRICE_USDT:.2f} USDT" if PREMIUM_PRICE_USDT>0 else "Precio no configurado"; vip_price=f"{VIP_PRICE_USDT:.2f} USDT" if VIP_PRICE_USDT>0 else "Precio no configurado"
-    texto=("💎 *PLANES VENBOT*\n\n🆓 *FREE*\n• Monitor P2P y BCV sin iniciar sesión\n• Calculadora y análisis básico\n• Registro Telegram\n\n"+f"⭐ *PREMIUM* — `{premium_price}`\n• Todo FREE\n• IA avanzada\n• 30 consultas IA/día\n• Hasta 10 alertas\n• Historial 30 días\n• Credenciales de acceso\n\n"+f"👑 *VIP* — `{vip_price}`\n• Todo PREMIUM\n• Spot y funciones Quant\n• Predicción avanzada\n• 100 consultas IA/día\n• Hasta 50 alertas\n• Historial 365 días\n• Credenciales de acceso\n\n")
-    if account:
-        texto += f"👤 Tu estado actual: *{_plan_vigente(account.get('plan_code'),account.get('plan_expires_at'))}*\n\n"
-    else:
-        texto += "📝 Aún no tienes una cuenta registrada. Usa /registrar para crear tu registro FREE antes de comprar un plan.\n\n"
-    if not account:
-        botones = [[InlineKeyboardButton("📝 Registrarme", callback_data="cmd_registrar")], [InlineKeyboardButton("⬅️ Volver al menú", callback_data="cmd_menu")]]
-    elif BILLING_PROVIDER == "manual":
+    texto=("💎 *PLANES VENBOT*\n\n🆓 *FREE*\n• Monitor P2P y BCV\n• Calculadora y análisis básico\n• 5 consultas IA/día\n• 2 alertas\n\n"+f"⭐ *PREMIUM* — `{premium_price}`\n• Todo FREE\n• IA avanzada\n• 30 consultas IA/día\n• Hasta 10 alertas\n• Historial 30 días\n\n"+f"👑 *VIP* — `{vip_price}`\n• Todo PREMIUM\n• Spot y funciones Quant\n• Predicción avanzada\n• 100 consultas IA/día\n• Hasta 50 alertas\n• Historial 365 días\n\n"+f"🔐 Cuenta: `{account.get('username')}`\n📍 Mercado de cuenta: `{country}`\n\n")
+    if BILLING_PROVIDER == "manual":
         ready = bool(PREMIUM_PRICE_USDT>0 and VIP_PRICE_USDT>0 and PREMIUM_PRICE_VES>0 and VIP_PRICE_VES>0)
         if ready:
             texto+="Puedes pagar en *USDT* o en *Bolívares (Bs)*. El pago se valida manualmente: debes enviar captura + referencia. El plan se activa solo después de mi aprobación."
@@ -5807,9 +5821,7 @@ async def manejar_botones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Cada comando delegado confirma su propio callback.
     # No responder aquí y luego otra vez dentro de cmd_*: Telegram invalida
     # la segunda respuesta como query duplicada.
-    if data == "cmd_registrar":
-        await cmd_registrar(update, context)
-    elif data == "cmd_estado":
+    if data == "cmd_estado":
         await cmd_estado(update, context)
     elif data == "cmd_rendimiento":
         await cmd_rendimiento(update, context)
@@ -5946,17 +5958,13 @@ async def _publicar_predicciones_telegram_automaticas():
             targets.append(("PREMIUM", int(TELEGRAM_PREMIUM_CHAT_ID), _texto_auto_premium(resumen)))
         if TELEGRAM_VIP_CHAT_ID.lstrip("-").isdigit():
             targets.append(("VIP", int(TELEGRAM_VIP_CHAT_ID), await _texto_auto_vip(resumen)))
-        ciclo = datetime.now(VET).strftime("%Y%m%d-%H%M")
-        enviados = 0
         for plan, chat_id, text in targets:
             try:
                 await telegram_app.bot.send_message(chat_id=chat_id, text=text[:TELEGRAM_MESSAGE_MAX_LENGTH], parse_mode="Markdown")
-                enviados += 1
-                logger.info("[TELEGRAM AUTO] ciclo=%s publicación=%s enviada chat=%s", ciclo, plan, chat_id)
+                logger.info("[TELEGRAM AUTO] publicación %s enviada chat=%s", plan, chat_id)
             except Exception as e:
                 logger.warning("[TELEGRAM AUTO] no se pudo publicar %s chat=%s: %s", plan, chat_id, e)
         _LAST_TELEGRAM_AUTO_PREDICTIONS_TS = now_mono
-        logger.info("[TELEGRAM AUTO] ciclo=%s completado envios=%s intervalo=%ss", ciclo, enviados, TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS)
     except Exception:
         logger.exception("[TELEGRAM AUTO] fallo de publicación automática")
 
@@ -6199,26 +6207,6 @@ def _verify_password(password: str, stored: str) -> bool:
 def _new_venbot_credentials() -> tuple[str, str]:
     return "VEN-" + secrets.token_hex(4).upper(), secrets.token_urlsafe(9)
 
-def _telegram_account_for_user_id(telegram_user_id: int):
-    """Consulta una cuenta Telegram existente sin crear una nueva."""
-    if not DATABASE_URL or telegram_user_id is None:
-        return None
-    try:
-        with obtener_conexion() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT external_user_id,username,plan_code,status,plan_expires_at FROM venbot_users WHERE telegram_user_id=%s LIMIT 1",
-                    (int(telegram_user_id),)
-                )
-                row = cur.fetchone()
-        if not row:
-            return None
-        return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row))
-    except Exception:
-        logger.exception("No se pudo consultar cuenta Telegram existente")
-        return None
-
-
 def _create_or_get_telegram_account(telegram_user_id: int, country_code: str = "VE"):
     """Resuelve una cuenta por Telegram User ID, nunca por el chat/grupo.
 
@@ -6242,7 +6230,7 @@ def _create_or_get_telegram_account(telegram_user_id: int, country_code: str = "
             if row:
                 logger.info("[TELEGRAM IDENTITY] resolved user_id=%s external_user_id=%s username=%s plan=%s source=telegram_user_id",
                             user_id, row[0], row[1], row[2])
-                return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), False
+                return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), None
 
             external_id = str(uuid.uuid4())
             username = None
@@ -6271,20 +6259,16 @@ def _create_or_get_telegram_account(telegram_user_id: int, country_code: str = "
             row = cur.fetchone()
             logger.info("[TELEGRAM IDENTITY] created user_id=%s external_user_id=%s username=%s plan=%s",
                         user_id, row[0], row[1], row[2])
-    return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), True
+    return dict(zip(["external_user_id","username","plan_code","status","plan_expires_at"], row)), None
 
 def _set_new_password(external_user_id: str):
     password = secrets.token_urlsafe(10)
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT plan_code,plan_expires_at FROM venbot_users WHERE external_user_id=%s LIMIT 1", (external_user_id,))
-            current = cur.fetchone()
-            if not current:
-                raise HTTPException(status_code=404, detail="account_not_found")
-            if _plan_vigente(current[0], current[1]) == "FREE":
-                raise HTTPException(status_code=403, detail="FREE no utiliza credenciales de acceso")
             cur.execute("UPDATE venbot_users SET password_hash=%s,updated_at=CURRENT_TIMESTAMP WHERE external_user_id=%s RETURNING username,plan_code,status,plan_expires_at", (_hash_password(password), external_user_id))
             row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="account_not_found")
     return {"username": row[0], "plan_code": row[1], "status": row[2], "plan_expires_at": row[3], "password": password}
 
 def _account_from_session(token: str):
@@ -6792,8 +6776,6 @@ def auth_login(payload: LoginRequest, request: Request):
     if not row or not row[2] or not _verify_password(payload.password, row[2]) or row[5] != "active":
         bucket.append(now_mono)
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    if _plan_vigente(row[4], row[6]) == "FREE":
-        raise HTTPException(status_code=403, detail="El acceso con credenciales está reservado a cuentas PREMIUM o VIP")
     _AUTH_LOGIN_ATTEMPTS.pop(client_key, None)
     token, expires = _create_session(row[0])
     user = dict(zip(["external_user_id","username","password_hash","country_code","plan_code","status","plan_expires_at"], row))
@@ -6821,8 +6803,6 @@ def auth_telegram_account(payload: TelegramAccountRequest, request: Request):
     if not TELEGRAM_ACCOUNT_SETUP_SECRET or not secrets.compare_digest(supplied, TELEGRAM_ACCOUNT_SETUP_SECRET):
         raise HTTPException(status_code=401, detail="telegram_account_setup_not_authorized")
     account, _ = _create_or_get_telegram_account(payload.telegram_chat_id, payload.country_code)
-    if _plan_vigente(account.get("plan_code"), account.get("plan_expires_at")) == "FREE":
-        raise HTTPException(status_code=403, detail="FREE no utiliza credenciales de acceso")
     credentials = _set_new_password(account["external_user_id"])
     return {"ok": True, "account": {"external_user_id": account["external_user_id"], "username": credentials["username"], "plan": _plan_efectivo(credentials["plan_code"]), "status": credentials["status"], "plan_expires_at": credentials["plan_expires_at"].isoformat() if credentials["plan_expires_at"] else None}, "password": credentials["password"]}
 
@@ -6833,16 +6813,7 @@ def foundation_bootstrap(payload: FoundationBootstrapRequest, request: Request):
     if authenticated:
         user = authenticated
     else:
-        # Visitante FREE del Monitor: no crea una cuenta persistente ni credenciales.
-        # El registro de usuarios Telegram se realiza únicamente con /registrar.
-        user = {
-            "external_user_id": payload.external_user_id,
-            "username": None,
-            "country_code": (payload.country_code or DEFAULT_COUNTRY_CODE).upper()[:8],
-            "plan_code": "FREE",
-            "status": "anonymous",
-            "plan_expires_at": None,
-        }
+        user = _foundation_user(payload.external_user_id, payload.country_code)
     ent = _foundation_entitlements(user)
     policy = _billing_policy(user.get("country_code"))
     return {
@@ -6984,7 +6955,12 @@ def _create_billing_order(external_user_id, telegram_chat_id, plan_code, pay_cur
     return {"ok":True,"order_id":order_id,"plan_code":plan,"pay_currency":currency,"base_amount_usdt":amount,"quoted_amount":checkout["quoted_amount"],"checkout_url":checkout["checkout_url"],"status":"PAYMENT_PENDING","expires_at":checkout.get("expires_at").isoformat() if checkout.get("expires_at") else None}
 
 def _is_billing_admin(chat_id):
-    return bool(BILLING_ADMIN_TELEGRAM_CHAT_ID and str(chat_id) == BILLING_ADMIN_TELEGRAM_CHAT_ID)
+    if chat_id is None:
+        return False
+    value = str(chat_id)
+    if BILLING_ADMIN_TELEGRAM_CHAT_ID and value == BILLING_ADMIN_TELEGRAM_CHAT_ID:
+        return True
+    return value in TELEGRAM_ADMIN_USER_IDS
 
 def _save_manual_proof(order_id, external_user_id, file_id=None, reference=None):
     with obtener_conexion() as conn:
@@ -7170,6 +7146,7 @@ async def billing_webhook_pabilo(request:Request):
         try:
             exp=activation.get("plan_expires_at") or "sin fecha"
             asyncio.create_task(telegram_app.bot.send_message(chat_id=int(activation["telegram_chat_id"]),text=f"✅ *Venbot: pago confirmado*\n\n💎 Plan: *{activation['plan']}*\n📅 Válido hasta: `{exp}`\n\nTu acceso ya está activo. Usa /cuenta para consultar tu plan.",parse_mode="Markdown"))
+            asyncio.create_task(_send_paid_group_access(int(activation["telegram_chat_id"]), activation.get("plan")))
         except Exception: logger.exception("No se pudo notificar pago Pabilo por Telegram")
     return result
 
@@ -7203,7 +7180,6 @@ def foundation_config(request: Request):
         "features": FEATURE_MIN_PLAN,
         "billing": {"external_checkout_allowed": policy["external_checkout"], "provider": policy["provider"], "checkout_url_configured": bool(EXTERNAL_BILLING_URL)},
         "beta": {"premium_access": BETA_PREMIUM_ACCESS, "vip_access": BETA_VIP_ACCESS},
-        "authentication": {"free_monitor_public": True, "paid_login_required": True, "free_credentials": False},
     }
 
 
@@ -8792,6 +8768,7 @@ async def startup_event():
         telegram_app.add_handler(CommandHandler("pagos", cmd_pagos))
         telegram_app.add_handler(CommandHandler("aprobar", cmd_aprobar))
         telegram_app.add_handler(CommandHandler("rechazar", cmd_rechazar))
+        telegram_app.add_handler(CommandHandler("cancelarpago", cmd_cancelarpago))
         telegram_app.add_handler(MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), recibir_comprobante))
         telegram_app.add_handler(CallbackQueryHandler(manejar_botones))
         telegram_app.add_handler(ChatJoinRequestHandler(telegram_join_request))
