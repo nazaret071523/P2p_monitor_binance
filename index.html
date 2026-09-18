@@ -1776,7 +1776,7 @@
       if(!username||!password){showLoginStatus('Introduce usuario y contraseña.');return;}
       const btn=document.getElementById('login-submit'); btn.disabled=true; btn.textContent='Verificando...';
       try { const r=await fetch(`${API_BASE_URL}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})}); const d=await r.json();
-        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); applyPlanHorizonUI(); renderAccountModal(d.user); loadSpotMarket(); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
+        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); renderAccountModal(d.user); loadSpotMarket(); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
       } catch(e){ showLoginStatus(e.message||'Credenciales inválidas.'); } finally { btn.disabled=false; btn.textContent='Iniciar sesión'; }
     }
     async function logoutVenbot(){ const token=getAuthToken(); try{ if(token) await fetch(`${API_BASE_URL}/api/auth/logout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})}); }catch(e){} localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); window.venbotUser=null; window.venbotEntitlements=null; applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); updateLoginButton(); renderAccountModal(null); closeLoginModal(); location.reload(); }
@@ -1786,7 +1786,7 @@
         const country = (localStorage.getItem('venbot-country') || 'VE').toUpperCase();
         const headers={'Content-Type':'application/json','X-Venbot-Country':country}; if(token) headers['X-Venbot-Session']=token;
         const r = await fetch(`${API_BASE_URL}/api/foundation/bootstrap`, {method:'POST', headers, body:JSON.stringify({external_user_id:sid, country_code:country})});
-        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton(); applyPlanHorizonUI(); loadSpotMarket();
+        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton(); applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); loadSpotMarket();
       } catch(e) {}
     }
     async function loadCommunityLinks(){
