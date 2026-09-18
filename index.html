@@ -314,7 +314,7 @@
         <div class="flex items-center gap-1.5 shrink-0">
           <button type="button" onclick="openInfoMenu()" aria-label="Abrir menú" class="focus-ring bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs w-10 h-10 rounded-xl shadow-lg transition flex items-center justify-center"><i class="fa-solid fa-bars"></i></button>
           <button type="button" onclick="handleLoginClick()" class="focus-ring bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5">
-            <i class="fa-solid fa-user-lock text-emerald-400"></i><span class="hidden sm:inline">Acceso Premium/VIP</span><span class="sm:hidden">Acceso</span>
+            <i class="fa-solid fa-user text-emerald-400"></i><span class="hidden sm:inline">Iniciar sesión</span><span class="sm:hidden">Entrar</span>
           </button>
         </div>
       </div>
@@ -756,7 +756,7 @@
     <div id="loginModal" class="fixed inset-0 z-[90] bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4" onclick="if(event.target===this) closeLoginModal()">
       <div class="glass-card w-full max-w-sm rounded-2xl border border-emerald-500/30 p-5 shadow-2xl space-y-4 fade-up">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-user-lock"></i></div><div><h3 class="font-extrabold text-sm text-white">Acceso Premium / VIP</h3><p class="text-[10px] text-slate-400">FREE utiliza el Monitor sin iniciar sesión. Las credenciales solo corresponden a cuentas PREMIUM o VIP.</p></div></div>
+          <div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400"><i class="fa-solid fa-user-lock"></i></div><div><h3 class="font-extrabold text-sm text-white">Entrar en Venbot</h3><p class="text-[10px] text-slate-400">Usa las credenciales entregadas por Telegram.</p></div></div>
           <button type="button" onclick="closeLoginModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div class="space-y-3">
@@ -769,7 +769,7 @@
           <div class="font-bold text-white">Cuenta activa</div><div>Usuario: <span id="logged-account-user" class="font-mono text-emerald-300"></span></div><div>Plan: <span id="logged-account-plan" class="font-bold text-emerald-300"></span></div><div>Vence: <span id="logged-account-exp" class="font-mono"></span></div>
           <button type="button" onclick="logoutVenbot()" class="mt-1 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-2 rounded-xl">Cerrar sesión</button>
         </div>
-        <p class="text-[10px] leading-relaxed text-slate-500">Las credenciales no son necesarias para FREE. PREMIUM y VIP pueden generarlas desde el chat privado de Venbot mediante <code>/credenciales</code>.</p>
+        <p class="text-[10px] leading-relaxed text-slate-500">¿No tienes credenciales? El bot oficial de Venbot las genera mediante <code>/credenciales</code> en Telegram.</p>
       </div>
     </div>
 
@@ -1594,7 +1594,7 @@
     }
     function updateLoginButton() {
       const logged=!!localStorage.getItem('venbot-session-token'); const b=document.querySelector('button[onclick="handleLoginClick()"]');
-      if(b){ const span=b.querySelector('span.hidden'); if(span) span.textContent=logged?'Cuenta':'Acceso Premium/VIP'; const sm=Array.from(b.querySelectorAll('span')).find(el=>el.classList.contains('sm:hidden')); if(sm) sm.textContent=logged?'Cuenta':'Acceso'; }
+      if(b){ const span=b.querySelector('span.hidden'); if(span) span.textContent=logged?'Cuenta':'Iniciar sesión'; const sm=Array.from(b.querySelectorAll('span')).find(el=>el.classList.contains('sm:hidden')); if(sm) sm.textContent=logged?'Cuenta':'Entrar'; }
     }
     function toggleLoginPassword(){
       const input=document.getElementById('login-password');
@@ -1623,7 +1623,7 @@
       if(!username||!password){showLoginStatus('Introduce usuario y contraseña.');return;}
       const btn=document.getElementById('login-submit'); btn.disabled=true; btn.textContent='Verificando...';
       try { const r=await fetch(`${API_BASE_URL}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})}); const d=await r.json();
-        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); if((d.user?.plan||'FREE')==='FREE') throw new Error('Las cuentas FREE no utilizan credenciales. El Monitor FREE es público.'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); renderAccountModal(d.user); loadSpotMarket(); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
+        if(!r.ok) throw new Error(d.detail||'No se pudo iniciar sesión'); localStorage.setItem('venbot-session-token',d.session_token); localStorage.setItem('venbot-account-id',d.user.external_user_id); window.venbotUser=d.user; window.venbotEntitlements=d.entitlements||null; updateLoginButton(); renderAccountModal(d.user); loadSpotMarket(); showLoginStatus('Sesión iniciada correctamente.',true); await bootstrapVenbotFoundation();
       } catch(e){ showLoginStatus(e.message||'Credenciales inválidas.'); } finally { btn.disabled=false; btn.textContent='Iniciar sesión'; }
     }
     async function logoutVenbot(){ const token=getAuthToken(); try{ if(token) await fetch(`${API_BASE_URL}/api/auth/logout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})}); }catch(e){} localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); window.venbotUser=null; updateLoginButton(); renderAccountModal(null); closeLoginModal(); location.reload(); }
@@ -1653,7 +1653,7 @@
         document.getElementById('menu-online-count').textContent = n;
       } catch(e) {}
     }
-    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Venbot AI requiere una cuenta PREMIUM o VIP con acceso autorizado. FREE puede utilizar el Monitor básico sin iniciar sesión.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); }
+    function handleAIClick() { if(!getAuthToken()){ openLoginModal(); showLoginStatus('Inicia sesión para usar Venbot AI. Tu plan FREE incluye 5 consultas al día.'); return; } document.getElementById('aiChatModal').classList.remove('hidden'); }
     function closeAIChatModal() { document.getElementById('aiChatModal').classList.add('hidden'); }
     function openAlertsModal() {
       document.getElementById('alertsModal').classList.remove('hidden');
