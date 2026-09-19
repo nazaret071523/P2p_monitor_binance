@@ -257,7 +257,7 @@
       .venbot-ai-fab::before,.venbot-ai-fab::after{animation:none!important}
     }
 
-  .adv-timeline-node{border:1px solid rgba(51,65,85,.78);background:linear-gradient(180deg,rgba(15,23,42,.88),rgba(2,6,23,.72));border-radius:.9rem;padding:.55rem .65rem;min-width:0}.adv-timeline-node .t{color:#64748b;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.adv-timeline-node .v{margin-top:.2rem;color:#f8fafc;font-size:12px;font-weight:900;font-variant-numeric:tabular-nums}.adv-timeline-node .r{margin-top:.15rem;color:#64748b;font-size:8px;font-weight:700}.adv-chart-note{color:#64748b;font-size:8px;font-weight:700}</style>
+  .adv-timeline-node{border:1px solid rgba(51,65,85,.78);background:linear-gradient(180deg,rgba(15,23,42,.88),rgba(2,6,23,.72));border-radius:.9rem;padding:.55rem .65rem;min-width:0}.adv-timeline-node .t{color:#64748b;font-size:8px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.adv-timeline-node .v{margin-top:.2rem;color:#f8fafc;font-size:12px;font-weight:900;font-variant-numeric:tabular-nums}.adv-timeline-node .r{margin-top:.15rem;color:#64748b;font-size:8px;font-weight:700}.adv-chart-note{color:#64748b;font-size:8px;font-weight:700}.adv-snapshot-badge{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;border:1px solid rgba(245,158,11,.22);background:rgba(245,158,11,.06);color:#fcd34d;padding:.22rem .5rem;border-radius:999px}.adv-learning-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem}.adv-learning-kpi{border:1px solid rgba(51,65,85,.7);background:rgba(2,6,23,.48);border-radius:.75rem;padding:.55rem .6rem}.adv-learning-kpi span{display:block;color:#64748b;font-size:8px;font-weight:800;text-transform:uppercase}.adv-learning-kpi strong{display:block;margin-top:.18rem;color:#f8fafc;font-size:12px;font-weight:900}.adv-learning-note{color:#64748b;font-size:8px;line-height:1.45}</style>
 
 <style id="venbot-neural-approved">
 .venbot-neural{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:58px;height:58px;filter:drop-shadow(0 0 16px rgba(0,153,255,.38)) drop-shadow(0 0 28px rgba(0,217,255,.14));animation:neuralFloat 4.4s ease-in-out infinite}
@@ -825,11 +825,11 @@
             <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-3">
               <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <div><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot</h3><p class="text-[9px] text-slate-500 mt-1">La línea sólida representa observaciones; la línea punteada representa proyección.</p></div>
-                  <div class="flex items-center gap-3 text-[9px] text-slate-500"><span><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección</span><span><i class="fa-solid fa-ruler-combined text-slate-400 mr-1"></i>Rango</span></div>
+                  <div><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot → Resultado</h3><p class="text-[9px] text-slate-500 mt-1">La proyección activa mira al futuro; el snapshot histórico se conserva para compararlo con el precio real que ocurrió después.</p></div>
+                  <div class="flex items-center gap-2 text-[9px] text-slate-500 flex-wrap"><span><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span><i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real posterior</span><span><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección activa</span><span><i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0</span><span class="adv-snapshot-badge" id="adv-snapshot-badge">sin snapshot</span></div>
                 </div>
                 <div class="relative h-[20rem] md:h-[32rem] w-full rounded-xl overflow-hidden bg-slate-950/70 border border-slate-800/70"><canvas id="advancedPredictiveChart"></canvas></div>
-                <div class="mt-3 flex items-center justify-between gap-2"><div class="adv-chart-note"><i class="fa-solid fa-route text-cyan-300 mr-1"></i> T0 → horizonte: la curva futura representa la trayectoria central entregada por el motor y la franja representa su rango.</div><div id="adv-t0-label" class="text-[8px] uppercase tracking-[0.16em] font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">T0 · ahora</div></div>
+                <div class="mt-3 flex items-center justify-between gap-2"><div class="adv-chart-note"><i class="fa-solid fa-route text-cyan-300 mr-1"></i> T0 → futuro: la curva púrpura es la proyección activa; el snapshot ámbar conserva una predicción anterior y la línea verde remarca el resultado real posterior.</div><div id="adv-t0-label" class="text-[8px] uppercase tracking-[0.16em] font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">T0 · ahora</div></div>
                 <div id="adv-timeline-strip" class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2"></div>
               </div>
 
@@ -852,6 +852,13 @@
             <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
               <div class="flex items-center justify-between gap-2 mb-3"><div><h3 class="text-xs md:text-sm font-black text-white">Trazabilidad de la predicción</h3><p class="text-[9px] text-slate-500 mt-1">Venbot conserva la separación entre predicción y resultado real cuando el tracking ya ha evaluado el horizonte.</p></div><span class="text-[8px] uppercase font-black text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">T0 → resultado</span></div>
               <div id="adv-trace-table" class="overflow-x-auto"></div>
+            </div>
+
+            <div class="glass-card rounded-2xl border border-purple-500/15 bg-purple-500/[0.025] p-3 md:p-4">
+              <div class="flex items-center justify-between gap-2 mb-3"><div><h3 class="text-xs md:text-sm font-black text-white">Aprendizaje adaptativo · supervisado</h3><p class="text-[9px] text-slate-500 mt-1">Venbot compara predicciones con resultados reales y mantiene candidatos de recalibración en sombra; no modifica producción automáticamente.</p></div><span id="adv-learning-badge" class="text-[8px] uppercase font-black text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">lectura</span></div>
+              <div id="adv-learning-content" class="adv-learning-grid"></div>
+              <div id="adv-learning-horizons" class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2"></div>
+              <div id="adv-learning-note" class="adv-learning-note mt-3">La capa adaptativa usa evidencia histórica y validaciones OOS antes de proponer cambios.</div>
             </div>
 
             <div class="rounded-xl border border-amber-500/15 bg-amber-500/5 px-3 py-2 text-[9px] text-slate-500 leading-relaxed">
@@ -2293,18 +2300,28 @@
     const meta=chart._venbotMeta||{}; const xScale=chart.scales?.x; if(!xScale||!Number.isFinite(meta.anchor)) return;
     const x0=xScale.getPixelForValue(meta.anchor); const area=chart.chartArea; const ctx=chart.ctx; if(!area) return;
     ctx.save();
-    ctx.fillStyle='rgba(139,92,246,.055)'; ctx.fillRect(x0,area.top,Math.max(0,area.right-x0),area.bottom-area.top);
-    ctx.setLineDash([6,5]); ctx.strokeStyle='rgba(96,165,250,.7)'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(x0,area.top); ctx.lineTo(x0,area.bottom); ctx.stroke();
+    ctx.fillStyle='rgba(139,92,246,.045)'; ctx.fillRect(x0,area.top,Math.max(0,area.right-x0),area.bottom-area.top);
+    ctx.setLineDash([6,5]); ctx.strokeStyle='rgba(96,165,250,.68)'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(x0,area.top); ctx.lineTo(x0,area.bottom); ctx.stroke();
     ctx.setLineDash([]); ctx.fillStyle='#93c5fd'; ctx.font='900 9px system-ui,sans-serif'; ctx.fillText('AHORA',Math.min(x0+6,area.right-42),area.top+13);
+    if(Number.isFinite(meta.snapshotAnchor)){
+      const xs=xScale.getPixelForValue(meta.snapshotAnchor);
+      ctx.setLineDash([3,4]); ctx.strokeStyle='rgba(245,158,11,.55)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(xs,area.top); ctx.lineTo(xs,area.bottom); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle='#fcd34d'; ctx.font='800 8px system-ui,sans-serif'; ctx.fillText('T0 SNAPSHOT',Math.min(xs+5,area.right-72),area.top+26);
+    }
     ctx.restore();
   },afterDatasetsDraw(chart){
-    const meta=chart._venbotMeta||{}; const xScale=chart.scales?.x, yScale=chart.scales?.y; if(!xScale||!yScale||!Array.isArray(meta.forecast)) return;
+    const meta=chart._venbotMeta||{}; const xScale=chart.scales?.x, yScale=chart.scales?.y; if(!xScale||!yScale) return;
     const ctx=chart.ctx; const area=chart.chartArea; ctx.save();
-    meta.forecast.filter(p=>!p.anchor && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y))).forEach(p=>{
+    (meta.forecast||[]).filter(p=>!p.anchor&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).forEach(p=>{
       const px=xScale.getPixelForValue(p.x), py=yScale.getPixelForValue(p.y); const hours=Math.round((Number(p.x)-meta.anchor)/3600000); const label=hours>0?`+${hours}H`:'';
       if(px<area.left||px>area.right||py<area.top||py>area.bottom) return;
-      ctx.beginPath(); ctx.arc(px,py,4.3,0,Math.PI*2); ctx.fillStyle='#c084fc'; ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(px,py,4.5,0,Math.PI*2); ctx.fillStyle='#c084fc'; ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1.5; ctx.stroke();
       ctx.fillStyle='#e9d5ff'; ctx.font='900 8px system-ui,sans-serif'; ctx.textAlign='center'; ctx.fillText(label,px,Math.max(area.top+12,py-10));
+    });
+    (meta.snapshotForecast||[]).filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).forEach(p=>{
+      const px=xScale.getPixelForValue(p.x), py=yScale.getPixelForValue(p.y);
+      if(px<area.left||px>area.right||py<area.top||py>area.bottom) return;
+      ctx.beginPath(); ctx.arc(px,py,3.2,0,Math.PI*2); ctx.fillStyle='#fbbf24'; ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1.2; ctx.stroke();
     });
     ctx.restore();
   }};
@@ -2312,7 +2329,16 @@
     const box=document.getElementById('adv-timeline-strip'); if(!box) return;
     box.innerHTML=rows.filter(r=>r&&r.h).map(r=>{const d=advNum(r.change), cls=advDirectionClass(r.direction); const hh=advHorizonHours(r.h); const label=Number.isFinite(hh)?`T+${hh}H`:advHorizonLabel(r.h); return `<div class="adv-timeline-node"><div class="flex items-center justify-between gap-2"><span class="t">${advEsc(label)}</span><span class="adv-pill ${cls}">${advPct(d)}</span></div><div class="v">${advMoney(r.central,unit==='USDT'?4:2)} ${advEsc(unit)}</div><div class="r">Rango ${advMoney(r.low,unit==='USDT'?4:2)} – ${advMoney(r.high,unit==='USDT'?4:2)} · ${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'confianza n/d'}</div></div>`}).join('');
   }
-  function advRenderChart(points, forecast, unit){
+  function advSnapshotForecast(snapshot){
+    if(!snapshot?.horizons || !snapshot.created_at) return [];
+    const anchor=Number(new Date(snapshot.created_at).getTime()); if(!Number.isFinite(anchor)) return [];
+    return ['1h','3h','7h','24h'].map(h=>{const q=snapshot.horizons[h]||{}; const hours=Number(q.hours||advHorizonHours(h)); const y=advNum(q.predicted); return {x:anchor+hours*3600000,y:y,low:advNum(q.low),high:advNum(q.high),h,actual:advNum(q.actual),evaluated_at:q.evaluated_at||null};}).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+  }
+  function advPickSnapshot(payload){
+    const list=Array.isArray(payload?.snapshots)?payload.snapshots:[];
+    return list.find(s=>Number(s.evaluated_count||0)>0) || list[0] || null;
+  }
+  function advRenderChart(points, forecast, unit, snapshot=null){
     const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
     advDestroyChart();
     const hist=Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
@@ -2320,21 +2346,33 @@
     const anchor=hist.length?Number(hist[hist.length-1].x):(proj.length?Number(proj[0].x):Date.now());
     const currentY=hist.length?Number(hist[hist.length-1].y):(proj.length?Number(proj[0].y):NaN);
     if(Number.isFinite(currentY)) proj=[{x:anchor,y:currentY,low:currentY,high:currentY,anchor:true},...proj.filter(p=>Number(p.x)>anchor)];
-    if(!proj.length){
-      advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets:[{label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.06)',pointRadius:0,borderWidth:2.2,tension:.24,fill:false}]},options:advChartOptions(unit),plugins:[advPredictivePlugin]});
-      return;
-    }
-    const lower=proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y))); const upper=proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
+    const lower=proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
+    const upper=proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
+    const snapProj=advSnapshotForecast(snapshot);
+    const snapAnchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):NaN;
+    const posterior=snapProj.length&&Number.isFinite(snapAnchor)?hist.filter(p=>Number(p.x)>=snapAnchor):[];
+    const snapshotLower=snapProj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
+    const snapshotUpper=snapProj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
     const datasets=[
-      {label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.04)',pointRadius:0,borderWidth:2.5,tension:.2,fill:false},
-      {label:'Proyección Venbot',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.08)',borderDash:[9,5],pointRadius:proj.map(p=>p.anchor?6:3.5),pointHoverRadius:7,borderWidth:3.1,tension:.19,fill:false},
-      {label:'Rango inferior',data:lower,borderColor:'rgba(192,132,252,.32)',borderDash:[3,4],pointRadius:0,borderWidth:1.1,fill:false},
-      {label:'Rango superior',data:upper,borderColor:'rgba(192,132,252,.32)',borderDash:[3,4],pointRadius:0,borderWidth:1.1,backgroundColor:'rgba(192,132,252,.12)',fill:'-1'}
+      {label:'Real',data:hist,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.03)',pointRadius:0,borderWidth:2.4,tension:.2,fill:false},
+      ...(posterior.length? [{label:'Real posterior',data:posterior,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.04)',pointRadius:0,borderWidth:3.4,tension:.18,fill:false}]:[]),
+      ...(proj.length? [
+        {label:'Proyección activa',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.06)',borderDash:[9,5],pointRadius:proj.map(p=>p.anchor?6:3.2),pointHoverRadius:7,borderWidth:3.0,tension:.16,fill:false},
+        {label:'Rango activo inferior',data:lower,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,fill:false},
+        {label:'Rango activo superior',data:upper,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,backgroundColor:'rgba(192,132,252,.11)',fill:'-1'}
+      ]:[]),
+      ...(snapProj.length? [
+        {label:'Snapshot T0',data:snapProj,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.035)',borderDash:[4,4],pointRadius:0,borderWidth:1.9,tension:.14,fill:false},
+        ...(snapshotLower.length? [{label:'Rango snapshot inferior',data:snapshotLower,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,fill:false}]:[]),
+        ...(snapshotUpper.length? [{label:'Rango snapshot superior',data:snapshotUpper,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,backgroundColor:'rgba(251,191,36,.05)',fill:'-1'}]:[]),
+      ]:[])
     ];
+    if(!datasets.length) datasets.push({label:'Real',data:hist,borderColor:'#22d3ee',pointRadius:0,borderWidth:2,fill:false});
     advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit),plugins:[advPredictivePlugin]});
-    advancedChart._venbotMeta={anchor,forecast:proj};
+    advancedChart._venbotMeta={anchor,forecast:proj,snapshotForecast:snapProj,snapshotAnchor:snapAnchor};
     advancedChart.update('none');
     const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(anchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`;
+    const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snapshot ? `${snapshot.status||'snapshot'} · ${snapshot.evaluated_count||0}/4 evaluadas` : 'sin snapshot';
   }
   function advRenderHorizonCards(rows, unit){
     const box=document.getElementById('adv-horizon-cards'); if(!box) return;
@@ -2353,7 +2391,28 @@
     const labels=['1h','3h','7h','24h'];
     box.innerHTML=`<table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción central</th><th class="py-2 pr-3">Evaluadas</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{const x=horizonObj[h]||{}; return `<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${advHorizonLabel(h)}</td><td class="py-2 pr-3 text-purple-300">${projections[h]?advMoney(projections[h].central,4):'n/d'} USDT</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'}</td><td class="py-2 text-slate-300">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'%':'n/d'}</td></tr>`}).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">Activo: ${advEsc(symbol)} · métricas leídas del Spot Prediction Tracking.</p>`;
   }
-  function advResetDetails(){ ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; }
+  function advRenderSnapshotTrace(snapshot, unit){
+    const box=document.getElementById('adv-trace-table'); if(!box) return;
+    if(!snapshot){box.innerHTML='<div class="text-[9px] text-slate-600">Aún no existe un snapshot registrado para comparar.</div>';return;}
+    const labels=['1h','3h','7h','24h'];
+    box.innerHTML=`<div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-[9px] text-slate-500">Snapshot #${advEsc(snapshot.id)} · T0 ${new Date(snapshot.created_at).toLocaleString('es-VE')} · ${advEsc(snapshot.status)}</div><span class="adv-snapshot-badge">${snapshot.evaluated_count||0}/4 evaluadas</span></div><table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción T0</th><th class="py-2 pr-3">Resultado real</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{const q=snapshot.horizons?.[h]||{}; const actual=Number.isFinite(Number(q.actual))?advMoney(q.actual,unit==='USDT'?4:2)+' '+advEsc(unit):'pendiente'; const error=Number.isFinite(Number(q.error_pct))?advPct(q.error_pct):'n/d'; const dir=q.direction_correct===true?'Correcta':q.direction_correct===false?'Incorrecta':'n/d'; return `<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${h.toUpperCase()}</td><td class="py-2 pr-3 text-amber-200">${Number.isFinite(Number(q.predicted))?advMoney(q.predicted,unit==='USDT'?4:2):'n/d'} ${advEsc(unit)}</td><td class="py-2 pr-3 text-emerald-300">${actual}</td><td class="py-2 pr-3 text-slate-300">${error}</td><td class="py-2 text-slate-300">${dir}</td></tr>`;}).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">La predicción T0 queda congelada; el resultado real proviene del Prediction Tracking cuando el horizonte ya venció.</p>`;
+  }
+  function advRenderLearning(data, kind){
+    const box=document.getElementById('adv-learning-content'), hzbox=document.getElementById('adv-learning-horizons'), note=document.getElementById('adv-learning-note'), badge=document.getElementById('adv-learning-badge'); if(!box||!hzbox) return;
+    const motor=kind==='spot'?data?.spot:data?.p2p; const stage=motor?.stage||{}; if(!motor){box.innerHTML='';hzbox.innerHTML='';if(note)note.textContent='Sin lectura adaptativa disponible.';return;}
+    const coverage=Number(motor.coverage_hours||0); const hvals=motor.horizons||{};
+    box.innerHTML=`<div class="adv-learning-kpi"><span>Motor</span><strong>${kind==='spot'?'SPOT':'P2P'}</strong></div><div class="adv-learning-kpi"><span>Cobertura</span><strong>${coverage.toFixed(2)} h</strong></div><div class="adv-learning-kpi"><span>Etapa</span><strong>${advEsc(stage.stage||'ACUMULANDO')}</strong></div><div class="adv-learning-kpi"><span>Modo</span><strong>EN SOMBRA</strong></div>`;
+    hzbox.innerHTML=['1h','3h','7h','24h'].map(h=>{const v=hvals[h]||{};const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'n/d';const mae=Number.isFinite(Number(v.mae_pct))?`${Number(v.mae_pct).toFixed(3)}% MAE`:'n/d';const cand=v.shadow_candidate?.status||'ACUMULANDO';return `<div class="adv-learning-kpi"><span>${h.toUpperCase()}</span><strong>${Number(v.evaluated||0)} eval.</strong><small class="text-slate-500">${acc} · ${mae}</small><small class="text-purple-300">${advEsc(cand)}</small></div>`;}).join('');
+    if(badge) badge.textContent=motor.stage?.stage||'lectura';
+    if(note) note.textContent='La capa adaptativa observa errores y sesgos, separa entrenamiento de OOS y mantiene los candidatos en sombra. Una medición no modifica el motor productivo.';
+  }
+  async function advLoadLearning(kind){
+    try{
+      const symbol=kind==='spot'?`?symbol=${encodeURIComponent(advancedSpotSymbol)}`:'';
+      const d=await advFetch(`${API_BASE_URL}/api/quant/adaptive/status${symbol}`); advRenderLearning(d,kind);
+    }catch(e){const n=document.getElementById('adv-learning-note');if(n)n.textContent=e.message||'Aprendizaje adaptativo temporalmente no disponible.';}
+  }
+  function advResetDetails(){ ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot'; const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML=''; const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML=''; }
   function advProjectionRowsP2P(analysis){
     const src=analysis?.proyecciones_horizontes||{};
     return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza};});
@@ -2364,7 +2423,7 @@
   }
   async function loadAdvancedP2P(){
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=1200&t=${Date.now()}`);
-    const a=d.analysis||{}; const perf=d.performance||{};
+    const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
     const proj=advProjectionRowsP2P(a);
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=periodConfig.rows.map(r=>({x:new Date(r.timestamp).getTime(),y:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.y>0);
@@ -2378,26 +2437,28 @@
     advSetText('adv-m-range',selected?`${advMoney(selected.low)}–${advMoney(selected.high)}`:'n/d'); advSetText('adv-m-confidence',selected&&Number.isFinite(Number(selected.confidence))?advMoney(selected.confidence,0):'n/d');
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advRenderHorizonCards(proj,'Bs'); advRenderChart(hist,forecast,'Bs');
+    advRenderHorizonCards(proj,'Bs'); advRenderChart(hist,forecast,'Bs',snapshot);
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
-    advRenderTraceP2P(perf,a.proyecciones_horizontes||{},advancedP2PBank);
-    advSetStatus(`P2P ${advancedP2PBank} · ${periodConfig.label} de histórico real + proyección cuantitativa · ${new Date().toLocaleTimeString('es-VE')}`,'ok');
+    advRenderSnapshotTrace(snapshot,'Bs');
+    advLoadLearning('p2p');
+    advSetStatus(`P2P ${advancedP2PBank} · ${periodConfig.label} de histórico real + proyección activa + snapshot verificable · ${new Date().toLocaleTimeString('es-VE')}`,'ok');
   }
   async function loadAdvancedSpot(){
     const rangeCfg = advancedPeriod==='24h' ? {interval:'1h',limit:80} : advancedPeriod==='7d' ? {interval:'1h',limit:180} : {interval:'4h',limit:220};
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/spot?symbol=${encodeURIComponent(advancedSpotSymbol)}&interval=${rangeCfg.interval}&limit=${rangeCfg.limit}&t=${Date.now()}`);
-    const pred=d.prediction||{}; const o=pred.observed||{}; const a=pred.analysis||{}; const proj=advProjectionRowsSpot(pred); const perf=d.performance||{};
+    const pred=d.prediction||{}; const o=pred.observed||{}; const a=pred.analysis||{}; const proj=advProjectionRowsSpot(pred); const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
     const points=(d.candles||[]).map(c=>({x:Number(c.open_time||c.timestamp||c.time),y:Number(c.close)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
     const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?Date.now()+hrs*3600000:NaN,y:Number(r.central),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
     const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
     advSetText('adv-m-current',advMoney(o.price,4)); advSetText('adv-m-current-unit','USDT'); advSetText('adv-m-projection',advMoney(selected?.central,4)); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change)); advSetText('adv-m-range',selected?`${advMoney(selected.low,4)}–${advMoney(selected.high,4)}`:'n/d'); advSetText('adv-m-confidence',Number.isFinite(Number(a.confidence))?advMoney(a.confidence,0):'n/d'); advSetText('adv-m-r2',Number.isFinite(Number(a.regression_r2))?advMoney(a.regression_r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number(perf?.horizons?.[hz]?.evaluated??0),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advRenderHorizonCards(proj,'USDT'); advRenderChart(points,forecast,'USDT');
+    advRenderHorizonCards(proj,'USDT'); advRenderChart(points,forecast,'USDT',snapshot);
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const sc=pred.scenarios_24h||{}; sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.trend)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(a.support,4)} USDT</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(a.resistance,4)} USDT</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Escenario 24H</span><strong class="block mt-1">Bajista ${advMoney(sc.bearish,4)} · Central ${advMoney(sc.central,4)} · Alcista ${advMoney(sc.bullish,4)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){const hz=perf?.horizons||{}; vbox.innerHTML=['1h','3h','7h','24h'].map(hzKey=>{const x=hz[hzKey]||{};return `<div class="adv-horizon-row"><div class="flex items-center justify-between"><span class="font-black text-slate-300">${hzKey.toUpperCase()}</span><span class="text-slate-500">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'} evaluadas</span></div><strong class="block mt-1">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'% dirección':'n/d'}</strong></div>`}).join('');}
-    advRenderTraceSpot(perf,pred.projections||{},advancedSpotSymbol);
-    advSetStatus(`${advancedSpotSymbol} · ${advancedPeriod.toUpperCase()} de histórico real + proyección Venbot · ${new Date(pred.generated_at||Date.now()).toLocaleTimeString('es-VE')}`,'ok');
+    advRenderSnapshotTrace(snapshot,'USDT');
+    advLoadLearning('spot');
+    advSetStatus(`${advancedSpotSymbol} · ${advancedPeriod.toUpperCase()} de histórico real + proyección activa + snapshot verificable · ${new Date(pred.generated_at||Date.now()).toLocaleTimeString('es-VE')}`,'ok');
   }
   window.openAdvancedGraphs=async function(){
     if(!window.venbotUser?.is_developer){alert('🔐 Centro Predictivo reservado al administrador de Venbot.');return;}
