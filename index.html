@@ -2348,7 +2348,7 @@
             maxTicksLimit:8,
             font:{size:9},
             autoSkip:false,
-            callback:(v)=>{
+            callback:function(v){
               const meta=this.chart?._venbotMeta||{};
               const x=Number(v), anchor=Number(meta.anchor), start=Number(meta.historyStart);
               if(Number.isFinite(start) && Math.abs(x-start)<1 && Math.abs(start-anchor)>1) return 'HIST.';
@@ -2392,11 +2392,27 @@
       const byH=new Map();
       (meta.forecastBuy||[]).filter(p=>Number(p.x)>meta.anchor).forEach(p=>byH.set(Number(p.x),{...byH.get(Number(p.x)),buy:p}));
       (meta.forecastSell||[]).filter(p=>Number(p.x)>meta.anchor).forEach(p=>byH.set(Number(p.x),{...byH.get(Number(p.x)),sell:p}));
-      [...byH.entries()].sort((a,b)=>a[0]-b[0]).forEach(([x,row])=>{
+      [...byH.entries()].sort((a,b)=>a[0]-b[0]).forEach(([x,row],idx)=>{
         const px=xScale.getPixelForValue(x); const hours=Math.round((x-meta.anchor)/3600000); if(px<area.left||px>area.right) return;
-        ctx.textAlign='center'; ctx.font='900 8px system-ui,sans-serif'; ctx.fillStyle='#e9d5ff'; ctx.fillText(hours>0?`+${hours}H`:'',px,area.top+14);
-        if(row.sell&&Number.isFinite(Number(row.sell.y))){ const py=yScale.getPixelForValue(row.sell.y); if(py>=area.top&&py<=area.bottom){ctx.beginPath();ctx.arc(px,py,4.2,0,Math.PI*2);ctx.fillStyle='#34d399';ctx.fill();ctx.strokeStyle='#0f172a';ctx.lineWidth=1.4;ctx.stroke();ctx.fillStyle='#a7f3d0';ctx.font='900 8px system-ui,sans-serif';ctx.fillText(`V ${advMoney(row.sell.y,decimals)}`,px,Math.max(area.top+26,py-9));}}
-        if(row.buy&&Number.isFinite(Number(row.buy.y))){ const py=yScale.getPixelForValue(row.buy.y); if(py>=area.top&&py<=area.bottom){ctx.beginPath();ctx.arc(px,py,4.2,0,Math.PI*2);ctx.fillStyle='#fb7185';ctx.fill();ctx.strokeStyle='#0f172a';ctx.lineWidth=1.4;ctx.stroke();ctx.fillStyle='#fecdd3';ctx.font='900 8px system-ui,sans-serif';ctx.fillText(`C ${advMoney(row.buy.y,decimals)}`,px,Math.min(area.bottom-4,py+15));}}
+        const tagY=area.top+14+(idx%2?11:0);
+        ctx.textAlign='center'; ctx.font='900 8px system-ui,sans-serif'; ctx.fillStyle='#e9d5ff';
+        ctx.fillText(hours>0?`+${hours}H`:'',px,tagY);
+        if(row.sell&&Number.isFinite(Number(row.sell.y))){
+          const py=yScale.getPixelForValue(row.sell.y);
+          if(py>=area.top&&py<=area.bottom){
+            ctx.beginPath();ctx.arc(px,py,5,0,Math.PI*2);ctx.fillStyle='#34d399';ctx.fill();ctx.strokeStyle='#07111f';ctx.lineWidth=1.6;ctx.stroke();
+            ctx.fillStyle='#a7f3d0';ctx.font='900 8px system-ui,sans-serif';
+            ctx.fillText(`V ${advMoney(row.sell.y,decimals)}`,px,Math.max(area.top+28,py-10));
+          }
+        }
+        if(row.buy&&Number.isFinite(Number(row.buy.y))){
+          const py=yScale.getPixelForValue(row.buy.y);
+          if(py>=area.top&&py<=area.bottom){
+            ctx.beginPath();ctx.arc(px,py,5,0,Math.PI*2);ctx.fillStyle='#fb7185';ctx.fill();ctx.strokeStyle='#07111f';ctx.lineWidth=1.6;ctx.stroke();
+            ctx.fillStyle='#fecdd3';ctx.font='900 8px system-ui,sans-serif';
+            ctx.fillText(`C ${advMoney(row.buy.y,decimals)}`,px,Math.min(area.bottom-5,py+16));
+          }
+        }
       });
     } else {
       (meta.forecast||[]).filter(p=>!p.anchor&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).forEach(p=>{
@@ -2531,6 +2547,24 @@
     const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(anchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`;
     const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snapshot ? `${snapshot.status||'snapshot'} · ${snapshot.evaluated_count||0}/4 evaluadas` : 'sin snapshot';
   }
+  function advRenderSnapshotTrace(snapshot, unit){
+    const box=document.getElementById('adv-trace-table'); if(!box) return;
+    const labels=['1h','3h','7h','24h'];
+    if(!snapshot){ box.innerHTML='<div class="text-[9px] text-slate-600">Aún no existe un snapshot registrado para comparar.</div>'; return; }
+    const snapTime=snapshot.created_at?new Date(snapshot.created_at):null;
+    const status=String(snapshot.status||'pendiente');
+    const count=Number(snapshot.evaluated_count||0);
+    box.innerHTML=`<div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-[9px] text-slate-500">Snapshot #${advEsc(snapshot.id)} · T0 ${snapTime?advEsc(snapTime.toLocaleString('es-VE')):'n/d'} · ${advEsc(status)}</div><span class="adv-snapshot-badge">${count}/4 evaluadas</span></div><div class="overflow-x-auto"><table class="w-full min-w-[560px] text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción T0</th><th class="py-2 pr-3">Resultado real</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{
+      const q=snapshot.horizons?.[h]||{};
+      const predicted=advNum(q.predicted);
+      const actualNum=advNum(q.actual);
+      const evaluated=Boolean(q.evaluated_at)||q.evaluated===true||q.status==='evaluated';
+      const actual=evaluated&&Number.isFinite(actualNum)&&actualNum>0?advMoney(actualNum,unit==='USDT'?4:2)+' '+advEsc(unit):'pendiente';
+      const error=evaluated&&Number.isFinite(Number(q.error_pct))?advPct(q.error_pct):'n/d';
+      const dir=evaluated?(q.direction_correct===true?'Correcta':q.direction_correct===false?'Incorrecta':'n/d'):'n/d';
+      return `<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${h.toUpperCase()}</td><td class="py-2 pr-3 text-amber-200">${Number.isFinite(predicted)?advMoney(predicted,unit==='USDT'?4:2):'n/d'} ${advEsc(unit)}</td><td class="py-2 pr-3 text-emerald-300">${actual}</td><td class="py-2 pr-3 text-slate-300">${error}</td><td class="py-2 text-slate-300">${dir}</td></tr>`;
+    }).join('')}</tbody></table></div><p class="text-[8px] text-slate-600 mt-2">La predicción T0 queda congelada; el resultado real aparece únicamente cuando Prediction Tracking evalúa el horizonte vencido.</p>`;
+  }
   function advRenderHorizonCards(rows, unit, dualP2P=false){
     const box=document.getElementById('adv-horizon-cards'); if(!box) return;
     box.innerHTML=rows.map(r=>{const c=advNum(r.change), cls=advDirectionClass(r.direction); const d=unit==='USDT'?4:2; const priceBlock=dualP2P?`<div class="grid grid-cols-2 gap-2 mt-2"><div><span class="text-[8px] uppercase text-rose-300/80 font-black">Compra</span><strong class="block text-[12px] mt-0.5 text-rose-200">${advMoney(r.buy,d)} ${advEsc(unit)}</strong></div><div><span class="text-[8px] uppercase text-emerald-300/80 font-black">Venta</span><strong class="block text-[12px] mt-0.5 text-emerald-200">${advMoney(r.sell,d)} ${advEsc(unit)}</strong></div></div>`:`<strong class="block text-sm mt-1">${advMoney(r.central,d)} ${advEsc(unit)}</strong>`; return `<div class="adv-horizon-row"><div class="flex items-center justify-between gap-2"><div><span class="text-[8px] uppercase text-slate-500 font-black">${advHorizonLabel(r.h)}</span>${priceBlock}</div><span class="adv-pill ${cls}">${advPct(c)}</span></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div><span class="text-slate-600">Rango</span><strong class="block mt-0.5 text-slate-300">${advMoney(r.low,d)} – ${advMoney(r.high,d)}</strong></div><div><span class="text-slate-600">Confianza</span><strong class="block mt-0.5 text-slate-300">${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'n/d'}</strong></div></div>${dualP2P?`<div class="mt-1 text-[8px] text-slate-600">Spread proyectado · ${advMoney(Number(r.sell)-Number(r.buy),d)} ${advEsc(unit)}</div>`:''}</div>`}).join('') || '<div class="text-slate-600">Sin proyecciones disponibles.</div>';
@@ -2577,7 +2611,7 @@
     advSetText('adv-m-range',selected?`${advMoney(selected.low)}–${advMoney(selected.high)}`:'n/d'); advSetText('adv-m-confidence',selected&&Number.isFinite(Number(selected.confidence))?advMoney(selected.confidence,0):'n/d');
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advSetText('adv-chart-mode-label','P2P · corredor Compra / Venta'); advSetChartLegend('p2p');
+    advSetText('adv-chart-mode-label','P2P · corredor cuantitativo Compra / Venta'); advSetChartLegend('p2p');
     advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
