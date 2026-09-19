@@ -825,8 +825,8 @@
             <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-3">
               <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <div><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot → Resultado</h3><p class="text-[9px] text-slate-500 mt-1">La proyección activa mira al futuro; el snapshot histórico se conserva para compararlo con el precio real que ocurrió después.</p></div>
-                  <div class="flex items-center gap-2 text-[9px] text-slate-500 flex-wrap"><span><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span><i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real posterior</span><span><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección activa</span><span><i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0</span><span class="adv-snapshot-badge" id="adv-snapshot-badge">sin snapshot</span></div>
+                  <div><div class="flex flex-wrap items-center gap-2"><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot → Resultado</h3><span id="adv-chart-mode-label" class="text-[8px] uppercase tracking-wider font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">Modelo cuantitativo</span></div><p class="text-[9px] text-slate-500 mt-1">La proyección activa mira al futuro; en P2P el corredor separa compra y venta y conserva el rango estadístico para medir incertidumbre.</p></div>
+                  <div id="adv-chart-legend" class="flex items-center gap-2 text-[9px] text-slate-500 flex-wrap"><span id="adv-leg-a"><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span id="adv-leg-b"><i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real posterior</span><span id="adv-leg-c"><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección activa</span><span id="adv-leg-d"><i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0</span><span class="adv-snapshot-badge" id="adv-snapshot-badge">sin snapshot</span></div>
                 </div>
                 <div class="relative h-[20rem] md:h-[32rem] w-full rounded-xl overflow-hidden bg-slate-950/70 border border-slate-800/70"><canvas id="advancedPredictiveChart"></canvas></div>
                 <div class="mt-3 flex items-center justify-between gap-2"><div class="adv-chart-note"><i class="fa-solid fa-route text-cyan-300 mr-1"></i> T0 → futuro: la curva púrpura es la proyección activa; el snapshot ámbar conserva una predicción anterior y la línea verde remarca el resultado real posterior.</div><div id="adv-t0-label" class="text-[8px] uppercase tracking-[0.16em] font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">T0 · ahora</div></div>
@@ -2388,14 +2388,26 @@
     const meta=chart._venbotMeta||{}; const xScale=chart.scales?.x, yScale=chart.scales?.y; if(!xScale||!yScale) return;
     const ctx=chart.ctx; const area=chart.chartArea; ctx.save();
     const unit=meta.unit==='USDT'?'USDT':'Bs'; const decimals=unit==='USDT'?4:2;
-    (meta.forecast||[]).filter(p=>!p.anchor&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).forEach(p=>{
-      const px=xScale.getPixelForValue(p.x), py=yScale.getPixelForValue(p.y); const hours=Math.round((Number(p.x)-meta.anchor)/3600000);
-      if(px<area.left||px>area.right||py<area.top||py>area.bottom) return;
-      ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fillStyle='#c084fc'; ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1.7; ctx.stroke();
-      ctx.textAlign='center';
-      ctx.fillStyle='#e9d5ff'; ctx.font='900 8px system-ui,sans-serif'; ctx.fillText(hours>0?`+${hours}H`:'',px,Math.max(area.top+11,py-22));
-      ctx.fillStyle='#f5f3ff'; ctx.font='900 9px system-ui,sans-serif'; ctx.fillText(`${advMoney(p.y,decimals)} ${unit}`,px,Math.max(area.top+21,py-10));
-    });
+    if(meta.dualP2P){
+      const byH=new Map();
+      (meta.forecastBuy||[]).filter(p=>Number(p.x)>meta.anchor).forEach(p=>byH.set(Number(p.x),{...byH.get(Number(p.x)),buy:p}));
+      (meta.forecastSell||[]).filter(p=>Number(p.x)>meta.anchor).forEach(p=>byH.set(Number(p.x),{...byH.get(Number(p.x)),sell:p}));
+      [...byH.entries()].sort((a,b)=>a[0]-b[0]).forEach(([x,row])=>{
+        const px=xScale.getPixelForValue(x); const hours=Math.round((x-meta.anchor)/3600000); if(px<area.left||px>area.right) return;
+        ctx.textAlign='center'; ctx.font='900 8px system-ui,sans-serif'; ctx.fillStyle='#e9d5ff'; ctx.fillText(hours>0?`+${hours}H`:'',px,area.top+14);
+        if(row.sell&&Number.isFinite(Number(row.sell.y))){ const py=yScale.getPixelForValue(row.sell.y); if(py>=area.top&&py<=area.bottom){ctx.beginPath();ctx.arc(px,py,4.2,0,Math.PI*2);ctx.fillStyle='#34d399';ctx.fill();ctx.strokeStyle='#0f172a';ctx.lineWidth=1.4;ctx.stroke();ctx.fillStyle='#a7f3d0';ctx.font='900 8px system-ui,sans-serif';ctx.fillText(`V ${advMoney(row.sell.y,decimals)}`,px,Math.max(area.top+26,py-9));}}
+        if(row.buy&&Number.isFinite(Number(row.buy.y))){ const py=yScale.getPixelForValue(row.buy.y); if(py>=area.top&&py<=area.bottom){ctx.beginPath();ctx.arc(px,py,4.2,0,Math.PI*2);ctx.fillStyle='#fb7185';ctx.fill();ctx.strokeStyle='#0f172a';ctx.lineWidth=1.4;ctx.stroke();ctx.fillStyle='#fecdd3';ctx.font='900 8px system-ui,sans-serif';ctx.fillText(`C ${advMoney(row.buy.y,decimals)}`,px,Math.min(area.bottom-4,py+15));}}
+      });
+    } else {
+      (meta.forecast||[]).filter(p=>!p.anchor&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).forEach(p=>{
+        const px=xScale.getPixelForValue(p.x), py=yScale.getPixelForValue(p.y); const hours=Math.round((Number(p.x)-meta.anchor)/3600000);
+        if(px<area.left||px>area.right||py<area.top||py>area.bottom) return;
+        ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fillStyle='#c084fc'; ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1.7; ctx.stroke();
+        ctx.textAlign='center';
+        ctx.fillStyle='#e9d5ff'; ctx.font='900 8px system-ui,sans-serif'; ctx.fillText(hours>0?`+${hours}H`:'',px,Math.max(area.top+11,py-22));
+        ctx.fillStyle='#f5f3ff'; ctx.font='900 9px system-ui,sans-serif'; ctx.fillText(`${advMoney(p.y,decimals)} ${unit}`,px,Math.max(area.top+21,py-10));
+      });
+    }
     const base=(meta.forecast||[]).find(p=>p.anchor&&Number.isFinite(Number(p.y)));
     if(base){
       const px=xScale.getPixelForValue(base.x), py=yScale.getPixelForValue(base.y);
@@ -2410,9 +2422,9 @@
     });
     ctx.restore();
   }};
-  function advRenderTimeline(rows, unit){
+  function advRenderTimeline(rows, unit, dualP2P=false){
     const box=document.getElementById('adv-timeline-strip'); if(!box) return;
-    box.innerHTML=rows.filter(r=>r&&r.h).map(r=>{const d=advNum(r.change), cls=advDirectionClass(r.direction); const hh=advHorizonHours(r.h); const label=Number.isFinite(hh)?`T+${hh}H`:advHorizonLabel(r.h); return `<div class="adv-timeline-node"><div class="flex items-center justify-between gap-2"><span class="t">${advEsc(label)}</span><span class="adv-pill ${cls}">${advPct(d)}</span></div><div class="v">${advMoney(r.central,unit==='USDT'?4:2)} ${advEsc(unit)}</div><div class="r">Rango ${advMoney(r.low,unit==='USDT'?4:2)} – ${advMoney(r.high,unit==='USDT'?4:2)} · ${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'confianza n/d'}</div></div>`}).join('');
+    box.innerHTML=rows.filter(r=>r&&r.h).map(r=>{const d=advNum(r.change), cls=advDirectionClass(r.direction); const hh=advHorizonHours(r.h); const label=Number.isFinite(hh)?`T+${hh}H`:advHorizonLabel(r.h); const decimals=unit==='USDT'?4:2; const values=dualP2P?`C ${advMoney(r.buy,decimals)} · V ${advMoney(r.sell,decimals)}`:`${advMoney(r.central,decimals)} ${advEsc(unit)}`; return `<div class="adv-timeline-node"><div class="flex items-center justify-between gap-2"><span class="t">${advEsc(label)}</span><span class="adv-pill ${cls}">${advPct(d)}</span></div><div class="v">${values}</div><div class="r">Rango ${advMoney(r.low,decimals)} – ${advMoney(r.high,decimals)} · ${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'confianza n/d'}</div></div>`}).join('');
   }
   function advPopulateSnapshotSelector(payload){
     const select=document.getElementById('adv-snapshot-select');
@@ -2447,114 +2459,126 @@
   function advRenderChart(points, forecast, unit, snapshot=null, options={}){
     const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
     advDestroyChart();
-    const hist=Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
-    let proj=Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
+    const dualP2P=options.dualP2P===true;
+    const hist=Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
+    let proj=Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
     const referenceTime=Number(options.referenceTime);
     const anchor=Number.isFinite(referenceTime)?referenceTime:(hist.length?Number(hist[hist.length-1].x):(proj.length?Number(proj[0].x):Date.now()));
-    const fallbackCurrent=hist.length?Number(hist[hist.length-1].y):(proj.length?Number(proj[0].y):NaN);
+    const fallbackCurrent=hist.length?(dualP2P?Number(hist[hist.length-1].mid??((Number(hist[hist.length-1].buy)+Number(hist[hist.length-1].sell))/2)):Number(hist[hist.length-1].y)):(proj.length?Number(proj[0].y):NaN);
     const currentY=Number.isFinite(Number(options.currentPrice))?Number(options.currentPrice):fallbackCurrent;
-    const histDisplay=hist.slice();
-    if(Number.isFinite(currentY)){
-      if(!histDisplay.length || anchor>Number(histDisplay[histDisplay.length-1].x)+1){
-        histDisplay.push({x:anchor,y:currentY});
-      }else if(Math.abs(Number(histDisplay[histDisplay.length-1].x)-anchor)<=1){
-        histDisplay[histDisplay.length-1]={x:anchor,y:currentY};
+
+    if(dualP2P){
+      const currentBuy=Number.isFinite(Number(options.currentBuy))?Number(options.currentBuy):Number(hist[hist.length-1]?.buy);
+      const currentSell=Number.isFinite(Number(options.currentSell))?Number(options.currentSell):Number(hist[hist.length-1]?.sell);
+      if(Number.isFinite(currentBuy)&&Number.isFinite(currentSell)){
+        if(!hist.length || anchor>Number(hist[hist.length-1].x)+1) hist.push({x:anchor,buy:currentBuy,sell:currentSell,mid:(currentBuy+currentSell)/2});
+        else if(Math.abs(Number(hist[hist.length-1].x)-anchor)<=1) hist[hist.length-1]={...hist[hist.length-1],x:anchor,buy:currentBuy,sell:currentSell,mid:(currentBuy+currentSell)/2};
       }
+      const buy=[{x:anchor,y:Number.isFinite(currentBuy)?currentBuy:(hist.length?Number(hist[hist.length-1].buy):NaN)}].filter(p=>Number.isFinite(p.y));
+      const sell=[{x:anchor,y:Number.isFinite(currentSell)?currentSell:(hist.length?Number(hist[hist.length-1].sell):NaN)}].filter(p=>Number.isFinite(p.y));
+      const mid=[{x:anchor,y:Number.isFinite(currentY)?currentY:NaN}].filter(p=>Number.isFinite(p.y));
+      proj.filter(p=>Number(p.x)>anchor).forEach(p=>{
+        if(Number.isFinite(Number(p.buy))) buy.push({x:p.x,y:Number(p.buy),h:p.h});
+        if(Number.isFinite(Number(p.sell))) sell.push({x:p.x,y:Number(p.sell),h:p.h});
+        if(Number.isFinite(Number(p.y))) mid.push({x:p.x,y:Number(p.y),h:p.h});
+      });
+      const histBuy=hist.filter(p=>Number.isFinite(Number(p.buy))).map(p=>({x:Number(p.x),y:Number(p.buy)}));
+      const histSell=hist.filter(p=>Number.isFinite(Number(p.sell))).map(p=>({x:Number(p.x),y:Number(p.sell)}));
+      const corridorLow=buy.slice(); const corridorHigh=sell.slice();
+      const uncertaintyLow=proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
+      const uncertaintyHigh=proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
+      const snapProj=advSnapshotForecast(snapshot); const snapAnchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):NaN;
+      const posterior=snapProj.length&&Number.isFinite(snapAnchor)?snapProj.map(p=>({x:p.x,y:p.y})).filter(p=>Number(p.x)>=snapAnchor):[];
+      const datasets=[
+        ...(histBuy.length?[{label:'Real · Compra',data:histBuy,borderColor:'#fb7185',backgroundColor:'rgba(251,113,133,.03)',pointRadius:0,borderWidth:2.4,tension:.2,fill:false}]:[]),
+        ...(histSell.length?[{label:'Real · Venta',data:histSell,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.03)',pointRadius:0,borderWidth:2.4,tension:.2,fill:false}]:[]),
+        ...(corridorLow.length&&corridorHigh.length?[{label:'Corredor P2P · Compra→Venta',data:corridorLow,borderColor:'rgba(251,113,133,.36)',backgroundColor:'rgba(99,102,241,.055)',borderDash:[3,4],pointRadius:0,borderWidth:1.1,fill:false},{label:'Corredor P2P · límite venta',data:corridorHigh,borderColor:'rgba(52,211,153,.38)',borderDash:[3,4],pointRadius:0,borderWidth:1.1,backgroundColor:'rgba(99,102,241,.08)',fill:'-1'}]:[]),
+        ...(mid.length?[{label:'Proyección activa · midpoint',data:mid,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.035)',borderDash:[9,5],pointRadius:mid.map(p=>p.x===anchor?6:0),pointHoverRadius:7,borderWidth:2.4,tension:.16,fill:false}]:[]),
+        ...(uncertaintyLow.length&&uncertaintyHigh.length?[{label:'Rango estadístico inferior',data:uncertaintyLow,borderColor:'rgba(192,132,252,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,fill:false},{label:'Rango estadístico superior',data:uncertaintyHigh,borderColor:'rgba(192,132,252,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,backgroundColor:'rgba(192,132,252,.055)',fill:'-1'}]:[]),
+        ...(posterior.length?[{label:'Snapshot T0 · referencia',data:posterior,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.025)',borderDash:[4,4],pointRadius:0,borderWidth:1.6,tension:.14,fill:false}]:[])
+      ];
+      if(!datasets.length) datasets.push({label:'Real',data:histBuy.length?histBuy:histSell,borderColor:'#22d3ee',pointRadius:0,borderWidth:2,fill:false});
+      advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit),plugins:[advPredictivePlugin]});
+      advancedChart._venbotMeta={anchor,historyStart:hist.length?Number(hist[0].x):anchor,forecast:proj,snapshotForecast:snapProj,snapshotAnchor:snapAnchor,unit,dualP2P:true,forecastBuy:buy,forecastSell:sell};
+      advancedChart.update('none');
+      const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(anchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`;
+      const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snapshot ? `${snapshot.status||'snapshot'} · ${snapshot.evaluated_count||0}/4 evaluadas` : 'sin snapshot';
+      return;
+    }
+
+    const histDisplay=hist.map(p=>({x:Number(p.x),y:Number(p.y)}));
+    if(Number.isFinite(currentY)){
+      if(!histDisplay.length || anchor>Number(histDisplay[histDisplay.length-1].x)+1) histDisplay.push({x:anchor,y:currentY});
+      else if(Math.abs(Number(histDisplay[histDisplay.length-1].x)-anchor)<=1) histDisplay[histDisplay.length-1]={x:anchor,y:currentY};
     }
     if(Number.isFinite(currentY)) proj=[{x:anchor,y:currentY,low:currentY,high:currentY,anchor:true},...proj.filter(p=>Number(p.x)>anchor)];
     const lower=proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
     const upper=proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
-    const snapProj=advSnapshotForecast(snapshot);
-    const snapAnchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):NaN;
+    const snapProj=advSnapshotForecast(snapshot); const snapAnchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):NaN;
     const posterior=snapProj.length&&Number.isFinite(snapAnchor)?histDisplay.filter(p=>Number(p.x)>=snapAnchor):[];
     const snapshotLower=snapProj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
     const snapshotUpper=snapProj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
     const datasets=[
       {label:'Real',data:histDisplay,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.03)',pointRadius:0,borderWidth:2.4,tension:.2,fill:false},
       ...(posterior.length? [{label:'Real posterior',data:posterior,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.04)',pointRadius:0,borderWidth:3.4,tension:.18,fill:false}]:[]),
-      ...(proj.length? [
-        {label:'Proyección activa',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.06)',borderDash:[9,5],pointRadius:proj.map(p=>p.anchor?6:4),pointHoverRadius:8,borderWidth:3.0,tension:.16,fill:false},
-        {label:'Rango activo inferior',data:lower,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,fill:false},
-        {label:'Rango activo superior',data:upper,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,backgroundColor:'rgba(192,132,252,.11)',fill:'-1'}
-      ]:[]),
-      ...(snapProj.length? [
-        {label:'Snapshot T0',data:snapProj,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.035)',borderDash:[4,4],pointRadius:0,borderWidth:1.9,tension:.14,fill:false},
-        ...(snapshotLower.length? [{label:'Rango snapshot inferior',data:snapshotLower,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,fill:false}]:[]),
-        ...(snapshotUpper.length? [{label:'Rango snapshot superior',data:snapshotUpper,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,backgroundColor:'rgba(251,191,36,.05)',fill:'-1'}]:[]),
-      ]:[])
+      ...(proj.length? [{label:'Proyección activa',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.06)',borderDash:[9,5],pointRadius:proj.map(p=>p.anchor?6:4),pointHoverRadius:8,borderWidth:3.0,tension:.16,fill:false},{label:'Rango activo inferior',data:lower,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,fill:false},{label:'Rango activo superior',data:upper,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,backgroundColor:'rgba(192,132,252,.11)',fill:'-1'}]:[]),
+      ...(snapProj.length? [{label:'Snapshot T0',data:snapProj,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.035)',borderDash:[4,4],pointRadius:0,borderWidth:1.9,tension:.14,fill:false},...(snapshotLower.length?[{label:'Rango snapshot inferior',data:snapshotLower,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,fill:false}]:[]),...(snapshotUpper.length?[{label:'Rango snapshot superior',data:snapshotUpper,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,backgroundColor:'rgba(251,191,36,.05)',fill:'-1'}]:[])]:[])
     ];
     if(!datasets.length) datasets.push({label:'Real',data:histDisplay,borderColor:'#22d3ee',pointRadius:0,borderWidth:2,fill:false});
     advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit),plugins:[advPredictivePlugin]});
-    advancedChart._venbotMeta={anchor,historyStart:histDisplay.length?Number(histDisplay[0].x):anchor,forecast:proj,snapshotForecast:snapProj,snapshotAnchor:snapAnchor,unit};
+    advancedChart._venbotMeta={anchor,historyStart:histDisplay.length?Number(histDisplay[0].x):anchor,forecast:proj,snapshotForecast:snapProj,snapshotAnchor:snapAnchor,unit,dualP2P:false};
     advancedChart.update('none');
     const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(anchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`;
     const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snapshot ? `${snapshot.status||'snapshot'} · ${snapshot.evaluated_count||0}/4 evaluadas` : 'sin snapshot';
   }
-  function advRenderHorizonCards(rows, unit){
+  function advRenderHorizonCards(rows, unit, dualP2P=false){
     const box=document.getElementById('adv-horizon-cards'); if(!box) return;
-    box.innerHTML=rows.map(r=>{const c=advNum(r.change), cls=advDirectionClass(r.direction); return `<div class="adv-horizon-row"><div class="flex items-center justify-between gap-2"><div><span class="text-[8px] uppercase text-slate-500 font-black">${advHorizonLabel(r.h)}</span><strong class="block text-sm mt-1">${advMoney(r.central,unit==='USDT'?4:2)} ${advEsc(unit)}</strong></div><span class="adv-pill ${cls}">${advPct(c)}</span></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div><span class="text-slate-600">Rango</span><strong class="block mt-0.5 text-slate-300">${advMoney(r.low,unit==='USDT'?4:2)} – ${advMoney(r.high,unit==='USDT'?4:2)}</strong></div><div><span class="text-slate-600">Confianza</span><strong class="block mt-0.5 text-slate-300">${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'n/d'}</strong></div></div></div>`}).join('') || '<div class="text-slate-600">Sin proyecciones disponibles.</div>';
+    box.innerHTML=rows.map(r=>{const c=advNum(r.change), cls=advDirectionClass(r.direction); const d=unit==='USDT'?4:2; const priceBlock=dualP2P?`<div class="grid grid-cols-2 gap-2 mt-2"><div><span class="text-[8px] uppercase text-rose-300/80 font-black">Compra</span><strong class="block text-[12px] mt-0.5 text-rose-200">${advMoney(r.buy,d)} ${advEsc(unit)}</strong></div><div><span class="text-[8px] uppercase text-emerald-300/80 font-black">Venta</span><strong class="block text-[12px] mt-0.5 text-emerald-200">${advMoney(r.sell,d)} ${advEsc(unit)}</strong></div></div>`:`<strong class="block text-sm mt-1">${advMoney(r.central,d)} ${advEsc(unit)}</strong>`; return `<div class="adv-horizon-row"><div class="flex items-center justify-between gap-2"><div><span class="text-[8px] uppercase text-slate-500 font-black">${advHorizonLabel(r.h)}</span>${priceBlock}</div><span class="adv-pill ${cls}">${advPct(c)}</span></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div><span class="text-slate-600">Rango</span><strong class="block mt-0.5 text-slate-300">${advMoney(r.low,d)} – ${advMoney(r.high,d)}</strong></div><div><span class="text-slate-600">Confianza</span><strong class="block mt-0.5 text-slate-300">${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'n/d'}</strong></div></div>${dualP2P?`<div class="mt-1 text-[8px] text-slate-600">Spread proyectado · ${advMoney(Number(r.sell)-Number(r.buy),d)} ${advEsc(unit)}</div>`:''}</div>`}).join('') || '<div class="text-slate-600">Sin proyecciones disponibles.</div>';
   }
-  function advRenderTraceP2P(perf, projections, bank){
-    const box=document.getElementById('adv-trace-table'); if(!box) return;
-    const horizonObj=perf?.horizons||perf?.by_horizon||perf?.summary||{};
-    const labels=['1h','3h','7h','24h'];
-    const rows=labels.map(h=>{const x=horizonObj[h]||{}; return {h,eval:x.evaluated??x.count,mae:x.mae_ves??x.mae,error:x.mape_pct??x.error_pct,acc:x.direction_accuracy_pct??x.accuracy_pct};});
-    box.innerHTML=`<table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción central</th><th class="py-2 pr-3">Evaluadas</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${rows.map(r=>`<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${advHorizonLabel(r.h)}</td><td class="py-2 pr-3 text-purple-300">${projections[r.h]?advMoney(projections[r.h].midpoint):'n/d'} Bs</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(r.eval))?r.eval:'n/d'}</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(r.error))?advMoney(r.error,2)+'%':Number.isFinite(Number(r.mae))?advMoney(r.mae,2)+' Bs':'n/d'}</td><td class="py-2 text-slate-300">${Number.isFinite(Number(r.acc))?advMoney(r.acc,1)+'%':'n/d'}</td></tr>`).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">Banco: ${advEsc(bank)} · métricas leídas del Prediction Tracking. La ausencia de una métrica se muestra como n/d.</p>`;
-  }
-  function advRenderTraceSpot(perf, projections, symbol){
-    const box=document.getElementById('adv-trace-table'); if(!box) return;
-    const horizonObj=perf?.horizons||perf?.horizon_summary||perf?.by_horizon||perf?.summary||{};
-    const labels=['1h','3h','7h','24h'];
-    box.innerHTML=`<table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción central</th><th class="py-2 pr-3">Evaluadas</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{const x=horizonObj[h]||{}; return `<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${advHorizonLabel(h)}</td><td class="py-2 pr-3 text-purple-300">${projections[h]?advMoney(projections[h].central,4):'n/d'} USDT</td><td class="py-2 pr-3 text-slate-300">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'}</td><td class="py-2 text-slate-300">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'%':'n/d'}</td></tr>`}).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">Activo: ${advEsc(symbol)} · métricas leídas del Spot Prediction Tracking.</p>`;
-  }
-  function advRenderSnapshotTrace(snapshot, unit){
-    const box=document.getElementById('adv-trace-table'); if(!box) return;
-    const labels=['1h','3h','7h','24h'];
-    if(!snapshot){box.innerHTML='<div class="text-[9px] text-slate-600">Aún no existe un snapshot registrado para comparar.</div>';return;}
-    box.innerHTML=`<div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-[9px] text-slate-500">Snapshot #${advEsc(snapshot.id)} · T0 ${new Date(snapshot.created_at).toLocaleString('es-VE')} · ${advEsc(snapshot.status)}</div><span class="adv-snapshot-badge">${snapshot.evaluated_count||0}/4 evaluadas</span></div><table class="w-full text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción T0</th><th class="py-2 pr-3">Resultado real</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{
-      const q=snapshot.horizons?.[h]||{};
-      const actualNum=advNum(q.actual);
-      const evaluated=Boolean(q.evaluated_at)||q.evaluated===true||q.status==='evaluated';
-      const actual=evaluated&&Number.isFinite(actualNum)&&actualNum>0?advMoney(actualNum,unit==='USDT'?4:2)+' '+advEsc(unit):'pendiente';
-      const error=evaluated&&Number.isFinite(Number(q.error_pct))?advPct(q.error_pct):'n/d';
-      const dir=evaluated?(q.direction_correct===true?'Correcta':q.direction_correct===false?'Incorrecta':'n/d'):'n/d';
-      return `<tr class="border-b border-slate-900/80"><td class="py-2 pr-3 font-black text-slate-300">${h.toUpperCase()}</td><td class="py-2 pr-3 text-amber-200">${Number.isFinite(Number(q.predicted))?advMoney(q.predicted,unit==='USDT'?4:2):'n/d'} ${advEsc(unit)}</td><td class="py-2 pr-3 text-emerald-300">${actual}</td><td class="py-2 pr-3 text-slate-300">${error}</td><td class="py-2 text-slate-300">${dir}</td></tr>`;
-    }).join('')}</tbody></table><p class="text-[8px] text-slate-600 mt-2">La predicción T0 queda congelada; el resultado real aparece únicamente cuando Prediction Tracking evalúa el horizonte vencido.</p>`;
-  }
-  async function advLoadLearning(kind){
-    try{
-      const symbol=kind==='spot'?`?symbol=${encodeURIComponent(advancedSpotSymbol)}`:'';
-      const d=await advFetch(`${API_BASE_URL}/api/quant/adaptive/status${symbol}`); advRenderLearning(d,kind);
-    }catch(e){const n=document.getElementById('adv-learning-note');if(n)n.textContent=e.message||'Aprendizaje adaptativo temporalmente no disponible.';}
-  }
-  function advResetDetails(){ ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot'; const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML=''; const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML=''; const cm=document.getElementById('adv-learning-coverage-meta'); if(cm) cm.textContent='0 / 700 h'; const cf=document.getElementById('adv-learning-coverage-fill'); if(cf) cf.style.width='0%'; }
+  function advResetDetails(){ advSetText('adv-chart-mode-label','Modelo cuantitativo'); ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot'; const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML=''; const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML=''; const cm=document.getElementById('adv-learning-coverage-meta'); if(cm) cm.textContent='0 / 700 h'; const cf=document.getElementById('adv-learning-coverage-fill'); if(cf) cf.style.width='0%'; }
   function advProjectionRowsP2P(analysis){
     const src=analysis?.proyecciones_horizontes||{};
-    return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza};});
+    return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};});
   }
   function advProjectionRowsSpot(d){
     const src=d?.projections||{};
     return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.central,low:q.low,high:q.high,change:q.change_pct,direction:Math.abs(Number(q.change_pct||0))<0.08?'RANGO':Number(q.change_pct)>0?'ALCISTA':'BAJISTA',confidence:q.confidence};});
+  }
+  function advSetChartLegend(kind){
+    const ids=['adv-leg-a','adv-leg-b','adv-leg-c','adv-leg-d'];
+    const vals=kind==='p2p'?[
+      '<i class="fa-solid fa-circle text-rose-300 mr-1"></i>Real · Compra',
+      '<i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real · Venta',
+      '<i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección · corredor',
+      '<i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0'
+    ]:[
+      '<i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real',
+      '<i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real posterior',
+      '<i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección activa',
+      '<i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0'
+    ];
+    ids.forEach((id,i)=>{const el=document.getElementById(id); if(el) el.innerHTML=vals[i];});
   }
   async function loadAdvancedP2P(){
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=1200&t=${Date.now()}`);
     advPopulateSnapshotSelector(d); const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
     const proj=advProjectionRowsP2P(a);
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
-    const hist=periodConfig.rows.map(r=>({x:new Date(r.timestamp).getTime(),y:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.y>0);
+    const hist=d.history?.map(r=>({x:new Date(r.timestamp).getTime(),buy:Number(r.compra),sell:Number(r.venta),mid:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&p.buy>0&&p.sell>0) || [];
     const projectionBase=Date.now();
     const m=a.metricas||{};
     const liveCompra=Number(m.compra)>0?Number(m.compra):Number(marketState.buy)||0;
     const liveVenta=Number(m.venta)>0?Number(m.venta):Number(marketState.sell)||0;
-    const current=liveCompra>0&&liveVenta>0?((liveCompra+liveVenta)/2):(hist.length?hist[hist.length-1].y:NaN);
-    const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?projectionBase+hrs*3600000:NaN,y:Number(r.central),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
+    const current=liveCompra>0&&liveVenta>0?((liveCompra+liveVenta)/2):(hist.length?hist[hist.length-1].mid:NaN);
+    const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?projectionBase+hrs*3600000:NaN,y:Number(r.central),buy:Number(r.buy),sell:Number(r.sell),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
     const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
     advSetText('adv-m-current',`${advMoney(current)} Bs`); advSetText('adv-m-current-unit',`${advancedP2PBank} · midpoint`);
     advSetText('adv-m-projection',`${advMoney(selected?.central)} Bs`); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change));
     advSetText('adv-m-range',selected?`${advMoney(selected.low)}–${advMoney(selected.high)}`:'n/d'); advSetText('adv-m-confidence',selected&&Number.isFinite(Number(selected.confidence))?advMoney(selected.confidence,0):'n/d');
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advRenderHorizonCards(proj,'Bs'); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current});
+    advSetText('adv-chart-mode-label','P2P · corredor Compra / Venta'); advSetChartLegend('p2p');
+    advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
     advRenderSnapshotTrace(snapshot,'Bs');
@@ -2571,7 +2595,7 @@
     const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
     advSetText('adv-m-current',advMoney(o.price,4)); advSetText('adv-m-current-unit','USDT'); advSetText('adv-m-projection',advMoney(selected?.central,4)); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change)); advSetText('adv-m-range',selected?`${advMoney(selected.low,4)}–${advMoney(selected.high,4)}`:'n/d'); advSetText('adv-m-confidence',Number.isFinite(Number(a.confidence))?advMoney(a.confidence,0):'n/d'); advSetText('adv-m-r2',Number.isFinite(Number(a.regression_r2))?advMoney(a.regression_r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number(perf?.horizons?.[hz]?.evaluated??0),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advRenderHorizonCards(proj,'USDT'); advRenderChart(points,forecast,'USDT',snapshot,{referenceTime:projectionBase,currentPrice:advNum(o.price)});
+    advSetText('adv-chart-mode-label',`${advancedSpotSymbol} · trayectoria cuantitativa`); advSetChartLegend('spot'); advRenderHorizonCards(proj,'USDT'); advRenderTimeline(proj,'USDT',false); advRenderChart(points,forecast,'USDT',snapshot,{referenceTime:projectionBase,currentPrice:advNum(o.price)});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const sc=pred.scenarios_24h||{}; sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.trend)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(a.support,4)} USDT</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(a.resistance,4)} USDT</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Escenario 24H</span><strong class="block mt-1">Bajista ${advMoney(sc.bearish,4)} · Central ${advMoney(sc.central,4)} · Alcista ${advMoney(sc.bullish,4)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){const hz=perf?.horizons||{}; vbox.innerHTML=['1h','3h','7h','24h'].map(hzKey=>{const x=hz[hzKey]||{};return `<div class="adv-horizon-row"><div class="flex items-center justify-between"><span class="font-black text-slate-300">${hzKey.toUpperCase()}</span><span class="text-slate-500">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'} evaluadas</span></div><strong class="block mt-1">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'% dirección':'n/d'}</strong></div>`}).join('');}
     advRenderSnapshotTrace(snapshot,'USDT');
