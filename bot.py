@@ -1827,6 +1827,184 @@ def obtener_spot_prediction_performance(symbol=None):
         return {"ok": False, "tracked": 0, "error": "performance Spot temporalmente no disponible"}
 
 
+
+def _safe_json_payload(value):
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    try:
+        return json.loads(value) if value else {}
+    except Exception:
+        return {}
+
+
+def _prediction_snapshot_status(horizons):
+    evaluated = sum(1 for v in (horizons or {}).values() if v.get("evaluated_at"))
+    if evaluated >= 4:
+        return "COMPLETAMENTE_EVALUADA"
+    if evaluated > 0:
+        return "PARCIALMENTE_EVALUADA"
+    return "PENDIENTE"
+
+
+def obtener_prediction_snapshots(banco="GENERAL", limit=40):
+    """Devuelve snapshots P2P congelados para trazabilidad visual.
+
+    No genera nuevas predicciones: lee los eventos que ya registra el
+    Prediction Tracking y expone predicción, resultado y evaluación por horizonte.
+    """
+    if not DATABASE_URL:
+        return {"ok": False, "snapshots": [], "tracked": 0}
+    bank = (banco or "GENERAL").upper().strip()
+    if bank not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
+        bank = "GENERAL"
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,banco,created_at,actual_mid,
+                           pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
+                           pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
+                           actual_mid_1h,actual_mid_3h,actual_mid_7h,actual_mid_24h,
+                           error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,
+                           direction_correct_1h,direction_correct_3h,direction_correct_7h,direction_correct_24h,
+                           evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at,
+                           confidence,tendencia,regimen,support_7h,resistance_7h,volatility_pct,payload
+                    FROM venbot_prediction_events
+                    WHERE banco=%s
+                    ORDER BY created_at DESC LIMIT %s
+                """, (bank, int(limit)))
+                rows = cur.fetchall()
+        labels = ("1h", "3h", "7h", "24h")
+        snapshots=[]
+        for row in rows:
+            (pid,row_bank,created_at,origin_mid,
+             pc1,pv1,pc3,pv3,pc7,pv7,pc24,pv24,
+             act1,act3,act7,act24,err1,err3,err7,err24,
+             dir1,dir3,dir7,dir24,ev1,ev3,ev7,ev24,
+             confidence,tendencia,regimen,support,resistance,volatility,payload) = row
+            payload_obj = _safe_json_payload(payload)
+            raw_proj = payload_obj.get("proyecciones_horizontes") or {}
+            preds = {
+                "1h": ((float(pc1)+float(pv1))/2.0) if pc1 is not None and pv1 is not None else None,
+                "3h": ((float(pc3)+float(pv3))/2.0) if pc3 is not None and pv3 is not None else None,
+                "7h": ((float(pc7)+float(pv7))/2.0) if pc7 is not None and pv7 is not None else None,
+                "24h": ((float(pc24)+float(pv24))/2.0) if pc24 is not None and pv24 is not None else None,
+            }
+            actuals={"1h":act1,"3h":act3,"7h":act7,"24h":act24}
+            errors={"1h":err1,"3h":err3,"7h":err7,"24h":err24}
+            directions={"1h":dir1,"3h":dir3,"7h":dir7,"24h":dir24}
+            evaluated_at={"1h":ev1,"3h":ev3,"7h":ev7,"24h":ev24}
+            horizons={}
+            for h in labels:
+                src = raw_proj.get(h) or raw_proj.get(h.upper()) or {}
+                horizons[h]={
+                    "hours": int(re.search(r"[0-9]+", h).group(0)),
+                    "predicted": round(preds[h], 4 if preds[h] is not None else 0) if preds[h] is not None else None,
+                    "low": src.get("rango_mid_min"),
+                    "high": src.get("rango_mid_max"),
+                    "change_pct": src.get("cambio_pct"),
+                    "confidence": src.get("confianza") if src.get("confianza") is not None else confidence,
+                    "actual": float(actuals[h]) if actuals[h] is not None else None,
+                    "error_pct": float(errors[h]) if errors[h] is not None else None,
+                    "direction_correct": bool(directions[h]) if directions[h] is not None else None,
+                    "evaluated_at": evaluated_at[h].isoformat() if evaluated_at[h] else None,
+                    "status": "EVALUADA" if evaluated_at[h] else "PENDIENTE",
+                }
+            snapshots.append({
+                "id": int(pid), "bank": bank, "created_at": created_at.isoformat(),
+                "origin_mid": float(origin_mid), "confidence": int(confidence or 0),
+                "trend": tendencia, "regimen": str(regimen or ""),
+                "support": float(support) if support is not None else None,
+                "resistance": float(resistance) if resistance is not None else None,
+                "volatility_pct": float(volatility) if volatility is not None else None,
+                "status": _prediction_snapshot_status(horizons),
+                "evaluated_count": sum(1 for v in horizons.values() if v.get("evaluated_at")),
+                "horizons": horizons,
+            })
+        evaluable = sum(1 for s in snapshots if s["evaluated_count"] > 0)
+        return {"ok": True, "bank": bank, "snapshots": snapshots, "tracked": len(snapshots), "evaluable": evaluable}
+    except Exception as e:
+        logger.warning("Snapshots P2P no disponibles %s: %s", bank, e)
+        return {"ok": False, "bank": bank, "snapshots": [], "tracked": 0, "error": "snapshots_temporalmente_no_disponibles"}
+
+
+def obtener_spot_prediction_snapshots(symbol=None, limit=40):
+    """Devuelve snapshots Spot congelados para trazabilidad visual."""
+    if not DATABASE_URL:
+        return {"ok": False, "snapshots": [], "tracked": 0}
+    sym = _normalizar_spot_symbol(symbol) if symbol else None
+    if sym and sym not in SPOT_SYMBOLS:
+        sym = "BTCUSDT"
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                where = ""
+                params=[]
+                if sym:
+                    where = "WHERE symbol=%s"
+                    params.append(sym)
+                params.append(int(limit))
+                cur.execute(f"""
+                    SELECT id,symbol,created_at,observed_price,
+                           pred_1h,pred_3h,pred_7h,pred_24h,
+                           actual_1h,actual_3h,actual_7h,actual_24h,
+                           error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,
+                           direction_correct_1h,direction_correct_3h,direction_correct_7h,direction_correct_24h,
+                           evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at,
+                           trend,regimen,confidence,regression_r2,support,resistance,volatility_pct,payload
+                    FROM venbot_spot_prediction_events
+                    {where}
+                    ORDER BY created_at DESC LIMIT %s
+                """, tuple(params))
+                rows=cur.fetchall()
+        labels=("1h","3h","7h","24h")
+        snapshots=[]
+        for row in rows:
+            (pid,row_sym,created_at,origin,
+             p1,p3,p7,p24,a1,a3,a7,a24,e1,e3,e7,e24,
+             d1,d3,d7,d24,ev1,ev3,ev7,ev24,
+             trend,regimen,confidence,r2,support,resistance,volatility,payload)=row
+            actuals={"1h":a1,"3h":a3,"7h":a7,"24h":a24}
+            preds={"1h":p1,"3h":p3,"7h":p7,"24h":p24}
+            errors={"1h":e1,"3h":e3,"7h":e7,"24h":e24}
+            dirs={"1h":d1,"3h":d3,"7h":d7,"24h":d24}
+            evs={"1h":ev1,"3h":ev3,"7h":ev7,"24h":ev24}
+            payload_obj=_safe_json_payload(payload)
+            uncertainty=payload_obj.get("uncertainty_pct") or {}
+            horizons={}
+            for h in labels:
+                q=uncertainty.get(h) or {}
+                horizon_hours=int(re.search(r"[0-9]+", h).group(0))
+                center=float(preds[h]) if preds[h] is not None else None
+                unc=float(q) if isinstance(q,(int,float)) else None
+                low=center*(1-unc/100.0) if center is not None and unc is not None else None
+                high=center*(1+unc/100.0) if center is not None and unc is not None else None
+                horizons[h]={
+                    "hours": horizon_hours, "predicted": center, "low": low, "high": high,
+                    "confidence": int(confidence or 0), "actual": float(actuals[h]) if actuals[h] is not None else None,
+                    "error_pct": float(errors[h]) if errors[h] is not None else None,
+                    "direction_correct": bool(dirs[h]) if dirs[h] is not None else None,
+                    "evaluated_at": evs[h].isoformat() if evs[h] else None,
+                    "status": "EVALUADA" if evs[h] else "PENDIENTE",
+                }
+            snapshots.append({
+                "id": int(pid), "symbol": str(row_sym), "created_at": created_at.isoformat(),
+                "origin_price": float(origin), "confidence": int(confidence or 0),
+                "trend": trend, "regimen": str(regimen or ""), "regression_r2": float(r2) if r2 is not None else None,
+                "support": float(support) if support is not None else None, "resistance": float(resistance) if resistance is not None else None,
+                "volatility_pct": float(volatility) if volatility is not None else None,
+                "status": _prediction_snapshot_status(horizons), "evaluated_count": sum(1 for v in horizons.values() if v.get("evaluated_at")),
+                "horizons": horizons,
+            })
+        evaluable=sum(1 for s in snapshots if s["evaluated_count"]>0)
+        return {"ok":True,"symbol":sym or "ALL","snapshots":snapshots,"tracked":len(snapshots),"evaluable":evaluable}
+    except Exception as e:
+        logger.warning("Snapshots Spot no disponibles %s: %s", sym or "ALL", e)
+        return {"ok":False,"symbol":sym or "ALL","snapshots":[],"tracked":0,"error":"snapshots_temporalmente_no_disponibles"}
+
+
 def obtener_spot_predicciones_contexto():
     """Expone solo predicciones Spot ya calculadas y cacheadas para la IA.
 
@@ -7429,7 +7607,7 @@ def admin_predictive_p2p(
         except Exception:
             continue
     performance = obtener_prediction_performance(bank, min(1000, max(100, int(limit)))) if DATABASE_URL else {"ok": False}
-    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance}
+    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": obtener_prediction_snapshots(bank, 40)}
 
 
 @app.get("/api/admin/predictive/spot")
@@ -7447,7 +7625,7 @@ def admin_predictive_spot(
     prediction = analizar_spot_predictivo(sym)
     candles = obtener_spot_klines(sym, interval, limit)
     performance = obtener_spot_prediction_performance(sym)
-    return {"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance}
+    return {"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance, "snapshots": obtener_spot_prediction_snapshots(sym, 40)}
 
 
 @app.get("/api/plans")
