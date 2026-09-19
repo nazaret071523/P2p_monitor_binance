@@ -2354,7 +2354,7 @@
               if(Number.isFinite(start) && Math.abs(x-start)<1 && Math.abs(start-anchor)>1) return 'HIST.';
               if(Number.isFinite(anchor)){
                 const hours=(x-anchor)/3600000;
-                if(Math.abs(hours)<0.01) return 'AHORA';
+                if(Math.abs(hours)<0.01) return '';
                 const rounded=Math.round(hours);
                 if(Math.abs(hours-rounded)<0.04 && [1,3,7,24].includes(rounded)) return `+${rounded}H`;
               }
@@ -2396,7 +2396,7 @@
         const px=xScale.getPixelForValue(x); const hours=Math.round((x-meta.anchor)/3600000); if(px<area.left||px>area.right) return;
         const tagY=area.top+14+(idx%2?11:0);
         ctx.textAlign='center'; ctx.font='900 8px system-ui,sans-serif'; ctx.fillStyle='#e9d5ff';
-        ctx.fillText(hours>0?`+${hours}H`:'',px,tagY);
+        // Horizon labels are rendered only on the x-axis to avoid collisions with AHORA/T0 and price labels.
         if(row.sell&&Number.isFinite(Number(row.sell.y))){
           const py=yScale.getPixelForValue(row.sell.y);
           if(py>=area.top&&py<=area.bottom){
@@ -2420,7 +2420,6 @@
         if(px<area.left||px>area.right||py<area.top||py>area.bottom) return;
         ctx.beginPath(); ctx.arc(px,py,5,0,Math.PI*2); ctx.fillStyle='#c084fc'; ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=1.7; ctx.stroke();
         ctx.textAlign='center';
-        ctx.fillStyle='#e9d5ff'; ctx.font='900 8px system-ui,sans-serif'; ctx.fillText(hours>0?`+${hours}H`:'',px,Math.max(area.top+11,py-22));
         ctx.fillStyle='#f5f3ff'; ctx.font='900 9px system-ui,sans-serif'; ctx.fillText(`${advMoney(p.y,decimals)} ${unit}`,px,Math.max(area.top+21,py-10));
       });
     }
@@ -2568,6 +2567,22 @@
   function advRenderHorizonCards(rows, unit, dualP2P=false){
     const box=document.getElementById('adv-horizon-cards'); if(!box) return;
     box.innerHTML=rows.map(r=>{const c=advNum(r.change), cls=advDirectionClass(r.direction); const d=unit==='USDT'?4:2; const priceBlock=dualP2P?`<div class="grid grid-cols-2 gap-2 mt-2"><div><span class="text-[8px] uppercase text-rose-300/80 font-black">Compra</span><strong class="block text-[12px] mt-0.5 text-rose-200">${advMoney(r.buy,d)} ${advEsc(unit)}</strong></div><div><span class="text-[8px] uppercase text-emerald-300/80 font-black">Venta</span><strong class="block text-[12px] mt-0.5 text-emerald-200">${advMoney(r.sell,d)} ${advEsc(unit)}</strong></div></div>`:`<strong class="block text-sm mt-1">${advMoney(r.central,d)} ${advEsc(unit)}</strong>`; return `<div class="adv-horizon-row"><div class="flex items-center justify-between gap-2"><div><span class="text-[8px] uppercase text-slate-500 font-black">${advHorizonLabel(r.h)}</span>${priceBlock}</div><span class="adv-pill ${cls}">${advPct(c)}</span></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div><span class="text-slate-600">Rango</span><strong class="block mt-0.5 text-slate-300">${advMoney(r.low,d)} – ${advMoney(r.high,d)}</strong></div><div><span class="text-slate-600">Confianza</span><strong class="block mt-0.5 text-slate-300">${Number.isFinite(Number(r.confidence))?advMoney(r.confidence,0)+'/100':'n/d'}</strong></div></div>${dualP2P?`<div class="mt-1 text-[8px] text-slate-600">Spread proyectado · ${advMoney(Number(r.sell)-Number(r.buy),d)} ${advEsc(unit)}</div>`:''}</div>`}).join('') || '<div class="text-slate-600">Sin proyecciones disponibles.</div>';
+  }
+  function advRenderLearning(data, kind){
+    const box=document.getElementById('adv-learning-content'), hzbox=document.getElementById('adv-learning-horizons'), note=document.getElementById('adv-learning-note'), badge=document.getElementById('adv-learning-badge'); if(!box||!hzbox) return;
+    const motor=kind==='spot'?data?.spot:data?.p2p; const stage=motor?.stage||{}; if(!motor){box.innerHTML='';hzbox.innerHTML='';if(note)note.textContent='Sin lectura adaptativa disponible.';return;}
+    const coverage=Number(motor.coverage_hours||0); const hvals=motor.horizons||{};
+    box.innerHTML=`<div class="adv-learning-kpi"><span>Motor</span><strong>${kind==='spot'?'SPOT':'P2P'}</strong></div><div class="adv-learning-kpi"><span>Cobertura</span><strong>${coverage.toFixed(2)} h</strong></div><div class="adv-learning-kpi"><span>Etapa</span><strong>${advEsc(stage.stage||'ACUMULANDO')}</strong></div><div class="adv-learning-kpi"><span>Modo</span><strong>EN SOMBRA</strong></div>`;
+    const covPct=Math.max(0,Math.min(100,(coverage/700)*100)); const covMeta=document.getElementById('adv-learning-coverage-meta'); const covFill=document.getElementById('adv-learning-coverage-fill'); if(covMeta) covMeta.textContent=`${coverage.toFixed(2)} / 700 h`; if(covFill) covFill.style.width=`${covPct.toFixed(1)}%`;
+    hzbox.innerHTML=['1h','3h','7h','24h'].map(h=>{const v=hvals[h]||{};const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'n/d';const mae=Number.isFinite(Number(v.mae_pct))?`${Number(v.mae_pct).toFixed(3)}% MAE`:'n/d';const cand=v.shadow_candidate?.status||'ACUMULANDO';return `<div class="adv-learning-kpi"><span>${h.toUpperCase()}</span><strong>${Number(v.evaluated||0)} eval.</strong><small class="text-slate-500">${acc} · ${mae}</small><small class="text-purple-300">${advEsc(cand)}</small></div>`;}).join('');
+    if(badge) badge.textContent=motor.stage?.stage||'lectura';
+    if(note) note.textContent='La capa adaptativa observa errores y sesgos, separa entrenamiento de OOS y mantiene los candidatos en sombra. Una medición no modifica el motor productivo.';
+  }
+  async function advLoadLearning(kind){
+    try{
+      const symbol=kind==='spot'?`?symbol=${encodeURIComponent(advancedSpotSymbol)}`:'';
+      const d=await advFetch(`${API_BASE_URL}/api/quant/adaptive/status${symbol}`); advRenderLearning(d,kind);
+    }catch(e){const n=document.getElementById('adv-learning-note');if(n)n.textContent=e.message||'Aprendizaje adaptativo temporalmente no disponible.';}
   }
   function advResetDetails(){ advSetText('adv-chart-mode-label','Modelo cuantitativo'); ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot'; const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML=''; const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML=''; const cm=document.getElementById('adv-learning-coverage-meta'); if(cm) cm.textContent='0 / 700 h'; const cf=document.getElementById('adv-learning-coverage-fill'); if(cf) cf.style.width='0%'; }
   function advProjectionRowsP2P(analysis){
