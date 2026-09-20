@@ -504,25 +504,25 @@
             <div>
               <div class="flex items-center gap-2">
                 <h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-flask text-indigo-400"></i>Validación Motor Quant</h3>
-                <span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span>
+                <span class="text-[8px] font-black uppercase tracking-wider text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">ADMIN</span>
               </div>
               <p class="text-[10px] text-slate-500 mt-1">Ejecuta el backtest autenticado con tu sesión actual. No expone tu token ni abre el endpoint públicamente.</p>
             </div>
             <button id="quant-backtest-run" type="button" onclick="runQuantBacktest()" class="shrink-0 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-200 text-[10px] font-black px-3 py-2 hover:bg-indigo-500/25 transition">Ejecutar</button>
           </div>
-          <div id="quant-backtest-status" class="text-[10px] text-slate-500">Inicia sesión con un plan VIP para ejecutar la validación.</div>
+          <div id="quant-backtest-status" class="text-[10px] text-slate-500">Acceso reservado al administrador de Venbot.</div>
           <div id="quant-backtest-result" class="hidden"></div>
         </section>
 
         <section id="sec-quant-adaptive" data-developer-only="true" class="glass-card p-4 rounded-2xl border border-purple-500/20 space-y-3">
           <div class="flex items-start justify-between gap-3">
             <div>
-              <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-brain text-purple-400"></i>Evolución adaptativa de motores</h3><span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span></div>
+              <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-brain text-purple-400"></i>Evolución adaptativa de motores</h3><span class="text-[8px] font-black uppercase tracking-wider text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">ADMIN</span></div>
               <p class="text-[10px] text-slate-500 mt-1">Cobertura, evaluaciones y sesgos observados. Los candidatos de calibración permanecen en sombra.</p>
             </div>
             <button type="button" onclick="loadQuantAdaptiveStatus()" class="shrink-0 rounded-xl bg-purple-500/10 border border-purple-500/25 text-purple-200 text-[10px] font-black px-3 py-2">Actualizar</button>
           </div>
-          <div id="quant-adaptive-status" class="text-[10px] text-slate-500">Inicia sesión con un plan VIP para consultar la evolución adaptativa.</div>
+          <div id="quant-adaptive-status" class="text-[10px] text-slate-500">Acceso reservado al administrador de Venbot.</div>
           <div id="quant-adaptive-content" class="grid grid-cols-1 md:grid-cols-2 gap-2.5"></div>
         </section>
 
@@ -576,7 +576,21 @@
           <h2 class="text-xl md:text-2xl font-black text-white mt-1">Más</h2>
           <p class="text-[10px] text-slate-500 mt-1">Comunidad, cuenta, soporte y opciones legales siguen en el menú secundario.</p>
         </div>
-        <div data-developer-only="true" id="advanced-graphs-launcher" class="hidden glass-card p-4 md:p-5 rounded-2xl border border-cyan-500/20 space-y-3 mt-4">
+        <section id="venbot-admin-center" data-developer-only="true" class="hidden glass-card p-4 md:p-5 rounded-2xl border border-cyan-500/20 space-y-4 mt-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-[9px] text-cyan-300 font-black uppercase tracking-[0.2em]">Solo administrador</p>
+              <h3 class="text-base md:text-lg font-black text-white mt-1">Centro de Mando Venbot</h3>
+              <p class="text-[10px] text-slate-500 mt-1">Acceso exclusivo para gráficas avanzadas, motores, validación y evolución.</p>
+            </div>
+            <span class="text-[8px] font-black uppercase text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full shrink-0">ADMIN</span>
+          </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-chart-line text-cyan-300"></i>
+              <span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Gráficas avanzadas</span>
+            </div>
+                    <div data-developer-only="true" id="advanced-graphs-launcher" class="hidden glass-card p-4 md:p-5 rounded-2xl border border-cyan-500/20 space-y-3 mt-4">
           <div class="flex items-start justify-between gap-3">
             <div class="flex items-start gap-3 min-w-0">
               <div class="w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-300 shrink-0"><i class="fa-solid fa-wave-square"></i></div>
@@ -589,6 +603,18 @@
           </button>
           <p class="text-[9px] text-slate-600">No modifica los motores P2P, Spot, Quant ni Tracking; esta fase solo añade visualización sobre datos existentes.</p>
         </div>
+          </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-microchip text-purple-300"></i>
+              <span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Motores · validación · evolución</span>
+            </div>
+            <div id="admin-motors-slot" class="space-y-3"></div>
+          </div>
+          <div class="rounded-xl bg-amber-500/5 border border-amber-500/15 p-3 text-[9px] leading-relaxed text-slate-500">
+            Esta sección no aparece a cuentas FREE, PREMIUM ni VIP. La lógica productiva de P2P, Spot, Quant y Tracking permanece intacta.
+          </div>
+        </section>
         <div id="community-content-slot"></div>
       </section>
 
@@ -681,7 +707,7 @@
       <section id="sec-spot" class="glass-card p-4 md:p-5 rounded-2xl space-y-4 scroll-mt-24 border border-purple-500/20">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-crystal-ball text-purple-400"></i>SPOT · PREDICCIÓN Y PROYECCIÓN</h3><span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span></div>
+            <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-crystal-ball text-purple-400"></i>SPOT · PREDICCIÓN Y PROYECCIÓN</h3><span class="text-[8px] font-black uppercase tracking-wider text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">ADMIN</span></div>
             <p class="text-[10px] text-slate-500 mt-1">Binance aporta el dato observado; Venbot calcula tendencia, escenarios y proyecciones futuras.</p>
           </div>
           <div class="flex items-center gap-2">
@@ -1106,7 +1132,7 @@
       const status=document.getElementById('quant-backtest-status');
       const btn=document.getElementById('quant-backtest-run');
       const token=getAuthToken();
-      if(!token) { if(status) status.textContent='Inicia sesión con un plan VIP para ejecutar la validación.'; return; }
+      if(!token) { if(status) status.textContent='Acceso reservado al administrador de Venbot.'; return; }
       if(btn){btn.disabled=true;btn.textContent='Procesando...';}
       if(status) status.textContent='Backtest en cola...';
       try {
@@ -2163,7 +2189,7 @@
       const content=document.getElementById('quant-adaptive-content');
       if(!status||!content) return;
       const token=getAuthToken();
-      if(!token){status.textContent='Inicia sesión con un plan VIP para consultar la evolución adaptativa.';content.innerHTML='';return;}
+      if(!token){status.textContent='Acceso reservado al administrador de Venbot.';content.innerHTML='';return;}
       status.textContent='Consultando cobertura y evaluaciones reales…';
       try{
         const r=await fetch(`${API_BASE_URL}/api/quant/adaptive/status`,{headers:{'X-Venbot-Session':token,'Accept':'application/json'},cache:'no-store'});
@@ -2784,14 +2810,17 @@
   const contextMap={market:'Mercado P2P · USDT / VES',analysis:'Análisis P2P · Tendencia y predicción',spot:'Spot · Predicción y proyección',alerts:'Alertas de precio P2P',international:'Mercado Internacional',more:'Comunidad · Cuenta · Soporte'};
   function applyDeveloperOnly(){
     const visible = !!window.venbotUser?.is_developer;
-    [quantBacktest, quantAdaptive, document.getElementById('advanced-graphs-launcher')].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
+    [quantBacktest, quantAdaptive, document.getElementById('advanced-graphs-launcher'), document.getElementById('venbot-admin-center')].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
   }
   window.applyVenbotDeveloperUI = applyDeveloperOnly;
   function place(){
     if(chart) document.querySelector('#analysis-content-slot').appendChild(chart);
     if(gemini) document.querySelector('#analysis-content-slot').appendChild(gemini);
-    if(quantBacktest) document.querySelector('#analysis-content-slot').appendChild(quantBacktest);
-    if(quantAdaptive) document.querySelector('#analysis-content-slot').appendChild(quantAdaptive);
+    const adminMotorsSlot=document.querySelector('#admin-motors-slot');
+    if(adminMotorsSlot){
+      if(quantBacktest) adminMotorsSlot.appendChild(quantBacktest);
+      if(quantAdaptive) adminMotorsSlot.appendChild(quantAdaptive);
+    }
     if(spotOriginal) document.querySelector('#spot-content-slot').appendChild(spotOriginal);
     if(alertsOriginal) document.querySelector('#alerts-content-slot').appendChild(alertsOriginal);
     if(communityOriginal) document.querySelector('#community-content-slot').appendChild(communityOriginal);
