@@ -531,6 +531,30 @@ def inicializar_db():
                     );
                 """)
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_launch_mode (
+                        id SMALLINT PRIMARY KEY CHECK (id = 1),
+                        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                        duration_days INTEGER,
+                        activated_at TIMESTAMPTZ,
+                        expires_at TIMESTAMPTZ,
+                        activated_by TEXT,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    INSERT INTO venbot_launch_mode(id, enabled) VALUES (1, FALSE)
+                    ON CONFLICT (id) DO NOTHING
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_admin_audit (
+                        id BIGSERIAL PRIMARY KEY,
+                        action TEXT NOT NULL,
+                        actor TEXT,
+                        details JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_usage_daily (
                         external_user_id TEXT NOT NULL,
                         usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -6753,16 +6777,75 @@ def _create_session(external_user_id: str):
             cur.execute("DELETE FROM venbot_sessions WHERE external_user_id=%s AND (revoked_at IS NOT NULL OR expires_at<=CURRENT_TIMESTAMP)", (external_user_id,))
     return token, expires
 
+def _launch_mode_state():
+    """Estado del modo lanzamiento promocional global. Se autoexpira por fecha."""
+    base = {"enabled": False, "duration_days": None, "activated_at": None, "expires_at": None, "activated_by": None}
+    if not DATABASE_URL:
+        return base
+    try:
+        now = datetime.now(VET)
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT enabled,duration_days,activated_at,expires_at,activated_by FROM venbot_launch_mode WHERE id=1")
+                row = cur.fetchone()
+                if not row:
+                    cur.execute("INSERT INTO venbot_launch_mode(id,enabled) VALUES (1,FALSE) ON CONFLICT (id) DO NOTHING")
+                    return base
+                enabled, duration_days, activated_at, expires_at, activated_by = row
+                if enabled and expires_at:
+                    exp = expires_at if expires_at.tzinfo else VET.localize(expires_at)
+                    if exp <= now:
+                        cur.execute("UPDATE venbot_launch_mode SET enabled=FALSE,updated_at=CURRENT_TIMESTAMP WHERE id=1")
+                        logger.info("[LAUNCH MODE] autoexpirado")
+                        return base
+                return {
+                    "enabled": bool(enabled),
+                    "duration_days": int(duration_days) if duration_days else None,
+                    "activated_at": activated_at.isoformat() if activated_at else None,
+                    "expires_at": expires_at.isoformat() if expires_at else None,
+                    "activated_by": str(activated_by) if activated_by else None,
+                }
+    except Exception as exc:
+        logger.warning("[LAUNCH MODE] lectura falló: %s", exc)
+        return base
+
+def _set_launch_mode(enabled: bool, duration_days: Optional[int], actor: str):
+    if enabled and int(duration_days or 0) not in {15, 30}:
+        raise HTTPException(status_code=400, detail="duration_days debe ser 15 o 30")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="database_not_configured")
+    now = datetime.now(VET)
+    expires = now + timedelta(days=int(duration_days)) if enabled else None
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO venbot_launch_mode(id,enabled,duration_days,activated_at,expires_at,activated_by,updated_at)
+                VALUES (1,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET enabled=EXCLUDED.enabled,duration_days=EXCLUDED.duration_days,
+                    activated_at=EXCLUDED.activated_at,expires_at=EXCLUDED.expires_at,activated_by=EXCLUDED.activated_by,
+                    updated_at=CURRENT_TIMESTAMP
+            """, (bool(enabled), int(duration_days) if enabled else None, now if enabled else None, expires, actor[:128] if actor else None))
+            cur.execute("INSERT INTO venbot_admin_audit(action,actor,details) VALUES (%s,%s,%s)", (
+                "LAUNCH_MODE_ACTIVATE" if enabled else "LAUNCH_MODE_DEACTIVATE", actor[:128] if actor else None,
+                json.dumps({"duration_days": int(duration_days) if enabled else None})
+            ))
+    logger.info("[LAUNCH MODE] %s duration=%s actor=%s", "activado" if enabled else "desactivado", duration_days, actor)
+    return _launch_mode_state()
+
 def _foundation_entitlements(user):
     plan = _plan_vigente(user.get("plan_code"), user.get("plan_expires_at"))
-    limits = dict(PLAN_LIMITS[plan])
-    features = {k: PLAN_ORDER[plan] >= PLAN_ORDER[v] for k,v in FEATURE_MIN_PLAN.items()}
-    return {"plan": plan, "limits": limits, "features": features}
+    launch = _launch_mode_state()
+    access_plan = "VIP" if launch.get("enabled") else plan
+    limits = dict(PLAN_LIMITS[access_plan])
+    features = {k: PLAN_ORDER[access_plan] >= PLAN_ORDER[v] for k,v in FEATURE_MIN_PLAN.items()}
+    return {"plan": plan, "access_plan": access_plan, "limits": limits, "features": features, "launch_mode": launch}
 
 def _require_plan_user(request: Request, minimum_plan: str):
     user = _require_session_user(request)
     current = _plan_vigente(user.get("plan_code"), user.get("plan_expires_at"))
-    if PLAN_ORDER[current] < PLAN_ORDER[minimum_plan]:
+    launch = _launch_mode_state()
+    access_plan = "VIP" if launch.get("enabled") else current
+    if PLAN_ORDER[access_plan] < PLAN_ORDER[minimum_plan]:
         raise HTTPException(status_code=403, detail={"error":"plan_required", "required_plan":minimum_plan, "current_plan":current})
     return user
 
@@ -6869,6 +6952,10 @@ class BillingWebhookRequest(BaseModel):
 class BillingOrderCreateRequest(BaseModel):
     plan_code: str = Field(min_length=4, max_length=12)
     pay_currency: str = Field(min_length=3, max_length=8)
+
+class LaunchModeRequest(BaseModel):
+    action: str = Field(min_length=4, max_length=20)
+    duration_days: Optional[int] = Field(default=None, ge=1, le=30)
 
 class AlertRuleCreateRequest(BaseModel):
     banco: str = Field(default="GENERAL", min_length=3, max_length=12)
@@ -7627,6 +7714,22 @@ def admin_predictive_spot(
     performance = obtener_spot_prediction_performance(sym)
     return {"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance, "snapshots": obtener_spot_prediction_snapshots(sym, 40)}
 
+
+@app.get("/api/admin/launch-mode")
+def admin_launch_mode_get(request: Request):
+    user = _require_developer_session(request)
+    return {"ok": True, "launch_mode": _launch_mode_state(), "actor": user.get("username") or user.get("external_user_id")}
+
+@app.post("/api/admin/launch-mode")
+def admin_launch_mode_set(payload: LaunchModeRequest, request: Request):
+    user = _require_developer_session(request)
+    action = (payload.action or "").strip().lower()
+    actor = str(user.get("username") or user.get("external_user_id") or "admin")
+    if action in {"activate", "activar"}:
+        return {"ok": True, "launch_mode": _set_launch_mode(True, payload.duration_days, actor)}
+    if action in {"deactivate", "desactivar"}:
+        return {"ok": True, "launch_mode": _set_launch_mode(False, None, actor)}
+    raise HTTPException(status_code=400, detail="action debe ser activate o deactivate")
 
 @app.get("/api/plans")
 def api_plans(request: Request):
