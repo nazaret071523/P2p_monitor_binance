@@ -586,6 +586,30 @@
             <span class="text-[8px] font-black uppercase text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full shrink-0">ADMIN</span>
           </div>
           <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2"><i class="fa-solid fa-heart-pulse text-emerald-300"></i><span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Estado del sistema</span></div>
+              <button type="button" onclick="loadAdminControlCenter()" class="focus-ring rounded-lg border border-slate-700 bg-slate-900/80 text-slate-300 px-2.5 py-1.5 text-[9px] font-black">Actualizar</button>
+            </div>
+            <div id="admin-system-status" class="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-[8px] text-slate-500 uppercase font-black">P2P</span><strong class="block mt-1 text-emerald-300 text-[11px]">--</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-[8px] text-slate-500 uppercase font-black">Quant</span><strong class="block mt-1 text-emerald-300 text-[11px]">--</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-[8px] text-slate-500 uppercase font-black">Tracking</span><strong class="block mt-1 text-emerald-300 text-[11px]">--</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-[8px] text-slate-500 uppercase font-black">Spot</span><strong class="block mt-1 text-emerald-300 text-[11px]">--</strong></div>
+            </div>
+          </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <div><div class="flex items-center gap-2"><i class="fa-solid fa-rocket text-amber-300"></i><span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Modo lanzamiento</span></div><p class="text-[9px] text-slate-500 mt-1">Activa temporalmente el acceso promocional global. Se autoexpira.</p></div>
+              <span id="admin-launch-badge" class="text-[8px] font-black uppercase text-slate-400 bg-slate-900 border border-slate-700 px-2 py-1 rounded-full">INACTIVO</span>
+            </div>
+            <div id="admin-launch-summary" class="text-[10px] text-slate-500">Sin promoción activa. Las reglas FREE/PREMIUM/VIP funcionan normalmente.</div>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" onclick="setAdminLaunchMode(15)" class="focus-ring rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 px-3 py-2.5 text-[10px] font-black">15 días</button>
+              <button type="button" onclick="setAdminLaunchMode(30)" class="focus-ring rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 px-3 py-2.5 text-[10px] font-black">30 días</button>
+              <button type="button" onclick="setAdminLaunchMode(null)" class="focus-ring rounded-xl bg-slate-900 border border-slate-700 text-slate-300 px-3 py-2.5 text-[10px] font-black">Desactivar</button>
+            </div>
+          </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
             <div class="flex items-center gap-2">
               <i class="fa-solid fa-chart-line text-cyan-300"></i>
               <span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Gráficas avanzadas</span>
@@ -707,7 +731,7 @@
       <section id="sec-spot" class="glass-card p-4 md:p-5 rounded-2xl space-y-4 scroll-mt-24 border border-purple-500/20">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-crystal-ball text-purple-400"></i>SPOT · PREDICCIÓN Y PROYECCIÓN</h3><span class="text-[8px] font-black uppercase tracking-wider text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">ADMIN</span></div>
+            <div class="flex items-center gap-2"><h3 class="font-black text-slate-100 text-sm flex items-center gap-2"><i class="fa-solid fa-crystal-ball text-purple-400"></i>SPOT · PREDICCIÓN Y PROYECCIÓN</h3><span class="text-[8px] font-black uppercase tracking-wider text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">VIP</span></div>
             <p class="text-[10px] text-slate-500 mt-1">Binance aporta el dato observado; Venbot calcula tendencia, escenarios y proyecciones futuras.</p>
           </div>
           <div class="flex items-center gap-2">
@@ -1597,6 +1621,7 @@
     }
 
     function getFrontendPlan() {
+      if (window.venbotEntitlements?.launch_mode?.enabled) return 'VIP';
       const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
@@ -2808,9 +2833,49 @@
   const alertsOriginal=document.getElementById('sec-alertas');
   const communityOriginal=document.getElementById('sec-comunidad');
   const contextMap={market:'Mercado P2P · USDT / VES',analysis:'Análisis P2P · Tendencia y predicción',spot:'Spot · Predicción y proyección',alerts:'Alertas de precio P2P',international:'Mercado Internacional',more:'Comunidad · Cuenta · Soporte'};
+  async function loadAdminControlCenter(){
+    if(!window.venbotUser?.is_developer) return;
+    const statusEl=document.getElementById('admin-system-status');
+    try{
+      const [stateRes, launchRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/estado?banco=GENERAL&t=${Date.now()}`,{headers:{'Accept':'application/json'},cache:'no-store'}),
+        fetch(`${API_BASE_URL}/api/admin/launch-mode?t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'})
+      ]);
+      const state=await stateRes.json(); const launch=await launchRes.json();
+      if(statusEl){
+        const svc=state?.services||{};
+        const items=[['P2P',!!svc.p2p],['Quant',!!svc.quant],['Tracking',!!svc.prediction_tracking],['Spot',!!svc.spot_prediction_tracking]];
+        statusEl.innerHTML=items.map(([label,ok])=>`<div class="rounded-xl border ${ok?'border-emerald-500/15':'border-rose-500/20'} bg-slate-950/60 p-2.5"><span class="text-[8px] text-slate-500 uppercase font-black">${label}</span><strong class="block mt-1 ${ok?'text-emerald-300':'text-rose-300'} text-[11px]">${ok?'OPERATIVO':'REVISAR'}</strong></div>`).join('');
+      }
+      renderAdminLaunchMode(launch?.launch_mode||{});
+    }catch(e){
+      if(statusEl) statusEl.innerHTML='<div class="col-span-2 md:col-span-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-2.5 text-rose-300 text-[10px]">No se pudo actualizar el estado administrativo.</div>';
+    }
+  }
+  function renderAdminLaunchMode(state){
+    const badge=document.getElementById('admin-launch-badge'), summary=document.getElementById('admin-launch-summary'); if(!badge||!summary) return;
+    if(state?.enabled){
+      badge.textContent='ACTIVO'; badge.className='text-[8px] font-black uppercase text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full';
+      summary.textContent=`Acceso promocional activo por ${state.duration_days||'--'} días · vence ${state.expires_at?new Date(state.expires_at).toLocaleString('es-VE'):'--'}.`;
+    }else{
+      badge.textContent='INACTIVO'; badge.className='text-[8px] font-black uppercase text-slate-400 bg-slate-900 border border-slate-700 px-2 py-1 rounded-full';
+      summary.textContent='Sin promoción activa. Las reglas FREE/PREMIUM/VIP funcionan normalmente.';
+    }
+  }
+  async function setAdminLaunchMode(days){
+    if(!window.venbotUser?.is_developer) return;
+    const action=days===null?'deactivate':'activate'; const body={action}; if(action==='activate') body.duration_days=Number(days);
+    try{
+      const r=await fetch(`${API_BASE_URL}/api/admin/launch-mode`,{method:'POST',headers:{'Content-Type':'application/json','X-Venbot-Session':getAuthToken(),'Accept':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json(); if(!r.ok) throw new Error(d.detail||'No se pudo actualizar el modo lanzamiento');
+      renderAdminLaunchMode(d.launch_mode||{}); await bootstrapVenbotFoundation(); applyPlanHorizonUI();
+    }catch(e){ const summary=document.getElementById('admin-launch-summary'); if(summary) summary.textContent=`Error: ${e.message||'No se pudo actualizar'}`; }
+  }
+  window.loadAdminControlCenter=loadAdminControlCenter; window.setAdminLaunchMode=setAdminLaunchMode;
   function applyDeveloperOnly(){
     const visible = !!window.venbotUser?.is_developer;
     [quantBacktest, quantAdaptive, document.getElementById('advanced-graphs-launcher'), document.getElementById('venbot-admin-center')].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
+    if(visible) loadAdminControlCenter();
   }
   window.applyVenbotDeveloperUI = applyDeveloperOnly;
   function place(){
