@@ -31,6 +31,7 @@
     @keyframes pulseVoice{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
 
     .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
+    body.venbot-no-ads .ad-slot{display:none!important}
     .ad-label{letter-spacing:.12em}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
     .calc-quick-btn{background:rgba(15,23,42,.75);border:1px solid rgba(51,65,85,.8);color:#94a3b8;border-radius:.65rem;padding:.42rem .72rem;font-size:9px;font-weight:800;transition:.18s ease}
@@ -315,7 +316,7 @@
         <div class="hidden md:block flex-1 max-w-xl mx-3">
           <div class="ad-slot rounded-xl px-4 py-2 text-center">
             <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-            <div class="text-[9px] text-slate-600 mt-0.5">Banner publicitario de prueba · ubicación escritorio</div>
+            <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
           </div>
         </div>
         <div class="flex items-center gap-1.5 shrink-0">
@@ -344,7 +345,7 @@
     <div class="w-full px-4 pt-2">
       <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="banner-top">
         <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-        <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario</div>
+        <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
       </div>
     </div>
 
@@ -610,6 +611,27 @@
             </div>
           </div>
           <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-rectangle-ad text-amber-300"></i>
+                <div>
+                  <span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Monetización publicitaria</span>
+                  <p class="text-[9px] text-slate-500 mt-1">FREE y promoción con anuncios · PREMIUM y VIP sin anuncios.</p>
+                </div>
+              </div>
+              <span id="admin-ads-badge" class="text-[8px] font-black uppercase text-amber-200 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full">PREPARADA</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[9px]">
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">Web</span><strong id="admin-ads-web" class="block mt-1 text-emerald-300">ESPACIOS ACTIVOS</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">FREE / PROMO</span><strong id="admin-ads-free" class="block mt-1 text-amber-200">CON ANUNCIOS</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">PREMIUM / VIP</span><strong id="admin-ads-paid" class="block mt-1 text-emerald-300">SIN ANUNCIOS</strong></div>
+            </div>
+            <div class="rounded-xl bg-slate-900/50 border border-slate-800 p-2.5 text-[9px] leading-relaxed text-slate-500">
+              <div><span class="text-slate-400 font-black">Proveedor web:</span> pendiente de conectar la cuenta publicitaria real.</div>
+              <div class="mt-1"><span class="text-slate-400 font-black">App:</span> preparada para integración publicitaria Android/Play Store.</div>
+            </div>
+          </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
             <div class="flex items-center gap-2">
               <i class="fa-solid fa-chart-line text-cyan-300"></i>
               <span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Gráficas avanzadas</span>
@@ -797,7 +819,7 @@
 
         <div class="ad-slot rounded-xl p-4 text-center">
           <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
-          <div class="text-[10px] text-slate-600 mt-1">Banner publicitario de prueba · debajo de las redes</div>
+          <div class="text-[10px] text-slate-600 mt-1">Espacio publicitario · FREE / promoción · debajo de las redes</div>
         </div>
       </section>
     </main>
@@ -1480,6 +1502,8 @@
       }
     }
 
+    setTimeout(applyVenbotAdPolicy, 0);
+
     async function loadSpotMarket() {
       const ent=window.venbotEntitlements?.features || {};
       const token=getAuthToken();
@@ -1626,6 +1650,28 @@
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
 
+    // Publicidad: el modo lanzamiento puede liberar funciones, pero conserva anuncios para cuentas FREE.
+    // PREMIUM/VIP pagados quedan sin publicidad. La cuenta/proveedor publicitario real se configura después.
+    window.VENBOT_AD_CONFIG = window.VENBOT_AD_CONFIG || { webEnabled: true, providerConfigured: false, appReady: true };
+    function getAdvertisingPlan() {
+      const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
+      return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
+    }
+    function applyVenbotAdPolicy() {
+      const plan = getAdvertisingPlan();
+      const paid = plan === 'PREMIUM' || plan === 'VIP';
+      const enabled = window.VENBOT_AD_CONFIG?.webEnabled !== false;
+      document.body.classList.toggle('venbot-no-ads', !(enabled && !paid));
+      const badge = document.getElementById('admin-ads-badge');
+      const web = document.getElementById('admin-ads-web');
+      const free = document.getElementById('admin-ads-free');
+      const paidEl = document.getElementById('admin-ads-paid');
+      if (badge && window.venbotUser?.is_developer) badge.textContent = window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'PREPARADA';
+      if (web && window.venbotUser?.is_developer) web.textContent = enabled ? (window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'ESPACIOS ACTIVOS') : 'DESACTIVADA';
+      if (free && window.venbotUser?.is_developer) free.textContent = enabled ? 'CON ANUNCIOS' : 'DESACTIVADOS';
+      if (paidEl && window.venbotUser?.is_developer) paidEl.textContent = 'SIN ANUNCIOS';
+    }
+
     function allowedP2PHorizons(plan = getFrontendPlan()) {
       if (plan === 'VIP') return ['1h','3h','7h','24h'];
       if (plan === 'PREMIUM') return ['1h','3h','7h'];
@@ -1659,6 +1705,7 @@
       if (typeof renderP2PHorizon === 'function') renderP2PHorizon();
       applyAIPlanUI();
       if (typeof window.applyVenbotDeveloperUI === 'function') window.applyVenbotDeveloperUI();
+      applyVenbotAdPolicy();
     }
 
     let selectedP2PHorizon = '1h';
