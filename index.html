@@ -684,7 +684,9 @@
             </div>
             <span class="text-[8px] font-black uppercase text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full shrink-0">ADMIN</span>
           </div>
-          <button type="button" onclick="window.openAdvancedGraphs()" class="w-full focus-ring rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/15 text-cyan-200 px-4 py-3 text-xs font-black flex items-center justify-between transition">
+          <button type="button"
+ onclick="event.preventDefault();var m=document.getElementById('advancedGraphsModal');if(m){m.classList.remove('hidden');m.style.display='block';document.body.classList.add('overflow-hidden');setTimeout(function(){try{window.advSetKindUI&&window.advSetKindUI();window.advSetButtons&&window.advSetButtons();window.loadAdvancedGraphs&&window.loadAdvancedGraphs()}catch(e){console.error(e)}},0)}"
+ class="w-full focus-ring rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/15 text-cyan-200 px-4 py-3 text-xs font-black flex items-center justify-between transition relative z-10 pointer-events-auto">
             <span><i class="fa-solid fa-chart-line mr-2"></i>Abrir gráficas avanzadas</span><i class="fa-solid fa-arrow-up-right-from-square"></i>
           </button>
           <p class="text-[9px] text-slate-600">No modifica los motores P2P, Spot, Quant ni Tracking; esta fase solo añade visualización sobre datos existentes.</p>
@@ -910,7 +912,7 @@
   </div>
 
     <!-- Menú informativo y legal -->
-    <div id="advancedGraphsModal" class="hidden fixed inset-0 z-[95] bg-black/90 backdrop-blur-md p-2 md:p-4 overflow-y-auto">
+    <div id="advancedGraphsModal" class="hidden fixed inset-0 z-[9999] pointer-events-auto bg-black/90 backdrop-blur-md p-2 md:p-4 overflow-y-auto">
       <div class="max-w-[1500px] mx-auto min-h-full flex items-start justify-center py-2 md:py-4">
         <section class="w-full glass-card rounded-2xl border border-cyan-500/20 shadow-2xl overflow-hidden fade-up">
           <header class="px-4 py-3 md:px-5 md:py-4 border-b border-slate-800 bg-slate-950/80 sticky top-0 z-10">
@@ -3413,6 +3415,24 @@
  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();
 </script>
+
+<script id="venbot-v31-42-direct-open">
+window.venbotOpenAdvancedDirect=function(){
+  try{
+    const m=document.getElementById('advancedGraphsModal');
+    if(!m){alert('No se encontró el panel de gráficas.');return;}
+    m.classList.remove('hidden');
+    m.style.display='block';
+    m.style.visibility='visible';
+    m.style.opacity='1';
+    document.body.classList.add('overflow-hidden');
+    try{window.advSetKindUI&&window.advSetKindUI()}catch(e){}
+    try{window.advSetButtons&&window.advSetButtons()}catch(e){}
+    try{window.loadAdvancedGraphs&&window.loadAdvancedGraphs()}catch(e){console.error(e)}
+  }catch(e){console.error('Venbot apertura directa',e)}
+};
+</script>
+
 </body>
 </html>
 
