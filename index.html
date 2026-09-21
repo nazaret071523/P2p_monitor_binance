@@ -296,6 +296,15 @@
 /* Solo correcciones de los detalles aprobados: órbita real de la O y mismo Neural Orbit en IA. */
 .robot-o-ball{fill:#28c8ff!important;filter:drop-shadow(0 0 3px #28c8ff)!important;}
 </style>
+
+<style id="venbot-v31-46-p2p-reference-style">
+#advancedPredictiveChart{display:none!important}
+.venbot-p2p-refgraph{min-height:100%!important}
+@media(max-width:640px){
+  .venbot-p2p-refgraph{min-width:980px!important}
+}
+</style>
+
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
@@ -2681,7 +2690,414 @@
     const timeText=selectedTime&&Number.isFinite(selectedTime.getTime())?selectedTime.toLocaleString('es-VE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'n/d';
     box.innerHTML=`<div class="adv-memory-kpi"><span>Memoria disponible</span><strong>${arr.length} snapshots</strong><small>eventos congelados recibidos</small></div><div class="adv-memory-kpi"><span>Snapshot seleccionado</span><strong>#${selected?advEsc(selected.id):'n/d'}</strong><small>${advEsc(timeText)} · ${selectedActual}/4 resultados visibles</small></div><div class="adv-memory-kpi"><span>Evaluables</span><strong>${evaluated}</strong><small>con al menos un horizonte vencido</small></div>`;
   }
+
+  /*
+   * VENBOT v31.46 — P2P intradía reference-style renderer.
+   * This is only a presentation layer. No backend/motor mathematics is changed.
+   * Layout follows the user's supplied reference: KPI ribbon + wide intraday plot
+   * + future shaded corridor + projected sell/buyback rails + price markers +
+   * momentum strip + clean VET timing. Only actual motor outputs are drawn.
+   */
   function advRenderChart(points, forecast, unit, snapshot=null, options={}){
+    const dualP2P=options.dualP2P===true;
+
+    // Keep Spot exactly on the last working renderer.
+    if(!dualP2P){
+      const oldCanvas=document.getElementById('advancedPredictiveChart');
+      const parent=oldCanvas?.parentElement;
+      if(parent && !oldCanvas) parent.innerHTML='<canvas id="advancedPredictiveChart"></canvas>';
+      return advRenderChartSpotLegacy(points,forecast,unit,snapshot,options);
+    }
+
+    advDestroyChart();
+
+    const canvas=document.getElementById('advancedPredictiveChart');
+    const host=canvas?.parentElement;
+    if(!host) return;
+
+    const fmt=(v,d=2)=>{
+      const n=Number(v);
+      return Number.isFinite(n)
+        ? n.toLocaleString('es-VE',{minimumFractionDigits:d,maximumFractionDigits:d})
+        : 'n/d';
+    };
+    const num=(v)=>Number(v);
+    const esc=(v)=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const vet=(ts,withDate=false)=>{
+      const n=Number(ts);
+      if(!Number.isFinite(n)) return 'n/d';
+      const o={
+        timeZone:'America/Caracas',hour:'2-digit',minute:'2-digit',hour12:true
+      };
+      if(withDate){o.day='2-digit';o.month='short';}
+      return new Intl.DateTimeFormat('es-VE',o).format(new Date(n))
+        .replace('a. m.','a.m.').replace('p. m.','p.m.');
+    };
+
+    const hist=(Array.isArray(points)?points:[])
+      .map(p=>({x:num(p.x),buy:num(p.buy),sell:num(p.sell),mid:num(p.mid)}))
+      .filter(p=>Number.isFinite(p.x)&&(p.buy>0||p.sell>0))
+      .sort((a,b)=>a.x-b.x);
+
+    const selectedSnapshot=snapshot||null;
+    const snapshotAnchor=selectedSnapshot?.created_at
+      ? new Date(selectedSnapshot.created_at).getTime() : NaN;
+    const referenceTime=Number(options.referenceTime);
+    const anchor=Number.isFinite(snapshotAnchor)
+      ? snapshotAnchor
+      : (Number.isFinite(referenceTime)
+          ? referenceTime
+          : (hist.length?hist[hist.length-1].x:Date.now()));
+
+    const t0Hist=hist.filter(p=>p.x<=anchor);
+    const t0=t0Hist[t0Hist.length-1]||hist[0]||null;
+    if(!t0){
+      host.innerHTML='<div class="h-full flex items-center justify-center text-slate-500 text-sm">Sin histórico P2P suficiente para construir la proyección.</div>';
+      return;
+    }
+
+    const forecastArr=(Array.isArray(forecast)?forecast:[])
+      .map(p=>({
+        h:String(p.h||'').toLowerCase(),
+        x:num(p.x),
+        y:num(p.y),
+        buy:num(p.buy),
+        sell:num(p.sell),
+        low:num(p.low),
+        high:num(p.high)
+      }))
+      .filter(p=>Number.isFinite(p.x))
+      .sort((a,b)=>a.x-b.x);
+
+    const currentBuy=Number.isFinite(num(options.currentBuy))?num(options.currentBuy):num(hist[hist.length-1]?.buy);
+    const currentSell=Number.isFinite(num(options.currentSell))?num(options.currentSell):num(hist[hist.length-1]?.sell);
+    const currentMid=Number.isFinite(num(options.currentPrice))
+      ? num(options.currentPrice)
+      : ((currentBuy>0&&currentSell>0)?(currentBuy+currentSell)/2:num(hist[hist.length-1]?.mid));
+
+    // Snapshot values are preferred when available. If the snapshot contains only
+    // central values, fall back to the corresponding live Venbot horizon output
+    // rather than inventing a price.
+    const snapH=selectedSnapshot?.horizons||{};
+    const horizonOrder=['1h','3h','7h','24h'];
+    const liveByH=Object.fromEntries(forecastArr.map(p=>[p.h,p]));
+
+    const frozenForecast=horizonOrder.map((h)=>{
+      const q=snapH?.[h]||{};
+      const hours=Number(q.hours||({1:1,3:3,7:7,24:24}[Number(h.replace('h',''))]||24));
+      const live=liveByH[h]||{};
+      const buyCandidates=[q.buy_predicted,q.buy,q.compra_predicted,q.compra];
+      const sellCandidates=[q.sell_predicted,q.sell,q.venta_predicted,q.venta];
+      const predictedCandidates=[q.predicted,q.midpoint,q.central,live.y];
+      const buy=buyCandidates.map(num).find(v=>Number.isFinite(v)&&v>0);
+      const sell=sellCandidates.map(num).find(v=>Number.isFinite(v)&&v>0);
+      const central=predictedCandidates.map(num).find(v=>Number.isFinite(v)&&v>0);
+      return {
+        h,hours,
+        x:anchor+hours*3600000,
+        buy:Number.isFinite(buy)?buy:(Number.isFinite(live.buy)?live.buy:NaN),
+        sell:Number.isFinite(sell)?sell:(Number.isFinite(live.sell)?live.sell:NaN),
+        central:central,
+        low:num(q.low), high:num(q.high),
+        confidence:num(q.confidence),
+        change:num(q.change)
+      };
+    }).filter(p=>Number.isFinite(p.x)&&(
+      Number.isFinite(p.buy)||Number.isFinite(p.sell)||Number.isFinite(p.central)
+    ));
+
+    // Projected prices should stay on their own BUY/SELL rails. No hourly points
+    // are fabricated between 1H/3H/7H/24H.
+    const sellPts=frozenForecast.filter(p=>Number.isFinite(p.sell));
+    const buyPts=frozenForecast.filter(p=>Number.isFinite(p.buy));
+
+    const histStart=anchor-12*3600000;
+    const nowRaw=Date.now();
+    const elapsedHours=Math.max(0,Math.min(24,(nowRaw-anchor)/3600000));
+    const nowTs=anchor+elapsedHours*3600000;
+    const histView=hist.filter(p=>p.x>=histStart&&p.x<=nowTs);
+    const allPts=histView.length?histView:[t0];
+
+    const vals=[];
+    allPts.forEach(p=>{if(p.buy>0)vals.push(p.buy);if(p.sell>0)vals.push(p.sell);});
+    frozenForecast.forEach(p=>{
+      [p.buy,p.sell,p.low,p.high,p.central].forEach(v=>{if(Number.isFinite(v)&&v>0)vals.push(v);});
+    });
+    if(currentMid>0)vals.push(currentMid);
+    let lo=Math.min(...vals),hi=Math.max(...vals);
+    const baseSpan=Math.max(hi-lo,Math.abs(hi)*0.012,1);
+    lo=Math.max(0,lo-baseSpan*.12); hi+=baseSpan*.12;
+
+    const W=1540,H=960;
+    const L=104,R=78,T=158,B=225;
+    const PW=W-L-R, PH=H-T-B;
+    const futureLeft=L+PW*.55, futureRight=W-R;
+    const histRight=futureLeft;
+
+    const xHist=(ts)=>L+((Number(ts)-histStart)/Math.max(1,anchor-histStart))*(histRight-L);
+    const xFuture=(ts)=>futureLeft+((Number(ts)-anchor)/(24*3600000))*(futureRight-futureLeft);
+    const x=(ts)=>Number(ts)<=anchor?xHist(ts):xFuture(ts);
+    const y=(v)=>T+(hi-Number(v))/Math.max(1e-9,hi-lo)*PH;
+
+    const downsample=(arr,max=520)=>{
+      if(arr.length<=max)return arr;
+      const out=[],step=(arr.length-1)/(max-1);
+      for(let i=0;i<max;i++)out.push(arr[Math.round(i*step)]);
+      return out;
+    };
+    const hdraw=downsample(allPts);
+
+    const buyHist=hdraw.filter(p=>p.buy>0).map(p=>({x:p.x,y:p.buy}));
+    const sellHist=hdraw.filter(p=>p.sell>0).map(p=>({x:p.x,y:p.sell}));
+    const buildPath=(arr)=>arr.map((p,i)=>`${i?'L':'M'} ${x(p.x).toFixed(1)} ${y(p.y).toFixed(1)}`).join(' ');
+
+    const realBuyAfter=hist.filter(p=>p.x>=anchor&&p.x<=nowTs&&p.buy>0).map(p=>({x:p.x,y:p.buy}));
+    const realSellAfter=hist.filter(p=>p.x>=anchor&&p.x<=nowTs&&p.sell>0).map(p=>({x:p.x,y:p.sell}));
+
+    const sellPath=[
+      {x:anchor,y:t0.sell},
+      ...sellPts.map(p=>({x:p.x,y:p.sell}))
+    ].filter(p=>p.y>0);
+    const buyPath=[
+      {x:anchor,y:t0.buy},
+      ...buyPts.map(p=>({x:p.x,y:p.buy}))
+    ].filter(p=>p.y>0);
+
+    const support=num(options.support), resistance=num(options.resistance);
+    const trend=String(options.trend||'').toUpperCase();
+    const bull=trend.includes('ALC')||trend.includes('SUB');
+    const bear=trend.includes('BAJ')||trend.includes('CAI');
+    const marketLabel=bull?'SUBIENDO':bear?'BAJANDO':'LATERAL';
+    const marketDelta=bull?'ALZA PROYECTADA':bear?'BAJA PROYECTADA':'RANGO / MIXTO';
+    const marketColor=bull?'#f0bf4f':bear?'#ff7891':'#b8b5ff';
+
+    const predValues=[
+      ...sellPts.map(p=>p.sell),
+      ...buyPts.map(p=>p.buy)
+    ].filter(v=>Number.isFinite(v)&&v>0);
+    const roof=predValues.length?Math.max(...predValues):NaN;
+    const floor=predValues.length?Math.min(...predValues):NaN;
+    const spreads=frozenForecast.map(p=>p.sell-p.buy).filter(v=>Number.isFinite(v)&&v>=0);
+    const spreadMax=spreads.length?Math.max(...spreads):NaN;
+    const remaining=Math.max(0,24-elapsedHours);
+
+    // Hourly time grid: every hour is real time reference only; only motor-supplied
+    // horizons receive a projected price marker.
+    const ticks=[];
+    for(let h=0;h<=24;h++){
+      const xx=xFuture(anchor+h*3600000);
+      const heavy=(h===0||h===1||h===3||h===7||h===24);
+      ticks.push(`<line x1="${xx}" y1="${T}" x2="${xx}" y2="${T+PH}" stroke="${h===0?'#e8be50':'#1c2b42'}" stroke-width="${h===0?3:1}" ${h===0?'stroke-dasharray="8 8"':''}/>`);
+      if(h%2===0||heavy){
+        ticks.push(`<text x="${xx}" y="${T+PH+30}" text-anchor="middle" fill="#8492a8" font-size="13" font-weight="800">${vet(anchor+h*3600000)}</text>`);
+        ticks.push(`<text x="${xx}" y="${T+PH+50}" text-anchor="middle" fill="#596981" font-size="11" font-weight="900">${h===0?'T0':`+${h}H`}</text>`);
+      }
+    }
+
+    const yGrid=[];
+    for(let i=0;i<=7;i++){
+      const val=lo+(hi-lo)*(i/7), yy=y(val);
+      yGrid.push(`<line x1="${L}" y1="${yy}" x2="${futureRight}" y2="${yy}" stroke="#1d2b40" stroke-width="1"/>`);
+      yGrid.push(`<text x="${L-16}" y="${yy+5}" text-anchor="end" fill="#7989a1" font-size="15" font-weight="750">${fmt(val,2)}</text>`);
+    }
+
+    const levelLines=[];
+    if(Number.isFinite(support)){
+      const yy=y(support);
+      levelLines.push(`<line x1="${L}" y1="${yy}" x2="${futureRight}" y2="${yy}" stroke="#2ed9a2" stroke-opacity=".42" stroke-width="2" stroke-dasharray="6 7"/><text x="${L+12}" y="${yy-9}" fill="#5de2b4" font-size="12" font-weight="900">SOPORTE ${fmt(support)} Bs</text>`);
+    }
+    if(Number.isFinite(resistance)){
+      const yy=y(resistance);
+      levelLines.push(`<line x1="${L}" y1="${yy}" x2="${futureRight}" y2="${yy}" stroke="#ff6e89" stroke-opacity=".42" stroke-width="2" stroke-dasharray="6 7"/><text x="${L+12}" y="${yy-9}" fill="#ff8ea0" font-size="12" font-weight="900">RESISTENCIA ${fmt(resistance)} Bs</text>`);
+    }
+
+    // Reference-style hourly observed momentum bars from real history.
+    const buckets=[];
+    const maxBuckets=12;
+    for(let i=0;i<maxBuckets;i++){
+      const end=anchor-(maxBuckets-1-i)*3600000;
+      const beg=end-3600000;
+      const rows=hist.filter(p=>p.x>beg&&p.x<=end);
+      if(!rows.length){buckets.push(null);continue;}
+      const a=rows[0].mid||((rows[0].buy+rows[0].sell)/2);
+      const b=rows[rows.length-1].mid||((rows[rows.length-1].buy+rows[rows.length-1].sell)/2);
+      buckets.push(Number.isFinite(a)&&Number.isFinite(b)?((b/a)-1)*100:null);
+    }
+    const maxAbs=Math.max(.1,...buckets.filter(v=>Number.isFinite(v)).map(v=>Math.abs(v)));
+    const barBase=T+PH+88, barH=45, barW=Math.min(48,(histRight-L)/(buckets.length*1.45));
+    const bars=buckets.map((v,i)=>{
+      if(!Number.isFinite(v))return '';
+      const cx=L+(i+.5)*(histRight-L)/buckets.length;
+      const hpx=(Math.abs(v)/maxAbs)*barH;
+      const yy=v>=0?barBase-hpx:barBase;
+      const fill=v>=0?'#35d6a0':'#ff738e';
+      return `<rect x="${(cx-barW/2).toFixed(1)}" y="${yy.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(2,hpx).toFixed(1)}" rx="4" fill="${fill}" opacity=".86"/><text x="${cx.toFixed(1)}" y="${barBase+17}" text-anchor="middle" fill="#61728d" font-size="9" font-weight="800">${vet(anchor-(buckets.length-1-i)*3600000)}</text>`;
+    }).join('');
+
+    const markProjected=(p,color,kind)=>{
+      const xx=xFuture(p.x), yy=y(kind==='sell'?p.sell:p.buy);
+      const px=kind==='sell' ? xx+10 : xx+10;
+      const label=`+${p.hours}H · ${fmt(kind==='sell'?p.sell:p.buy)} Bs`;
+      const ty=kind==='sell'
+        ? yy-28-(p.hours===3?12:0)
+        : yy+34+(p.hours===3?14:0);
+      const tm=vet(p.x);
+      return `<circle cx="${xx}" cy="${yy}" r="7.5" fill="${color}" stroke="#07101a" stroke-width="4"/>
+        <line x1="${xx}" y1="${yy}" x2="${px}" y2="${ty}" stroke="${color}" stroke-opacity=".35" stroke-width="1.2"/>
+        <text x="${px}" y="${ty}" fill="${color}" font-size="14" font-weight="900" paint-order="stroke" stroke="#06101a" stroke-width="6">${label}</text>
+        <text x="${px}" y="${ty+(kind==='sell'?13:17)}" fill="#8e9eb5" font-size="10" font-weight="800" paint-order="stroke" stroke="#06101a" stroke-width="5">${tm} VET</text>`;
+    };
+
+    const projectedSellLabels=sellPts.map(p=>markProjected(p,'#f4c357','sell')).join('');
+    const projectedBuyLabels=buyPts.map(p=>markProjected(p,'#5ddcff','buy')).join('');
+
+    const corridorTop=sellPts.map(p=>({x:p.x,y:p.sell}));
+    const corridorBottom=buyPts.slice().reverse().map(p=>({x:p.x,y:p.buy}));
+    const corridorPath=(corridorTop.length&&corridorBottom.length)
+      ? `${corridorTop.map((p,i)=>`${i?'L':'M'} ${xFuture(p.x).toFixed(1)} ${y(p.y).toFixed(1)}`).join(' ')} ${corridorBottom.map(p=>`L ${xFuture(p.x).toFixed(1)} ${y(p.y).toFixed(1)}`).join(' ')} Z`
+      : '';
+
+    const html=`<div class="venbot-p2p-refgraph">
+      <style>
+        .venbot-p2p-refgraph{height:100%;min-height:100%;background:#070d18;color:#e9f0fc;position:relative}
+        .venbot-p2p-refgraph .vp2p-svg{width:100%;height:100%;display:block}
+        .venbot-p2p-refgraph .vp2p-full{position:absolute;right:12px;top:12px;border:1px solid rgba(93,220,255,.3);background:rgba(6,15,27,.86);color:#9feaff;border-radius:9px;padding:6px 10px;font-size:11px;font-weight:900;cursor:pointer;z-index:3}
+        .venbot-p2p-refgraph:fullscreen{background:#030812}
+        .venbot-p2p-refgraph:fullscreen .vp2p-svg{height:100vh}
+      </style>
+      <button class="vp2p-full" type="button" title="Expandir gráfica">⛶ EXPANDIR</button>
+      <svg class="vp2p-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <linearGradient id="vp2pFuture" x1="0" x2="1"><stop offset="0" stop-color="#56418b" stop-opacity=".10"/><stop offset="1" stop-color="#56418b" stop-opacity=".035"/></linearGradient>
+          <linearGradient id="vp2pCorridor" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#f4c357" stop-opacity=".10"/><stop offset="1" stop-color="#5ddcff" stop-opacity=".025"/></linearGradient>
+          <clipPath id="vp2pClip"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" rx="10"/></clipPath>
+        </defs>
+
+        <rect width="${W}" height="${H}" fill="#070d18"/>
+
+        <!-- Reference-style KPI ribbon -->
+        <text x="${L}" y="29" fill="#e9f0fc" font-size="21" font-weight="900">PROYECCIÓN DE FLUCTUACIÓN DIARIA · VENBOT</text>
+        <text x="${futureRight}" y="29" text-anchor="end" fill="${marketColor}" font-size="21" font-weight="900">${marketDelta}</text>
+
+        <text x="${L}" y="50" fill="#5f718b" font-size="10" font-weight="850">T0 ${vet(anchor)} VET · CICLO DE PROYECCIÓN 24H · GENERAL</text>
+        <text x="${futureRight}" y="50" text-anchor="end" fill="#61718b" font-size="10" font-weight="800">SNAPSHOT #${esc(selectedSnapshot?.id||'—')} · CONGELADO</text>
+
+        <g>
+          <rect x="${L}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3049"/>
+          <text x="${L+14}" y="84" fill="#64758e" font-size="9" font-weight="900">TECHO PROYECTADO</text>
+          <text x="${L+14}" y="107" fill="#f5ca63" font-size="19" font-weight="900">${Number.isFinite(roof)?fmt(roof)+' Bs':'n/d'}</text>
+
+          <rect x="${L+222}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3049"/>
+          <text x="${L+236}" y="84" fill="#64758e" font-size="9" font-weight="900">PISO PROYECTADO</text>
+          <text x="${L+236}" y="107" fill="#5ddcff" font-size="19" font-weight="900">${Number.isFinite(floor)?fmt(floor)+' Bs':'n/d'}</text>
+
+          <rect x="${L+444}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3049"/>
+          <text x="${L+458}" y="84" fill="#64758e" font-size="9" font-weight="900">SPREAD MÁXIMO</text>
+          <text x="${L+458}" y="107" fill="#d9bcff" font-size="19" font-weight="900">${Number.isFinite(spreadMax)?fmt(spreadMax)+' Bs':'n/d'}</text>
+
+          <rect x="${L+666}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3049"/>
+          <text x="${L+680}" y="84" fill="#64758e" font-size="9" font-weight="900">MERCADO</text>
+          <text x="${L+680}" y="107" fill="${marketColor}" font-size="17" font-weight="900">${marketLabel}</text>
+
+          <rect x="${L+888}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3049"/>
+          <text x="${L+902}" y="84" fill="#64758e" font-size="9" font-weight="900">AHORA · VET</text>
+          <text x="${L+902}" y="107" fill="#5ddcff" font-size="17" font-weight="900">${vet(nowTs)}</text>
+
+          <rect x="${L+1110}" y="65" width="190" height="56" rx="10" fill="#0a1422" stroke="#1d3049"/>
+          <text x="${L+1124}" y="84" fill="#64758e" font-size="9" font-weight="900">QUEDA POR VENIR</text>
+          <text x="${L+1124}" y="107" fill="#edf3ff" font-size="17" font-weight="900">${remaining.toFixed(1)} h</text>
+        </g>
+
+        <!-- future panel -->
+        <rect x="${futureLeft}" y="${T}" width="${futureRight-futureLeft}" height="${PH}" fill="url(#vp2pFuture)"/>
+        ${yGrid.join('')}
+        ${ticks.join('')}
+        ${levelLines.join('')}
+
+        <text x="${L+12}" y="${T-16}" fill="#64758d" font-size="11" font-weight="900">HISTÓRICO REAL</text>
+        <text x="${futureLeft+14}" y="${T-16}" fill="#9c85c9" font-size="11" font-weight="900">CARRIL FUTURO · PROYECCIÓN VENBOT</text>
+
+        <!-- T0 / AHORA -->
+        <line x1="${futureLeft}" y1="${T}" x2="${futureLeft}" y2="${T+PH}" stroke="#f4c357" stroke-width="3" stroke-dasharray="9 9"/>
+        <text x="${futureLeft+13}" y="${T+24}" fill="#f4c357" font-size="16" font-weight="900">T0 · ${vet(anchor)} VET</text>
+        <text x="${futureLeft+13}" y="${T+43}" fill="#7a8ba5" font-size="10" font-weight="800">SNAPSHOT CONGELADO</text>
+
+        <line x1="${xFuture(nowTs)}" y1="${T}" x2="${xFuture(nowTs)}" y2="${T+PH}" stroke="#5ddcff" stroke-width="2.2" stroke-dasharray="5 7"/>
+        <text x="${Math.min(xFuture(nowTs)+10,futureRight-185)}" y="${T+24}" fill="#5ddcff" font-size="15" font-weight="900">AHORA · ${vet(nowTs)} VET</text>
+
+        <g clip-path="url(#vp2pClip)">
+          ${buildPath(buyHist)?`<path d="${buildPath(buyHist)}" fill="none" stroke="#35d6a0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+          ${buildPath(sellHist)?`<path d="${buildPath(sellHist)}" fill="none" stroke="#ff718e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+          ${realBuyAfter.length?`<path d="${buildPath(realBuyAfter.map(p=>({x:p.x,y:p.y})))}" fill="none" stroke="#35d6a0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+          ${realSellAfter.length?`<path d="${buildPath(realSellAfter.map(p=>({x:p.x,y:p.y})))}" fill="none" stroke="#ff718e" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+
+          ${corridorPath?`<path d="${corridorPath}" fill="url(#vp2pCorridor)" stroke="none"/>`:''}
+          ${sellPath.length?`<path d="${buildPath(sellPath)}" fill="none" stroke="#f4c357" stroke-width="5.5" stroke-dasharray="12 9" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+          ${buyPath.length?`<path d="${buildPath(buyPath)}" fill="none" stroke="#5ddcff" stroke-width="5.5" stroke-dasharray="12 9" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+
+          ${Number.isFinite(t0.buy)?`<circle cx="${futureLeft}" cy="${y(t0.buy)}" r="8" fill="#35d6a0" stroke="#07101a" stroke-width="5"/>`:''}
+          ${Number.isFinite(t0.sell)?`<circle cx="${futureLeft}" cy="${y(t0.sell)}" r="8" fill="#ff718e" stroke="#07101a" stroke-width="5"/>`:''}
+        </g>
+
+        <!-- projected prices and VET time on every supplied motor horizon -->
+        ${projectedSellLabels}
+        ${projectedBuyLabels}
+
+        <!-- actual current price markers -->
+        ${actualBuy>0?`<circle cx="${xFuture(nowTs)}" cy="${y(actualBuy)}" r="8.5" fill="#35d6a0" stroke="#07101a" stroke-width="5"/><text x="${Math.min(xFuture(nowTs)+14,futureRight-250)}" y="${y(actualBuy)-13}" fill="#72e5b8" font-size="13" font-weight="900" paint-order="stroke" stroke="#07101a" stroke-width="6">REAL COMPRA · ${fmt(actualBuy)} Bs</text>`:''}
+        ${actualSell>0?`<circle cx="${xFuture(nowTs)}" cy="${y(actualSell)}" r="8.5" fill="#ff718e" stroke="#07101a" stroke-width="5"/><text x="${Math.min(xFuture(nowTs)+14,futureRight-250)}" y="${y(actualSell)+22}" fill="#ff9caf" font-size="13" font-weight="900" paint-order="stroke" stroke="#07101a" stroke-width="6">REAL VENTA · ${fmt(actualSell)} Bs</text>`:''}
+
+        <!-- momentum strip -->
+        <line x1="${L}" y1="${barBase}" x2="${histRight}" y2="${barBase}" stroke="#22324a" stroke-width="1.5"/>
+        <text x="${L}" y="${barBase-barH-13}" fill="#63738c" font-size="10" font-weight="900">MOMENTUM OBSERVADO · ÚLTIMAS 12H</text>
+        ${bars}
+
+        <!-- future legend -->
+        <rect x="${futureLeft+18}" y="${barBase+43}" width="${futureRight-futureLeft-36}" height="63" rx="11" fill="#091421" stroke="#20344d"/>
+        <line x1="${futureLeft+34}" y1="${barBase+67}" x2="${futureLeft+70}" y2="${barBase+67}" stroke="#f4c357" stroke-width="5" stroke-dasharray="10 8"/>
+        <text x="${futureLeft+80}" y="${barBase+72}" fill="#a6b5c9" font-size="12" font-weight="850">Tasa de venta proyectada</text>
+        <line x1="${futureLeft+280}" y1="${barBase+67}" x2="${futureLeft+316}" y2="${barBase+67}" stroke="#5ddcff" stroke-width="5" stroke-dasharray="10 8"/>
+        <text x="${futureLeft+326}" y="${barBase+72}" fill="#a6b5c9" font-size="12" font-weight="850">Tasa de recompra proyectada</text>
+        <text x="${futureLeft+610}" y="${barBase+72}" fill="#65778f" font-size="11" font-weight="800">Los puntos horarios futuros aparecen solo donde Venbot entrega una predicción real.</text>
+
+        <text x="${L}" y="${H-22}" fill="#566780" font-size="10" font-weight="750">Horario de Venezuela · VET (UTC−4) · T0 permanece congelado para seguimiento y validación.</text>
+        <text x="${futureRight}" y="${H-22}" text-anchor="end" fill="#6a7b93" font-size="10" font-weight="850">REAL → PROYECTADO → COMPARACIÓN</text>
+      </svg>
+    </div>`;
+
+    host.innerHTML=html;
+
+    const shell=host.querySelector('.venbot-p2p-refgraph');
+    const full=host.querySelector('.vp2p-full');
+    if(full&&shell){
+      full.addEventListener('click',async()=>{
+        try{
+          if(!document.fullscreenElement) await shell.requestFullscreen?.();
+          else await document.exitFullscreen?.();
+        }catch(e){console.error('Venbot graph fullscreen',e);}
+      });
+    }
+
+    advancedChart={
+      destroy:()=>{},
+      resize:()=>{},
+      _venbotMeta:{
+        dualP2P:true,
+        anchor,
+        nowTs,
+        snapshotId:selectedSnapshot?.id||null,
+        snapshotAnchor,
+        frozen:true,
+        timezone:'America/Caracas'
+      }
+    };
+    const t0El=document.getElementById('adv-t0-label');
+    if(t0El)t0El.textContent=`T0 · ${vet(anchor)} VET · snapshot fijo`;
+    const badge=document.getElementById('adv-snapshot-badge');
+    if(badge)badge.textContent=selectedSnapshot?`T0 #${selectedSnapshot.id} · ${vet(anchor)} VET · congelado`:'sin snapshot';
+  }
+
+  function advRenderChartSpotLegacy(points, forecast, unit, snapshot=null, options={}){
     const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
     advDestroyChart();
     const dualP2P=options.dualP2P===true;
@@ -2834,7 +3250,7 @@
     const proj=advProjectionRowsP2P(a);
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=d.history?.map(r=>({x:new Date(r.timestamp).getTime(),buy:Number(r.compra),sell:Number(r.venta),mid:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&p.buy>0&&p.sell>0) || [];
-    const projectionBase=Date.now();
+    const projectionBase=(snapshot?.created_at?new Date(snapshot.created_at).getTime():Date.now());
     const m=a.metricas||{};
     const liveCompra=Number(m.compra)>0?Number(m.compra):Number(marketState.buy)||0;
     const liveVenta=Number(m.venta)>0?Number(m.venta):Number(marketState.sell)||0;
@@ -2847,7 +3263,7 @@
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
     advSetText('adv-chart-mode-label','P2P · corredor cuantitativo Compra / Venta'); advSetChartLegend('p2p');
-    advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots});
+    advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots,trend:String(a.tendencia||''),support:Number((a.proyeccion_7h||{}).soporte_7h??m.soporte??a.soporte_7h),resistance:Number((a.proyeccion_7h||{}).resistencia_7h??m.resistencia??a.resistencia_7h)});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
     advRenderSnapshotTrace(snapshot,'Bs');
