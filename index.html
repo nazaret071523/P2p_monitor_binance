@@ -312,6 +312,16 @@
 @media(max-width:760px){#adv-canvas-wrap{min-height:560px!important}}
 </style>
 
+<style id="venbot-v31-50-hourly">
+.vp2p-shell{display:flex!important;flex-direction:column!important}
+.vp2p-scroll{position:relative!important;inset:auto!important;flex:1 1 auto!important;min-height:0!important}
+.vp2p-hourly-readout{background:#07101c;border-top:1px solid #1d3048;padding:12px 14px}
+.vp2p-hourly-title{font-size:11px;font-weight:900;color:#cfd9e9;letter-spacing:.03em;margin-bottom:8px}.vp2p-hourly-title span{color:#8a73b3;font-weight:800;margin-left:8px}
+.vp2p-hourly-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+.vp2p-hour-cell{border:1px solid #1b2e46;border-radius:8px;background:#091521;padding:6px 7px;display:grid;gap:2px}.vp2p-hour-cell b{color:#f3c75f;font-size:11px}.vp2p-hour-cell small{color:#71839c;font-size:9px}.vp2p-hour-cell strong{font-size:10px;color:#aeefff}.vp2p-hour-cell strong:last-child{color:#f3aebd}
+@media(max-width:760px){.vp2p-hourly-grid{grid-template-columns:repeat(4,minmax(110px,1fr))}.vp2p-hourly-readout{min-width:1540px}}
+</style>
+
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
@@ -2753,9 +2763,12 @@
 
     const anchorSnap=snapshot?.created_at
       ? new Date(snapshot.created_at).getTime() : NaN;
-    const anchor=Number.isFinite(anchorSnap)
-      ? anchorSnap
-      : (Number.isFinite(N(options.referenceTime))?N(options.referenceTime):(hist.length?hist[hist.length-1].x:Date.now()));
+    const anchorOption=N(options.hourlyAnchor);
+    const anchor=Number.isFinite(anchorOption)
+      ? anchorOption
+      : (Number.isFinite(anchorSnap)
+          ? anchorSnap
+          : (Number.isFinite(N(options.referenceTime))?N(options.referenceTime):(hist.length?hist[hist.length-1].x:Date.now())));
 
     const t0Hist=hist.filter(p=>p.x<=anchor);
     const t0=t0Hist[t0Hist.length-1]||hist[0];
@@ -2781,6 +2794,13 @@
       return {h,hours,x:anchor+hours*3600000,buy,sell,central,low:N(q.low),high:N(q.high),change:N(q.change),confidence:N(q.confidence)};
     }).filter(p=>Number.isFinite(p.x)&&(Number.isFinite(p.buy)||Number.isFinite(p.sell)||Number.isFinite(p.central)));
 
+    const hourlySource=options.hourlyProjection?.points||options.hourlyProjection||{};
+    const hourlyFrozen=Object.entries(hourlySource).map(([key,q])=>{
+      const hours=Number(q?.horizonte_horas||q?.hours||String(key).replace(/[^0-9]/g,''));
+      const target=q?.target_at?new Date(q.target_at).getTime():anchor+hours*3600000;
+      return {h:`${hours}h`,hours,x:target,buy:N(q?.compra),sell:N(q?.venta),central:N(q?.midpoint),low:N(q?.rango_mid_min),high:N(q?.rango_mid_max),change:N(q?.cambio_pct),confidence:N(q?.confianza)};
+    }).filter(p=>Number.isFinite(p.x)&&p.hours>=1&&p.hours<=24&&(Number.isFinite(p.buy)||Number.isFinite(p.sell)||Number.isFinite(p.central))).sort((a,b)=>a.hours-b.hours);
+
     const p24=frozen.find(p=>p.hours===24)||frozen[frozen.length-1];
     const t0Mid=(t0.buy>0&&t0.sell>0)?(t0.buy+t0.sell)/2:t0.mid;
     const f24mid=p24?.central??((p24?.buy>0&&p24?.sell>0)?(p24.buy+p24.sell)/2:NaN);
@@ -2801,6 +2821,7 @@
     const vals=[];
     histView.forEach(p=>[p.buy,p.sell].forEach(v=>{if(v>0)vals.push(v);}));
     frozen.forEach(p=>[p.buy,p.sell,p.low,p.high,p.central].forEach(v=>{if(Number.isFinite(v)&&v>0)vals.push(v);}));
+    hourlyFrozen.forEach(p=>[p.buy,p.sell,p.low,p.high,p.central].forEach(v=>{if(Number.isFinite(v)&&v>0)vals.push(v);}));
     [liveBuy,liveSell].forEach(v=>{if(v>0)vals.push(v);});
     let lo=Math.min(...vals),hi=Math.max(...vals);
     const pad=Math.max((hi-lo)*.12,Math.abs(hi)*.006,.8);
@@ -2832,12 +2853,16 @@
 
     const sellPts=frozen.filter(p=>p.sell>0).map(p=>({x:p.x,y:p.sell,h:p.hours}));
     const buyPts=frozen.filter(p=>p.buy>0).map(p=>({x:p.x,y:p.buy,h:p.hours}));
-    const sellProj=[{x:anchor,y:t0.sell},...sellPts].filter(p=>p.y>0);
-    const buyProj=[{x:anchor,y:t0.buy},...buyPts].filter(p=>p.y>0);
+    const hourlySellPts=hourlyFrozen.filter(p=>p.sell>0).map(p=>({x:p.x,y:p.sell,h:p.hours}));
+    const hourlyBuyPts=hourlyFrozen.filter(p=>p.buy>0).map(p=>({x:p.x,y:p.buy,h:p.hours}));
+    const primarySellPts=hourlySellPts.length>=4?hourlySellPts:sellPts;
+    const primaryBuyPts=hourlyBuyPts.length>=4?hourlyBuyPts:buyPts;
+    const sellProj=[{x:anchor,y:t0.sell},...primarySellPts].filter(p=>p.y>0);
+    const buyProj=[{x:anchor,y:t0.buy},...primaryBuyPts].filter(p=>p.y>0);
     const projectPath=arr=>arr.map((p,i)=>`${i?'L':'M'} ${xFuture(p.x).toFixed(1)} ${y(p.y).toFixed(1)}`).join(' ');
 
-    const corridorTop=sellPts.map(p=>({x:p.x,y:p.y}));
-    const corridorBottom=buyPts.slice().reverse().map(p=>({x:p.x,y:p.y}));
+    const corridorTop=primarySellPts.map(p=>({x:p.x,y:p.y}));
+    const corridorBottom=primaryBuyPts.slice().reverse().map(p=>({x:p.x,y:p.y}));
     const corridor=(corridorTop.length&&corridorBottom.length)
       ?`${corridorTop.map((p,i)=>`${i?'L':'M'} ${xFuture(p.x)} ${y(p.y)}`).join(' ')} ${corridorBottom.map(p=>`L ${xFuture(p.x)} ${y(p.y)}`).join(' ')} Z`:'';
 
@@ -2879,7 +2904,7 @@
 
     // Future movement strip is derived from Venbot forecast changes, never presented as exchange volume.
     const futureBars=[];
-    const fMoves=frozen.map(p=>{
+    const fMoves=(hourlyFrozen.length?hourlyFrozen:frozen).map(p=>{
       const mid=Number.isFinite(p.central)?p.central:(p.buy>0&&p.sell>0?(p.buy+p.sell)/2:NaN);
       const d=Number.isFinite(mid)&&t0Mid>0?((mid/t0Mid)-1)*100:NaN;
       return {h:p.hours,d};
@@ -2901,11 +2926,17 @@
         <text x="${tx}" y="${yy+dy}" text-anchor="${ta}" fill="${color}" font-size="14" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="6">+${p.h}H · ${F(p.y)} Bs</text>
         <text x="${tx}" y="${yy+dy+14}" text-anchor="${ta}" fill="#8d9db3" font-size="10" font-weight="800" paint-order="stroke" stroke="#06101b" stroke-width="5">${vet(p.x)} VET</text>`;
     };
+    const hourlyPointMarkers=(hourlyFrozen.length?hourlyFrozen:[]).map(p=>{
+      const pieces=[];
+      if(p.buy>0) pieces.push(`<circle cx="${xFuture(p.x)}" cy="${y(p.buy)}" r="3.6" fill="#5ddcff" stroke="#06101b" stroke-width="2"><title>+${p.hours}H · Compra ${F(p.buy)} Bs · ${vet(p.x)} VET</title></circle>`);
+      if(p.sell>0) pieces.push(`<circle cx="${xFuture(p.x)}" cy="${y(p.sell)}" r="3.6" fill="#f2c65b" stroke="#06101b" stroke-width="2"><title>+${p.hours}H · Venta ${F(p.sell)} Bs · ${vet(p.x)} VET</title></circle>`);
+      return pieces.join('');
+    }).join('');
     const sellLabels=sellPts.map(p=>marker(p,'#f2c65b','sell')).join('');
     const buyLabels=buyPts.map(p=>marker(p,'#5ddcff','buy')).join('');
 
-    const roof=Math.max(...sellPts.concat(buyPts).map(p=>p.y).filter(Number.isFinite),-Infinity);
-    const floor=Math.min(...sellPts.concat(buyPts).map(p=>p.y).filter(Number.isFinite),Infinity);
+    const roof=Math.max(...primarySellPts.concat(primaryBuyPts).map(p=>p.y).filter(Number.isFinite),-Infinity);
+    const floor=Math.min(...primarySellPts.concat(primaryBuyPts).map(p=>p.y).filter(Number.isFinite),Infinity);
     const spreads=frozen.map(p=>p.sell-p.buy).filter(v=>Number.isFinite(v)&&v>=0);
     const spreadMax=spreads.length?Math.max(...spreads):NaN;
     const remaining=Math.max(0,24-elapsed);
@@ -2974,6 +3005,7 @@
               ${corridor?`<path d="${corridor}" fill="url(#vp2pCorridor)" stroke="none"/>`:''}
               ${projectPath(sellProj)?`<path d="${projectPath(sellProj)}" fill="none" stroke="#f2c65b" stroke-width="6" stroke-dasharray="13 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
               ${projectPath(buyProj)?`<path d="${projectPath(buyProj)}" fill="none" stroke="#5ddcff" stroke-width="6" stroke-dasharray="13 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+              ${hourlyPointMarkers}
             </g>
 
             ${sellLabels}
@@ -3005,6 +3037,13 @@
     </div>`;
 
     host.innerHTML=svgHtml;
+
+    if(hourlyFrozen.length){
+      const table=document.createElement('div');
+      table.className='vp2p-hourly-readout';
+      table.innerHTML=`<div class="vp2p-hourly-title">PROYECCIÓN HORARIA VENBOT · +1H → +24H <span>SHADOW EXPERIMENTAL · T0 ${vet(anchor)} VET</span></div><div class="vp2p-hourly-grid">${hourlyFrozen.map(p=>`<div class="vp2p-hour-cell"><b>+${p.hours}H</b><small>${vet(p.x)} VET</small><strong>${p.buy>0?`C ${F(p.buy)}`:'C —'}</strong><strong>${p.sell>0?`V ${F(p.sell)}`:'V —'}</strong></div>`).join('')}</div>`;
+      host.querySelector('.vp2p-shell')?.appendChild(table);
+    }
 
     const shell=host.querySelector('.vp2p-shell');
     const stage=host.querySelector('.vp2p-stage');
@@ -3181,6 +3220,8 @@
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=1200&t=${Date.now()}`); const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden');
     advPopulateSnapshotSelector(d); const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
     const liveProj=advProjectionRowsP2P(a);
+    const serverHourly=d.hourly_projection||null;
+    const serverHourlyPoints=serverHourly?.points||a.proyecciones_horarias_24h||{};
     let lock=p2pReadLock();
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=d.history?.map(r=>({x:new Date(r.timestamp).getTime(),buy:Number(r.compra),sell:Number(r.venta),mid:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&p.buy>0&&p.sell>0) || [];
@@ -3193,6 +3234,8 @@
           snapshotId:String(snapshot.id),
           created_at:snapshot.created_at||null,
           projection:liveProj.map(x=>({...x})),
+          hourly_projection:serverHourlyPoints,
+          hourly_created_at:serverHourly?.created_at||new Date().toISOString(),
           trend:String(a.tendencia||''),
           support:Number((a.proyeccion_7h||{}).soporte_7h??a.metricas?.soporte??a.soporte_7h),
           resistance:Number((a.proyeccion_7h||{}).resistencia_7h??a.metricas?.resistencia??a.resistencia_7h)
@@ -3201,9 +3244,14 @@
       }
     } else if(!lock || !Array.isArray(lock?.projection) || !lock.projection.length){
       lock={snapshotId:`live-${projectionBase}`,created_at:new Date(projectionBase).toISOString(),
-        projection:liveProj.map(x=>({...x})),trend:String(a.tendencia||''),
+        projection:liveProj.map(x=>({...x})),hourly_projection:serverHourlyPoints,hourly_created_at:serverHourly?.created_at||new Date().toISOString(),trend:String(a.tendencia||''),
         support:Number((a.proyeccion_7h||{}).soporte_7h??a.metricas?.soporte??a.soporte_7h),
         resistance:Number((a.proyeccion_7h||{}).resistencia_7h??a.resistencia_7h)};
+      p2pWriteLock(lock);
+    }
+    if(lock && (!lock.hourly_projection || !Object.keys(lock.hourly_projection).length) && Object.keys(serverHourlyPoints).length){
+      lock.hourly_projection=serverHourlyPoints;
+      lock.hourly_created_at=serverHourly?.created_at||new Date().toISOString();
       p2pWriteLock(lock);
     }
     const proj=Array.isArray(lock?.projection)&&lock.projection.length?lock.projection:liveProj;
@@ -3211,6 +3259,16 @@
     const liveCompra=Number(m.compra)>0?Number(m.compra):Number(marketState.buy)||0;
     const liveVenta=Number(m.venta)>0?Number(m.venta):Number(marketState.sell)||0;
     const current=liveCompra>0&&liveVenta>0?((liveCompra+liveVenta)/2):(hist.length?hist[hist.length-1].mid:NaN);
+    const hourlyAnchor=Number.isFinite(Date.parse(lock?.hourly_created_at||'') )?Date.parse(lock.hourly_created_at):projectionBase;
+    const hourlyChartPoints=lock?.hourly_projection||serverHourlyPoints||{};
+    const graphHorizons=['1h','3h','7h','24h'];
+    const graphH={};
+    for(const h of graphHorizons){
+      const q=hourlyChartPoints[h];
+      if(q) graphH[h]={hours:Number(q.horizonte_horas||h.replace('h','')),predicted:Number(q.midpoint),buy_predicted:Number(q.compra),sell_predicted:Number(q.venta),low:Number(q.rango_mid_min),high:Number(q.rango_mid_max),change_pct:Number(q.cambio_pct),confidence:Number(q.confianza)};
+      else if(snapshot?.horizons?.[h]) graphH[h]=snapshot.horizons[h];
+    }
+    const graphSnapshot=Object.keys(graphH).length?{...(snapshot||{}),created_at:lock?.hourly_created_at||snapshot?.created_at,horizons:graphH}:snapshot;
     const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?projectionBase+hrs*3600000:NaN,y:Number(r.central),buy:Number(r.buy),sell:Number(r.sell),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
     const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
     advSetText('adv-m-current',`${advMoney(current)} Bs`); advSetText('adv-m-current-unit',`${advancedP2PBank} · midpoint`);
@@ -3218,8 +3276,8 @@
     advSetText('adv-m-range',selected?`${advMoney(selected.low)}–${advMoney(selected.high)}`:'n/d'); advSetText('adv-m-confidence',selected&&Number.isFinite(Number(selected.confidence))?advMoney(selected.confidence,0):'n/d');
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advSetText('adv-chart-mode-label','P2P · corredor cuantitativo Compra / Venta'); advSetChartLegend('p2p');
-    advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots,trend:String(lock?.trend||a.tendencia||''),support:Number(lock?.support??(a.proyeccion_7h||{}).soporte_7h??m.soporte??a.soporte_7h),resistance:Number(lock?.resistance??(a.proyeccion_7h||{}).resistencia_7h??m.resistencia??a.resistencia_7h),frozenProjection:proj});
+    advSetText('adv-chart-mode-label','P2P · corredor horario 1H → 24H · T0 FIJO'); advSetChartLegend('p2p');
+    advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',graphSnapshot,{referenceTime:projectionBase,hourlyAnchor,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots,trend:String(lock?.trend||a.tendencia||''),support:Number(lock?.support??(a.proyeccion_7h||{}).soporte_7h??m.soporte??a.soporte_7h),resistance:Number(lock?.resistance??(a.proyeccion_7h||{}).resistencia_7h??m.resistencia??a.resistencia_7h),frozenProjection:proj,hourlyProjection:lock?.hourly_projection||serverHourlyPoints});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
     advRenderSnapshotTrace(snapshot,'Bs');
