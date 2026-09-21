@@ -2771,6 +2771,9 @@
 
     const currentBuy=Number.isFinite(num(options.currentBuy))?num(options.currentBuy):num(hist[hist.length-1]?.buy);
     const currentSell=Number.isFinite(num(options.currentSell))?num(options.currentSell):num(hist[hist.length-1]?.sell);
+    // Aliases used by the marker layer below; keep names explicit and in scope.
+    const actualBuy=currentBuy;
+    const actualSell=currentSell;
     const currentMid=Number.isFinite(num(options.currentPrice))
       ? num(options.currentPrice)
       : ((currentBuy>0&&currentSell>0)?(currentBuy+currentSell)/2:num(hist[hist.length-1]?.mid));
@@ -3015,7 +3018,7 @@
         ${levelLines.join('')}
 
         <text x="${L+12}" y="${T-16}" fill="#64758d" font-size="11" font-weight="900">HISTÓRICO REAL</text>
-        <text x="${futureLeft+14}" y="${T-16}" fill="#9c85c9" font-size="11" font-weight="900">CARRIL FUTURO · PROYECCIÓN VENBOT</text>
+        <text x="${futureLeft+14}" y="${T-16}" fill="#9c85c9" font-size="11" font-weight="900">CARRIL FUTURO · PROYECCIÓN ACTIVA VENBOT</text>
 
         <!-- T0 / AHORA -->
         <line x1="${futureLeft}" y1="${T}" x2="${futureLeft}" y2="${T+PH}" stroke="#f4c357" stroke-width="3" stroke-dasharray="9 9"/>
