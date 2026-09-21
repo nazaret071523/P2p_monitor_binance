@@ -1927,6 +1927,8 @@ def obtener_prediction_snapshots(banco="GENERAL", limit=40):
                 horizons[h]={
                     "hours": int(re.search(r"[0-9]+", h).group(0)),
                     "predicted": round(preds[h], 4 if preds[h] is not None else 0) if preds[h] is not None else None,
+                    "buy_predicted": round(float({"1h":pc1,"3h":pc3,"7h":pc7,"24h":pc24}[h]), 4) if {"1h":pc1,"3h":pc3,"7h":pc7,"24h":pc24}[h] is not None else None,
+                    "sell_predicted": round(float({"1h":pv1,"3h":pv3,"7h":pv7,"24h":pv24}[h]), 4) if {"1h":pv1,"3h":pv3,"7h":pv7,"24h":pv24}[h] is not None else None,
                     "low": src.get("rango_mid_min"),
                     "high": src.get("rango_mid_max"),
                     "change_pct": src.get("cambio_pct"),
