@@ -325,6 +325,7 @@ ADAPTIVE_STAGES = ("BASE", "ADAPTATIVO", "REGIMENES", "ML_COMPARATIVO", "MADUREZ
 ADAPTIVE_SHADOW_TRAIN_RATIO = min(0.8, max(0.5, float(os.getenv("ADAPTIVE_SHADOW_TRAIN_RATIO", "0.6"))))
 ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT = max(0.5, float(os.getenv("ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT", "2.0")))
 ADAPTIVE_PROMOTION_STABLE_PASSES = max(2, int(os.getenv("ADAPTIVE_PROMOTION_STABLE_PASSES", "2")))
+ADAPTIVE_SHADOW_MIN_REGIME_TRAIN = max(10, int(os.getenv("ADAPTIVE_SHADOW_MIN_REGIME_TRAIN", "20")))
 _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
@@ -3982,9 +3983,13 @@ def _mae_percent(items):
 def _build_shadow_candidate(rows, mode="p2p"):
     """Construye un candidato de calibración con separación temporal train/OOS.
 
-    rows llegan más recientes primero. Para evitar fuga temporal, el conjunto
-    de calibración usa el bloque más antiguo y el OOS el bloque más reciente.
-    La corrección es un factor multiplicativo basado en el sesgo del train.
+    El candidato aprende de tres señales conservadoras, siempre en sombra:
+    1) sesgo global ponderado hacia datos recientes;
+    2) sesgo específico por régimen cuando existe evidencia suficiente;
+    3) validación OOS temporal sobre el bloque más reciente.
+
+    Producción no se modifica aquí: el resultado solo describe una variante
+    candidata que el gate de promoción puede revisar posteriormente.
     """
     n=len(rows)
     train_n=max(10, int(round(n*ADAPTIVE_SHADOW_TRAIN_RATIO)))
@@ -3993,42 +3998,71 @@ def _build_shadow_candidate(rows, mode="p2p"):
     oos=rows[:n-train_n]
     if len(oos)<5 or len(train)<10:
         return {"status":"ACUMULANDO_EVIDENCIA","reason":"OOS_INSUFICIENTE","train_evaluated":len(train),"oos_evaluated":len(oos)}
-    train_bias=[]
-    for r in train:
-        try:
-            pred=float(r["pred"]); actual=float(r["actual"])
-            if pred: train_bias.append((actual-pred)/pred*100.0)
-        except Exception:
-            continue
-    if not train_bias:
+
+    def _bias_pairs(items, recency_weighted=False):
+        pairs=[]
+        m=len(items)
+        weights=np.exp(np.linspace(-1.2,0.0,m)) if recency_weighted and m>1 else np.ones(m)
+        for idx,r in enumerate(items):
+            try:
+                pred=float(r["pred"]); actual=float(r["actual"])
+                if pred:
+                    pairs.append(((actual-pred)/pred*100.0,float(weights[idx])))
+            except Exception:
+                continue
+        return pairs
+
+    global_pairs=_bias_pairs(train, recency_weighted=True)
+    if not global_pairs:
         return {"status":"ACUMULANDO_EVIDENCIA","reason":"BIAS_NO_DISPONIBLE","train_evaluated":len(train),"oos_evaluated":len(oos)}
-    train_bias_pct=float(np.mean(train_bias))
-    factor=float(np.clip(1.0+train_bias_pct/100.0,0.95,1.05))
-    baseline=_mae_percent(oos)
-    corrected=[]
-    for r in oos:
-        rr=dict(r); rr["pred"]=float(r["pred"])*factor; corrected.append(rr)
-    corrected_mae=_mae_percent(corrected)
-    improvement=((baseline-corrected_mae)/baseline*100.0) if baseline and corrected_mae is not None else None
-    ready=improvement is not None and improvement>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
-    # Candidato por régimen: solo proponemos factor cuando ese régimen tiene evidencia
-    # suficiente en train; sigue siendo informativo y no toca producción.
+    gw=np.asarray([w for _,w in global_pairs],dtype=float)
+    gb=np.asarray([b for b,_ in global_pairs],dtype=float)
+    train_bias_pct=float(np.average(gb,weights=gw))
+    global_factor=float(np.clip(1.0+train_bias_pct/100.0,0.95,1.05))
+
+    # Factores por régimen: solo se permiten con evidencia suficiente para no
+    # convertir ruido de un régimen pequeño en una corrección productiva.
     by_regime={}
     buckets={}
     for r in train:
-        g=r["group"]
+        g=str(r.get("group") or "SIN_CLASIFICAR").upper()
         buckets.setdefault(g,[]).append(r)
     for g,items in buckets.items():
-        if len(items)<10: continue
-        b=[]
-        for r in items:
-            try:
-                pred=float(r["pred"]); actual=float(r["actual"])
-                if pred: b.append((actual-pred)/pred*100.0)
-            except Exception: pass
-        if not b: continue
-        by_regime[g]={"train_evaluated":len(items),"bias_pct":round(float(np.mean(b)),4),"candidate_factor":round(float(np.clip(1+float(np.mean(b))/100.0,0.95,1.05)),6)}
-    return {"status":"CANDIDATO_VALIDO" if ready else "CANDIDATO_NO_APROBADO","train_evaluated":len(train),"oos_evaluated":len(oos),"train_bias_pct":round(train_bias_pct,4),"candidate_factor":round(factor,6),"oos_mae_baseline_pct":round(baseline,4) if baseline is not None else None,"oos_mae_candidate_pct":round(corrected_mae,4) if corrected_mae is not None else None,"oos_improvement_pct":round(improvement,2) if improvement is not None else None,"required_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"by_regime":by_regime}
+        if len(items)<ADAPTIVE_SHADOW_MIN_REGIME_TRAIN: continue
+        pairs=_bias_pairs(items, recency_weighted=True)
+        if not pairs: continue
+        ww=np.asarray([w for _,w in pairs],dtype=float); bb=np.asarray([b for b,_ in pairs],dtype=float)
+        b=float(np.average(bb,weights=ww)); f=float(np.clip(1.0+b/100.0,0.95,1.05))
+        by_regime[g]={"train_evaluated":len(items),"bias_pct":round(b,4),"candidate_factor":round(f,6)}
+
+    baseline=_mae_percent(oos)
+    corrected=[]
+    regime_corrections_used=0
+    for r in oos:
+        rr=dict(r)
+        g=str(r.get("group") or "SIN_CLASIFICAR").upper()
+        factor=float(by_regime.get(g,{}).get("candidate_factor",global_factor))
+        if g in by_regime: regime_corrections_used += 1
+        rr["pred"]=float(r["pred"])*factor
+        corrected.append(rr)
+    corrected_mae=_mae_percent(corrected)
+    improvement=((baseline-corrected_mae)/baseline*100.0) if baseline and corrected_mae is not None else None
+    ready=improvement is not None and improvement>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
+
+    return {
+        "status":"CANDIDATO_VALIDO" if ready else "CANDIDATO_NO_APROBADO",
+        "train_evaluated":len(train),"oos_evaluated":len(oos),
+        "train_bias_pct":round(train_bias_pct,4),
+        "candidate_factor":round(global_factor,6),
+        "learning_method":"sesgo ponderado por recencia + corrección por régimen",
+        "regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,
+        "regime_corrections_used":regime_corrections_used,
+        "oos_mae_baseline_pct":round(baseline,4) if baseline is not None else None,
+        "oos_mae_candidate_pct":round(corrected_mae,4) if corrected_mae is not None else None,
+        "oos_improvement_pct":round(improvement,2) if improvement is not None else None,
+        "required_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,
+        "by_regime":by_regime,
+    }
 
 
 def _adaptive_p2p_stats(banco="GENERAL", horizon="1h", limit=5000):
@@ -4127,7 +4161,7 @@ def obtener_quant_adaptive_status(symbol=None):
     p2p_stage=_adaptive_stage_for_hours(p2p_cov)
     spot_stage=_adaptive_stage_for_hours(spot_cov["median_hours"])
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
-      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES},
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN},
       "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
       "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
       "generated_at":datetime.now(VET).isoformat()}
