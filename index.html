@@ -288,13 +288,6 @@
 #advancedPredictiveSvg{width:100%;height:100%;display:block}
 #adv-chart-shell{background:#050b16!important;border-color:#20324d!important}
 @media(max-width:640px){#adv-canvas-wrap{height:68vh!important;min-height:480px!important}}
-
-/* v31.38 — P2P graph rebuilt from scratch against fixed T0 timeline */
-#adv-chart-shell{min-height:68vh!important;background:#050a14!important;border-color:rgba(43,61,91,.92)!important}
-#adv-canvas-wrap{height:min(68vh,700px)!important;min-height:540px!important}
-#adv-chart-shell:fullscreen{width:100vw;height:100vh;min-height:100vh;padding:8px;background:#03060d!important;border:0!important;border-radius:0}
-#adv-chart-shell:fullscreen #adv-canvas-wrap{height:calc(100vh - 16px)!important;min-height:0!important}
-@media(max-width:640px){#adv-canvas-wrap{height:70vh!important;min-height:540px!important}}
 </style>
 
 <style id="venbot-neural-approved">
@@ -333,6 +326,16 @@
 /* Solo correcciones de los detalles aprobados: órbita real de la O y mismo Neural Orbit en IA. */
 .robot-o-ball{fill:#28c8ff!important;filter:drop-shadow(0 0 3px #28c8ff)!important;}
 </style>
+
+<style id="venbot-v31-39-p2p-clean">
+#adv-canvas-wrap{height:clamp(38rem,78vh,58rem)!important;min-height:560px!important;background:#050b16!important}
+#adv-chart-shell{background:#050b16!important}
+#advancedPredictiveSvg{width:100%;height:100%;display:block}
+#adv-chart-shell:fullscreen{width:100vw;height:100vh;min-height:100vh;background:#03060d!important;border:0!important}
+#adv-chart-shell:fullscreen #adv-canvas-wrap{height:calc(100vh - 16px)!important;min-height:0!important}
+@media(max-width:640px){#adv-canvas-wrap{height:76vh!important;min-height:520px!important}}
+</style>
+
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
@@ -963,7 +966,7 @@
                   <div id="adv-chart-legend" class="flex items-center gap-2 text-[9px] text-slate-500 flex-wrap"><span id="adv-leg-a"><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span id="adv-leg-b"><i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real posterior</span><span id="adv-leg-c"><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección activa</span><span id="adv-leg-d"><i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0 · congelado</span><span class="adv-snapshot-badge" id="adv-snapshot-badge">sin snapshot</span></div>
                 </div>
                 <div class="adv-chart-toolbar flex flex-wrap items-center justify-end gap-1.5 mb-2">
-                  <span class="text-[8px] text-slate-600 mr-auto">Arrastra para recorrer · rueda/pellizco para zoom · snapshot T0 congelado</span>
+                  <span class="text-[8px] text-slate-600 mr-auto">VET UTC−4 · arrastra · zoom · T0 congelado</span>
                   <button type="button" class="adv-chart-btn" onclick="advChartZoom(-1)" title="Alejar">−</button>
                   <button type="button" class="adv-chart-btn" onclick="advChartZoom(1)" title="Acercar">＋</button>
                   <button type="button" class="adv-chart-btn" onclick="advChartResetView()" title="Restablecer vista">⟲</button>
@@ -2812,9 +2815,8 @@
   function advRenderChart(points, forecast, unit, snapshot=null, options={}){
     const wrap=document.getElementById('adv-canvas-wrap'); if(!wrap) return;
     const dualP2P=options.dualP2P===true;
-
-    // SPOT keeps its existing renderer. This rebuild is intentionally P2P-only.
     if(!dualP2P){
+      // Keep existing Spot path untouched; the new SVG graph is specifically for P2P.
       const canvas=document.getElementById('advancedPredictiveChart');
       if(canvas && window.Chart){
         advDestroyChart();
@@ -2825,269 +2827,298 @@
         if(proj.length) datasets.push({label:'Proyección',data:proj,borderColor:'#c084fc',borderDash:[9,6],pointRadius:4,borderWidth:3,tension:.14,fill:false});
         advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit,advComputeYBounds(datasets,unit)),plugins:[advPredictivePlugin]});
         advancedChart._venbotMeta={anchor:Number(snapshot?.created_at?new Date(snapshot.created_at).getTime():Date.now()),dualP2P:false};
+        advAttachPanZoom=()=>{};
         return;
       }
       return;
     }
 
+
+    /* v31.39 — P2P graph rebuilt from scratch for one clean temporal model.
+       T0 = selected snapshot time; AHORA = current time; projection frozen.
+       All clock labels explicitly use America/Caracas (VET, UTC-4).
+    */
     const esc=(v)=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    const money=(v,d=2)=>{const n=Number(v);return Number.isFinite(n)?n.toLocaleString('es-VE',{minimumFractionDigits:d,maximumFractionDigits:d}):'n/d';};
-    const hist=(Array.isArray(points)?points:[])
-      .map(p=>({x:Number(p.x),buy:Number(p.buy),sell:Number(p.sell)}))
-      .filter(p=>Number.isFinite(p.x)&&(Number.isFinite(p.buy)||Number.isFinite(p.sell)))
-      .sort((a,b)=>a.x-b.x);
-
-    const snap=snapshot||null;
-    const t0=snap?.created_at ? Number(new Date(snap.created_at).getTime()) : Number(options.referenceTime||Date.now());
-    const now=Date.now();
-    const horizonKeys=['1h','3h','7h','24h'].filter(h=>snap?.horizons?.[h]);
-    const keys=horizonKeys.length?horizonKeys:['1h','3h','7h','24h'];
-
-    // IMPORTANT: T0 base comes from historical data nearest to the snapshot, never from the current live price.
-    const around=hist.filter(p=>Math.abs(p.x-t0)<=10*60*1000);
-    const nearest=around.length ? around.slice().sort((a,b)=>Math.abs(a.x-t0)-Math.abs(b.x-t0))[0]
-      : hist.filter(p=>p.x<=t0).slice(-1)[0] || hist[0] || {};
-    const t0Buy=Number(nearest.buy);
-    const t0Sell=Number(nearest.sell);
-    const liveBuy=Number(options.currentBuy);
-    const liveSell=Number(options.currentSell);
-
-    const horizon=(h)=>{
-      const q=snap?.horizons?.[h]||{};
-      const hrs=Number(q.hours||advHorizonHours(h));
-      return {
-        h, hrs,
-        x:t0+hrs*3600000,
-        buy:Number(q.buy_predicted),
-        sell:Number(q.sell_predicted),
-        low:Number(q.low),
-        high:Number(q.high),
-        actual:Number(q.actual),
-        evaluated_at:q.evaluated_at||null
-      };
+    const fmtMoney=(v)=>{const n=Number(v);return Number.isFinite(n)?n.toLocaleString('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}):'n/d';};
+    const fmtVetTime=(ts)=>{
+      const n=Number(ts); if(!Number.isFinite(n)) return 'n/d';
+      return new Intl.DateTimeFormat('es-VE',{timeZone:'America/Caracas',hour:'2-digit',minute:'2-digit',hour12:true}).format(new Date(n)).replace('a. m.','a.m.').replace('p. m.','p.m.');
     };
-    const snapRows=keys.map(horizon).filter(r=>Number.isFinite(r.x)&& (Number.isFinite(r.buy)||Number.isFinite(r.sell)));
+    advDestroyChart();
+    const wrap=document.getElementById('adv-canvas-wrap'); if(!wrap) return;
 
-    // Keep a single absolute timeline. Historical time is left of T0; future time is right of T0.
-    // This makes the live trace land on the exact same +1H/+3H/+7H/+24H coordinates as the snapshot.
-    const historyHours=advancedPeriod==='7d'?72:advancedPeriod==='30d'?168:6;
-    const histStart=t0-historyHours*3600000;
-    const futureEnd=t0+24*3600000;
-    const viewStart=Math.min(histStart, hist.length?hist[0].x:histStart);
-    const viewEnd=futureEnd;
-    const visible=hist.filter(p=>p.x>=viewStart && p.x<=Math.min(viewEnd,Math.max(now, t0)));
-    const visHist=hist.filter(p=>p.x>=viewStart && p.x<=viewEnd);
+    const hist=(Array.isArray(points)?points:[]).map(p=>({
+      x:Number(p.x),buy:Number(p.buy),sell:Number(p.sell),mid:Number(p.mid??((Number(p.buy)+Number(p.sell))/2))
+    })).filter(p=>Number.isFinite(p.x)&&(Number.isFinite(p.buy)||Number.isFinite(p.sell))).sort((a,b)=>a.x-b.x);
+
+    const anchor=Number(snapshot?.created_at?new Date(snapshot.created_at).getTime():NaN);
+    if(!Number.isFinite(anchor)||!snapshot?.horizons){
+      wrap.innerHTML='<div class="h-full flex items-center justify-center text-slate-500 text-sm p-8">Sin snapshot T0 válido.</div>';
+      return;
+    }
+
+    const defs=[{key:'1h',hours:1},{key:'3h',hours:3},{key:'7h',hours:7},{key:'24h',hours:24}];
+    const forecast=defs.map(d=>{
+      const q=snapshot.horizons?.[d.key]||{};
+      const hours=Number(q.hours??d.hours);
+      return {key:d.key,hours,x:anchor+hours*3600000,buy:Number(q.buy_predicted),sell:Number(q.sell_predicted),low:Number(q.low),high:Number(q.high)};
+    }).filter(p=>Number.isFinite(p.x)&&(Number.isFinite(p.buy)||Number.isFinite(p.sell)));
+
+    const before=hist.filter(p=>p.x<=anchor);
+    const t0Sample=before[before.length-1]||hist[0];
+    const nowReal=hist.filter(p=>p.x<=Date.now()).slice(-1)[0]||hist[hist.length-1]||t0Sample;
+    const actualNowTs=Math.min(Math.max(Date.now(),anchor),anchor+24*3600000);
+    const actualBuy=Number(options.currentBuy)>0?Number(options.currentBuy):Number(nowReal?.buy);
+    const actualSell=Number(options.currentSell)>0?Number(options.currentSell):Number(nowReal?.sell);
+    if(!t0Sample||!forecast.length){
+      wrap.innerHTML='<div class="h-full flex items-center justify-center text-slate-500 text-sm p-8">Datos insuficientes para construir la proyección.</div>';
+      return;
+    }
+
+    const histStart=anchor-12*3600000, viewEnd=anchor+24*3600000;
+    const histView=hist.filter(p=>p.x>=histStart&&p.x<=Math.min(actualNowTs,viewEnd));
+    function downsample(arr,max=480){if(arr.length<=max)return arr;const o=[];const s=(arr.length-1)/(max-1);for(let i=0;i<max;i++)o.push(arr[Math.round(i*s)]);return o;}
+    const hd=downsample(histView.length?histView:[t0Sample]);
 
     const vals=[];
-    const push=(v)=>{const n=Number(v);if(Number.isFinite(n)&&n>0)vals.push(n)};
-    visHist.forEach(p=>{push(p.buy);push(p.sell)});
-    snapRows.forEach(p=>{push(p.buy);push(p.sell);push(p.low);push(p.high)});
-    push(t0Buy);push(t0Sell);push(liveBuy);push(liveSell);
-    if(!vals.length){wrap.innerHTML='<div class="h-full flex items-center justify-center text-slate-600 text-xs">Sin datos suficientes para construir la gráfica.</div>';return;}
+    hd.forEach(p=>{if(Number.isFinite(p.buy))vals.push(p.buy);if(Number.isFinite(p.sell))vals.push(p.sell);});
+    forecast.forEach(p=>{if(Number.isFinite(p.buy))vals.push(p.buy);if(Number.isFinite(p.sell))vals.push(p.sell);if(Number.isFinite(p.low))vals.push(p.low);if(Number.isFinite(p.high))vals.push(p.high);});
+    if(Number.isFinite(actualBuy))vals.push(actualBuy);if(Number.isFinite(actualSell))vals.push(actualSell);
+    let lo=Math.min(...vals),hi=Math.max(...vals),span=Math.max(hi-lo,Math.abs(hi)*.012,1);
+    lo=Math.max(0,lo-span*.14);hi+=span*.14;
 
-    let lo=Math.min(...vals), hi=Math.max(...vals);
-    const span=Math.max(hi-lo,Math.abs(hi)*0.012,1);
-    lo-=span*0.12; hi+=span*0.12;
+    const W=1520,H=880,L=105,R=72,T=112,B=115,PW=W-L-R,PH=H-T-B;
+    const futureLeft=L+PW*.57,futureRight=L+PW;
+    const xHist=(ts)=>L+((Number(ts)-histStart)/Math.max(1,anchor-histStart))*(futureLeft-L);
+    const xFutureH=(h)=>futureLeft+(h/24)*(futureRight-futureLeft);
+    const xAt=(ts)=>Number(ts)<=anchor?xHist(ts):xFutureH((Number(ts)-anchor)/3600000);
+    const yAt=(v)=>T+(hi-Number(v))/(hi-lo)*PH;
 
-    const W=1500,H=840;
-    const L=92,R=230,T=92,B=88;
-    const plotW=W-L-R, plotH=H-T-B;
-    const xAt=(ts)=>L+((Number(ts)-viewStart)/Math.max(1,viewEnd-viewStart))*plotW;
-    const yAt=(v)=>T+(hi-Number(v))/Math.max(1e-9,hi-lo)*plotH;
-    const fmtClock=(ts)=>new Date(ts).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'});
-    const fmtDate=(ts)=>new Date(ts).toLocaleDateString('es-VE',{day:'2-digit',month:'short'});
+    const histBuyPath=hd.filter(p=>Number.isFinite(p.buy)).map((p,i)=>`${i?'L':'M'} ${xHist(p.x).toFixed(1)} ${yAt(p.buy).toFixed(1)}`).join(' ');
+    const histSellPath=hd.filter(p=>Number.isFinite(p.sell)).map((p,i)=>`${i?'L':'M'} ${xHist(p.x).toFixed(1)} ${yAt(p.sell).toFixed(1)}`).join(' ');
+
+    const postBuy=hist.filter(p=>p.x>=anchor&&p.x<=actualNowTs&&Number.isFinite(p.buy));
+    const postSell=hist.filter(p=>p.x>=anchor&&p.x<=actualNowTs&&Number.isFinite(p.sell));
+    const postBuyPath=postBuy.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.buy).toFixed(1)}`).join(' ');
+    const postSellPath=postSell.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.sell).toFixed(1)}`).join(' ');
+
+    const pBuy=forecast.filter(p=>Number.isFinite(p.buy));
+    const pSell=forecast.filter(p=>Number.isFinite(p.sell));
+    const projBuyPath=[{x:anchor,y:Number(t0Sample.buy)},...pBuy.map(p=>({x:p.x,y:p.buy}))].filter(p=>Number.isFinite(p.y)).map((p,i)=>`${i?'L':'M'} ${xFutureH((p.x-anchor)/3600000).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
+    const projSellPath=[{x:anchor,y:Number(t0Sample.sell)},...pSell.map(p=>({x:p.x,y:p.sell}))].filter(p=>Number.isFinite(p.y)).map((p,i)=>`${i?'L':'M'} ${xFutureH((p.x-anchor)/3600000).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
+
+    const allProj=[...forecast.flatMap(p=>[p.buy,p.sell])].filter(Number.isFinite);
+    const p24=forecast.find(p=>p.hours===24)||forecast[forecast.length-1];
+    const projMin=allProj.length?Math.min(...allProj):NaN,projMax=allProj.length?Math.max(...allProj):NaN;
+    const currentMid=(Number.isFinite(actualBuy)&&Number.isFinite(actualSell))?((actualBuy+actualSell)/2):Number(nowReal?.mid);
     const trend=String(options.trend||'').toUpperCase();
-    const isUp=/ALC|SUB|UP|BULL/.test(trend), isDown=/BAJ|CAI|DOWN|BEAR/.test(trend);
-    const trendText=isUp?'ALZA PROYECTADA':isDown?'BAJA PROYECTADA':'PROYECCIÓN';
-    const trendColor=isUp?'#74e8b7':isDown?'#ff879f':'#c9b8ff';
+    const bull=trend.includes('ALC')||trend.includes('SUB');
+    const bear=trend.includes('BAJ')||trend.includes('CAI');
+    const trendLabel=bull?'ALZA PROYECTADA':bear?'BAJA PROYECTADA':'PROYECCIÓN';
+    const trendColor=bull?'#73e6b6':bear?'#ff8ba0':'#c8b4ff';
 
-    function downsample(arr,max=600){
-      if(arr.length<=max)return arr;
-      const out=[],step=(arr.length-1)/(max-1);
-      for(let i=0;i<max;i++)out.push(arr[Math.round(i*step)]);
-      return out;
+    const grid=[];
+    for(let i=0;i<=8;i++){
+      const v=lo+(hi-lo)*i/8,yy=yAt(v);
+      grid.push(`<line x1="${L}" y1="${yy}" x2="${futureRight}" y2="${yy}" stroke="#22314a" stroke-width="1"/><text x="${L-18}" y="${yy+6}" text-anchor="end" fill="#7f90a8" font-size="16" font-weight="700">${fmtMoney(v)}</text>`);
     }
-    const histD=downsample(visHist,600);
-    const path=(arr,field,stroke,width,dash='')=>{
-      const pts=arr.filter(p=>Number.isFinite(Number(p[field])));
-      if(!pts.length)return '';
-      const d=pts.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p[field]).toFixed(1)}`).join(' ');
-      return `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}" ${dash?`stroke-dasharray="${dash}"`:''} stroke-linecap="round" stroke-linejoin="round"/>`;
+
+    const hourTicks=[];
+    for(let h=0;h<=24;h+=1){
+      const xx=xFutureH(h);
+      if(h%2===0 || [1,3,7,24].includes(h)){
+        hourTicks.push(`<line x1="${xx}" y1="${T}" x2="${xx}" y2="${T+PH}" stroke="${h===0?'#f5c85c':'#1b2a41'}" stroke-width="${h===0?3:1}" ${h===0?'stroke-dasharray="9 9"':''}/>`);
+        const ts=anchor+h*3600000;
+        hourTicks.push(`<text x="${xx}" y="${H-B+26}" text-anchor="middle" fill="#8190aa" font-size="12" font-weight="800">${fmtVetTime(ts)}</text>`);
+        hourTicks.push(`<text x="${xx}" y="${H-B+45}" text-anchor="middle" fill="#596981" font-size="11" font-weight="800">${h===0?'T0':`+${h}H`}</text>`);
+      }
+    }
+
+    const nowH=Math.max(0,Math.min(24,(actualNowTs-anchor)/3600000)),nowX=xFutureH(nowH),t0X=futureLeft;
+    const label=(p,color,side,idx)=>{
+      const xx=xFutureH(p.hours),yy=yAt(p.y);
+      const offsets=side==='sell'?[-30,-58,-30,-58]:[34,62,34,62];
+      let tx=xx+16,anchorTxt='start';
+      if(p.hours===24){tx=xx-16;anchorTxt='end';}
+      const ly=yy+offsets[idx%offsets.length];
+      const time=fmtVetTime(p.x);
+      const value=`+${p.hours}H · ${fmtMoney(p.y)} Bs`;
+      return `<circle cx="${xx}" cy="${yy}" r="9" fill="${color}" stroke="#06101b" stroke-width="5"/><line x1="${xx}" y1="${yy}" x2="${tx}" y2="${ly}" stroke="${color}" stroke-opacity=".34" stroke-width="1.3" stroke-dasharray="3 4"/><text x="${tx}" y="${ly}" text-anchor="${anchorTxt}" fill="${color}" font-size="16" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="7">${value}</text><text x="${tx}" y="${ly+(side==='sell'?17:-17)}" text-anchor="${anchorTxt}" fill="#98a7bd" font-size="11" font-weight="800" paint-order="stroke" stroke="#06101b" stroke-width="5">${time} VET</text>`;
     };
 
-    const yTicks=7;
-    let grid='';
-    for(let i=0;i<=yTicks;i++){
-      const v=lo+(hi-lo)*(i/yTicks), yy=yAt(v);
-      grid+=`<line x1="${L}" y1="${yy.toFixed(1)}" x2="${L+plotW}" y2="${yy.toFixed(1)}" stroke="#1d2b42" stroke-width="1"/><text x="${L-14}" y="${(yy+6).toFixed(1)}" text-anchor="end" fill="#8292aa" font-size="16" font-weight="700">${money(v)}</text>`;
-    }
+    const sellLabels=pSell.map((p,i)=>label(p,'#f5c85c','sell',i)).join('');
+    const buyLabels=pBuy.map((p,i)=>label(p,'#5ddcff','buy',i)).join('');
 
-    // Vertical time marks: T0, NOW, and the forecast horizons.
-    let timeGrid='';
-    const marks=[{ts:t0,label:'T0',kind:'t0'}];
-    if(now>t0 && now<futureEnd)marks.push({ts:now,label:'AHORA',kind:'now'});
-    keys.forEach(h=>{const r=snapRows.find(x=>x.h===h);if(r)marks.push({ts:r.x,label:`+${r.hrs}H`,kind:'h'});});
-    const seen=new Set();
-    for(const m of marks){
-      const xx=xAt(m.ts); const key=Math.round(xx);
-      if(seen.has(key))continue; seen.add(key);
-      const color=m.kind==='t0'?'#f5c85c':m.kind==='now'?'#67e8f9':'#25354f';
-      const dash=m.kind==='t0'?'9 8':m.kind==='now'?'4 7':'';
-      timeGrid+=`<line x1="${xx.toFixed(1)}" y1="${T}" x2="${xx.toFixed(1)}" y2="${T+plotH}" stroke="${color}" stroke-width="${m.kind==='t0'||m.kind==='now'?2.4:1}" ${dash?`stroke-dasharray="${dash}"`:''}/>`;
-      const bottomLabel=m.kind==='t0'?`T0 · ${fmtClock(t0)}`:m.kind==='now'?`AHORA · ${fmtClock(now)}`:m.label;
-      timeGrid+=`<text x="${xx.toFixed(1)}" y="${H-44}" text-anchor="middle" fill="${color==='\#25354f'?'#7d8da5':color}" font-size="14" font-weight="800">${esc(bottomLabel)}</text>`;
-    }
+    const sup=Number(options.support),res=Number(options.resistance);
+    const levels=[];
+    if(Number.isFinite(sup)){const y=yAt(sup);levels.push(`<line x1="${L}" y1="${y}" x2="${futureRight}" y2="${y}" stroke="#27e3a6" stroke-opacity=".42" stroke-width="2" stroke-dasharray="5 7"/><text x="${L+10}" y="${y-8}" fill="#62e7ba" font-size="13" font-weight="850">SOPORTE ${fmtMoney(sup)} Bs</text>`);}
+    if(Number.isFinite(res)){const y=yAt(res);levels.push(`<line x1="${L}" y1="${y}" x2="${futureRight}" y2="${y}" stroke="#ff718f" stroke-opacity=".44" stroke-width="2" stroke-dasharray="5 7"/><text x="${L+10}" y="${y-8}" fill="#ff8ea3" font-size="13" font-weight="850">RESISTENCIA ${fmtMoney(res)} Bs</text>`);}
 
-    const support=Number(options.support),resistance=Number(options.resistance);
-    const levels=(Number.isFinite(support)?`<line x1="${L}" y1="${yAt(support)}" x2="${L+plotW}" y2="${yAt(support)}" stroke="#27e3a6" stroke-opacity=".32" stroke-width="1.8" stroke-dasharray="5 7"/><text x="${L+12}" y="${yAt(support)-9}" fill="#5cdbaf" font-size="12" font-weight="800">SOPORTE ${money(support)} Bs</text>`:'')+
-      (Number.isFinite(resistance)?`<line x1="${L}" y1="${yAt(resistance)}" x2="${L+plotW}" y2="${yAt(resistance)}" stroke="#ff718f" stroke-opacity=".34" stroke-width="1.8" stroke-dasharray="5 7"/><text x="${L+12}" y="${yAt(resistance)-9}" fill="#ff8ba0" font-size="12" font-weight="800">RESISTENCIA ${money(resistance)} Bs</text>`:'');
-
-    // Current snapshot projection: one frozen trajectory per side, anchored exactly at its stored T0.
-    const activeBuy=snapRows.filter(p=>Number.isFinite(p.buy));
-    const activeSell=snapRows.filter(p=>Number.isFinite(p.sell));
-    const activeBuyLine=[{x:t0,y:t0Buy},...activeBuy.map(p=>({x:p.x,y:p.buy}))].filter(p=>Number.isFinite(p.y));
-    const activeSellLine=[{x:t0,y:t0Sell},...activeSell.map(p=>({x:p.x,y:p.sell}))].filter(p=>Number.isFinite(p.y));
-
-    // Posterior real path uses absolute timestamps, so it overlays the frozen projection at the correct hours.
-    let realBuy=histD.filter(p=>p.x<=now);
-    let realSell=histD.filter(p=>p.x<=now);
-    if(now>t0){
-      if(Number.isFinite(liveBuy)) realBuy=[...realBuy,{x:now,buy:liveBuy}];
-      if(Number.isFinite(liveSell)) realSell=[...realSell,{x:now,sell:liveSell}];
-    }
-    realBuy=realBuy.filter(p=>p.x>=viewStart&&p.x<=viewEnd);
-    realSell=realSell.filter(p=>p.x>=viewStart&&p.x<=viewEnd);
-    const postBuy=realBuy.filter(p=>p.x>=t0);
-    const postSell=realSell.filter(p=>p.x>=t0);
-
-    // Current snapshot uncertainty: one conservative central corridor from the real engine's low/high fields.
-    const bandTop=activeSell.filter(p=>Number.isFinite(p.high));
-    const bandBottom=activeBuy.filter(p=>Number.isFinite(p.low));
-    let uncertainty='';
-    if(bandTop.length>=2 && bandBottom.length>=2){
-      const top=bandTop.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.high).toFixed(1)}`).join(' ');
-      const bot=bandBottom.slice().reverse().map(p=>`L ${xAt(p.x).toFixed(1)} ${yAt(p.low).toFixed(1)}`).join(' ');
-      uncertainty=`<path d="${top} ${bot} Z" fill="#a87df7" opacity=".10"/>`;
-    }
-
-    // Previous snapshots: visible but intentionally subdued. They never become the main line.
-    const allSnaps=Array.isArray(options.snapshotHistory)?options.snapshotHistory:[];
-    const older=allSnaps.filter(s=>String(s?.id)!==String(snap?.id)).slice(0,3);
-    let previousPaths='';
-    older.forEach((s,idx)=>{
-      if(!s?.created_at)return;
-      const sa=Number(new Date(s.created_at).getTime());
-      const rows=['1h','3h','7h','24h'].map(h=>{const q=s.horizons?.[h]||{};const hrs=Number(q.hours||advHorizonHours(h));return {x:sa+hrs*3600000,buy:Number(q.buy_predicted),sell:Number(q.sell_predicted)};});
-      const sAround=hist.filter(p=>Math.abs(p.x-sa)<=10*60*1000);
-      const sNear=sAround.length ? sAround.slice().sort((a,b)=>Math.abs(a.x-sa)-Math.abs(b.x-sa))[0] : hist.filter(p=>p.x<=sa).slice(-1)[0] || hist[0] || {};
-      const buy=[...([{x:sa,y:Number(sNear.buy)}].filter(p=>Number.isFinite(p.y))),...rows.filter(r=>Number.isFinite(r.buy)).map(r=>({x:r.x,y:r.buy}))];
-      const sell=[...([{x:sa,y:Number(sNear.sell)}].filter(p=>Number.isFinite(p.y))),...rows.filter(r=>Number.isFinite(r.sell)).map(r=>({x:r.x,y:r.sell}))];
-      const c=idx===0?'#f5c85c':'#8090aa'; const op=idx===0?.62:.28;
-      if(buy.length>=2){previousPaths+=`<path d="${buy.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ')}" fill="none" stroke="${c}" stroke-opacity="${op}" stroke-width="${idx===0?2.5:1.3}" stroke-dasharray="${idx===0?'7 8':'3 7'}"/>`;}
-      if(sell.length>=2){previousPaths+=`<path d="${sell.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ')}" fill="none" stroke="${c}" stroke-opacity="${op}" stroke-width="${idx===0?2.5:1.3}" stroke-dasharray="${idx===0?'7 8':'3 7'}"/>`;}
-    });
-
-    // Forecast labels: no boxes. Put them on clean lanes with their exact price.
-    function forecastLabels(rows,color,side){
-      return rows.map((p,idx)=>{
-        const xx=xAt(p.x), yy=yAt(side==='sell'?p.sell:p.buy);
-        const value=side==='sell'?p.sell:p.buy;
-        if(!Number.isFinite(value))return '';
-        let tx=xx, anchorText='middle', ly=yy+(side==='sell'?-20:28);
-        if(p.hrs===24){tx=Math.min(xx+78,L+plotW-8);anchorText='end';}
-        if(p.hrs===1){tx=Math.max(xx+34,L+20);anchorText='start';}
-        return `<circle cx="${xx.toFixed(1)}" cy="${yy.toFixed(1)}" r="7.5" fill="${color}" stroke="#07111d" stroke-width="4"/><text x="${tx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchorText}" fill="${color}" font-size="15" font-weight="900" paint-order="stroke" stroke="#07111d" stroke-width="6">+${p.hrs}H · ${money(value)} Bs</text>`;
-      }).join('');
-    }
-
-    const recentPoints=(now>=t0)?visible.filter(p=>p.x<=now):visible;
-    const currentActualYBuy=Number.isFinite(liveBuy)?yAt(liveBuy):NaN;
-    const currentActualYSell=Number.isFinite(liveSell)?yAt(liveSell):NaN;
-
-    // Right-side compact snapshot panel inside the chart, like the reference layout.
-    const last24=activeSell.find(p=>p.h==='24h')||activeSell[activeSell.length-1];
-    const last24Buy=activeBuy.find(p=>p.h==='24h')||activeBuy[activeBuy.length-1];
-    const rLow=Math.min(...activeBuy.map(p=>p.low).filter(Number.isFinite), ...activeSell.map(p=>p.low).filter(Number.isFinite));
-    const rHigh=Math.max(...activeBuy.map(p=>p.high).filter(Number.isFinite), ...activeSell.map(p=>p.high).filter(Number.isFinite));
-    const sideX=L+plotW+26;
-    const panelW=R-42;
-    const panelH1=196, panelH2=220;
-
-    wrap.innerHTML=`<svg id="advancedPredictiveSvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Gráfica P2P Venbot con snapshot congelado y precio real trazable">
+    wrap.innerHTML=`<svg id="advancedPredictiveSvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="VENBOT P2P: proyección T0 congelada con precio real">
       <defs>
-        <clipPath id="advClipNew"><rect x="${L}" y="${T}" width="${plotW}" height="${plotH}" rx="8"/></clipPath>
-        <linearGradient id="futureBgNew" x1="0" x2="1"><stop offset="0" stop-color="#a77bf5" stop-opacity=".055"/><stop offset="1" stop-color="#a77bf5" stop-opacity=".025"/></linearGradient>
+        <clipPath id="advClip"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" rx="12"/></clipPath>
+        <linearGradient id="futureBg" x1="0" x2="1"><stop offset="0" stop-color="#a78bfa" stop-opacity=".055"/><stop offset="1" stop-color="#a78bfa" stop-opacity=".018"/></linearGradient>
       </defs>
-      <rect width="${W}" height="${H}" fill="#050a14"/>
-      <text x="${L+5}" y="38" fill="#f5c85c" font-size="21" font-weight="900">PROYECCIÓN T0 · ${snap?esc(fmtClock(t0)):'SIN SNAPSHOT'}</text>
-      <text x="${W-30}" y="38" text-anchor="end" fill="${trendColor}" font-size="22" font-weight="900">${trendText}</text>
-      ${snap?`<text x="${W-30}" y="61" text-anchor="end" fill="#7f8da4" font-size="12" font-weight="700">SNAPSHOT #${esc(snap.id)} · ${esc(fmtDate(t0))} · CONGELADO</text>`:''}
 
-      <!-- plot background -->
-      <rect x="${L}" y="${T}" width="${plotW}" height="${plotH}" rx="10" fill="#070e1a" stroke="#19283f"/>
-      <rect x="${xAt(t0)}" y="${T}" width="${Math.max(0,(xAt(futureEnd)-xAt(t0)))}" height="${plotH}" fill="url(#futureBgNew)"/>
-      ${grid}${timeGrid}${levels}
+      <rect width="${W}" height="${H}" rx="20" fill="#050b16"/>
 
-      <!-- actual history + actual path after T0 -->
-      <g clip-path="url(#advClipNew)">
-        ${path(histD,'buy','#27e3a6',4.2)}
-        ${path(histD,'sell','#ff718f',4.2)}
-        ${now>t0?path(postBuy,'buy','#5ddcff',5.2):''}
-        ${now>t0?path(postSell,'sell','#ff9ab0',5.2):''}
-        ${uncertainty}
-        ${previousPaths}
-        <path d="${activeBuyLine.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ')}" fill="none" stroke="#67dfff" stroke-width="5.2" stroke-dasharray="12 9" stroke-linecap="round"/>
-        <path d="${activeSellLine.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ')}" fill="none" stroke="#b978ff" stroke-width="5.2" stroke-dasharray="12 9" stroke-linecap="round"/>
+      <text x="${L}" y="34" fill="#f5c85c" font-size="21" font-weight="900">PROYECCIÓN T0 · ${t0Time=fmtVetTime(anchor)} VET</text>
+      <text x="${futureRight}" y="34" text-anchor="end" fill="${trendColor}" font-size="22" font-weight="900">${trendLabel}</text>
+      <text x="${futureRight}" y="56" text-anchor="end" fill="#60708a" font-size="11" font-weight="800">SNAPSHOT #${esc(snapshot.id||'—')} · CONGELADO</text>
+
+      <g>
+        <rect x="${L}" y="68" width="245" height="50" rx="10" fill="#091220" stroke="#1e304a"/>
+        <text x="${L+14}" y="89" fill="#71819a" font-size="10" font-weight="900">PRECIO REAL AHORA</text>
+        <text x="${L+14}" y="108" fill="#f8fafc" font-size="17" font-weight="900">${fmtMoney(currentMid)} Bs</text>
+
+        <rect x="${L+257}" y="68" width="245" height="50" rx="10" fill="#091220" stroke="#1e304a"/>
+        <text x="${L+271}" y="89" fill="#71819a" font-size="10" font-weight="900">TECHO PROYECTADO</text>
+        <text x="${L+271}" y="108" fill="#f5c85c" font-size="17" font-weight="900">${fmtMoney(projMax)} Bs</text>
+
+        <rect x="${L+514}" y="68" width="245" height="50" rx="10" fill="#091220" stroke="#1e304a"/>
+        <text x="${L+528}" y="89" fill="#71819a" font-size="10" font-weight="900">PISO PROYECTADO</text>
+        <text x="${L+528}" y="108" fill="#5ddcff" font-size="17" font-weight="900">${fmtMoney(projMin)} Bs</text>
+
+        <rect x="${L+771}" y="68" width="310" height="50" rx="10" fill="#091220" stroke="#1e304a"/>
+        <text x="${L+785}" y="89" fill="#71819a" font-size="10" font-weight="900">REFERENCIA 24H</text>
+        <text x="${L+785}" y="108" fill="#d8b4fe" font-size="17" font-weight="900">${fmtMoney(p24?.sell)} venta · ${fmtMoney(p24?.buy)} compra</text>
       </g>
 
-      <!-- T0 anchor -->
-      ${Number.isFinite(t0Buy)?`<circle cx="${xAt(t0).toFixed(1)}" cy="${yAt(t0Buy).toFixed(1)}" r="8" fill="#27e3a6" stroke="#07111d" stroke-width="4"/>`:''}
-      ${Number.isFinite(t0Sell)?`<circle cx="${xAt(t0).toFixed(1)}" cy="${yAt(t0Sell).toFixed(1)}" r="8" fill="#ff718f" stroke="#07111d" stroke-width="4"/>`:''}
-      <text x="${(xAt(t0)+12).toFixed(1)}" y="${T+28}" fill="#f5c85c" font-size="17" font-weight="900">T0 · ${fmtClock(t0)}</text>
-      ${now>t0?`<text x="${(xAt(now)+12).toFixed(1)}" y="${T+52}" fill="#67e8f9" font-size="16" font-weight="900">AHORA · ${fmtClock(now)}</text>`:''}
+      <rect x="${futureLeft}" y="${T}" width="${futureRight-futureLeft}" height="${PH}" fill="url(#futureBg)"/>
+      ${grid.join('')}
+      ${hourTicks.join('')}
+      ${levels.join('')}
 
-      <!-- forecast nodes -->
-      ${forecastLabels(activeSell,'#b978ff','sell')}
-      ${forecastLabels(activeBuy,'#67dfff','buy')}
+      <text x="${L+12}" y="${T-16}" fill="#596a83" font-size="11" font-weight="800">HISTÓRICO REAL</text>
+      <text x="${futureLeft+16}" y="${T-16}" fill="#8d7baa" font-size="11" font-weight="900">FUTURO · PROYECCIÓN T0</text>
 
-      <!-- current live point -->
-      ${Number.isFinite(liveBuy)&&now>=t0?`<circle cx="${xAt(now).toFixed(1)}" cy="${yAt(liveBuy).toFixed(1)}" r="8" fill="#27e3a6" stroke="#07111d" stroke-width="4"/>`:''}
-      ${Number.isFinite(liveSell)&&now>=t0?`<circle cx="${xAt(now).toFixed(1)}" cy="${yAt(liveSell).toFixed(1)}" r="8" fill="#ff718f" stroke="#07111d" stroke-width="4"/>`:''}
+      <line x1="${t0X}" y1="${T}" x2="${t0X}" y2="${T+PH}" stroke="#f5c85c" stroke-width="3" stroke-dasharray="9 9"/>
+      <text x="${t0X+13}" y="${T+26}" fill="#f5c85c" font-size="17" font-weight="900">T0 · ${t0Time}</text>
+      <text x="${t0X+13}" y="${T+46}" fill="#7d8da5" font-size="11" font-weight="800">SNAPSHOT CONGELADO</text>
 
-      <!-- right panel: snapshots -->
-      <rect x="${sideX}" y="${T}" width="${panelW}" height="${panelH1}" rx="16" fill="#07101d" stroke="#20324b"/>
-      <text x="${sideX+18}" y="${T+28}" fill="#dfe8f7" font-size="17" font-weight="900">Snapshots</text>
-      <circle cx="${sideX+24}" cy="${T+61}" r="9" fill="none" stroke="#b978ff" stroke-width="3"/><circle cx="${sideX+24}" cy="${T+61}" r="3" fill="#b978ff"/>
-      <text x="${sideX+44}" y="${T+66}" fill="#d6b7ff" font-size="13" font-weight="800">Actual (${snap?fmtClock(t0):'n/d'})</text>
-      ${older.length?`<circle cx="${sideX+24}" cy="${T+95}" r="8" fill="none" stroke="#f5c85c" stroke-width="2.5"/><text x="${sideX+44}" y="${T+100}" fill="#f5d57f" font-size="13" font-weight="800">Anterior (${fmtClock(Number(new Date(older[0].created_at).getTime()))})</text>`:''}
-      ${older.length>1?`<circle cx="${sideX+24}" cy="${T+129}" r="8" fill="none" stroke="#8090aa" stroke-width="2"/><text x="${sideX+44}" y="${T+134}" fill="#9aa9c1" font-size="13" font-weight="800">Anteriores (${older.length-1})</text>`:''}
-      <line x1="${sideX+18}" y1="${T+153}" x2="${sideX+panelW-18}" y2="${T+153}" stroke="#1f2e45"/>
-      <text x="${sideX+18}" y="${T+175}" fill="#7f8ea7" font-size="11" font-weight="800">T0 fijo · nueva actualización no lo mueve</text>
+      <line x1="${nowX}" y1="${T}" x2="${nowX}" y2="${T+PH}" stroke="#5ddcff" stroke-width="2.3" stroke-dasharray="5 7"/>
+      <text x="${Math.min(nowX+12,futureRight-160)}" y="${T+26}" fill="#5ddcff" font-size="16" font-weight="900">AHORA · ${fmtVetTime(actualNowTs)} VET</text>
 
-      <!-- right panel: prediction range -->
-      <rect x="${sideX}" y="${T+panelH1+18}" width="${panelW}" height="${panelH2}" rx="16" fill="#07101d" stroke="#20324b"/>
-      <text x="${sideX+18}" y="${T+panelH1+47}" fill="#dfe8f7" font-size="16" font-weight="900">Referencia 24H</text>
-      ${last24?`<text x="${sideX+18}" y="${T+panelH1+78}" fill="#b978ff" font-size="12" font-weight="800">VENTA +24H</text><text x="${sideX+18}" y="${T+panelH1+102}" fill="#f0d8ff" font-size="22" font-weight="900">${money(last24.sell)} Bs</text>`:''}
-      ${last24Buy?`<text x="${sideX+18}" y="${T+panelH1+136}" fill="#67dfff" font-size="12" font-weight="800">COMPRA +24H</text><text x="${sideX+18}" y="${T+panelH1+160}" fill="#c9f6ff" font-size="22" font-weight="900">${money(last24Buy.buy)} Bs</text>`:''}
-      ${Number.isFinite(rLow)&&Number.isFinite(rHigh)?`<text x="${sideX+18}" y="${T+panelH1+191}" fill="#8494ac" font-size="12" font-weight="800">RANGO MOTOR</text><text x="${sideX+18}" y="${T+panelH1+213}" fill="#d9c5ff" font-size="14" font-weight="900">${money(rLow)} – ${money(rHigh)} Bs</text>`:''}
-
-      <!-- footer legend -->
-      <g transform="translate(${L} ${H-10})">
-        <circle cx="8" cy="0" r="6" fill="#27e3a6"/><text x="20" y="5" fill="#a9b7cc" font-size="13" font-weight="800">REAL · COMPRA</text>
-        <circle cx="165" cy="0" r="6" fill="#ff718f"/><text x="177" y="5" fill="#a9b7cc" font-size="13" font-weight="800">REAL · VENTA</text>
-        <line x1="335" y1="0" x2="367" y2="0" stroke="#67dfff" stroke-width="5" stroke-dasharray="10 7"/><text x="378" y="5" fill="#a9b7cc" font-size="13" font-weight="800">PROYECCIÓN COMPRA T0</text>
-        <line x1="590" y1="0" x2="622" y2="0" stroke="#b978ff" stroke-width="5" stroke-dasharray="10 7"/><text x="633" y="5" fill="#a9b7cc" font-size="13" font-weight="800">PROYECCIÓN VENTA T0</text>
-        <line x1="846" y1="0" x2="878" y2="0" stroke="#f5c85c" stroke-width="3" stroke-dasharray="7 8"/><text x="889" y="5" fill="#a9b7cc" font-size="13" font-weight="800">SNAPSHOT ANTERIOR</text>
+      <g clip-path="url(#advClip)">
+        ${histBuyPath?`<path d="${histBuyPath}" fill="none" stroke="#27e3a6" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${histSellPath?`<path d="${histSellPath}" fill="none" stroke="#ff718f" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${postBuyPath?`<path d="${postBuyPath}" fill="none" stroke="#27e3a6" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${postSellPath?`<path d="${postSellPath}" fill="none" stroke="#ff718f" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${projSellPath?`<path d="${projSellPath}" fill="none" stroke="#f5c85c" stroke-width="6.2" stroke-dasharray="14 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${projBuyPath?`<path d="${projBuyPath}" fill="none" stroke="#5ddcff" stroke-width="6.2" stroke-dasharray="14 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
       </g>
 
-      <text x="${L+8}" y="${H-64}" fill="#62738b" font-size="11" font-weight="700">El carril T0 permanece congelado. La traza REAL posterior se dibuja en la misma coordenada temporal para comprobar el cumplimiento.</text>
+      ${sellLabels}
+      ${buyLabels}
+
+      ${Number.isFinite(actualBuy)?`<circle cx="${nowX}" cy="${yAt(actualBuy)}" r="9" fill="#27e3a6" stroke="#06101b" stroke-width="5"/><text x="${Math.min(nowX+14,futureRight-260)}" y="${yAt(actualBuy)-14}" fill="#74e7bb" font-size="14" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="6">REAL COMPRA · ${fmtMoney(actualBuy)} Bs</text>`:''}
+      ${Number.isFinite(actualSell)?`<circle cx="${nowX}" cy="${yAt(actualSell)}" r="9" fill="#ff718f" stroke="#06101b" stroke-width="5"/><text x="${Math.min(nowX+14,futureRight-260)}" y="${yAt(actualSell)+24}" fill="#ff9aae" font-size="14" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="6">REAL VENTA · ${fmtMoney(actualSell)} Bs</text>`:''}
+
+      <g transform="translate(${L} ${H-42})">
+        <circle cx="8" cy="-1" r="6" fill="#27e3a6"/><text x="20" y="4" fill="#aab8ce" font-size="13" font-weight="850">REAL · COMPRA</text>
+        <circle cx="178" cy="-1" r="6" fill="#ff718f"/><text x="190" y="4" fill="#aab8ce" font-size="13" font-weight="850">REAL · VENTA</text>
+        <line x1="352" y1="-1" x2="390" y2="-1" stroke="#f5c85c" stroke-width="5" stroke-dasharray="10 8"/><text x="402" y="4" fill="#aab8ce" font-size="13" font-weight="850">VENTA PROYECTADA · T0 FIJA</text>
+        <line x1="620" y1="-1" x2="658" y2="-1" stroke="#5ddcff" stroke-width="5" stroke-dasharray="10 8"/><text x="670" y="4" fill="#aab8ce" font-size="13" font-weight="850">COMPRA PROYECTADA · T0 FIJA</text>
+      </g>
+
+      <text x="${L}" y="${H-B+76}" fill="#5d6d85" font-size="11" font-weight="700">Horario Venezuela · VET (UTC−4) · solo los puntos entregados por el motor se marcan como predicción.</text>
+      <text x="${futureRight}" y="${H-B+76}" text-anchor="end" fill="#6c7c93" font-size="11" font-weight="800">REAL vs PROYECTADO · seguimiento del snapshot</text>
     </svg>`;
 
-    advancedChart={destroy:()=>{},resize:()=>{},_venbotMeta:{anchor:t0,dualP2P:true}};
-    advViewState={scale:1,tx:0,ty:0,minScale:.86,maxScale:3.2};
+    advancedChart={destroy:()=>{},resize:()=>{},_venbotMeta:{anchor,dualP2P:true,snapshotId:snapshot?.id||null,period:advancedPeriod,now:actualNowTs}};
+    advViewState={scale:1,tx:0,ty:0,minScale:.82,maxScale:2.8};
     advAttachPanZoom();
-    const t0el=document.getElementById('adv-t0-label'); if(t0el) t0el.textContent=`T0 · ${fmtClock(t0)}`;
-    const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snap?`${snap.status||'snapshot'} · ${snap.evaluated_count||0}/4 evaluadas`:'sin snapshot';
+    const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${t0Time} VET · snapshot fijo`;
+    const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snapshot?`T0 #${snapshot.id} · ${t0Time} VET · congelado`:'sin snapshot';
+  function advRenderChartLegacy(points, forecast, unit, snapshot=null, options={}){
+    const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
+    advDestroyChart();
+    const dualP2P=options.dualP2P===true;
+    const hist=Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
+    let proj=Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
+    const referenceTime=Number(options.referenceTime);
+    const anchor=Number.isFinite(referenceTime)?referenceTime:(hist.length?Number(hist[hist.length-1].x):(proj.length?Number(proj[0].x):Date.now()));
+    const fallbackCurrent=hist.length?(dualP2P?Number(hist[hist.length-1].mid??((Number(hist[hist.length-1].buy)+Number(hist[hist.length-1].sell))/2)):Number(hist[hist.length-1].y)):(proj.length?Number(proj[0].y):NaN);
+    const currentY=Number.isFinite(Number(options.currentPrice))?Number(options.currentPrice):fallbackCurrent;
+
+    if(dualP2P){
+      const currentBuy=Number.isFinite(Number(options.currentBuy))?Number(options.currentBuy):Number(hist[hist.length-1]?.buy);
+      const currentSell=Number.isFinite(Number(options.currentSell))?Number(options.currentSell):Number(hist[hist.length-1]?.sell);
+      if(Number.isFinite(currentBuy)&&Number.isFinite(currentSell)){
+        if(!hist.length || anchor>Number(hist[hist.length-1].x)+1) hist.push({x:anchor,buy:currentBuy,sell:currentSell,mid:(currentBuy+currentSell)/2});
+        else if(Math.abs(Number(hist[hist.length-1].x)-anchor)<=1) hist[hist.length-1]={...hist[hist.length-1],x:anchor,buy:currentBuy,sell:currentSell,mid:(currentBuy+currentSell)/2};
+      }
+      const buy=[{x:anchor,y:Number.isFinite(currentBuy)?currentBuy:(hist.length?Number(hist[hist.length-1].buy):NaN)}].filter(p=>Number.isFinite(p.y));
+      const sell=[{x:anchor,y:Number.isFinite(currentSell)?currentSell:(hist.length?Number(hist[hist.length-1].sell):NaN)}].filter(p=>Number.isFinite(p.y));
+      const mid=[{x:anchor,y:Number.isFinite(currentY)?currentY:NaN}].filter(p=>Number.isFinite(p.y));
+      proj.filter(p=>Number(p.x)>anchor).forEach(p=>{
+        if(Number.isFinite(Number(p.buy))) buy.push({x:p.x,y:Number(p.buy),h:p.h});
+        if(Number.isFinite(Number(p.sell))) sell.push({x:p.x,y:Number(p.sell),h:p.h});
+        if(Number.isFinite(Number(p.y))) mid.push({x:p.x,y:Number(p.y),h:p.h});
+      });
+      const histBuy=hist.filter(p=>Number.isFinite(Number(p.buy))).map(p=>({x:Number(p.x),y:Number(p.buy)}));
+      const histSell=hist.filter(p=>Number.isFinite(Number(p.sell))).map(p=>({x:Number(p.x),y:Number(p.sell)}));
+      const corridorLow=buy.slice(); const corridorHigh=sell.slice();
+      const uncertaintyLow=proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
+      const uncertaintyHigh=proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
+      const snapProj=advSnapshotForecast(snapshot); const snapAnchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):NaN;
+      const snapBuy=advSnapshotForecastP2P(snapshot,'buy');
+      const snapSell=advSnapshotForecastP2P(snapshot,'sell');
+      const posterior=snapProj.length&&Number.isFinite(snapAnchor)?hist.filter(p=>Number(p.x)>=snapAnchor).map(p=>({x:Number(p.x),y:Number(p.mid)})).filter(p=>Number.isFinite(p.y)):[];
+      const priorSnaps=advOlderSnapshots(options.snapshotHistory,snapshot).slice(0,1);
+      const datasets=[
+        ...(histBuy.length?[{label:'Real · Compra',data:histBuy,borderColor:'#fb7185',backgroundColor:'rgba(251,113,133,.03)',pointRadius:0,borderWidth:2.4,tension:.2,fill:false}]:[]),
+        ...(histSell.length?[{label:'Real · Venta',data:histSell,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.03)',pointRadius:0,borderWidth:2.4,tension:.2,fill:false}]:[]),
+        ...(corridorLow.length&&corridorHigh.length?[{label:'Proyección activa · compra',data:corridorLow,borderColor:'rgba(93,220,255,.34)',backgroundColor:'rgba(93,220,255,.02)',borderDash:[3,5],pointRadius:0,borderWidth:0.9,fill:false},{label:'Proyección activa · venta',data:corridorHigh,borderColor:'rgba(245,200,92,.34)',borderDash:[3,5],pointRadius:0,borderWidth:0.9,backgroundColor:'rgba(245,200,92,.025)',fill:'-1'}]:[]),
+        ...(snapBuy.length?[{label:'Snapshot T0 · compra · congelado',data:snapBuy,borderColor:'#5ddcff',backgroundColor:'rgba(93,220,255,.02)',borderDash:[11,8],pointRadius:0,borderWidth:3.2,tension:.12,fill:false}]:[]),
+        ...(snapSell.length?[{label:'Snapshot T0 · venta · congelado',data:snapSell,borderColor:'#f5c85c',backgroundColor:'rgba(245,200,92,.02)',borderDash:[11,8],pointRadius:0,borderWidth:3.2,tension:.12,fill:false}]:[]),
+        ...(uncertaintyLow.length&&uncertaintyHigh.length?[{label:'Rango estadístico inferior',data:uncertaintyLow,borderColor:'rgba(192,132,252,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,fill:false},{label:'Rango estadístico superior',data:uncertaintyHigh,borderColor:'rgba(192,132,252,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,backgroundColor:'rgba(192,132,252,.055)',fill:'-1'}]:[]),
+        ...(posterior.length?[{label:'Real posterior',data:posterior,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.03)',borderDash:[2,2],pointRadius:0,borderWidth:2.6,tension:.16,fill:false}]:[]),
+        ...(advSnapshotActuals(snapshot).length?[{label:'Resultado real · snapshot',data:advSnapshotActuals(snapshot),borderColor:'#34d399',backgroundColor:'#34d399',pointRadius:4,pointHoverRadius:6,showLine:false,borderWidth:0}]:[]),
+        ...priorSnaps.map((s,idx)=>{const sp=advSnapshotForecast(s),sa=advSnapshotActuals(s);return [...(sp.length?[{label:`Snapshot anterior #${s.id}`,data:sp,borderColor:idx===0?'rgba(245,158,11,.62)':'rgba(148,163,184,.30)',backgroundColor:'rgba(245,158,11,.02)',borderDash:[3,5],pointRadius:0,borderWidth:idx===0?1.4:.9,tension:.12,fill:false}]:[]),...(sa.length?[{label:`Resultado snapshot #${s.id}`,data:sa,borderColor:idx===0?'rgba(52,211,153,.65)':'rgba(52,211,153,.30)',backgroundColor:idx===0?'rgba(52,211,153,.65)':'rgba(52,211,153,.25)',pointRadius:idx===0?3.2:2.4,showLine:false,borderWidth:0}]:[]) ]}).flat()
+      ];
+      if(!datasets.length) datasets.push({label:'Real',data:histBuy.length?histBuy:histSell,borderColor:'#22d3ee',pointRadius:0,borderWidth:2,fill:false});
+      advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit,advComputeYBounds(datasets,unit)),plugins:[advPredictivePlugin]});
+      advancedChart._venbotMeta={anchor,historyStart:hist.length?Number(hist[0].x):anchor,forecast:proj,snapshotForecast:snapProj,snapshotAnchor:snapAnchor,unit,dualP2P:true,forecastBuy:buy,forecastSell:sell,snapshotP2PBuy:snapBuy,snapshotP2PSell:snapSell};
+      advancedChart.update('none');
+      advAttachPanZoom(advancedChart);
+      const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(anchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`;
+      const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snapshot ? `${snapshot.status||'snapshot'} · ${snapshot.evaluated_count||0}/4 evaluadas` : 'sin snapshot';
+      return;
+    }
+
+    const histDisplay=hist.map(p=>({x:Number(p.x),y:Number(p.y)}));
+    if(Number.isFinite(currentY)){
+      if(!histDisplay.length || anchor>Number(histDisplay[histDisplay.length-1].x)+1) histDisplay.push({x:anchor,y:currentY});
+      else if(Math.abs(Number(histDisplay[histDisplay.length-1].x)-anchor)<=1) histDisplay[histDisplay.length-1]={x:anchor,y:currentY};
+    }
+    if(Number.isFinite(currentY)) proj=[{x:anchor,y:currentY,low:currentY,high:currentY,anchor:true},...proj.filter(p=>Number(p.x)>anchor)];
+    const lower=proj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
+    const upper=proj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
+    const snapProj=advSnapshotForecast(snapshot); const snapAnchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):NaN;
+    const posterior=snapProj.length&&Number.isFinite(snapAnchor)?histDisplay.filter(p=>Number(p.x)>=snapAnchor):[];
+    const snapshotLower=snapProj.map(p=>({x:p.x,y:p.low})).filter(p=>Number.isFinite(Number(p.y)));
+    const snapshotUpper=snapProj.map(p=>({x:p.x,y:p.high})).filter(p=>Number.isFinite(Number(p.y)));
+    const priorSnaps=advOlderSnapshots(options.snapshotHistory,snapshot);
+    const last24=proj.find(p=>p.h==='24h')||proj[proj.length-1];
+    const scenarioBear=last24&&Number.isFinite(Number(last24.bearish))?[{x:anchor,y:currentY},{x:last24.x,y:Number(last24.bearish)}]:[];
+    const scenarioBull=last24&&Number.isFinite(Number(last24.bullish))?[{x:anchor,y:currentY},{x:last24.x,y:Number(last24.bullish)}]:[];
+    const datasets=[
+      {label:'Real',data:histDisplay,borderColor:'#22d3ee',backgroundColor:'rgba(34,211,238,.03)',pointRadius:0,borderWidth:2.4,tension:.2,fill:false},
+      ...(posterior.length? [{label:'Real posterior',data:posterior,borderColor:'#34d399',backgroundColor:'rgba(52,211,153,.04)',pointRadius:0,borderWidth:3.4,tension:.18,fill:false}]:[]),
+      ...(proj.length? [{label:'Proyección activa',data:proj,borderColor:'#c084fc',backgroundColor:'rgba(192,132,252,.06)',borderDash:[9,5],pointRadius:proj.map(p=>p.anchor?6:4),pointHoverRadius:8,borderWidth:3.0,tension:.16,fill:false},{label:'Rango activo inferior',data:lower,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,fill:false},{label:'Rango activo superior',data:upper,borderColor:'rgba(192,132,252,.30)',borderDash:[3,4],pointRadius:0,borderWidth:1.0,backgroundColor:'rgba(192,132,252,.11)',fill:'-1'}]:[]),
+
+      ...(snapProj.length? [{label:'Snapshot T0',data:snapProj,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.035)',borderDash:[4,4],pointRadius:0,borderWidth:1.9,tension:.14,fill:false},...(snapshotLower.length?[{label:'Rango snapshot inferior',data:snapshotLower,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,fill:false}]:[]),...(snapshotUpper.length?[{label:'Rango snapshot superior',data:snapshotUpper,borderColor:'rgba(251,191,36,.20)',borderDash:[2,5],pointRadius:0,borderWidth:.8,backgroundColor:'rgba(251,191,36,.05)',fill:'-1'}]:[])]:[]),
+      ...(advSnapshotActuals(snapshot).length?[{label:'Resultado real · snapshot',data:advSnapshotActuals(snapshot),borderColor:'#34d399',backgroundColor:'#34d399',pointRadius:4.2,pointHoverRadius:6,showLine:false,borderWidth:0}]:[]),
+      ...priorSnaps.map((s,idx)=>{const sp=advSnapshotForecast(s),sa=advSnapshotActuals(s);return [...(sp.length?[{label:`Snapshot anterior #${s.id}`,data:sp,borderColor:idx===0?'rgba(245,158,11,.62)':'rgba(148,163,184,.30)',borderDash:[3,5],pointRadius:0,borderWidth:idx===0?1.4:.9,tension:.12,fill:false}]:[]),...(sa.length?[{label:`Resultado snapshot #${s.id}`,data:sa,borderColor:idx===0?'rgba(52,211,153,.65)':'rgba(52,211,153,.30)',backgroundColor:idx===0?'rgba(52,211,153,.65)':'rgba(52,211,153,.25)',pointRadius:idx===0?3.2:2.4,showLine:false,borderWidth:0}]:[]) ]}).flat()
+    ];
+    if(!datasets.length) datasets.push({label:'Real',data:histDisplay,borderColor:'#22d3ee',pointRadius:0,borderWidth:2,fill:false});
+    advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:advChartOptions(unit,advComputeYBounds(datasets,unit)),plugins:[advPredictivePlugin]});
+    advancedChart._venbotMeta={anchor,historyStart:histDisplay.length?Number(histDisplay[0].x):anchor,forecast:proj,snapshotForecast:snapProj,snapshotAnchor:snapAnchor,unit,dualP2P:false,support:Number(options.support),resistance:Number(options.resistance),scenarioBear:Number(options.scenarioBear),scenarioBull:Number(options.scenarioBull)};
+    advancedChart.update('none');
+    advAttachPanZoom(advancedChart);
+    const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(anchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`;
+    const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=snapshot ? `${snapshot.status||'snapshot'} · ${snapshot.evaluated_count||0}/4 evaluadas` : 'sin snapshot';
   }
   function advRenderSnapshotTrace(snapshot, unit){
     const box=document.getElementById('adv-trace-table'); if(!box) return;
