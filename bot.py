@@ -662,6 +662,24 @@ def inicializar_db():
                     ON venbot_prediction_events(created_at DESC, evaluated_7h_at);
                 """)
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_p2p_hourly_prediction_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        banco TEXT NOT NULL DEFAULT 'GENERAL',
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        actual_compra DOUBLE PRECISION NOT NULL,
+                        actual_venta DOUBLE PRECISION NOT NULL,
+                        actual_mid DOUBLE PRECISION NOT NULL,
+                        projection JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        evaluations JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        promotion_status TEXT NOT NULL DEFAULT 'SHADOW_EXPERIMENTAL',
+                        last_evaluated_at TIMESTAMPTZ
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_p2p_hourly_projection_bank_created
+                    ON venbot_p2p_hourly_prediction_events(banco, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_p2p_hourly_projection_created
+                    ON venbot_p2p_hourly_prediction_events(created_at DESC);
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS spot_market_snapshots (
                         id BIGSERIAL PRIMARY KEY,
                         symbol TEXT NOT NULL,
@@ -3457,7 +3475,7 @@ def _quant_ml_cached(fechas,mids,compras,ventas,horizon_hours,current_mid):
     except Exception: return None
 
 
-def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual, spread_actual, volatilidad_global, abs_typical_global, calibracion_24h, use_ml=True):
+def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual, spread_actual, volatilidad_global, abs_typical_global, calibracion_24h, use_ml=True, horizon_specs=None):
     """Genera escenarios P2P independientes para 1H/3H/7H/24H.
 
     Cada horizonte calcula sus propios insumos sobre una ventana histórica
@@ -3468,7 +3486,7 @@ def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual
     if not fechas or len(mids) < 3 or mid_actual <= 0:
         return {}
 
-    horizons = (("1h", 1.0, 12), ("3h", 3.0, 24), ("7h", 7.0, 36), ("24h", 24.0, 72))
+    horizons = horizon_specs or (("1h", 1.0, 12), ("3h", 3.0, 24), ("7h", 7.0, 36), ("24h", 24.0, 72))
     out = {}
     peso24_global = float((calibracion_24h or {}).get("peso_aplicado", 0.0) or 0.0)
     drift24_global = float((calibracion_24h or {}).get("drift_24h_pct_h", 0.0) or 0.0)
@@ -3609,6 +3627,164 @@ def _proyecciones_multihorizonte_quant(fechas, mids, compras, ventas, mid_actual
         }
 
     return out
+
+
+def _proyecciones_horarias_24h_quant(
+    fechas, mids, compras, ventas, mid_actual, spread_actual,
+    volatilidad_global, abs_typical_global, calibracion_24h
+):
+    """Extiende el motor Quant existente a +1H..+24H.
+
+    No crea un segundo motor ni una segunda matemática: llama al mismo
+    calculador multihorizonte con un conjunto mayor de horizontes. Los cuatro
+    horizontes productivos actuales permanecen intactos.
+    """
+    specs=[]
+    for h in range(1,25):
+        if h == 1: min_points=12
+        elif h == 3: min_points=24
+        elif h == 7: min_points=36
+        elif h == 24: min_points=72
+        else: min_points=max(12, min(72, h*6))
+        specs.append((f"{h}h", float(h), min_points))
+    return _proyecciones_multihorizonte_quant(
+        fechas,mids,compras,ventas,mid_actual,spread_actual,
+        volatilidad_global,abs_typical_global,calibracion_24h,
+        use_ml=False,horizon_specs=tuple(specs)
+    )
+
+
+def _obtener_24h_calibration_for_hourly(fechas,mids,mid_actual):
+    """Reutiliza la lógica de calibración 24H del motor actual."""
+    out={"activa":False,"cobertura_horas":0.0,"drift_24h_pct_h":0.0,"r2_24h":0.0,"peso_aplicado":0.0,"motivo":"sin_cobertura_suficiente"}
+    if not QUANT_24H_CALIBRATION_ENABLED or len(fechas)<12:
+        return out
+    try:
+        now=fechas[-1]; cutoff=now-timedelta(hours=24)
+        idx=[i for i,dt in enumerate(fechas) if dt>=cutoff]
+        if len(idx)<12:return out
+        rd=[fechas[i] for i in idx]
+        x=np.asarray([(dt-rd[0]).total_seconds()/3600.0 for dt in rd],dtype=float)
+        y=np.asarray([mids[i] for i in idx],dtype=float)
+        coverage=max(0.0,(rd[-1]-rd[0]).total_seconds()/3600.0)
+        if coverage<12.0 or len(np.unique(x))<4 or float(np.ptp(x))<1.0:return out
+        slope,intercept=np.polyfit(x,y,1); yhat=slope*x+intercept
+        ss_res=float(np.sum((y-yhat)**2)); ss_tot=float(np.sum((y-np.mean(y))**2))
+        r2=max(0.0,min(1.0,1.0-ss_res/ss_tot)) if ss_tot>0 else 0.0
+        drift=float(slope/mid_actual*100.0) if mid_actual else 0.0
+        peso=min(QUANT_24H_TREND_WEIGHT_MAX,max(0.0,(coverage-12.0)/12.0)*QUANT_24H_TREND_WEIGHT_MAX)
+        peso*=min(1.0,r2/0.35)
+        return {"activa":peso>0,"cobertura_horas":round(coverage,2),"drift_24h_pct_h":round(drift,5),"r2_24h":round(r2,3),"peso_aplicado":round(peso,4),"motivo":"tendencia_24h_estable" if peso>0 else "r2_24h_insuficiente"}
+    except Exception:
+        return out
+
+
+def _generar_proyeccion_horaria_p2p(actual_compra, actual_venta, banco_filtro="GENERAL", q_context=None):
+    """Genera +1H..+24H con el mismo motor. Se ejecuta en la capa de tracking/admin."""
+    if actual_compra<=0 or actual_venta<=0:
+        return {"ok":False,"points":{},"status":"SIN_DATOS"}
+    filas=obtener_estadisticas_db(limit=30000,banco=banco_filtro)
+    now=datetime.now(VET); compra=float(actual_compra); venta=float(actual_venta); mid=(compra+venta)/2.0
+    series=[]
+    for c,v,_,fecha in filas:
+        try:
+            c=float(c);v=float(v)
+            if c<=0 or v<=0 or not fecha:continue
+            dt=fecha.astimezone(VET) if getattr(fecha,'tzinfo',None) else VET.localize(fecha)
+            series.append((dt,(c+v)/2.0,c,v))
+        except Exception:continue
+    if not series or now>=max(x[0] for x in series):
+        series.append((now,mid,compra,venta))
+    series.sort(key=lambda x:x[0])
+    fechas=[x[0] for x in series];mids=np.asarray([x[1] for x in series],dtype=float)
+    compras=np.asarray([x[2] for x in series],dtype=float);ventas=np.asarray([x[3] for x in series],dtype=float)
+    if len(mids)<3:return {"ok":False,"points":{},"status":"HISTORICO_INSUFICIENTE"}
+    idx=[i for i,dt in enumerate(fechas) if dt>=now-timedelta(hours=7)]
+    if len(idx)<3:idx=list(range(max(0,len(mids)-180),len(mids)))
+    recent=mids[idx] if idx else mids
+    returns=np.diff(recent)/recent[:-1]*100.0 if len(recent)>2 else np.array([])
+    vol=float(np.std(returns)) if len(returns)>1 else 0.0
+    typ=float(np.median(np.abs(returns))) if len(returns) else 0.0
+    spread=venta-compra
+    calib=(q_context or {}).get('calibracion_24h') if isinstance(q_context,dict) else None
+    if not isinstance(calib,dict):calib=_obtener_24h_calibration_for_hourly(fechas,mids,mid)
+    proj=_proyecciones_horarias_24h_quant(fechas,mids,compras,ventas,mid,spread,vol,typ,calib)
+    generated=now;out={}
+    for label,item in proj.items():
+        row=dict(item);h=int(row.get('horizonte_horas',0) or 0)
+        row['target_at']=(generated+timedelta(hours=h)).isoformat();row['generated_at']=generated.isoformat();row['status']='SHADOW_EXPERIMENTAL'
+        out[label]=row
+    coverage=max(0.0,(fechas[-1]-fechas[0]).total_seconds()/3600.0) if len(fechas)>1 else 0.0
+    return {"ok":bool(out),"bank":banco_filtro,"generated_at":generated.isoformat(),"origin":{"compra":compra,"venta":venta,"mid":mid,"timestamp":generated.isoformat()},"coverage_hours":round(coverage,3),"status":"SHADOW_EXPERIMENTAL","promotion":"BLOQUEADA","points":out}
+
+
+def guardar_proyeccion_horaria_p2p(banco, datos):
+    if not DATABASE_URL or not datos or not datos.get('ok'):return False
+    try:
+        origin=datos.get('origin') or {};projection=datos.get('points') or {}
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO venbot_p2p_hourly_prediction_events
+                    (banco,actual_compra,actual_venta,actual_mid,created_at,projection,promotion_status)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                """,(banco,float(origin.get('compra',0)),float(origin.get('venta',0)),float(origin.get('mid',0)),datetime.fromisoformat(datos['generated_at']),json.dumps(projection,ensure_ascii=False),'SHADOW_EXPERIMENTAL'))
+        return True
+    except Exception as e:
+        logger.warning('No se pudo guardar proyección horaria %s: %s',banco,e);return False
+
+
+def evaluar_proyecciones_horarias_p2p(limit=40):
+    if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:return {'evaluated':0}
+    total=0
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,banco,created_at,actual_mid,projection,evaluations
+                    FROM venbot_p2p_hourly_prediction_events
+                    WHERE created_at>=CURRENT_TIMESTAMP-INTERVAL '14 days'
+                    ORDER BY created_at ASC LIMIT %s
+                """,(int(limit),))
+                rows=cur.fetchall()
+                for pid,banco,created_at,origin_mid,projection,evaluations in rows:
+                    proj=projection if isinstance(projection,dict) else _safe_json_payload(projection)
+                    ev=evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
+                    changed=False
+                    origin_mid=float(origin_mid) if origin_mid is not None else None
+                    for label,item in (proj or {}).items():
+                        if ev.get(label,{}).get('evaluated_at'):continue
+                        h=int(item.get('horizonte_horas',0) or 0);target=created_at+timedelta(hours=h)
+                        if datetime.now(pytz.UTC)<target:continue
+                        actual=_buscar_muestra_futura(banco,target)
+                        if not actual:continue
+                        pred=float(item.get('midpoint') or 0);actual_mid=float(actual.get('mid') or 0)
+                        err=abs(actual_mid-pred)/actual_mid*100.0 if actual_mid else None
+                        direction=None
+                        if origin_mid and pred and actual_mid:direction=((pred-origin_mid)*(actual_mid-origin_mid))>0
+                        ev[label]={'actual_mid':actual_mid,'actual_compra':actual.get('compra'),'actual_venta':actual.get('venta'),'error_pct':err,'direction_correct':direction,'evaluated_at':actual['fecha'].isoformat() if hasattr(actual['fecha'],'isoformat') else str(actual['fecha'])}
+                        changed=True
+                    if changed:
+                        cur.execute('UPDATE venbot_p2p_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s',(json.dumps(ev,ensure_ascii=False),pid));total+=1
+        return {'evaluated':total}
+    except Exception as e:
+        logger.warning('Evaluación horaria P2P falló: %s',e);return {'evaluated':total,'error':'tracking_horario_temporalmente_no_disponible'}
+
+
+def obtener_ultima_proyeccion_horaria_p2p(banco='GENERAL'):
+    if not DATABASE_URL:return None
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,banco,created_at,actual_compra,actual_venta,actual_mid,projection,evaluations,promotion_status
+                    FROM venbot_p2p_hourly_prediction_events WHERE banco=%s ORDER BY created_at DESC LIMIT 1
+                """,(banco,));row=cur.fetchone()
+        if not row:return None
+        pid,bank,created,ac,av,am,projection,evaluations,status=row
+        return {'id':int(pid),'bank':bank,'created_at':created.isoformat(),'origin':{'compra':float(ac),'venta':float(av),'mid':float(am)},'points':projection if isinstance(projection,dict) else _safe_json_payload(projection),'evaluations':evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations),'status':status}
+    except Exception as e:
+        logger.warning('No se pudo leer proyección horaria P2P: %s',e);return None
 
 
 def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_filtro="GENERAL", _from_v2=False):
@@ -3866,6 +4042,10 @@ def motor_quant_inteligente(actual_compra, actual_venta, liquidez_actual, banco_
         "calidad_datos": calidad_datos,
         "calibracion_24h": calibracion_24h,
         "proyecciones_horizontes": proyecciones_horizontes,
+        "proyecciones_horarias_24h": _proyecciones_horarias_24h_quant(
+            fechas,mids,compras,ventas,mid_actual,spread_actual,
+            volatilidad,abs_typical,calibracion_24h
+        ),
         "manipulacion": manipulacion,
     }
 
@@ -6575,6 +6755,13 @@ async def tarea_recoleccion_automatica():
                                 if _c > 0 and _v > 0:
                                     _qtrack, _ = await asyncio.to_thread(_obtener_quant_compartido, _banco, _c, _v, _l)
                                     await asyncio.to_thread(registrar_prediccion_tracking, _banco, _c, _v, _qtrack)
+                                    if _banco == "GENERAL":
+                                        try:
+                                            _hourly = await asyncio.to_thread(_generar_proyeccion_horaria_p2p, _c, _v, _banco, _qtrack)
+                                            await asyncio.to_thread(guardar_proyeccion_horaria_p2p, _banco, _hourly)
+                                        except Exception as _hourly_exc:
+                                            logger.warning("Proyección horaria %s no registrada: %s", _banco, _hourly_exc)
+                            await asyncio.to_thread(evaluar_proyecciones_horarias_p2p, 40)
                             _LAST_PREDICTION_TRACKING_TS = time.monotonic()
                     except Exception as e:
                         logger.warning("Prediction tracking falló sin afectar P2P: %s", e)
@@ -7730,7 +7917,19 @@ def admin_predictive_p2p(
         except Exception:
             continue
     performance = obtener_prediction_performance(bank, min(1000, max(100, int(limit)))) if DATABASE_URL else {"ok": False}
-    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": obtener_prediction_snapshots(bank, 40)}
+    hourly = obtener_ultima_proyeccion_horaria_p2p(bank) if DATABASE_URL else None
+    if hourly is None:
+        try:
+            mercado = obtener_ultimo_mercado_banco(bank) or {}
+            c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
+            if c>0 and v>0:
+                hourly_now=_generar_proyeccion_horaria_p2p(c,v,bank,analysis)
+                if hourly_now.get("ok"):
+                    guardar_proyeccion_horaria_p2p(bank,hourly_now)
+                    hourly=obtener_ultima_proyeccion_horaria_p2p(bank)
+        except Exception as _hourly_now_exc:
+            logger.warning("Proyección horaria administrativa no disponible %s: %s",bank,_hourly_now_exc)
+    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": obtener_prediction_snapshots(bank, 40), "hourly_projection": hourly}
 
 
 @app.get("/api/admin/predictive/spot")
