@@ -919,7 +919,7 @@
                 <button type="button" data-adv-period="24h" onclick="setAdvancedPeriod('24h')" class="adv-period-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">24H</button>
                 <button type="button" data-adv-period="7d" onclick="setAdvancedPeriod('7d')" class="adv-period-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">7D</button>
                 <button type="button" data-adv-period="30d" onclick="setAdvancedPeriod('30d')" class="adv-period-btn focus-ring rounded-lg border px-2.5 py-2 text-[9px] font-black">30D</button>
-                <select id="adv-snapshot-select" onchange="setAdvancedSnapshot(this.value)" class="adv-snapshot-select hidden focus-ring bg-slate-900/80 border border-amber-500/20 rounded-xl px-3 py-2 text-[9px] font-black text-slate-200" title="Snapshot de predicción"><option value="">Snapshot más reciente</option></select><button type="button" onclick="loadAdvancedGraphs()" class="focus-ring w-9 h-9 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-cyan-300" title="Actualizar"><i class="fa-solid fa-rotate-right text-[10px]"></i></button>
+                <select id="adv-snapshot-select" onchange="setAdvancedSnapshot(this.value)" class="adv-snapshot-select hidden focus-ring bg-slate-900/80 border border-amber-500/20 rounded-xl px-3 py-2 text-[9px] font-black text-slate-200" title="Snapshot fijo"><option value="">Snapshot fijo</option></select><button type="button" onclick="newAdvancedP2PSnapshot()" class="focus-ring rounded-lg border border-amber-500/20 bg-amber-500/5 text-amber-300 px-2.5 py-2 text-[9px] font-black" title="Tomar nuevo T0">Nuevo T0</button><button type="button" onclick="loadAdvancedGraphs()" class="focus-ring w-9 h-9 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-cyan-300" title="Actualizar sin cambiar T0"><i class="fa-solid fa-rotate-right text-[10px]"></i></button>
               </div>
             </div>
 
@@ -2405,6 +2405,12 @@
   let advancedChart = null;
   let advancedBusy = false;
   let advancedSnapshotId = null;
+  const P2P_LOCK_PREFIX='venbot_p2p_t0_lock_v1:';
+  const p2pLockKey=()=>P2P_LOCK_PREFIX+String(advancedP2PBank||'GENERAL');
+  function p2pReadLock(){try{const v=localStorage.getItem(p2pLockKey());return v?JSON.parse(v):null;}catch(e){return null;}}
+  function p2pWriteLock(v){try{localStorage.setItem(p2pLockKey(),JSON.stringify(v));}catch(e){}}
+  function p2pClearLock(){try{localStorage.removeItem(p2pLockKey());}catch(e){}}
+  
 
   const advEsc = (value) => String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
   const advNum = (value) => Number.isFinite(Number(value)) ? Number(value) : NaN;
@@ -2645,18 +2651,25 @@
     }).join('');
     select.innerHTML=`<option value="">Snapshot más reciente/evaluable</option>${options}`;
     select.classList.toggle('hidden', !list.length);
+    const lock=p2pReadLock();
+    if(!advancedSnapshotId && lock?.snapshotId) advancedSnapshotId=String(lock.snapshotId);
     if(advancedSnapshotId && list.some(s=>String(s.id)===String(advancedSnapshotId))) select.value=String(advancedSnapshotId);
     else select.value='';
   }
   function advSelectedSnapshot(payload){
     const list=Array.isArray(payload?.snapshots)?payload.snapshots:[];
+    const lock=p2pReadLock();
+    if(!advancedSnapshotId && lock?.snapshotId) advancedSnapshotId=String(lock.snapshotId);
     if(advancedSnapshotId){
       const found=list.find(s=>String(s.id)===String(advancedSnapshotId));
       if(found) return found;
     }
-    // La memoria debe arrancar en el snapshot más reciente, aunque todavía esté pendiente.
-    // Así la curva activa queda separada de la última predicción congelada y las anteriores.
-    return list[0] || null;
+    const selected=list[0]||null;
+    if(selected?.id){
+      advancedSnapshotId=String(selected.id);
+      p2pWriteLock({snapshotId:String(selected.id),created_at:selected.created_at||null});
+    }
+    return selected;
   }
   function advSnapshotForecast(snapshot){
     if(!snapshot?.horizons || !snapshot.created_at) return [];
@@ -2754,7 +2767,7 @@
     const horizons=['1h','3h','7h','24h'];
     const hoursFor={1:1,3:3,7:7,24:24};
     const snapH=snapshot?.horizons||{};
-    const inputForecast=Array.isArray(forecast)?forecast:[];
+    const inputForecast=Array.isArray(options.frozenProjection)?options.frozenProjection:(Array.isArray(forecast)?forecast:[]);
     const liveMap=Object.fromEntries(inputForecast.map(p=>[String(p.h||'').toLowerCase(),p]));
 
     const frozen=horizons.map(h=>{
@@ -3002,8 +3015,8 @@
       stage.style.width=`${w}px`;stage.style.minWidth=`${w}px`;stage.style.height=`${h}px`;stage.style.minHeight=`${h}px`;
       svgEl.style.width=`${w}px`;svgEl.style.height=`${h}px`;
     };
-    host.querySelector('[data-vp="plus"]')?.addEventListener('click',()=>{zoomLevel=Math.min(2.2,zoomLevel+.15);applyZoom();});
-    host.querySelector('[data-vp="minus"]')?.addEventListener('click',()=>{zoomLevel=Math.max(.75,zoomLevel-.15);applyZoom();});
+    host.querySelector('[data-vp="plus"]')?.addEventListener('click',()=>{zoomLevel=Math.min(2.8,zoomLevel+.15);applyZoom();});
+    host.querySelector('[data-vp="minus"]')?.addEventListener('click',()=>{zoomLevel=Math.max(.50,zoomLevel-.15);applyZoom();});
     host.querySelector('[data-vp="reset"]')?.addEventListener('click',()=>{zoomLevel=1;applyZoom();});
     host.querySelector('[data-vp="full"]')?.addEventListener('click',async()=>{try{if(!document.fullscreenElement)await shell.requestFullscreen?.();else await document.exitFullscreen?.();}catch(e){console.error(e);}});
     applyZoom();
@@ -3167,10 +3180,33 @@
   async function loadAdvancedP2P(){
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=1200&t=${Date.now()}`); const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden');
     advPopulateSnapshotSelector(d); const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
-    const proj=advProjectionRowsP2P(a);
+    const liveProj=advProjectionRowsP2P(a);
+    let lock=p2pReadLock();
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=d.history?.map(r=>({x:new Date(r.timestamp).getTime(),buy:Number(r.compra),sell:Number(r.venta),mid:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&p.buy>0&&p.sell>0) || [];
     const projectionBase=(snapshot?.created_at?new Date(snapshot.created_at).getTime():Date.now());
+
+    if(snapshot){
+      const same=lock && String(lock.snapshotId)===String(snapshot.id);
+      if(!same || !Array.isArray(lock?.projection) || !lock.projection.length){
+        lock={
+          snapshotId:String(snapshot.id),
+          created_at:snapshot.created_at||null,
+          projection:liveProj.map(x=>({...x})),
+          trend:String(a.tendencia||''),
+          support:Number((a.proyeccion_7h||{}).soporte_7h??a.metricas?.soporte??a.soporte_7h),
+          resistance:Number((a.proyeccion_7h||{}).resistencia_7h??a.metricas?.resistencia??a.resistencia_7h)
+        };
+        p2pWriteLock(lock);
+      }
+    } else if(!lock || !Array.isArray(lock?.projection) || !lock.projection.length){
+      lock={snapshotId:`live-${projectionBase}`,created_at:new Date(projectionBase).toISOString(),
+        projection:liveProj.map(x=>({...x})),trend:String(a.tendencia||''),
+        support:Number((a.proyeccion_7h||{}).soporte_7h??a.metricas?.soporte??a.soporte_7h),
+        resistance:Number((a.proyeccion_7h||{}).resistencia_7h??a.resistencia_7h)};
+      p2pWriteLock(lock);
+    }
+    const proj=Array.isArray(lock?.projection)&&lock.projection.length?lock.projection:liveProj;
     const m=a.metricas||{};
     const liveCompra=Number(m.compra)>0?Number(m.compra):Number(marketState.buy)||0;
     const liveVenta=Number(m.venta)>0?Number(m.venta):Number(marketState.sell)||0;
@@ -3183,7 +3219,7 @@
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
     advSetText('adv-chart-mode-label','P2P · corredor cuantitativo Compra / Venta'); advSetChartLegend('p2p');
-    advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots,trend:String(a.tendencia||''),support:Number((a.proyeccion_7h||{}).soporte_7h??m.soporte??a.soporte_7h),resistance:Number((a.proyeccion_7h||{}).resistencia_7h??m.resistencia??a.resistencia_7h)});
+    advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',snapshot,{referenceTime:projectionBase,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots,trend:String(lock?.trend||a.tendencia||''),support:Number(lock?.support??(a.proyeccion_7h||{}).soporte_7h??m.soporte??a.soporte_7h),resistance:Number(lock?.resistance??(a.proyeccion_7h||{}).resistencia_7h??m.resistencia??a.resistencia_7h),frozenProjection:proj});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
     advRenderSnapshotTrace(snapshot,'Bs');
@@ -3216,7 +3252,16 @@
   window.setAdvancedGraphKind=async function(kind){advancedGraphKind=kind==='spot'?'spot':'p2p';advSetKindUI();advSetButtons();await loadAdvancedGraphs();};
   window.setAdvancedP2PBank=async function(bank){advancedP2PBank=['GENERAL','MERCANTIL','PROVINCIAL','BNC'].includes(bank)?bank:'GENERAL';advSetButtons();await loadAdvancedGraphs();};
   window.setAdvancedSpotSymbol=async function(symbol){advancedSpotSymbol=['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'].includes(symbol)?symbol:'BTCUSDT';await loadAdvancedGraphs();};
-  window.setAdvancedSnapshot=async function(id){advancedSnapshotId=id||null;await loadAdvancedGraphs();};
+  window.setAdvancedSnapshot=async function(id){
+    advancedSnapshotId=id||null;
+    if(id) p2pWriteLock({snapshotId:String(id),created_at:null});
+    await loadAdvancedGraphs();
+  };
+  window.newAdvancedP2PSnapshot=async function(){
+    p2pClearLock();
+    advancedSnapshotId=null;
+    await loadAdvancedGraphs();
+  };
   window.setAdvancedPeriod=async function(p){advancedPeriod=['24h','7d','30d'].includes(p)?p:'24h';advSetButtons();await loadAdvancedGraphs();};
   window.loadAdvancedGraphs=async function(){
     if(advancedBusy) return; advancedBusy=true; advResetDetails(); advSetStatus('Cargando datos reales…');
