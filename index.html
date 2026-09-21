@@ -657,6 +657,31 @@
             </div>
             <div id="admin-motors-slot" class="space-y-3"></div>
           </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-vial-circle-check text-indigo-300"></i>
+                <div>
+                  <span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Hito Spot · evaluación 300 h</span>
+                  <p class="text-[9px] text-slate-500 mt-1">Auditoría de lectura sobre el rendimiento real existente. No modifica el motor productivo.</p>
+                </div>
+              </div>
+              <span id="admin-spot-audit-badge" class="text-[8px] font-black uppercase text-slate-400 bg-slate-900 border border-slate-700 px-2 py-1 rounded-full">PENDIENTE</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[9px]">
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">Cobertura mediana</span><strong id="admin-spot-audit-coverage" class="block mt-1 text-cyan-300">-- h</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">Activos ≥ 300 h</span><strong id="admin-spot-audit-assets" class="block mt-1 text-cyan-300">-- / 9</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">Resolución objetivo</span><strong class="block mt-1 text-purple-300">1H → 24H horario</strong></div>
+            </div>
+            <div id="admin-spot-audit-result" class="rounded-xl bg-slate-900/50 border border-slate-800 p-2.5 text-[9px] text-slate-500">La auditoría consultará únicamente datos de evaluación ya almacenados por el motor.</div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" onclick="runSpot300hAudit()" class="focus-ring rounded-xl bg-indigo-500/10 border border-indigo-500/25 text-indigo-200 px-3 py-2 text-[10px] font-black">Auditar 300 h</button>
+              <span class="inline-flex items-center rounded-xl bg-purple-500/5 border border-purple-500/15 text-purple-200 px-3 py-2 text-[10px] font-black">Evolución futura: 1H, 2H, 3H…24H</span>
+            </div>
+            <div class="text-[8px] text-slate-600 leading-relaxed">
+              La ampliación horaria se mantendrá en sombra hasta completar la validación correspondiente. 48H y 72H quedan fuera de esta etapa.
+            </div>
+          </div>
           <div class="rounded-xl bg-amber-500/5 border border-amber-500/15 p-3 text-[9px] leading-relaxed text-slate-500">
             Esta sección no aparece a cuentas FREE, PREMIUM ni VIP. La lógica productiva de P2P, Spot, Quant y Tracking permanece intacta.
           </div>
@@ -2768,7 +2793,7 @@
     const motor=kind==='spot'?data?.spot:data?.p2p; const stage=motor?.stage||{}; if(!motor){box.innerHTML='';hzbox.innerHTML='';if(note)note.textContent='Sin lectura adaptativa disponible.';return;}
     const coverage=Number(motor.coverage_hours||0); const hvals=motor.horizons||{};
     box.innerHTML=`<div class="adv-learning-kpi"><span>Motor</span><strong>${kind==='spot'?'SPOT':'P2P'}</strong></div><div class="adv-learning-kpi"><span>Cobertura</span><strong>${coverage.toFixed(2)} h</strong></div><div class="adv-learning-kpi"><span>Etapa</span><strong>${advEsc(stage.stage||'ACUMULANDO')}</strong></div><div class="adv-learning-kpi"><span>Modo</span><strong>EN SOMBRA</strong></div>`;
-    const covPct=Math.max(0,Math.min(100,(coverage/700)*100)); const covMeta=document.getElementById('adv-learning-coverage-meta'); const covFill=document.getElementById('adv-learning-coverage-fill'); if(covMeta) covMeta.textContent=`${coverage.toFixed(2)} / 700 h`; if(covFill) covFill.style.width=`${covPct.toFixed(1)}%`;
+    const covGoal=Number(motor.stage?.next_target_hours||700); const covPct=Math.max(0,Math.min(100,(coverage/covGoal)*100)); const covMeta=document.getElementById('adv-learning-coverage-meta'); const covFill=document.getElementById('adv-learning-coverage-fill'); if(covMeta) covMeta.textContent=`${coverage.toFixed(2)} / ${covGoal.toFixed(0)} h`; if(covFill) covFill.style.width=`${covPct.toFixed(1)}%`;
     hzbox.innerHTML=['1h','3h','7h','24h'].map(h=>{const v=hvals[h]||{};const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'n/d';const mae=Number.isFinite(Number(v.mae_pct))?`${Number(v.mae_pct).toFixed(3)}% MAE`:'n/d';const cand=v.shadow_candidate?.status||'ACUMULANDO';return `<div class="adv-learning-kpi"><span>${h.toUpperCase()}</span><strong>${Number(v.evaluated||0)} eval.</strong><small class="text-slate-500">${acc} · ${mae}</small><small class="text-purple-300">${advEsc(cand)}</small></div>`;}).join('');
     if(badge) badge.textContent=motor.stage?.stage||'lectura';
     if(note) note.textContent='La capa adaptativa observa errores y sesgos, separa entrenamiento de OOS y mantiene los candidatos en sombra. Una medición no modifica el motor productivo.';
@@ -2921,6 +2946,50 @@
       const d=await r.json(); if(!r.ok) throw new Error(d.detail||'No se pudo actualizar el modo lanzamiento');
       renderAdminLaunchMode(d.launch_mode||{}); await bootstrapVenbotFoundation(); applyPlanHorizonUI();
     }catch(e){ const summary=document.getElementById('admin-launch-summary'); if(summary) summary.textContent=`Error: ${e.message||'No se pudo actualizar'}`; }
+  }
+  async function runSpot300hAudit(){
+    if(!window.venbotUser?.is_developer) return;
+    const badge=document.getElementById('admin-spot-audit-badge');
+    const coverageEl=document.getElementById('admin-spot-audit-coverage');
+    const assetsEl=document.getElementById('admin-spot-audit-assets');
+    const result=document.getElementById('admin-spot-audit-result');
+    const symbols=['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'];
+    if(badge) badge.textContent='AUDITANDO';
+    if(result) result.textContent='Consultando rendimiento y cobertura de los 9 activos…';
+    try{
+      const rows=[];
+      for(const symbol of symbols){
+        let adaptive=null, perf=null;
+        try{
+          const r=await fetch(`${API_BASE_URL}/api/quant/adaptive/status?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+          if(r.ok) adaptive=await r.json();
+        }catch(_){}
+        try{
+          const r=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+          if(r.ok) perf=await r.json();
+        }catch(_){}
+        const motor=adaptive?.spot||adaptive?.motor||adaptive||{};
+        const cov=Number(motor.coverage_hours||0);
+        const hz=motor.horizons||{};
+        const evaluated=['1h','3h','7h','24h'].reduce((acc,h)=>acc+Number(hz?.[h]?.evaluated||0),0);
+        rows.push({symbol,cov,evaluated,ok:Boolean(adaptive||perf)});
+      }
+      const valid=rows.filter(x=>x.ok);
+      const sorted=rows.map(x=>x.cov).sort((a,b)=>a-b);
+      const median=sorted.length?sorted[Math.floor(sorted.length/2)]:0;
+      const reached=rows.filter(x=>x.cov>=300).length;
+      if(coverageEl) coverageEl.textContent=`${median.toFixed(2)} h`;
+      if(assetsEl) assetsEl.textContent=`${reached} / 9`;
+      const status=(median>=300 && reached===9)?'HITO ALCANZADO · REVISIÓN FORMAL':'COBERTURA ALCANZADA PARCIAL';
+      if(badge){badge.textContent=status.includes('ALCANZADO')?'ALCANZADO':'EN REVISIÓN'; badge.className=status.includes('ALCANZADO')?'text-[8px] font-black uppercase text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full':'text-[8px] font-black uppercase text-amber-200 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full';}
+      if(result){
+        const totalEval=rows.reduce((a,x)=>a+x.evaluated,0);
+        result.innerHTML=`<div class="text-slate-300 font-black">${status}</div><div class="mt-1">Activos consultados: ${valid.length}/9 · evaluaciones reportadas: ${totalEval} · siguiente paso: revisar estabilidad, error, dirección, rangos y base vs candidato antes de cualquier promoción.</div>`;
+      }
+    }catch(e){
+      if(badge){badge.textContent='ERROR'; badge.className='text-[8px] font-black uppercase text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-full';}
+      if(result) result.textContent=`No se pudo completar la auditoría: ${e.message||'error temporal'}`;
+    }
   }
   window.loadAdminControlCenter=loadAdminControlCenter; window.setAdminLaunchMode=setAdminLaunchMode;
   function applyDeveloperOnly(){
