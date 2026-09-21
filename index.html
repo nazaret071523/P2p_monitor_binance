@@ -2825,139 +2825,161 @@
 
     const esc=(v)=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const money=(v,d=2)=>{const n=Number(v);return Number.isFinite(n)?n.toLocaleString('es-VE',{minimumFractionDigits:d,maximumFractionDigits:d}):'n/d';};
-    const hist=(Array.isArray(points)?points:[]).map(p=>({x:Number(p.x),buy:Number(p.buy),sell:Number(p.sell),mid:Number(p.mid??((Number(p.buy)+Number(p.sell))/2))})).filter(p=>Number.isFinite(p.x)&&(Number.isFinite(p.buy)||Number.isFinite(p.sell))).sort((a,b)=>a.x-b.x);
-    const anchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):Number(options.referenceTime||Date.now());
-    const horizonKeys=Object.keys(snapshot?.horizons||{}).filter(k=>Number.isFinite(Number((snapshot.horizons[k]||{}).hours??advHorizonHours(k)))).sort((a,b)=>Number((snapshot.horizons[a]||{}).hours??advHorizonHours(a))-Number((snapshot.horizons[b]||{}).hours??advHorizonHours(b)));
-    const fallbackKeys=['1h','3h','7h','24h'];
-    const keys=horizonKeys.length?horizonKeys:fallbackKeys;
+    const hist=(Array.isArray(points)?points:[]).map(p=>({x:Number(p.x),buy:Number(p.buy),sell:Number(p.sell)}))
+      .filter(p=>Number.isFinite(p.x)&&(Number.isFinite(p.buy)||Number.isFinite(p.sell))).sort((a,b)=>a.x-b.x);
+
+    // P2P: the selected snapshot is immutable. T0 is the snapshot emission time,
+    // while AHORA follows the newest real market reading. Never anchor the forecast
+    // to the live price after T0, otherwise the frozen trajectory appears shifted.
     const snap=snapshot||null;
+    const anchor=snap?.created_at?Number(new Date(snap.created_at).getTime()):Number(options.referenceTime||Date.now());
+    const latestHist=hist.length?hist[hist.length-1]:null;
+    const nowTs=latestHist?.x>anchor?Math.min(Number(latestHist.x),anchor+24*3600000):Math.min(Date.now(),anchor+24*3600000);
+    const pastHours=advancedPeriod==='30d'?168:advancedPeriod==='7d'?72:24;
+    const histStart=anchor-pastHours*3600000;
+    const futureEnd=anchor+24*3600000;
+
+    const keys=['1h','3h','7h','24h'];
     const sidePoints=(side)=>keys.map(h=>{
       const q=snap?.horizons?.[h]||{}; const hrs=Number(q.hours??advHorizonHours(h));
-      const val=Number(q[side==='buy'?'buy_predicted':'sell_predicted']);
+      const key=side==='buy'?'buy_predicted':'sell_predicted';
+      const val=Number(q[key]);
       return {h,hrs,x:anchor+hrs*3600000,y:val,low:Number(q.low),high:Number(q.high)};
     }).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
     const pBuy=sidePoints('buy'), pSell=sidePoints('sell');
 
-    // Keep the real history and only the post-T0 trail visible; projection itself is never recalculated here.
-    const periodHours=advancedPeriod==='7d'?168:advancedPeriod==='30d'?720:24;
-    const histStart=anchor-periodHours*3600000;
-    const histEnd=anchor+24*3600000;
-    const rawHist=hist.filter(p=>p.x>=histStart&&p.x<=histEnd);
-    const pre=rawHist.filter(p=>p.x<=anchor);
-    const post=rawHist.filter(p=>p.x>=anchor);
-    const nearest=pre.length?pre[pre.length-1]:hist.filter(p=>p.x<=anchor).slice(-1)[0]||hist[0];
-    const currentBuy=Number(options.currentBuy); const currentSell=Number(options.currentSell);
-    const t0Buy=Number.isFinite(currentBuy)&&currentBuy>0?currentBuy:Number(nearest?.buy);
-    const t0Sell=Number.isFinite(currentSell)&&currentSell>0?currentSell:Number(nearest?.sell);
+    // Find the observed market point closest to T0. This is the only observed
+    // starting point of the frozen trajectory. Do not use current live price here.
+    const nearest=hist.length?hist.reduce((best,p)=>Math.abs(p.x-anchor)<Math.abs(best.x-anchor)?p:best,hist[0]):null;
+    const t0Buy=Number.isFinite(nearest?.buy)?Number(nearest.buy):Number(options.currentBuy);
+    const t0Sell=Number.isFinite(nearest?.sell)?Number(nearest.sell):Number(options.currentSell);
 
-    // Downsample only the historical real trace; never downsample forecast nodes.
-    function downsample(arr,max=420){
+    function downsample(arr,max=520){
       if(arr.length<=max) return arr;
       const out=[]; const step=(arr.length-1)/(max-1);
       for(let i=0;i<max;i++) out.push(arr[Math.round(i*step)]);
       return out;
     }
-    const preD=downsample(pre); const postD=downsample(post);
+    const pre=hist.filter(p=>p.x<=anchor&&p.x>=histStart);
+    const post=hist.filter(p=>p.x>=anchor&&p.x<=nowTs);
+    const preD=downsample(pre), postD=downsample(post);
 
     const vals=[];
-    for(const p of [...preD,...postD]){ if(Number.isFinite(p.buy))vals.push(p.buy); if(Number.isFinite(p.sell))vals.push(p.sell); }
-    for(const p of [...pBuy,...pSell]){ if(Number.isFinite(p.y))vals.push(p.y); if(Number.isFinite(p.low))vals.push(p.low); if(Number.isFinite(p.high))vals.push(p.high); }
+    for(const p of [...preD,...postD]){if(Number.isFinite(p.buy))vals.push(p.buy);if(Number.isFinite(p.sell))vals.push(p.sell);}
+    for(const p of [...pBuy,...pSell]){if(Number.isFinite(p.y))vals.push(p.y);}
     if(Number.isFinite(t0Buy))vals.push(t0Buy); if(Number.isFinite(t0Sell))vals.push(t0Sell);
     if(!vals.length){wrap.innerHTML='<div class="h-full flex items-center justify-center text-slate-600 text-xs">Sin datos suficientes para construir la gráfica.</div>';return;}
-    let lo=Math.min(...vals),hi=Math.max(...vals); let span=Math.max(hi-lo,Math.abs(hi)*.012,1); lo-=span*.12; hi+=span*.12;
+    let lo=Math.min(...vals),hi=Math.max(...vals); let span=Math.max(hi-lo,Math.abs(hi)*.012,1); lo-=span*.14; hi+=span*.14;
 
-    const W=1400,H=760; const L=90,R=40,T=72,B=82; const PW=W-L-R, PH=H-T-B;
-    const futureStartX=L+PW*.64; const xStart=L, xEnd=L+PW;
-    const time0=histStart, time1=anchor+24*3600000;
-    const xAt=(ts)=>futureStartX + ((Number(ts)-anchor)/(24*3600000))*(xEnd-futureStartX);
-    const xHist=(ts)=>xStart + ((Number(ts)-time0)/Math.max(1,anchor-time0))*(futureStartX-xStart);
+    const W=1500,H=820,L=95,R=48,T=84,B=100,PW=W-L-R,PH=H-T-B;
+    const xHist=(ts)=>L+((Number(ts)-histStart)/Math.max(1,anchor-histStart))*(PW*0.57);
+    const futureX0=L+PW*0.57, futureW=PW*0.43;
+    const xFuture=(ts)=>futureX0+((Number(ts)-anchor)/Math.max(1,24*3600000))*futureW;
     const yAt=(v)=>T+(hi-Number(v))/(hi-lo)*PH;
-    const fmtTime=(ts)=>new Date(ts).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'});
-    const horizonText=(h,hrs)=>`+${hrs}H`;
-    const linePath=(arr,xfn,yfn,field)=>arr.filter(p=>Number.isFinite(p[field])).map((p,i)=>`${i?'L':'M'} ${xfn(p.x).toFixed(1)} ${yfn(p[field]).toFixed(1)}`).join(' ');
+    const path=(arr,fx,field)=>arr.filter(p=>Number.isFinite(p[field])).map((p,i)=>`${i?'L':'M'} ${fx(p.x).toFixed(1)} ${yAt(p[field]).toFixed(1)}`).join(' ');
+    const preBuy=path(preD,xHist,'buy'),preSell=path(preD,xHist,'sell');
+    const postBuy=path(postD,xFuture,'buy'),postSell=path(postD,xFuture,'sell');
+    const projBuy=[{x:anchor,y:t0Buy},...pBuy].filter(p=>Number.isFinite(p.y));
+    const projSell=[{x:anchor,y:t0Sell},...pSell].filter(p=>Number.isFinite(p.y));
+    const projBuyPath=projBuy.map((p,i)=>`${i?'L':'M'} ${xFuture(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
+    const projSellPath=projSell.map((p,i)=>`${i?'L':'M'} ${xFuture(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
 
-    const buyPrePath=linePath(preD,xHist,yAt,'buy'), sellPrePath=linePath(preD,xHist,yAt,'sell');
-    const buyPostPath=linePath(postD,xAt,yAt,'buy'), sellPostPath=linePath(postD,xAt,yAt,'sell');
-    const projBuy=[{x:anchor,y:t0Buy,h:'T0',hrs:0},...pBuy.map(p=>({x:p.x,y:p.y,h:p.h,hrs:p.hrs}))].filter(p=>Number.isFinite(p.y));
-    const projSell=[{x:anchor,y:t0Sell,h:'T0',hrs:0},...pSell.map(p=>({x:p.x,y:p.y,h:p.h,hrs:p.hrs}))].filter(p=>Number.isFinite(p.y));
-    const projBuyPath=projBuy.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
-    const projSellPath=projSell.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
-
-    // General uncertainty band only when the engine supplied bounds.
-    const bandTop=pSell.map((p)=>({x:p.x, y:Number.isFinite(p.high)?p.high:NaN})).filter(p=>Number.isFinite(p.y));
-    const bandBot=pBuy.map((p)=>({x:p.x, y:Number.isFinite(p.low)?p.low:NaN})).filter(p=>Number.isFinite(p.y));
+    // Optional corridor: only draw it when the motor actually provides bounds.
+    const upper=pSell.filter(p=>Number.isFinite(p.high));
+    const lower=pBuy.filter(p=>Number.isFinite(p.low));
     let band='';
-    if(bandTop.length>=2 && bandBot.length>=2){
-      const top=bandTop.map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
-      const bot=bandBot.slice().reverse().map(p=>`L ${xAt(p.x).toFixed(1)} ${yAt(p.y).toFixed(1)}`).join(' ');
-      band=`<path d="${top} ${bot} Z" fill="#a78bfa" opacity=".13"/>`;
+    if(upper.length>=2&&lower.length>=2){
+      const top=upper.map((p,i)=>`${i?'L':'M'} ${xFuture(p.x).toFixed(1)} ${yAt(p.high).toFixed(1)}`).join(' ');
+      const bot=lower.slice().reverse().map(p=>`L ${xFuture(p.x).toFixed(1)} ${yAt(p.low).toFixed(1)}`).join(' ');
+      band=`<path d="${top} ${bot} Z" fill="#b879ff" opacity=".10"/>`;
     }
 
-    const grid=[]; const labels=7; for(let i=0;i<=labels;i++){const v=lo+(hi-lo)*(i/labels);const yy=yAt(v);grid.push(`<line x1="${L}" y1="${yy.toFixed(1)}" x2="${xEnd}" y2="${yy.toFixed(1)}" stroke="#25334b" stroke-width="1"/><text x="${L-14}" y="${(yy+5).toFixed(1)}" text-anchor="end" fill="#7f90aa" font-size="16" font-weight="650">${money(v)}</text>`);}
-    const timeLabels=[0,6,12,18,24].map(h=>{const xx=xAt(anchor+h*3600000);return `<line x1="${xx.toFixed(1)}" y1="${T}" x2="${xx.toFixed(1)}" y2="${T+PH}" stroke="#1a2840" stroke-width="1"/><text x="${xx.toFixed(1)}" y="${H-34}" text-anchor="middle" fill="#8392aa" font-size="15" font-weight="700">${h===0?'AHORA':'+'+h+'H'}</text>`;}).join('');
+    const currentX=xFuture(nowTs);
+    const t0X=futureX0;
+    const yLabels=8;
+    let grid='';
+    for(let i=0;i<=yLabels;i++){
+      const v=lo+(hi-lo)*(i/yLabels),yy=yAt(v);
+      grid+=`<line x1="${L}" y1="${yy.toFixed(1)}" x2="${(W-R).toFixed(1)}" y2="${yy.toFixed(1)}" stroke="#23324a" stroke-width="1"/><text x="${L-14}" y="${(yy+6).toFixed(1)}" text-anchor="end" fill="#8393ab" font-size="16" font-weight="650">${money(v)}</text>`;
+    }
 
-    const horizonDots=(arr,color,dy)=>arr.map((p,i)=>{
-      const xx=xAt(p.x), yy=yAt(p.y), label=horizonText(p.h,p.hrs), side=p.hrs<=3?'start':'end';
-      const tx=side==='start'?xx+12:xx-12; const anchorText=side==='start'?'start':'end';
-      const safePrice=money(p.y);
-      return `<circle cx="${xx.toFixed(1)}" cy="${yy.toFixed(1)}" r="10" fill="${color}" stroke="#07101b" stroke-width="5"/><text x="${tx.toFixed(1)}" y="${(yy+dy).toFixed(1)}" text-anchor="${anchorText}" fill="${color}" font-size="16" font-weight="900" paint-order="stroke" stroke="#07101b" stroke-width="7" stroke-linejoin="round">${label} · ${safePrice} Bs</text>`;
+    const timeCols=[0,1,3,7,12,18,24];
+    const timeLabels=timeCols.map(h=>{
+      const xx=xFuture(anchor+h*3600000);
+      return `<line x1="${xx.toFixed(1)}" y1="${T}" x2="${xx.toFixed(1)}" y2="${T+PH}" stroke="#17263d" stroke-width="1"/>
+      <text x="${xx.toFixed(1)}" y="${H-60}" text-anchor="middle" fill="#8595ad" font-size="15" font-weight="750">${h===0?'T0':`+${h}H`}</text>`;
     }).join('');
 
-    const trend=String(options.trend||'').toUpperCase();
-    const trendText=trend.includes('ALC')||trend.includes('SUB')?'ALZA PROYECTADA':trend.includes('BAJ')||trend.includes('CAI')?'BAJA PROYECTADA':'PROYECCIÓN';
-    const trendColor=trendText==='ALZA PROYECTADA'?'#75e6b7':trendText==='BAJA PROYECTADA'?'#ff8ba1':'#c7b7ff';
-    const support=Number(options.support),resistance=Number(options.resistance);
-    const supportLine=Number.isFinite(support)?`<line x1="${L}" y1="${yAt(support)}" x2="${xEnd}" y2="${yAt(support)}" stroke="#27e3a6" stroke-opacity=".48" stroke-width="2" stroke-dasharray="5 7"/><text x="${L+12}" y="${yAt(support)-8}" fill="#63e9bb" font-size="13" font-weight="800">SOPORTE ${money(support)} Bs</text>`:'';
-    const resistanceLine=Number.isFinite(resistance)?`<line x1="${L}" y1="${yAt(resistance)}" x2="${xEnd}" y2="${yAt(resistance)}" stroke="#ff718f" stroke-opacity=".50" stroke-width="2" stroke-dasharray="5 7"/><text x="${L+12}" y="${yAt(resistance)-8}" fill="#ff8ba2" font-size="13" font-weight="800">RESISTENCIA ${money(resistance)} Bs</text>`:'';
+    const horizonPoint=(p,color,dy,side)=>{
+      const xx=xFuture(p.x),yy=yAt(p.y),label=`+${p.hrs}H · ${money(p.y)} Bs`;
+      const anchorText=xx>W-300?'end':'start';
+      const tx=anchorText==='start'?xx+14:xx-14;
+      return `<circle cx="${xx.toFixed(1)}" cy="${yy.toFixed(1)}" r="10" fill="${color}" stroke="#07101b" stroke-width="5"/>
+        <text x="${tx.toFixed(1)}" y="${(yy+dy).toFixed(1)}" text-anchor="${anchorText}" fill="${color}" font-size="17" font-weight="900" paint-order="stroke" stroke="#07101b" stroke-width="6" stroke-linejoin="round">${label}</text>`;
+    };
 
-    wrap.innerHTML=`<svg id="advancedPredictiveSvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Gráfica P2P Venbot con snapshot congelado y precio real">
+    const snapshotTime=snap?.created_at?new Date(anchor):null;
+    const trend=String(options.trend||'').toUpperCase();
+    const trendText=trend.includes('ALC')||trend.includes('SUB')?'ALZA':trend.includes('BAJ')||trend.includes('CAI')?'BAJA':'LATERAL';
+    const trendColor=trendText==='ALZA'?'#74e6b6':trendText==='BAJA'?'#ff849d':'#c9b5ff';
+    const support=Number(options.support),resistance=Number(options.resistance);
+    const sr=`${Number.isFinite(support)?`<line x1="${L}" y1="${yAt(support)}" x2="${W-R}" y2="${yAt(support)}" stroke="#27e3a6" stroke-width="2" stroke-dasharray="6 8" opacity=".42"/><text x="${L+12}" y="${yAt(support)-9}" fill="#54dfb1" font-size="13" font-weight="800">SOPORTE ${money(support)} Bs</text>`:''}${Number.isFinite(resistance)?`<line x1="${L}" y1="${yAt(resistance)}" x2="${W-R}" y2="${yAt(resistance)}" stroke="#ff718f" stroke-width="2" stroke-dasharray="6 8" opacity=".42"/><text x="${L+12}" y="${yAt(resistance)-9}" fill="#ff90a6" font-size="13" font-weight="800">RESISTENCIA ${money(resistance)} Bs</text>`:''}`;
+
+    // Keep ONLY the frozen T0 projection on the main plot. The live forecast is not
+    // rendered as a second future line, otherwise the graph ceases to be a traceable snapshot.
+    wrap.innerHTML=`<svg id="advancedPredictiveSvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Gráfica P2P Venbot: snapshot T0 congelado y recorrido real posterior">
       <defs>
-        <clipPath id="advClip"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" rx="12"/></clipPath>
-        <linearGradient id="advFutureBg" x1="0" x2="1"><stop offset="0" stop-color="#a78bfa" stop-opacity=".07"/><stop offset="1" stop-color="#a78bfa" stop-opacity=".025"/></linearGradient>
+        <clipPath id="advClip"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" rx="10"/></clipPath>
+        <linearGradient id="futureBg" x1="0" x2="1"><stop offset="0" stop-color="#8b5cf6" stop-opacity=".06"/><stop offset="1" stop-color="#8b5cf6" stop-opacity=".025"/></linearGradient>
       </defs>
-      <rect width="${W}" height="${H}" rx="18" fill="#050b16"/>
-      <text x="${L+8}" y="34" fill="#f5c85c" font-size="18" font-weight="900">PROYECCIÓN T0 · ${snap?.created_at?esc(fmtTime(anchor)):'AHORA'}</text>
-      <text x="${W-40}" y="34" text-anchor="end" fill="${trendColor}" font-size="20" font-weight="900">${trendText}</text>
-      <rect x="${futureStartX}" y="${T}" width="${xEnd-futureStartX}" height="${PH}" fill="url(#advFutureBg)"/>
-      <g id="advancedPredictivePlot">
-        ${grid.join('')}
-        ${timeLabels}
-        <line x1="${futureStartX}" y1="${T}" x2="${futureStartX}" y2="${T+PH}" stroke="#f5c85c" stroke-width="3" stroke-dasharray="8 9"/>
-        <text x="${futureStartX+14}" y="${T+27}" fill="#f5c85c" font-size="17" font-weight="900">AHORA</text>
-        <text x="${futureStartX+14}" y="${T+49}" fill="#8190a7" font-size="12" font-weight="700">CARRIL PROYECTADO · T0 CONGELADO</text>
-        ${supportLine}${resistanceLine}
-        <g clip-path="url(#advClip)">
-          ${buyPrePath?`<path d="${buyPrePath}" fill="none" stroke="#27e3a6" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>`:''}
-          ${sellPrePath?`<path d="${sellPrePath}" fill="none" stroke="#ff718f" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>`:''}
-          ${buyPostPath?`<path d="${buyPostPath}" fill="none" stroke="#5ddcff" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round"/>`:''}
-          ${sellPostPath?`<path d="${sellPostPath}" fill="none" stroke="#ff9ab0" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round"/>`:''}
-          ${band}
-          ${projSellPath?`<path d="${projSellPath}" fill="none" stroke="#f5c85c" stroke-width="6" stroke-dasharray="14 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
-          ${projBuyPath?`<path d="${projBuyPath}" fill="none" stroke="#5ddcff" stroke-width="6" stroke-dasharray="14 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
-        </g>
-        ${Number.isFinite(t0Buy)?`<circle cx="${futureStartX}" cy="${yAt(t0Buy)}" r="9" fill="#27e3a6" stroke="#07101b" stroke-width="5"/>`:''}
-        ${Number.isFinite(t0Sell)?`<circle cx="${futureStartX}" cy="${yAt(t0Sell)}" r="9" fill="#ff718f" stroke="#07101b" stroke-width="5"/>`:''}
-        ${horizonDots(pSell,'#f5c85c',-16)}
-        ${horizonDots(pBuy,'#5ddcff',22)}
-        <g>
-          <rect x="${futureStartX+20}" y="${H-92}" width="390" height="54" rx="12" fill="#091321" stroke="#263a59"/>
-          <text x="${futureStartX+38}" y="${H-68}" fill="#dbe5f4" font-size="14" font-weight="900">SNAPSHOT T0 = REFERENCIA FIJA</text>
-          <text x="${futureStartX+38}" y="${H-47}" fill="#8190a7" font-size="12">El REAL posterior se dibuja encima, sin moverlo.</text>
-        </g>
+      <rect width="${W}" height="${H}" rx="20" fill="#050a14"/>
+      <text x="${L+10}" y="38" fill="#f5c85c" font-size="20" font-weight="900">PROYECCIÓN T0 · ${snapshotTime?esc(snapshotTime.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})):'AHORA'}</text>
+      <text x="${W-R}" y="38" text-anchor="end" fill="${trendColor}" font-size="22" font-weight="900">${trendText} PROYECTADA</text>
+
+      <rect x="${futureX0}" y="${T}" width="${futureW}" height="${PH}" fill="url(#futureBg)"/>
+      ${grid}${timeLabels}${sr}
+
+      <!-- Frozen snapshot origin -->
+      <line x1="${t0X}" y1="${T}" x2="${t0X}" y2="${T+PH}" stroke="#f5c85c" stroke-width="3" stroke-dasharray="9 10"/>
+      <text x="${t0X+15}" y="${T+28}" fill="#f5c85c" font-size="18" font-weight="900">T0</text>
+      <text x="${t0X+15}" y="${T+50}" fill="#8b9bb2" font-size="12" font-weight="700">SNAPSHOT CONGELADO</text>
+
+      <!-- Moving NOW marker -->
+      <line x1="${currentX.toFixed(1)}" y1="${T}" x2="${currentX.toFixed(1)}" y2="${T+PH}" stroke="#5ddcff" stroke-width="2.5" stroke-dasharray="5 9" opacity=".9"/>
+      <text x="${currentX.toFixed(1)}" y="${T+78}" text-anchor="middle" fill="#5ddcff" font-size="16" font-weight="900">AHORA</text>
+      <text x="${currentX.toFixed(1)}" y="${T+98}" text-anchor="middle" fill="#8291a7" font-size="12" font-weight="700">${latestHist?.x?esc(new Date(nowTs).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})):'en vivo'}</text>
+
+      <g clip-path="url(#advClip)">
+        ${preBuy?`<path d="${preBuy}" fill="none" stroke="#27e3a6" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${preSell?`<path d="${preSell}" fill="none" stroke="#ff718f" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${postBuy?`<path d="${postBuy}" fill="none" stroke="#5ddcff" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${postSell?`<path d="${postSell}" fill="none" stroke="#ff97ad" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${band}
+        ${projSellPath?`<path d="${projSellPath}" fill="none" stroke="#f5c85c" stroke-width="6" stroke-dasharray="15 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
+        ${projBuyPath?`<path d="${projBuyPath}" fill="none" stroke="#5ddcff" stroke-width="6" stroke-dasharray="15 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}
       </g>
-      <g transform="translate(${L} ${H-68})">
+
+      ${pSell.map(p=>horizonPoint(p,'#f5c85c',-15,'sell')).join('')}
+      ${pBuy.map(p=>horizonPoint(p,'#5ddcff',24,'buy')).join('')}
+
+      <circle cx="${t0X}" cy="${yAt(t0Sell)}" r="8" fill="#ff718f" stroke="#07101b" stroke-width="4"/>
+      <circle cx="${t0X}" cy="${yAt(t0Buy)}" r="8" fill="#27e3a6" stroke="#07101b" stroke-width="4"/>
+
+      <!-- clean trace guide -->
+      <rect x="${Math.max(L+18,futureX0+18)}" y="${H-118}" width="455" height="66" rx="12" fill="#091321" stroke="#263a59"/>
+      <text x="${Math.max(L+36,futureX0+36)}" y="${H-90}" fill="#dbe5f4" font-size="15" font-weight="900">TRAZA DE PREDICCIÓN</text>
+      <text x="${Math.max(L+36,futureX0+36)}" y="${H-68}" fill="#8392aa" font-size="12">T0 queda fijo · AHORA avanza · REAL se compara encima</text>
+
+      <!-- legend -->
+      <g transform="translate(${L} ${H-28})">
         <circle cx="8" cy="0" r="6" fill="#27e3a6"/><text x="20" y="5" fill="#aab8ce" font-size="12" font-weight="800">REAL · COMPRA</text>
-        <circle cx="144" cy="0" r="6" fill="#ff718f"/><text x="156" y="5" fill="#aab8ce" font-size="12" font-weight="800">REAL · VENTA</text>
-        <line x1="282" y1="0" x2="312" y2="0" stroke="#f5c85c" stroke-width="5" stroke-dasharray="10 7"/><text x="322" y="5" fill="#aab8ce" font-size="12" font-weight="800">PROYECCIÓN T0</text>
-        <line x1="462" y1="0" x2="492" y2="0" stroke="#5ddcff" stroke-width="5" stroke-dasharray="10 7"/><text x="502" y="5" fill="#aab8ce" font-size="12" font-weight="800">COMPRA PROYECTADA</text>
+        <circle cx="153" cy="0" r="6" fill="#ff718f"/><text x="165" y="5" fill="#aab8ce" font-size="12" font-weight="800">REAL · VENTA</text>
+        <line x1="295" y1="0" x2="327" y2="0" stroke="#f5c85c" stroke-width="5" stroke-dasharray="11 8"/><text x="338" y="5" fill="#aab8ce" font-size="12" font-weight="800">PROYECCIÓN T0 · VENTA</text>
+        <line x1="550" y1="0" x2="582" y2="0" stroke="#5ddcff" stroke-width="5" stroke-dasharray="11 8"/><text x="593" y="5" fill="#aab8ce" font-size="12" font-weight="800">PROYECCIÓN T0 · COMPRA</text>
       </g>
     </svg>`;
 
-    advancedChart={
-      destroy:()=>{},
-      resize:()=>{},
-      _venbotMeta:{anchor,dualP2P:true,snapshotId:snapshot?.id||null,period:advancedPeriod}
-    };
+    advancedChart={destroy:()=>{},resize:()=>{},_venbotMeta:{anchor,nowTs,snapshotId:snapshot?.id||null,period:advancedPeriod,dualP2P:true}};
     advViewState={scale:1,tx:0,ty:0,minScale:.82,maxScale:2.8};
     advAttachPanZoom();
     const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${snapshot?.created_at?new Date(anchor).toLocaleString('es-VE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'ahora'}`;
