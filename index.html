@@ -684,7 +684,7 @@
             </div>
             <span class="text-[8px] font-black uppercase text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full shrink-0">ADMIN</span>
           </div>
-          <button type="button" onclick="openAdvancedGraphs()" class="w-full focus-ring rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/15 text-cyan-200 px-4 py-3 text-xs font-black flex items-center justify-between transition">
+          <button type="button" onclick="window.openAdvancedGraphs()" class="w-full focus-ring rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/15 text-cyan-200 px-4 py-3 text-xs font-black flex items-center justify-between transition">
             <span><i class="fa-solid fa-chart-line mr-2"></i>Abrir gráficas avanzadas</span><i class="fa-solid fa-arrow-up-right-from-square"></i>
           </button>
           <p class="text-[9px] text-slate-600">No modifica los motores P2P, Spot, Quant ni Tracking; esta fase solo añade visualización sobre datos existentes.</p>
@@ -3227,8 +3227,23 @@
     advSetStatus(`${advancedSpotSymbol} · ${advancedPeriod.toUpperCase()} de histórico real + proyección activa + snapshot verificable · ${new Date(pred.generated_at||Date.now()).toLocaleTimeString('es-VE')}`,'ok');
   }
   window.openAdvancedGraphs=async function(){
-    if(!window.venbotUser?.is_developer){alert('🔐 Centro Predictivo reservado al administrador de Venbot.');return;}
-    const modal=document.getElementById('advancedGraphsModal'); if(!modal) return; modal.classList.remove('hidden'); document.body.classList.add('overflow-hidden'); advSetKindUI(); advSetButtons(); await loadAdvancedGraphs();
+    const modal=document.getElementById('advancedGraphsModal');
+    if(!modal){ console.error('Venbot: advancedGraphsModal no existe'); return; }
+    const launcher=document.getElementById('advanced-graphs-launcher');
+    const allowed=!!window.venbotUser?.is_developer || (launcher && !launcher.classList.contains('hidden'));
+    if(!allowed){ alert('🔐 Centro Predictivo reservado al administrador de Venbot.'); return; }
+    modal.classList.remove('hidden');
+    document.body.classList.add('overflow-hidden');
+    try{
+      if(typeof advSetKindUI==='function') advSetKindUI();
+      if(typeof advSetButtons==='function') advSetButtons();
+      if(typeof loadAdvancedGraphs==='function') await loadAdvancedGraphs();
+      else throw new Error('No está disponible la carga de gráficas.');
+    }catch(e){
+      console.error('Venbot Centro Predictivo:',e);
+      const wrap=document.getElementById('adv-canvas-wrap');
+      if(wrap) wrap.innerHTML='<div class="h-full flex items-center justify-center p-6"><div class="text-center max-w-md"><div class="text-amber-300 font-bold mb-2">No se pudo cargar la gráfica</div><div class="text-slate-400 text-xs">'+String(e?.message||'Error inesperado')+'</div><button type="button" class="mt-4 adv-chart-btn" onclick="loadAdvancedGraphs()">Reintentar</button></div></div>';
+    }
   };
   window.closeAdvancedGraphs=function(){ const modal=document.getElementById('advancedGraphsModal'); if(modal) modal.classList.add('hidden'); document.body.classList.remove('overflow-hidden'); advDestroyChart(); };
   window.setAdvancedGraphKind=async function(kind){advancedGraphKind=kind==='spot'?'spot':'p2p';advSetKindUI();advSetButtons();await loadAdvancedGraphs();};
