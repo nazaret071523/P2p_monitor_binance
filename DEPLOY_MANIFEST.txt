@@ -1,0 +1,4 @@
+VENBOT AI — v31.27
+Cambios: integración de páginas públicas de privacidad, términos, riesgos, publicidad/cookies, eliminación de cuenta, ayuda/tutorial y responsables/contacto. El menú informativo enlaza a archivos estáticos del frontend.
+No se modifica bot.py ni la matemática de P2P/Spot/Quant/Tracking/Telegram.
+Pendiente antes de publicación final: completar proveedores reales de publicidad/IA, datos legales adicionales y ejecutar QA/Data Safety/Play Store con la implementación final.
