@@ -263,13 +263,23 @@
 @media (max-width:640px){.adv-chart-toolbar{width:100%;justify-content:flex-start}.adv-canvas-wrap{height:32rem!important}.adv-chart-btn{height:38px;min-width:38px}}
 
 
-/* v31.34 — P2P graph: wide, readable and low-obstruction */
+/* v31.35 — P2P graph: wide, readable and low-obstruction */
 #adv-chart-shell{min-height:62vh;background:rgba(2,6,23,.78)}
 #adv-canvas-wrap{height:62vh !important;min-height:540px}
 #adv-chart-shell:fullscreen{width:100vw;height:100vh;border:0;border-radius:0;background:#050914}
 #adv-chart-shell:fullscreen #adv-canvas-wrap{height:calc(100vh - 16px) !important;min-height:0}
 @media(max-width:900px){#adv-canvas-wrap{height:64vh !important;min-height:480px}}
 @media(max-width:640px){#adv-canvas-wrap{height:68vh !important;min-height:460px}}
+
+
+/* v31.35 — P2P chart rebuilt from scratch: clean frozen snapshot vs real path */
+#adv-chart-shell{min-height:70vh;background:#050a14;border:1px solid rgba(43,61,91,.9)!important}
+#adv-canvas-wrap{height:68vh!important;min-height:560px;background:linear-gradient(180deg,#050a14,#070d1a);border-radius:16px}
+#adv-chart-shell:fullscreen{width:100vw;height:100vh;min-height:100vh;padding:10px;background:#03060d!important;border:0!important;border-radius:0}
+#adv-chart-shell:fullscreen #adv-canvas-wrap{height:calc(100vh - 20px)!important;min-height:0}
+.adv-chart-toolbar{padding:4px 0}
+@media(max-width:900px){#adv-canvas-wrap{height:70vh!important;min-height:500px}}
+@media(max-width:640px){#adv-canvas-wrap{height:72vh!important;min-height:500px}}
 
 </style>
 
@@ -935,7 +945,7 @@
             <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-3">
               <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <div><div class="flex flex-wrap items-center gap-2"><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot → Resultado</h3><span id="adv-chart-mode-label" class="text-[8px] uppercase tracking-wider font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">Modelo cuantitativo</span></div><p class="text-[9px] text-slate-500 mt-1">La proyección activa mira al futuro; en P2P el corredor separa compra y venta y conserva el rango estadístico para medir incertidumbre.</p></div>
+                  <div><div class="flex flex-wrap items-center gap-2"><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Snapshot T0 congelado → Recorrido real</h3><span id="adv-chart-mode-label" class="text-[8px] uppercase tracking-wider font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">Modelo cuantitativo</span></div><p class="text-[9px] text-slate-500 mt-1">El snapshot T0 queda fijo; el precio real posterior avanza sobre él para comprobar el recorrido y el error.</p></div>
                   <div id="adv-chart-legend" class="flex items-center gap-2 text-[9px] text-slate-500 flex-wrap"><span id="adv-leg-a"><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span id="adv-leg-b"><i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real posterior</span><span id="adv-leg-c"><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección activa</span><span id="adv-leg-d"><i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0 · congelado</span><span class="adv-snapshot-badge" id="adv-snapshot-badge">sin snapshot</span></div>
                 </div>
                 <div class="adv-chart-toolbar flex flex-wrap items-center justify-end gap-1.5 mb-2">
@@ -948,7 +958,7 @@
                 <div id="adv-chart-shell" class="adv-chart-shell relative w-full rounded-xl overflow-hidden bg-slate-950/70 border border-slate-800/70">
                   <div id="adv-canvas-wrap" class="adv-canvas-wrap relative h-[27rem] md:h-[40rem] w-full"><canvas id="advancedPredictiveChart"></canvas></div>
                 </div>
-                <div class="mt-3 flex items-center justify-between gap-2"><div class="adv-chart-note"><i class="fa-solid fa-route text-cyan-300 mr-1"></i> T0 → futuro: la proyección T0 queda congelada; la traza REAL posterior se compara contra ella sin borrarla.</div><div id="adv-t0-label" class="text-[8px] uppercase tracking-[0.16em] font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">T0 · ahora</div></div>
+                <div class="mt-3 flex items-center justify-between gap-2"><div class="adv-chart-note"><i class="fa-solid fa-route text-cyan-300 mr-1"></i> T0 → +24H: la proyección queda congelada y la traza REAL se superpone sin reescribirla.</div><div id="adv-t0-label" class="text-[8px] uppercase tracking-[0.16em] font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">T0 · ahora</div></div>
                 <div id="adv-timeline-strip" class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2"></div>
                 <div class="mt-3 rounded-xl border border-slate-800 bg-slate-950/45 p-3">
                   <div class="flex items-center justify-between gap-2"><h4 class="text-[10px] font-black text-white">Huellas de predicción</h4><span class="text-[8px] text-slate-600">snapshots congelados</span></div>
@@ -2802,6 +2812,155 @@
     box.innerHTML=`<div class="adv-memory-kpi"><span>Memoria disponible</span><strong>${arr.length} snapshots</strong><small>eventos congelados recibidos</small></div><div class="adv-memory-kpi"><span>Snapshot seleccionado</span><strong>#${selected?advEsc(selected.id):'n/d'}</strong><small>${advEsc(timeText)} · ${selectedActual}/4 resultados visibles</small></div><div class="adv-memory-kpi"><span>Evaluables</span><strong>${evaluated}</strong><small>con al menos un horizonte vencido</small></div>`;
   }
   function advRenderChart(points, forecast, unit, snapshot=null, options={}){
+    // P2P: the main chart is rebuilt around ONE immutable T0 snapshot.
+    // The active forecast is intentionally not drawn here because it would
+    // move the reference line whenever the page refreshes.
+    if(options.dualP2P===true){
+      const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
+      advDestroyChart();
+      const hist=Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))&&Number(p.x)>0).sort((a,b)=>Number(a.x)-Number(b.x)):[];
+      const s=snapshot;
+      const snapAnchor=s?.created_at ? Number(new Date(s.created_at).getTime()) : NaN;
+      const snapBuy=advSnapshotForecastP2P(s,'buy');
+      const snapSell=advSnapshotForecastP2P(s,'sell');
+      const snapMid=(snapBuy.length&&snapSell.length)?snapBuy.map((p,i)=>({x:p.x,y:(Number(p.y)+Number(snapSell[i]?.y||p.y))/2,h:p.h})):[];
+      const horizonSet=new Set(['1h','3h','7h','24h']);
+
+      // Only real history + the selected T0 snapshot + real observations after T0.
+      const preBuy=hist.filter(p=>Number(p.x)<=snapAnchor&&Number.isFinite(Number(p.buy))).map(p=>({x:Number(p.x),y:Number(p.buy)}));
+      const postBuy=hist.filter(p=>Number(p.x)>=snapAnchor&&Number.isFinite(Number(p.buy))).map(p=>({x:Number(p.x),y:Number(p.buy)}));
+      const preSell=hist.filter(p=>Number(p.x)<=snapAnchor&&Number.isFinite(Number(p.sell))).map(p=>({x:Number(p.x),y:Number(p.sell)}));
+      const postSell=hist.filter(p=>Number(p.x)>=snapAnchor&&Number.isFinite(Number(p.sell))).map(p=>({x:Number(p.x),y:Number(p.sell)}));
+      const actualMid=hist.filter(p=>Number(p.x)>=snapAnchor&&Number.isFinite(Number(p.mid))).map(p=>({x:Number(p.x),y:Number(p.mid)}));
+
+      // A clean fallback when snapshot data is unavailable: show current real data,
+      // but never invent a projection.
+      if(!snapBuy.length || !snapSell.length){
+        const fallback=[
+          ...(preBuy.length?[{label:'Real · Compra',data:preBuy,borderColor:'#27e3a6',pointRadius:0,borderWidth:3,tension:.15,fill:false}]:[]),
+          ...(preSell.length?[{label:'Real · Venta',data:preSell,borderColor:'#ff718f',pointRadius:0,borderWidth:3,tension:.15,fill:false}]:[])
+        ];
+        if(!fallback.length) fallback.push({label:'Real',data:hist.map(p=>({x:Number(p.x),y:Number(p.mid)})),borderColor:'#5ddcff',pointRadius:0,borderWidth:3,fill:false});
+        advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets:fallback},options:advChartOptions('Bs',advComputeYBounds(fallback,'Bs')),plugins:[advPredictivePlugin]});
+        advancedChart._venbotMeta={anchor:snapAnchor,historyStart:hist.length?Number(hist[0].x):Date.now(),forecast:[] ,snapshotForecast:[],snapshotAnchor:snapAnchor,unit:'Bs',dualP2P:true};
+        advancedChart.update('none'); advAttachPanZoom(advancedChart); return;
+      }
+
+      const datasets=[];
+      if(preBuy.length){ datasets.push({label:'Real · Compra',data:preBuy,borderColor:'#27e3a6',backgroundColor:'rgba(39,227,166,.03)',pointRadius:0,borderWidth:3.2,tension:.14,fill:false}); }
+      if(postBuy.length){ datasets.push({label:'Real posterior · Compra',data:postBuy,borderColor:'#27e3a6',backgroundColor:'rgba(39,227,166,.06)',pointRadius:0,borderWidth:3.8,tension:.12,fill:false}); }
+      if(preSell.length){ datasets.push({label:'Real · Venta',data:preSell,borderColor:'#ff718f',backgroundColor:'rgba(255,113,143,.03)',pointRadius:0,borderWidth:3.2,tension:.14,fill:false}); }
+      if(postSell.length){ datasets.push({label:'Real posterior · Venta',data:postSell,borderColor:'#ff718f',backgroundColor:'rgba(255,113,143,.06)',pointRadius:0,borderWidth:3.8,tension:.12,fill:false}); }
+
+      // Frozen corridor: top = SELL, bottom = BUY. This is the only projected lane drawn.
+      datasets.push({label:'Snapshot T0 · Venta · CONGELADO',data:snapSell,borderColor:'#f5c85c',backgroundColor:'rgba(245,200,92,.11)',borderDash:[10,8],pointRadius:0,pointHoverRadius:7,borderWidth:4.2,tension:.08,fill:false});
+      datasets.push({label:'Snapshot T0 · Compra · CONGELADO',data:snapBuy,borderColor:'#5ddcff',backgroundColor:'rgba(93,220,255,.08)',borderDash:[10,8],pointRadius:0,pointHoverRadius:7,borderWidth:4.2,tension:.08,fill:'-1'});
+      if(snapMid.length){ datasets.push({label:'Snapshot T0 · Central',data:snapMid,borderColor:'#d7b8ff',backgroundColor:'transparent',borderDash:[3,6],pointRadius:0,borderWidth:1.7,tension:.08,fill:false}); }
+      if(actualMid.length){ datasets.push({label:'Real posterior · Centro',data:actualMid,borderColor:'#e7eefc',backgroundColor:'transparent',pointRadius:0,borderWidth:1.35,tension:.08,fill:false}); }
+
+      // Results already evaluated for the selected snapshot appear only at their true target time.
+      const resultActual=advSnapshotActuals(snapshot);
+      if(resultActual.length){ datasets.push({label:'Resultado real · snapshot',data:resultActual,borderColor:'#39f6aa',backgroundColor:'#39f6aa',pointRadius:4.8,pointHoverRadius:7,showLine:false,borderWidth:0}); }
+
+      // Build a deliberately wide, legible x-range: 12H before T0 through the later of
+      // the current observed history or the 24H snapshot endpoint.
+      const snapEnd=Number(snapSell[snapSell.length-1]?.x||snapBuy[snapBuy.length-1]?.x||NaN);
+      const histLast=Number(hist[hist.length-1]?.x||NaN);
+      const right=Math.max(Number.isFinite(histLast)?histLast:NaN,Number.isFinite(snapEnd)?snapEnd:NaN,snapAnchor+24*3600000);
+      const left=Math.min(Number(hist[0]?.x||snapAnchor-12*3600000),snapAnchor-12*3600000);
+
+      const optionsChart=advChartOptions('Bs',advComputeYBounds(datasets,'Bs'));
+      optionsChart.scales.x.min=left; optionsChart.scales.x.max=right;
+      optionsChart.plugins.tooltip.callbacks.label=(ctx)=>{
+        const y=Number(ctx.raw?.y); return `${ctx.dataset.label}: ${advMoney(y,2)} Bs`;
+      };
+      advancedChart=new Chart(canvas.getContext('2d'),{type:'line',data:{datasets},options:optionsChart,plugins:[{
+        id:'venbotP2PCleanOverlay',
+        afterDraw(chart){
+          const meta=chart._venbotMeta||{}; const xs=chart.scales.x, ys=chart.scales.y, area=chart.chartArea; if(!xs||!ys||!area) return;
+          const ctx=chart.ctx; ctx.save();
+          const x0=xs.getPixelForValue(meta.snapshotAnchor);
+          // Future area
+          ctx.fillStyle='rgba(138,92,246,.035)'; ctx.fillRect(x0,area.top,Math.max(0,area.right-x0),area.bottom-area.top);
+          // T0
+          ctx.setLineDash([7,6]); ctx.strokeStyle='rgba(245,200,92,.82)'; ctx.lineWidth=1.5;
+          ctx.beginPath(); ctx.moveTo(x0,area.top); ctx.lineTo(x0,area.bottom); ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle='#f5c85c'; ctx.font='900 14px system-ui,sans-serif'; ctx.textAlign='left';
+          ctx.fillText(`T0 · ${new Date(meta.snapshotAnchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}`,Math.min(x0+8,area.right-180),area.top+20);
+          ctx.fillStyle='#7f91ab'; ctx.font='800 11px system-ui,sans-serif';
+          ctx.fillText('PROYECCIÓN CONGELADA',Math.min(x0+8,area.right-180),area.top+37);
+
+          // Label helper with a small leader line; labels never sit directly on the curve.
+          const occupied=[];
+          const putLabel=(p,color,where,txt)=>{
+            const px=xs.getPixelForValue(p.x), py=ys.getPixelForValue(p.y); if(px<area.left||px>area.right||py<area.top||py>area.bottom)return;
+            let ly=where==='above'?py-18:py+22;
+            ly=Math.max(area.top+56,Math.min(area.bottom-8,ly));
+            let lx=Math.max(area.left+8,Math.min(area.right-135,px-48));
+            for(let i=0;i<8;i++){
+              if(!occupied.some(o=>Math.abs(o.x-lx)<130&&Math.abs(o.y-ly)<22)) break;
+              ly += where==='above' ? -20 : 20;
+              if(ly<area.top+55 || ly>area.bottom-8){ly=where==='above'?py+22:py-18;}
+            }
+            occupied.push({x:lx,y:ly});
+            ctx.strokeStyle=color+'88';ctx.lineWidth=1;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px,where==='above'?ly+6:ly-6);ctx.stroke();ctx.setLineDash([]);
+            ctx.fillStyle='#07101d';ctx.strokeStyle=color+'aa';ctx.lineWidth=1;
+            const w=118,h=25, bx=Math.max(area.left,Math.min(area.right-w,lx-3)); const by=where==='above'?ly-18:ly-5;
+            ctx.beginPath();ctx.roundRect(bx,by,w,h,7);ctx.fill();ctx.stroke();
+            ctx.fillStyle=color;ctx.font='900 12px system-ui,sans-serif';ctx.textAlign='center';ctx.fillText(txt,bx+w/2,by+17);
+          };
+          const sellPts=meta.snapshotP2PSell||[], buyPts=meta.snapshotP2PBuy||[];
+          const hs=['1h','3h','7h','24h'];
+          sellPts.filter(p=>horizonSet.has(String(p.h))).forEach(p=>putLabel(p,'#f5c85c','above',`V ${advMoney(p.y,2)} Bs`));
+          buyPts.filter(p=>horizonSet.has(String(p.h))).forEach(p=>putLabel(p,'#5ddcff','below',`C ${advMoney(p.y,2)} Bs`));
+
+          // Horizon tags sit along the bottom, away from price labels.
+          ctx.textAlign='center';ctx.font='900 11px system-ui,sans-serif';
+          [...new Set(sellPts.filter(p=>horizonSet.has(String(p.h))).map(p=>p.h))].forEach(h=>{
+            const p=sellPts.find(x=>x.h===h); if(!p)return; const px=xs.getPixelForValue(p.x);
+            const hh=advHorizonHours(h); ctx.fillStyle='#9ba9be';
+            ctx.fillText(`+${hh}H`,Math.max(area.left+18,Math.min(area.right-18,px)),area.bottom-8);
+          });
+
+          // Direction cue from the frozen corridor.
+          const first=(snapMid[0]?.y??(Number(snapBuy[0]?.y||0)+Number(snapSell[0]?.y||0))/2);
+          const last=(snapMid[snapMid.length-1]?.y??(Number(snapBuy[snapBuy.length-1]?.y||0)+Number(snapSell[snapSell.length-1]?.y||0))/2);
+          if(Number.isFinite(first)&&Number.isFinite(last)){
+            const dir=last-first; const label=Math.abs(dir)<0.01?'LATERAL':dir>0?'ALZA PROYECTADA':'BAJA PROYECTADA';
+            const col=Math.abs(dir)<0.01?'#f5c85c':dir>0?'#7bf2c0':'#ff9fb4';
+            ctx.fillStyle=col;ctx.textAlign='right';ctx.font='900 13px system-ui,sans-serif';ctx.fillText(label,area.right-10,area.top+20);
+          }
+          ctx.restore();
+        },
+        beforeDatasetsDraw(chart){
+          const meta=chart._venbotMeta||{}; const xs=chart.scales.x, ys=chart.scales.y, area=chart.chartArea; if(!xs||!ys||!area)return;
+          const x0=xs.getPixelForValue(meta.snapshotAnchor); const ctx=chart.ctx; ctx.save();
+          ctx.fillStyle='rgba(168,85,247,.035)';ctx.fillRect(x0,area.top,Math.max(0,area.right-x0),area.bottom-area.top);ctx.restore();
+        }
+      }]});
+      advancedChart._venbotMeta={
+        anchor:snapAnchor,
+        historyStart:hist.length?Number(hist[0].x):snapAnchor,
+        forecast:snapMid,
+        snapshotForecast:snapMid,
+        snapshotAnchor:snapAnchor,
+        snapshotP2PBuy:snapBuy,
+        snapshotP2PSell:snapSell,
+        forecastBuy:snapBuy,
+        forecastSell:snapSell,
+        unit:'Bs',
+        dualP2P:true
+      };
+      advancedChart.update('none');
+      advAttachPanZoom(advancedChart);
+      const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent=`T0 · ${new Date(snapAnchor).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})} · congelado`;
+      const badge=document.getElementById('adv-snapshot-badge'); if(badge) badge.textContent=s ? `T0 #${s.id} · ${s.evaluated_count||0}/4 evaluadas · CONGELADO` : 'sin snapshot';
+      return;
+    }
+    return advRenderChartLegacy(points,forecast,unit,snapshot,options);
+  }
+
+  function advRenderChartLegacy(points, forecast, unit, snapshot=null, options={}){
     const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
     advDestroyChart();
     const dualP2P=options.dualP2P===true;
