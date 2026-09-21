@@ -3188,12 +3188,13 @@
     const proj=advProjectionRowsP2P(a);
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=d.history?.map(r=>({x:new Date(r.timestamp).getTime(),buy:Number(r.compra),sell:Number(r.venta),mid:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&p.buy>0&&p.sell>0) || [];
-    const projectionBase=Date.now();
+    const projectionBase=Number(snapshot?.created_at?new Date(snapshot.created_at).getTime():NaN);
+    const fallbackProjectionBase=Number.isFinite(projectionBase)?projectionBase:(hist.length?hist[hist.length-1].x:Date.now());
     const m=a.metricas||{};
     const liveCompra=Number(m.compra)>0?Number(m.compra):Number(marketState.buy)||0;
     const liveVenta=Number(m.venta)>0?Number(m.venta):Number(marketState.sell)||0;
     const current=liveCompra>0&&liveVenta>0?((liveCompra+liveVenta)/2):(hist.length?hist[hist.length-1].mid:NaN);
-    const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?projectionBase+hrs*3600000:NaN,y:Number(r.central),buy:Number(r.buy),sell:Number(r.sell),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
+    const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?fallbackProjectionBase+hrs*3600000:NaN,y:Number(r.central),buy:Number(r.buy),sell:Number(r.sell),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
     const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
     advSetText('adv-m-current',`${advMoney(current)} Bs`); advSetText('adv-m-current-unit',`${advancedP2PBank} · midpoint`);
     advSetText('adv-m-projection',`${advMoney(selected?.central)} Bs`); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change));
