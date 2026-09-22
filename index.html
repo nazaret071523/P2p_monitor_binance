@@ -977,7 +977,7 @@
 
               <aside class="space-y-3">
                 <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
-                  <div class="flex items-center justify-between gap-2"><h3 class="text-xs font-black text-white">Proyección por horizonte</h3><span class="text-[8px] font-black uppercase tracking-wider text-slate-500">Motor real</span></div>
+                  <div class="flex items-center justify-between gap-2"><h3 id="adv-horizon-title" class="text-xs font-black text-white">Proyección por horizonte</h3><span class="text-[8px] font-black uppercase tracking-wider text-slate-500">Motor real</span></div>
                   <div id="adv-horizon-cards" class="space-y-2 mt-3"></div>
                 </div>
                 <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4" id="adv-spot-context-card">
@@ -2475,6 +2475,7 @@
     if(p2p) p2p.classList.toggle('hidden', advancedGraphKind!=='p2p');
     if(spot) spot.classList.toggle('hidden', advancedGraphKind!=='spot');
     advSetText('adv-graph-kind-label', advancedGraphKind==='p2p'?'P2P':'Spot');
+    advSetText('adv-horizon-title', advancedGraphKind==='spot'?'Proyección Spot · 1H → 24H':'Proyección P2P por horizonte');
   }
   function advSetButtons(){
     document.querySelectorAll('[data-adv-bank]').forEach(b=>b.classList.toggle('active', b.dataset.advBank===advancedP2PBank));
@@ -2759,8 +2760,9 @@
   function advRenderSnapshotHistory(snapshots, selected){
     const box=document.getElementById('adv-snapshot-history'); if(!box) return;
     const arr=Array.isArray(snapshots)?snapshots.slice(0,8):[];
+    const total=advancedGraphKind==='spot'?24:4;
     if(!arr.length){box.innerHTML='<span class="text-[8px] text-slate-600">Aún no hay huellas disponibles.</span>';return;}
-    box.innerHTML=arr.map(s=>{const dt=s.created_at?new Date(s.created_at):null;const time=dt&&Number.isFinite(dt.getTime())?dt.toLocaleString('es-VE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'sin fecha';const evaluated=Number(s.evaluated_count||0);const state=evaluated?`${evaluated}/4 evaluadas`:'pendiente';const cls=selected&&String(selected.id)===String(s.id)?' active':'';return `<button type="button" class="adv-snapshot-chip${cls}" data-adv-snapshot-id="${advEsc(s.id)}">#${advEsc(s.id)} · ${advEsc(time)} · <span class="mini">${state}</span></button>`;}).join('');
+    box.innerHTML=arr.map(s=>{const dt=s.created_at?new Date(s.created_at):null;const time=dt&&Number.isFinite(dt.getTime())?dt.toLocaleString('es-VE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'sin fecha';const evaluated=Number(s.evaluated_count||0);const state=evaluated?`${evaluated}/${total} evaluadas`:'pendiente';const cls=selected&&String(selected.id)===String(s.id)?' active':'';return `<button type="button" class="adv-snapshot-chip${cls}" data-adv-snapshot-id="${advEsc(s.id)}">#${advEsc(s.id)} · ${advEsc(time)} · <span class="mini">${state}</span></button>`;}).join('');
     box.querySelectorAll('[data-adv-snapshot-id]').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.getAttribute('data-adv-snapshot-id');window.setAdvancedSnapshot(id);}));
   }
 
@@ -2768,10 +2770,12 @@
     const box=document.getElementById('adv-memory-summary'); if(!box) return;
     const arr=Array.isArray(snapshots)?snapshots:[];
     const evaluated=arr.filter(s=>Number(s.evaluated_count||0)>0).length;
-    const selectedActual=advSnapshotActuals(selected).length;
+    const isSpot=advancedGraphKind==='spot';
+    const selectedActual=isSpot?advSpotHourlyActuals(selected).length:advSnapshotActuals(selected).length;
+    const total=isSpot?24:4;
     const selectedTime=selected?.created_at?new Date(selected.created_at):null;
     const timeText=selectedTime&&Number.isFinite(selectedTime.getTime())?selectedTime.toLocaleString('es-VE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'n/d';
-    box.innerHTML=`<div class="adv-memory-kpi"><span>Memoria disponible</span><strong>${arr.length} snapshots</strong><small>eventos congelados recibidos</small></div><div class="adv-memory-kpi"><span>Snapshot seleccionado</span><strong>#${selected?advEsc(selected.id):'n/d'}</strong><small>${advEsc(timeText)} · ${selectedActual}/4 resultados visibles</small></div><div class="adv-memory-kpi"><span>Evaluables</span><strong>${evaluated}</strong><small>con al menos un horizonte vencido</small></div>`;
+    box.innerHTML=`<div class="adv-memory-kpi"><span>Memoria disponible</span><strong>${arr.length} snapshots</strong><small>eventos congelados recibidos</small></div><div class="adv-memory-kpi"><span>Snapshot seleccionado</span><strong>#${selected?advEsc(selected.id):'n/d'}</strong><small>${advEsc(timeText)} · ${selectedActual}/${total} resultados visibles</small></div><div class="adv-memory-kpi"><span>Evaluables</span><strong>${evaluated}</strong><small>con al menos un horizonte vencido</small></div>`;
   }
 
   /*
@@ -2790,8 +2794,7 @@
     }
 
     advDestroyChart();
-    const canvas=document.getElementById('advancedPredictiveChart');
-    const host=canvas?.parentElement;
+    const host=document.getElementById('advancedPredictiveChart')?.parentElement || document.querySelector('.adv-chart-viewport');
     if(!host) return;
 
     const N=v=>Number(v);
@@ -3330,8 +3333,7 @@
 
   function advRenderSpotCustom(points, forecast, unit, snapshot=null, options={}){
     advDestroyChart();
-    const canvas=document.getElementById('advancedPredictiveChart');
-    const host=canvas?.parentElement; if(!host) return;
+    const host=document.getElementById('advancedPredictiveChart')?.parentElement || document.querySelector('.adv-chart-viewport'); if(!host) return;
     const N=v=>Number(v);
     const F=(v,d=4)=>{const n=N(v);return Number.isFinite(n)?n.toLocaleString('es-VE',{minimumFractionDigits:d,maximumFractionDigits:d}):'n/d';};
     const vet=ts=>{const n=N(ts);if(!Number.isFinite(n))return 'n/d';return new Intl.DateTimeFormat('es-VE',{timeZone:'America/Caracas',hour:'2-digit',minute:'2-digit',hour12:true}).format(new Date(n)).replace('a. m.','a.m.').replace('p. m.','p.m.');};
@@ -3394,12 +3396,12 @@
     scrollEl.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId))return;pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});if(pointers.size===2&&pinch){const pts=[...pointers.values()],scale=dist(pts[0],pts[1])/pinch.d,mm=mid(pts[0],pts[1]),r=scrollEl.getBoundingClientRect();zoomLevel=clamp(pinch.z*scale);apply(mm.x-r.left,mm.y-r.top);}else if(pointers.size===1&&pan){scrollEl.scrollLeft=pan.left-(e.clientX-pan.x);scrollEl.scrollTop=pan.top-(e.clientY-pan.y);}e.preventDefault();},{passive:false});
     const end=e=>{pointers.delete(e.pointerId);try{scrollEl.releasePointerCapture?.(e.pointerId);}catch{}if(!pointers.size){pan=null;pinch=null;}else if(pointers.size===1){const [id,p]=[...pointers.entries()][0];pan={x:p.clientX,y:p.clientY,left:scrollEl.scrollLeft,top:scrollEl.scrollTop};pinch=null;}e.preventDefault();};scrollEl.addEventListener('pointerup',end,{passive:false});scrollEl.addEventListener('pointercancel',end,{passive:false});scrollEl.addEventListener('wheel',e=>{if(!(e.ctrlKey||e.metaKey))return;e.preventDefault();const r=scrollEl.getBoundingClientRect();zoomLevel=clamp(zoomLevel+(e.deltaY<0?.02:-.02));apply(e.clientX-r.left,e.clientY-r.top);},{passive:false});
     const resize=()=>{if(Math.abs(zoomLevel-fitZoom())<.03){zoomLevel=fitZoom();apply();}};window.addEventListener('resize',resize,{passive:true});requestAnimationFrame(()=>{zoomLevel=fitZoom();apply();});
-    advancedChart={destroy:()=>{},resize:()=>{},_venbotMeta:{dualP2P:false,anchor:a,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'spot-hourly-shadow-v31.59'}};
+    advancedChart={destroy:()=>{},resize:()=>{},_venbotMeta:{dualP2P:false,anchor:a,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'spot-hourly-shadow-v31.60'}};
     const t0El=document.getElementById('adv-t0-label');if(t0El)t0El.textContent=`T0 · ${vet(a)} VET · snapshot fijo`;const badge=document.getElementById('adv-snapshot-badge');if(badge)badge.textContent=snapshot?`T0 #${snapshot.id} · ${vet(a)} VET · 24H`:'sin snapshot';
   }
 
   function advRenderChartSpotLegacy(points, forecast, unit, snapshot=null, options={}){
-    const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
+    const canvas=document.getElementById('advancedPredictiveChart'); const host=canvas?.parentElement || document.querySelector('.adv-chart-viewport'); if(!host) return;
     advDestroyChart();
     const dualP2P=options.dualP2P===true;
     const hist=Array.isArray(points)?points.filter(p=>Number.isFinite(Number(p.x))).sort((a,b)=>Number(a.x)-Number(b.x)):[];
