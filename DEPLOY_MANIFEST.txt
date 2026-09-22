@@ -1,6 +1,11 @@
-Venbot Fase12 v31.65
-Base: Venbot_Fase12_Aprendizaje24H_Hotfix_Adaptive_v31_64.zip
-Cambios: snapshot P2P persistente por snapshot_id + cierre robusto de gráficas/fullscreen + Escape.
-Producción: 1H/3H/7H/24H intactos; aprendizaje adicional en sombra.
-bot.py: sin cambios respecto a v31.64.
-index.html: parche aditivo únicamente.
+VENBOT — v31.69
+FASE 16: MONETIZACIÓN FREE + PUBLICIDAD WEB
+
+- bot.py conservado sin cambios.
+- FREE/promoción: anuncios cuando exista configuración publicitaria real.
+- PREMIUM/VIP: sin anuncios.
+- Zonas publicitarias: header, top, footer.
+- Sin anuncios dentro de gráficas, calculadora, precios ni controles.
+- Configuración pública separada en venbot-ads-config.js.
+- publisherId y slots vacíos por seguridad hasta disponer de los valores reales.
+- P2P/Spot/Quant/Tracking/Telegram y 1H/3H/7H/24H preservados.
