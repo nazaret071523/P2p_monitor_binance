@@ -1,3 +1,6 @@
-VENBOT AI — v31.28
-Cambios: añade al Centro de Mando una auditoría de lectura para el hito Spot 300 h sobre los datos reales de evaluación existentes y documenta visualmente la evolución horaria objetivo 1H→24H en sombra. No modifica la matemática ni promueve candidatos.
-No se modifica bot.py ni la matemática de P2P/Spot/Quant/Tracking/Telegram.
+Venbot Fase12 v31.65
+Base: Venbot_Fase12_Aprendizaje24H_Hotfix_Adaptive_v31_64.zip
+Cambios: snapshot P2P persistente por snapshot_id + cierre robusto de gráficas/fullscreen + Escape.
+Producción: 1H/3H/7H/24H intactos; aprendizaje adicional en sombra.
+bot.py: sin cambios respecto a v31.64.
+index.html: parche aditivo únicamente.
