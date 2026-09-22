@@ -2375,9 +2375,22 @@
           }).join('');
           const valid=research.filter(h=>(hs[h]?.shadow_candidate?.rolling_oos?.status||'')==='VALIDACION_ROLLING_OK').length;
           const evidence=research.filter(h=>Number(hs[h]?.evaluated||0)>=Number(d.minimum_evaluations_per_horizon||30)).length;
-          return `<div class="rounded-2xl bg-slate-950/60 border border-indigo-500/15 p-3 md:p-4 mt-3"><div class="flex items-center justify-between gap-2"><div><div class="font-black text-slate-100">Laboratorio de maduración · ${motor.motor}</div><div class="text-[9px] text-slate-500 mt-1">Walk-forward OOS adicional para nuevos horizontes. No modifica producción.</div></div><span class="text-[8px] uppercase font-black text-indigo-200 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-full">SOMBRA</span></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Producción</span><strong class="block text-emerald-300">${production.map(x=>x.toUpperCase()).join(' · ')}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Investigación</span><strong class="block text-purple-200">${research.length} horizontes</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-300">${evidence}/${research.length}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${valid?'text-emerald-300':'text-slate-400'}">${valid}/${research.length}</strong></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-3">${rows}</div><div class="text-[8px] text-slate-600 mt-2">La validación walk-forward requiere evidencia consecutiva; una mejora aislada no puede cambiar el motor. Los cuatro horizontes productivos permanecen bloqueados a cambios automáticos.</div></div>`;
+          const milestone=motor.milestone_300h||{};
+          const qStatuses=research.map(h=>hs[h]?.shadow_candidate?.rolling_oos?.data_quality?.status||'').filter(Boolean);
+          const qWarn=qStatuses.filter(x=>x!=='OK').length;
+          const milestoneText=motor.motor==='SPOT'?`${milestone.assets_reached||0}/${milestone.assets_total||9} activos ≥ 300 h`:`${Number(milestone.coverage_hours||0).toFixed(2)} h / 300 h`;
+          return `<div class="rounded-2xl bg-slate-950/60 border border-indigo-500/15 p-3 md:p-4 mt-3"><div class="flex items-center justify-between gap-2"><div><div class="font-black text-slate-100">Laboratorio de maduración · ${motor.motor}</div><div class="text-[9px] text-slate-500 mt-1">Walk-forward OOS adicional para nuevos horizontes. No modifica producción.</div></div><span class="text-[8px] uppercase font-black text-indigo-200 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-full">SOMBRA</span></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Producción</span><strong class="block text-emerald-300">${production.map(x=>x.toUpperCase()).join(' · ')}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Investigación</span><strong class="block text-purple-200">${research.length} horizontes</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-300">${evidence}/${research.length}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${valid?'text-emerald-300':'text-slate-400'}">${valid}/${research.length}</strong></div></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Hito 300 h</span><strong class="block ${milestone.status==='HITO_ALCANZADO'?'text-emerald-300':'text-amber-200'}">${milestoneText}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Calidad temporal</span><strong class="block ${qWarn?'text-amber-200':'text-emerald-300'}">${qWarn?`${qWarn} en observación`:'OK / sin alertas'}</strong></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-3">${rows}</div><div class="text-[8px] text-slate-600 mt-2">La validación walk-forward requiere evidencia consecutiva; las alertas de calidad son informativas y no cambian por sí solas el estado del candidato. Los cuatro horizontes productivos permanecen bloqueados a cambios automáticos.</div></div>`;
         };
         if(maturity) maturity.innerHTML=[d.p2p,d.spot].map(motorLab).join('');
+        const spotMilestone=d?.spot?.milestone_300h||d?.milestones?.spot_300h||{};
+        const auditBadge=document.getElementById('admin-spot-audit-badge');
+        const auditCoverage=document.getElementById('admin-spot-audit-coverage');
+        const auditAssets=document.getElementById('admin-spot-audit-assets');
+        const auditResult=document.getElementById('admin-spot-audit-result');
+        if(auditBadge){ const reached=Number(spotMilestone.assets_reached||0), total=Number(spotMilestone.assets_total||9); auditBadge.textContent=reached===total&&total>0?'ALCANZADO':'EN REVISIÓN'; auditBadge.className=reached===total&&total>0?'text-[8px] font-black uppercase text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full':'text-[8px] font-black uppercase text-amber-200 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full'; }
+        if(auditCoverage) auditCoverage.textContent=`${Number(spotMilestone.coverage_median_hours||0).toFixed(2)} h`;
+        if(auditAssets) auditAssets.textContent=`${Number(spotMilestone.assets_reached||0)} / ${Number(spotMilestone.assets_total||9)}`;
+        if(auditResult) auditResult.innerHTML=`<div class="text-slate-300 font-black">${spotMilestone.status==='HITO_ALCANZADO'?'HITO 300 h ALCANZADO':'COBERTURA EN REVISIÓN'}</div><div class="mt-1">Auditoría de cobertura automática sobre los 9 activos · ${Number(spotMilestone.assets_reached||0)}/${Number(spotMilestone.assets_total||9)} con ≥300 h · solo lectura, sin cambios al motor.</div>`;
         status.textContent='Medición adaptativa + maduración walk-forward en sombra: ninguna recomendación modifica las predicciones de producción.';
       }catch(e){
         console.error('Venbot evolución adaptativa:', e);
@@ -3782,44 +3795,26 @@
     const coverageEl=document.getElementById('admin-spot-audit-coverage');
     const assetsEl=document.getElementById('admin-spot-audit-assets');
     const result=document.getElementById('admin-spot-audit-result');
-    const symbols=['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'];
     if(badge) badge.textContent='AUDITANDO';
-    if(result) result.textContent='Consultando rendimiento y cobertura de los 9 activos…';
+    if(result) result.textContent='Consultando cobertura histórica consolidada de los 9 activos…';
     try{
-      const rows=[];
-      for(const symbol of symbols){
-        let adaptive=null, perf=null;
-        try{
-          const r=await fetch(`${API_BASE_URL}/api/quant/adaptive/status?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
-          if(r.ok) adaptive=await r.json();
-        }catch(_){}
-        try{
-          const r=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
-          if(r.ok) perf=await r.json();
-        }catch(_){}
-        const motor=adaptive?.spot||adaptive?.motor||adaptive||{};
-        const cov=Number(motor.coverage_hours||0);
-        const hz=motor.horizons||{};
-        const evaluated=['1h','3h','7h','24h'].reduce((acc,h)=>acc+Number(hz?.[h]?.evaluated||0),0);
-        rows.push({symbol,cov,evaluated,ok:Boolean(adaptive||perf)});
-      }
-      const valid=rows.filter(x=>x.ok);
-      const sorted=rows.map(x=>x.cov).sort((a,b)=>a-b);
-      const median=sorted.length?sorted[Math.floor(sorted.length/2)]:0;
-      const reached=rows.filter(x=>x.cov>=300).length;
+      const r=await fetch(`${API_BASE_URL}/api/quant/maturity/audit?t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+      const d=await r.json(); if(!r.ok) throw new Error(d.detail||'No se pudo completar la auditoría');
+      const spot=d?.spot_300h||{};
+      const reached=Number(spot.assets_reached||0), total=Number(spot.assets_total||9), median=Number(spot.coverage_median_hours||0);
       if(coverageEl) coverageEl.textContent=`${median.toFixed(2)} h`;
-      if(assetsEl) assetsEl.textContent=`${reached} / 9`;
-      const status=(median>=300 && reached===9)?'HITO ALCANZADO · REVISIÓN FORMAL':'COBERTURA ALCANZADA PARCIAL';
-      if(badge){badge.textContent=status.includes('ALCANZADO')?'ALCANZADO':'EN REVISIÓN'; badge.className=status.includes('ALCANZADO')?'text-[8px] font-black uppercase text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full':'text-[8px] font-black uppercase text-amber-200 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full';}
+      if(assetsEl) assetsEl.textContent=`${reached} / ${total}`;
+      const done=reached===total&&total>0&&median>=300;
+      if(badge){badge.textContent=done?'ALCANZADO':'EN REVISIÓN'; badge.className=done?'text-[8px] font-black uppercase text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full':'text-[8px] font-black uppercase text-amber-200 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full';}
       if(result){
-        const totalEval=rows.reduce((a,x)=>a+x.evaluated,0);
-        result.innerHTML=`<div class="text-slate-300 font-black">${status}</div><div class="mt-1">Activos consultados: ${valid.length}/9 · evaluaciones reportadas: ${totalEval} · siguiente paso: revisar estabilidad, error, dirección, rangos y base vs candidato antes de cualquier promoción.</div>`;
+        result.innerHTML=`<div class="text-slate-300 font-black">${done?'HITO ALCANZADO · REVISIÓN FORMAL':'COBERTURA ALCANZADA PARCIAL'}</div><div class="mt-1">Activos con ≥300 h: ${reached}/${total} · cobertura mediana: ${median.toFixed(2)} h · auditoría de lectura, sin cambios al motor. La evaluación de estabilidad y promoción continúa separada.</div>`;
       }
     }catch(e){
       if(badge){badge.textContent='ERROR'; badge.className='text-[8px] font-black uppercase text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-full';}
       if(result) result.textContent=`No se pudo completar la auditoría: ${e.message||'error temporal'}`;
     }
   }
+
   window.loadAdminControlCenter=loadAdminControlCenter; window.setAdminLaunchMode=setAdminLaunchMode;
   function applyDeveloperOnly(){
     const visible = !!window.venbotUser?.is_developer;
