@@ -328,6 +328,13 @@ ADAPTIVE_SHADOW_TRAIN_RATIO = min(0.8, max(0.5, float(os.getenv("ADAPTIVE_SHADOW
 ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT = max(0.5, float(os.getenv("ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT", "2.0")))
 ADAPTIVE_PROMOTION_STABLE_PASSES = max(2, int(os.getenv("ADAPTIVE_PROMOTION_STABLE_PASSES", "2")))
 ADAPTIVE_SHADOW_MIN_REGIME_TRAIN = max(10, int(os.getenv("ADAPTIVE_SHADOW_MIN_REGIME_TRAIN", "20")))
+# Fase 13: maduración del aprendizaje. Estos horizontes son investigación
+# en sombra; nunca sustituyen los cuatro horizontes productivos.
+ADAPTIVE_RESEARCH_HORIZONS = ("2h", "4h", "5h", "6h", "8h", "9h", "10h", "12h", "18h")
+ADAPTIVE_ROLLING_FOLDS = max(2, min(5, int(os.getenv("ADAPTIVE_ROLLING_FOLDS", "3"))))
+ADAPTIVE_ROLLING_MIN_TRAIN = max(12, int(os.getenv("ADAPTIVE_ROLLING_MIN_TRAIN", "15")))
+ADAPTIVE_ROLLING_MIN_OOS = max(5, int(os.getenv("ADAPTIVE_ROLLING_MIN_OOS", "5")))
+ADAPTIVE_ROLLING_MIN_VALID_FOLDS = max(2, int(os.getenv("ADAPTIVE_ROLLING_MIN_VALID_FOLDS", "2")))
 _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
@@ -4460,6 +4467,119 @@ def _mae_percent(items):
     return float(np.mean(vals)) if vals else None
 
 
+def _fit_shadow_bias_correction(train, min_regime_train=ADAPTIVE_SHADOW_MIN_REGIME_TRAIN):
+    """Ajusta solo factores de sesgo para una ventana de entrenamiento.
+
+    Se comparte entre la validación clásica y la validación walk-forward de
+    Fase 13. No toca el motor productivo ni persiste cambios de calibración.
+    """
+    def _bias_pairs(items, recency_weighted=True):
+        pairs=[]
+        m=len(items)
+        weights=np.exp(np.linspace(-1.2,0.0,m)) if recency_weighted and m>1 else np.ones(m)
+        for idx,r in enumerate(items):
+            try:
+                pred=float(r["pred"]); actual=float(r["actual"])
+                if pred:
+                    pairs.append(((actual-pred)/pred*100.0,float(weights[idx])))
+            except Exception:
+                continue
+        return pairs
+
+    pairs=_bias_pairs(train, True)
+    if not pairs:
+        return None, {}, None
+    ww=np.asarray([w for _,w in pairs],dtype=float); bb=np.asarray([b for b,_ in pairs],dtype=float)
+    train_bias=float(np.average(bb,weights=ww))
+    global_factor=float(np.clip(1.0+train_bias/100.0,0.95,1.05))
+    buckets={}
+    for r in train:
+        g=str(r.get("group") or "SIN_CLASIFICAR").upper()
+        buckets.setdefault(g,[]).append(r)
+    by_regime={}
+    for g,items in buckets.items():
+        if len(items)<min_regime_train:
+            continue
+        rpairs=_bias_pairs(items, True)
+        if not rpairs:
+            continue
+        rww=np.asarray([w for _,w in rpairs],dtype=float); rbb=np.asarray([b for b,_ in rpairs],dtype=float)
+        rbias=float(np.average(rbb,weights=rww))
+        by_regime[g]={"train_evaluated":len(items),"candidate_factor":float(np.clip(1.0+rbias/100.0,0.95,1.05)),"bias_pct":rbias}
+    return global_factor, by_regime, train_bias
+
+
+def _rolling_oos_validation(rows, mode="p2p", folds=ADAPTIVE_ROLLING_FOLDS):
+    """Validación temporal walk-forward adicional para madurar candidatos.
+
+    Divide la serie cronológica en ventanas consecutivas. Cada ventana usa solo
+    el pasado para estimar el factor candidato y un bloque posterior para OOS.
+    Reporta estabilidad global y por régimen. Nunca modifica producción.
+    """
+    try:
+        ordered=list(reversed(rows or []))  # más antiguo -> más reciente
+        n=len(ordered)
+        if n < ADAPTIVE_ROLLING_MIN_TRAIN + ADAPTIVE_ROLLING_MIN_OOS:
+            return {"status":"EVIDENCIA_INSUFICIENTE","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"train_min":ADAPTIVE_ROLLING_MIN_TRAIN,"oos_min":ADAPTIVE_ROLLING_MIN_OOS}
+        oos_size=max(ADAPTIVE_ROLLING_MIN_OOS, min(12, n//6))
+        train_floor=max(ADAPTIVE_ROLLING_MIN_TRAIN, int(round(n*0.40)))
+        possible=[]
+        for end in range(train_floor, n-oos_size+1, oos_size):
+            possible.append((end, min(n,end+oos_size)))
+        chosen=possible[-max(2,int(folds)):]
+        fold_rows=[]
+        improvements=[]
+        regime_acc={}
+        for idx,(train_end,oos_end) in enumerate(chosen,1):
+            train=ordered[:train_end]; oos=ordered[train_end:oos_end]
+            if len(oos)<ADAPTIVE_ROLLING_MIN_OOS:
+                continue
+            factor,by_regime,train_bias=_fit_shadow_bias_correction(train)
+            if factor is None:
+                continue
+            baseline=_mae_percent(oos)
+            corrected=[]
+            for r in oos:
+                g=str(r.get("group") or "SIN_CLASIFICAR").upper()
+                f=float(by_regime.get(g,{}).get("candidate_factor",factor))
+                rr=dict(r); rr["pred"]=float(r["pred"])*f; corrected.append(rr)
+            candidate=_mae_percent(corrected)
+            imp=((baseline-candidate)/baseline*100.0) if baseline and candidate is not None else None
+            if imp is None:
+                continue
+            improvements.append(float(imp))
+            reg_metrics={}
+            groups=sorted({str(r.get("group") or "SIN_CLASIFICAR").upper() for r in oos})
+            for g in groups:
+                base_group=[r for r in oos if str(r.get("group") or "SIN_CLASIFICAR").upper()==g]
+                cand_group=[r for r in corrected if str(r.get("group") or "SIN_CLASIFICAR").upper()==g]
+                if not base_group:
+                    continue
+                b=_mae_percent(base_group); c=_mae_percent(cand_group)
+                gi=((b-c)/b*100.0) if b and c is not None else None
+                reg_metrics[g]={"evaluated":len(base_group),"baseline_mae_pct":round(b,4) if b is not None else None,"candidate_mae_pct":round(c,4) if c is not None else None,"improvement_pct":round(gi,2) if gi is not None else None,"informative":len(base_group)>=10}
+                a=[r.get("direction") for r in base_group if r.get("direction") is not None]
+                if a:
+                    reg_metrics[g]["direction_accuracy_pct"]=round(100.0*sum(bool(x) for x in a)/len(a),1)
+                regime_acc.setdefault(g,[]).append(gi if gi is not None else None)
+            fold_rows.append({"fold":idx,"train_evaluated":len(train),"oos_evaluated":len(oos),"train_bias_pct":round(train_bias,4) if train_bias is not None else None,"candidate_factor":round(float(factor),6),"baseline_mae_pct":round(baseline,4) if baseline is not None else None,"candidate_mae_pct":round(candidate,4) if candidate is not None else None,"improvement_pct":round(float(imp),2),"regimes":reg_metrics})
+        if not fold_rows:
+            return {"status":"EVIDENCIA_INSUFICIENTE","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"train_min":ADAPTIVE_ROLLING_MIN_TRAIN,"oos_min":ADAPTIVE_ROLLING_MIN_OOS}
+        valid=sum(1 for x in improvements if x>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT)
+        avg=float(np.mean(improvements)) if improvements else None
+        std=float(np.std(improvements)) if len(improvements)>1 else 0.0
+        min_imp=float(min(improvements)) if improvements else None
+        regime_summary={}
+        for g,vals in regime_acc.items():
+            vv=[float(v) for v in vals if v is not None]
+            regime_summary[g]={"folds":len(vals),"avg_improvement_pct":round(float(np.mean(vv)),2) if vv else None,"informative":sum(1 for v in vals if v is not None and v>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT)>=ADAPTIVE_ROLLING_MIN_VALID_FOLDS}
+        ok=valid>=ADAPTIVE_ROLLING_MIN_VALID_FOLDS and len(fold_rows)>=ADAPTIVE_ROLLING_MIN_VALID_FOLDS
+        return {"status":"VALIDACION_ROLLING_OK" if ok else "VALIDACION_ROLLING_OBSERVACION","folds":fold_rows,"folds_validos":valid,"folds_totales":len(fold_rows),"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"avg_improvement_pct":round(avg,2) if avg is not None else None,"min_improvement_pct":round(min_imp,2) if min_imp is not None else None,"stdev_improvement_pct":round(std,2),"regime_oos":regime_summary,"walk_forward":True,"production_change":"DISABLED"}
+    except Exception as exc:
+        logger.warning("Adaptive rolling OOS falló mode=%s: %s",mode,exc)
+        return {"status":"ERROR_VALIDACION_ROLLING","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"error":str(exc)[:160]}
+
+
 def _build_shadow_candidate(rows, mode="p2p"):
     """Construye un candidato de calibración con separación temporal train/OOS.
 
@@ -4528,9 +4648,12 @@ def _build_shadow_candidate(rows, mode="p2p"):
     corrected_mae=_mae_percent(corrected)
     improvement=((baseline-corrected_mae)/baseline*100.0) if baseline and corrected_mae is not None else None
     ready=improvement is not None and improvement>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
+    rolling=_rolling_oos_validation(rows, mode)
 
     return {
         "status":"CANDIDATO_VALIDO" if ready else "CANDIDATO_NO_APROBADO",
+        "maturity_validation_status": rolling.get("status"),
+        "rolling_oos": rolling,
         "train_evaluated":len(train),"oos_evaluated":len(oos),
         "train_bias_pct":round(train_bias_pct,4),
         "candidate_factor":round(global_factor,6),
@@ -4944,6 +5067,26 @@ def _adaptive_promotion_gates(motor, scope, horizons):
         }
 
 
+def _adaptive_maturity_summary(hourly_shadow):
+    horizons=hourly_shadow.get("horizons",{}) if isinstance(hourly_shadow,dict) else {}
+    production={h:horizons.get(h,{}) for h in ("1h","3h","7h","24h")}
+    research={h:horizons.get(h,{}) for h in ADAPTIVE_RESEARCH_HORIZONS}
+    def _count_valid(data,key):
+        return sum(1 for v in data.values() if (v.get(key) or "") in {"VALIDACION_ROLLING_OK","CANDIDATO_VALIDO"})
+    rolling_ok=sum(1 for v in research.values() if (v.get("shadow_candidate") or {}).get("rolling_oos",{}).get("status")=="VALIDACION_ROLLING_OK")
+    evidence=sum(1 for v in research.values() if int(v.get("evaluated") or 0)>=ADAPTIVE_MIN_EVAL_PER_HORIZON)
+    return {
+        "production_horizons":production,
+        "research_horizons":research,
+        "research_evidence_ready":evidence,
+        "research_horizons_total":len(ADAPTIVE_RESEARCH_HORIZONS),
+        "research_rolling_validated":rolling_ok,
+        "research_rolling_total":len(ADAPTIVE_RESEARCH_HORIZONS),
+        "mode":"SHADOW_ONLY",
+        "production_change":"DISABLED",
+    }
+
+
 def _obtener_quant_adaptive_status_uncached(symbol=None):
     """Cálculo completo del panel adaptativo; llamado detrás de una caché corta."""
     if not DATABASE_URL: return {"ok":False,"error":"database_unavailable"}
@@ -4962,9 +5105,9 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
     p2p_primary_gates=_adaptive_promotion_gates("P2P","GENERAL",hs)
     spot_primary_gates=_adaptive_promotion_gates("SPOT",symbol or "ALL",hs)
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
-      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON"},
-      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"hourly_shadow":p2p_hourly,"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
-      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"hourly_shadow":spot_hourly,"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS}},
+      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":p2p_h,"hourly_shadow":p2p_hourly,"maturity":_adaptive_maturity_summary(p2p_hourly),"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":spot_h,"hourly_shadow":spot_hourly,"maturity":_adaptive_maturity_summary(spot_hourly),"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
       "generated_at":datetime.now(VET).isoformat()}
     # Persistimos una instantánea liviana para auditoría del aprendizaje.
     try:
