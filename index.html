@@ -2359,7 +2359,11 @@
         }
         content.innerHTML=cards.join('');
         status.textContent='Medición adaptativa en sombra: ninguna recomendación modifica aún las predicciones de producción.';
-      }catch(e){status.textContent=e.message||'No se pudo cargar la evolución adaptativa.';content.innerHTML='';}
+      }catch(e){
+        console.error('Venbot evolución adaptativa:', e);
+        status.textContent='No se pudo cargar la evolución adaptativa.';
+        content.innerHTML='<div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-[10px] text-amber-200">Lectura temporalmente no disponible. Usa <b>Actualizar</b> para reintentar.</div>';
+      }
     }
     window.loadQuantAdaptiveStatus=loadQuantAdaptiveStatus;
 
@@ -2382,7 +2386,11 @@
       refreshOnlineCount();
       updateLoginButton();
       await validateExistingSession();
-      loadQuantAdaptiveStatus().catch(()=>{});
+      // La evolución adaptativa es administrativa: evita consultas para
+      // cuentas normales y deja visible cualquier fallo de lectura.
+      if (window.venbotUser?.is_developer) {
+        loadQuantAdaptiveStatus().catch(error => console.error('Venbot evolución adaptativa:', error));
+      }
       // La primera solicitud ya fue lanzada en paralelo. No la esperamos aquí:
       // así una sesión lenta o el arranque de Foundation no bloquean el panel.
       bootstrapVenbotFoundation();
