@@ -916,7 +916,7 @@
               <div class="min-w-0">
                 <p class="text-[9px] font-black uppercase tracking-[0.2em] text-cyan-300">Venbot Predictive Command Center</p>
                 <h2 class="text-base md:text-xl font-black text-white mt-1">Gráficas avanzadas · <span id="adv-graph-kind-label">P2P</span></h2>
-                <p class="text-[10px] text-slate-500 mt-1">Visualización administrativa sobre datos reales de los motores productivos. Spot muestra precio, contexto, escenarios y proyección futura sin duplicar la lógica del motor.</p>
+                <p class="text-[10px] text-slate-500 mt-1">Visualización administrativa sobre datos reales de los motores productivos. Spot muestra un único precio, contexto, escenarios y proyección futura sin duplicar la lógica del motor.</p>
               </div>
               <button type="button" onclick="closeAdvancedGraphs()" class="focus-ring w-10 h-10 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white flex items-center justify-center shrink-0"><i class="fa-solid fa-xmark"></i></button>
             </div>
@@ -960,7 +960,7 @@
             <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-3">
               <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <div><div class="flex flex-wrap items-center gap-2"><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot → Resultado</h3><span id="adv-chart-mode-label" class="text-[8px] uppercase tracking-wider font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">Modelo cuantitativo</span></div><p class="text-[9px] text-slate-500 mt-1">La proyección activa mira al futuro; en P2P el corredor separa compra y venta y conserva el rango estadístico para medir incertidumbre.</p></div>
+                  <div><div class="flex flex-wrap items-center gap-2"><h3 class="text-xs md:text-sm font-black text-white">Histórico real → Proyección Venbot → Resultado</h3><span id="adv-chart-mode-label" class="text-[8px] uppercase tracking-wider font-black text-cyan-300 bg-cyan-500/5 border border-cyan-500/15 px-2 py-1 rounded-full">Modelo cuantitativo</span></div><p class="text-[9px] text-slate-500 mt-1">La proyección activa mira al futuro; P2P separa compra/venta y Spot utiliza una única trayectoria de precio con su rango de incertidumbre.</p></div>
                   <div id="adv-chart-legend" class="flex items-center gap-2 text-[9px] text-slate-500 flex-wrap"><span id="adv-leg-a"><i class="fa-solid fa-circle text-cyan-300 mr-1"></i>Real</span><span id="adv-leg-b"><i class="fa-solid fa-circle text-emerald-300 mr-1"></i>Real posterior</span><span id="adv-leg-c"><i class="fa-solid fa-circle text-purple-300 mr-1"></i>Proyección activa</span><span id="adv-leg-d"><i class="fa-solid fa-circle text-amber-300 mr-1"></i>Snapshot T0</span><span class="adv-snapshot-badge" id="adv-snapshot-badge">sin snapshot</span></div>
                 </div>
                 <div class="adv-chart-viewport relative h-[20rem] md:h-[32rem] w-full rounded-xl overflow-hidden bg-slate-950/70 border border-slate-800/70"><canvas id="advancedPredictiveChart"></canvas></div>
@@ -2429,11 +2429,18 @@
   let advancedChart = null;
   let advancedBusy = false;
   let advancedSnapshotId = null;
+  let advancedSpotHourlySnapshotId = null;
+  let advancedForceNewT0 = false;
   const P2P_LOCK_PREFIX='venbot_p2p_t0_lock_v1:';
+  const SPOT_LOCK_PREFIX='venbot_spot_t0_lock_v1:';
   const p2pLockKey=()=>P2P_LOCK_PREFIX+String(advancedP2PBank||'GENERAL');
   function p2pReadLock(){try{const v=localStorage.getItem(p2pLockKey());return v?JSON.parse(v):null;}catch(e){return null;}}
   function p2pWriteLock(v){try{localStorage.setItem(p2pLockKey(),JSON.stringify(v));}catch(e){}}
   function p2pClearLock(){try{localStorage.removeItem(p2pLockKey());}catch(e){}}
+  const spotLockKey=()=>SPOT_LOCK_PREFIX+String(advancedSpotSymbol||'BTCUSDT');
+  function spotReadLock(){try{const v=localStorage.getItem(spotLockKey());return v?JSON.parse(v):null;}catch(e){return null;}}
+  function spotWriteLock(v){try{localStorage.setItem(spotLockKey(),JSON.stringify(v));}catch(e){}}
+  function spotClearLock(){try{localStorage.removeItem(spotLockKey());}catch(e){}}
   
 
   const advEsc = (value) => String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
@@ -2665,16 +2672,25 @@
   }
   function advPopulateSnapshotSelector(payload){
     const select=document.getElementById('adv-snapshot-select');
-    const list=Array.isArray(payload?.snapshots)?payload.snapshots:[];
     if(!select) return;
+    const isSpot=advancedGraphKind==='spot';
+    const list=isSpot?(Array.isArray(payload?.hourly_shadow?.snapshots)?payload.hourly_shadow.snapshots:[]):(Array.isArray(payload?.snapshots)?payload.snapshots:[]);
     const options=list.slice(0,20).map(s=>{
       const id=String(s.id??'');
       const evaluated=Number(s.evaluated_count||0);
+      const total=isSpot?24:4;
       const dt=s.created_at?new Date(s.created_at).toLocaleString('es-VE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'sin fecha';
-      return `<option value="${advEsc(id)}">#${advEsc(id)} · ${advEsc(dt)} · ${evaluated}/4</option>`;
+      return `<option value="${advEsc(id)}">#${advEsc(id)} · ${advEsc(dt)} · ${evaluated}/${total}</option>`;
     }).join('');
-    select.innerHTML=`<option value="">Snapshot más reciente/evaluable</option>${options}`;
+    select.innerHTML=`<option value="">${isSpot?'Snapshot Spot horario':'Snapshot más reciente/evaluable'}</option>${options}`;
     select.classList.toggle('hidden', !list.length);
+    if(isSpot){
+      const lock=spotReadLock();
+      if(!advancedSpotHourlySnapshotId && lock?.snapshotId) advancedSpotHourlySnapshotId=String(lock.snapshotId);
+      if(advancedSpotHourlySnapshotId && list.some(s=>String(s.id)===String(advancedSpotHourlySnapshotId))) select.value=String(advancedSpotHourlySnapshotId);
+      else select.value='';
+      return;
+    }
     const lock=p2pReadLock();
     if(!advancedSnapshotId && lock?.snapshotId) advancedSnapshotId=String(lock.snapshotId);
     if(advancedSnapshotId && list.some(s=>String(s.id)===String(advancedSnapshotId))) select.value=String(advancedSnapshotId);
@@ -2701,6 +2717,29 @@
     return ['1h','3h','7h','24h'].map(h=>{const q=snapshot.horizons[h]||{}; const hours=Number(q.hours||advHorizonHours(h)); const y=advNum(q.predicted); return {x:anchor+hours*3600000,y:y,low:advNum(q.low),high:advNum(q.high),h,actual:advNum(q.actual),evaluated_at:q.evaluated_at||null};}).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
   }
   function advPickSnapshot(payload){ return advSelectedSnapshot(payload); }
+  function advSelectedSpotHourlySnapshot(payload){
+    const list=Array.isArray(payload?.hourly_shadow?.snapshots)?payload.hourly_shadow.snapshots:[];
+    const lock=spotReadLock();
+    if(!advancedSpotHourlySnapshotId && lock?.snapshotId) advancedSpotHourlySnapshotId=String(lock.snapshotId);
+    if(advancedSpotHourlySnapshotId){
+      const found=list.find(s=>String(s.id)===String(advancedSpotHourlySnapshotId));
+      if(found) return found;
+    }
+    const selected=list[0]||null;
+    if(selected?.id){
+      advancedSpotHourlySnapshotId=String(selected.id);
+      spotWriteLock({snapshotId:String(selected.id),created_at:selected.created_at||null});
+    }
+    return selected;
+  }
+  function advSpotHourlyForecast(snapshot){
+    if(!snapshot?.horizons || !snapshot.created_at) return [];
+    const anchor=Number(new Date(snapshot.created_at).getTime()); if(!Number.isFinite(anchor)) return [];
+    return Object.keys(snapshot.horizons).filter(h=>/^\d+h$/.test(h)).map(h=>{const q=snapshot.horizons[h]||{};const hours=Number(q.hours||String(h).replace('h',''));return {x:anchor+hours*3600000,y:advNum(q.predicted),low:advNum(q.low),high:advNum(q.high),h,actual:advNum(q.actual),evaluated_at:q.evaluated_at||null};}).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.y>0).sort((a,b)=>a.x-b.x);
+  }
+  function advSpotHourlyActuals(snapshot){
+    return advSpotHourlyForecast(snapshot).filter(p=>p.evaluated_at&&Number.isFinite(Number(p.actual))).map(p=>({x:p.x,y:Number(p.actual),h:p.h,evaluated_at:p.evaluated_at}));
+  }
   function advSnapshotActuals(snapshot){
     if(!snapshot?.horizons || !snapshot.created_at) return [];
     const anchor=Number(new Date(snapshot.created_at).getTime()); if(!Number.isFinite(anchor)) return [];
@@ -2746,6 +2785,7 @@
   function advRenderChart(points, forecast, unit, snapshot=null, options={}){
     const dualP2P=options.dualP2P===true;
     if(!dualP2P){
+      if(options.spotModern===true) return advRenderSpotCustom(points,forecast,unit,snapshot,options);
       return advRenderChartSpotLegacy(points,forecast,unit,snapshot,options);
     }
 
@@ -3288,6 +3328,76 @@
     const badge=document.getElementById('adv-snapshot-badge');if(badge)badge.textContent=snapshot?`T0 #${snapshot.id} · ${vet(anchor)} VET · congelado`:'sin snapshot';
   }
 
+  function advRenderSpotCustom(points, forecast, unit, snapshot=null, options={}){
+    advDestroyChart();
+    const canvas=document.getElementById('advancedPredictiveChart');
+    const host=canvas?.parentElement; if(!host) return;
+    const N=v=>Number(v);
+    const F=(v,d=4)=>{const n=N(v);return Number.isFinite(n)?n.toLocaleString('es-VE',{minimumFractionDigits:d,maximumFractionDigits:d}):'n/d';};
+    const vet=ts=>{const n=N(ts);if(!Number.isFinite(n))return 'n/d';return new Intl.DateTimeFormat('es-VE',{timeZone:'America/Caracas',hour:'2-digit',minute:'2-digit',hour12:true}).format(new Date(n)).replace('a. m.','a.m.').replace('p. m.','p.m.');};
+    const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const hist=(Array.isArray(points)?points:[]).map(p=>({x:N(p.x),y:N(p.y)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.y>0).sort((a,b)=>a.x-b.x);
+    const hourly=Array.isArray(forecast)?forecast.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))&&p.y>0).sort((a,b)=>a.x-b.x):[];
+    const snapshotHourly=advSpotHourlyForecast(snapshot);
+    const anchor=N(options.hourlyAnchor);
+    const snapAnchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):NaN;
+    const a=Number.isFinite(anchor)?anchor:(Number.isFinite(snapAnchor)?snapAnchor:(Number.isFinite(N(options.referenceTime))?N(options.referenceTime):(hist.length?hist[hist.length-1].x:Date.now())));
+    const live=N(options.currentPrice)>0?N(options.currentPrice):(hist.length?hist[hist.length-1].y:(hourly[0]?.y||NaN));
+    const nowTs=Math.max(a,Math.min(a+24*3600000,N(options.nowTs)||Date.now()));
+    const active=hourly.length?hourly:snapshotHourly;
+    if(!active.length){host.innerHTML='<div class="h-full flex items-center justify-center text-slate-500 text-sm p-6">No hay proyección Spot horaria disponible todavía.</div>';return;}
+    const t0Price=Number.isFinite(N(options.snapshotOriginPrice))?N(options.snapshotOriginPrice):(Number.isFinite(N(options.referencePrice))?N(options.referencePrice):(Number.isFinite(a)&&hist.length?hist.reduce((acc,p)=>p.x<=a?p.y:acc,hist[0].y):live));
+    const vals=[...hist.map(p=>p.y),...active.map(p=>p.y),...active.map(p=>p.low).filter(v=>v>0),...active.map(p=>p.high).filter(v=>v>0),live].filter(v=>Number.isFinite(v)&&v>0);
+    let lo=Math.min(...vals),hi=Math.max(...vals); const pad=Math.max((hi-lo)*.12,Math.abs(hi)*.008,.0005); lo=Math.max(0,lo-pad);hi+=pad;
+    const W=1680,H=1040,L=110,R=72,T=162,B=300,PW=W-L-R,PH=H-T-B,futureLeft=L+PW*.55,futureRight=W-R;
+    const histStart=a-12*3600000;
+    const xHist=ts=>L+((N(ts)-histStart)/Math.max(1,a-histStart))*(futureLeft-L);
+    const xFuture=ts=>futureLeft+((N(ts)-a)/(24*3600000))*(futureRight-futureLeft);
+    const xAt=ts=>N(ts)<=a?xHist(ts):xFuture(ts);
+    const y=v=>T+(hi-N(v))/Math.max(1e-9,hi-lo)*PH;
+    const path=arr=>arr.filter(p=>Number.isFinite(N(p.x))&&Number.isFinite(N(p.y))).map((p,i)=>`${i?'L':'M'} ${xAt(p.x).toFixed(1)} ${y(p.y).toFixed(1)}`).join(' ');
+    const histView=hist.filter(p=>p.x>=histStart&&p.x<=nowTs);
+    const post=hist.filter(p=>p.x>=a&&p.x<=nowTs);
+    if(live>0 && (!post.length||Math.abs(post[post.length-1].x-nowTs)>60000))post.push({x:nowTs,y:live});
+    const activePath=[{x:a,y:t0Price},...active].filter(p=>p.y>0);
+    const activeLow=active.map(p=>({x:p.x,y:p.low})).filter(p=>p.y>0);
+    const activeHigh=active.map(p=>({x:p.x,y:p.high})).filter(p=>p.y>0);
+    const snapPath=[{x:a,y:t0Price},...snapshotHourly].filter(p=>p.y>0);
+    const snapActual=advSpotHourlyActuals(snapshot);
+    const p24=active[active.length-1];
+    const delta24=t0Price>0?((p24.y/t0Price)-1)*100:0;
+    const trend=delta24>0.08?'SUBIENDO':delta24<-0.08?'BAJANDO':'LATERAL';
+    const trendLabel=delta24>0.08?'ALZA PROYECTADA':delta24<-0.08?'BAJA PROYECTADA':'RANGO / MIXTO';
+    const trendColor=delta24>0.08?'#72e6b7':delta24<-0.08?'#ff7f98':'#c9b8ff';
+    const support=N(options.support),resistance=N(options.resistance);
+    const grid=[]; for(let i=0;i<=7;i++){const val=lo+(hi-lo)*i/7,yy=y(val);grid.push(`<line x1="${L}" y1="${yy}" x2="${futureRight}" y2="${yy}" stroke="#1b2a40"/><text x="${L-16}" y="${yy+5}" text-anchor="end" fill="#72839c" font-size="15" font-weight="750">${F(val)}</text>`);}
+    const ticks=[]; for(let h=0;h<=24;h++){const xx=xFuture(a+h*3600000);const dash=h===0?'stroke-dasharray="8 8"':'';ticks.push(`<line x1="${xx}" y1="${T}" x2="${xx}" y2="${T+PH}" stroke="${h===0?'#f2c65b':'#192940'}" stroke-width="${h===0?3:1}" ${dash}/>`); const show=h===1||h===3||h===6||h===12||h===18||h===24; if(show) ticks.push(`<text x="${xx}" y="${T+PH+28}" text-anchor="middle" fill="${h===24||h===1?'#f2c65b':'#b9c8dc'}" font-size="12" font-weight="850">+${h}H · ${vet(a+h*3600000)}</text>`);}
+    const levelMarkup=[]; if(Number.isFinite(support)){const yy=y(support);levelMarkup.push(`<line x1="${L}" y1="${yy}" x2="${futureRight}" y2="${yy}" stroke="#31d7a2" stroke-opacity=".4" stroke-width="2" stroke-dasharray="6 8"/><text x="${L+12}" y="${yy-9}" fill="#62e1b2" font-size="12" font-weight="900">SOPORTE ${F(support)}</text>`);} if(Number.isFinite(resistance)){const yy=y(resistance);levelMarkup.push(`<line x1="${L}" y1="${yy}" x2="${futureRight}" y2="${yy}" stroke="#ff718e" stroke-opacity=".42" stroke-width="2" stroke-dasharray="6 8"/><text x="${L+12}" y="${yy-9}" fill="#ff8fa2" font-size="12" font-weight="900">RESISTENCIA ${F(resistance)}</text>`);}
+    const lastReal=histView[histView.length-1]?.y||live; const devRail=activePath.length?(()=>{const ts=nowTs,a0=activePath;if(ts<=a0[0].x)return a0[0].y;if(ts>=a0[a0.length-1].x)return a0[a0.length-1].y;for(let i=1;i<a0.length;i++){if(ts<=a0[i].x){const q=(ts-a0[i-1].x)/Math.max(1,a0[i].x-a0[i-1].x);return a0[i-1].y+(a0[i].y-a0[i-1].y)*q;}}return a0[a0.length-1].y;})():NaN;
+    const dev=live>0&&Number.isFinite(devRail)?live-devRail:NaN,devPct=Number.isFinite(dev)&&devRail>0?dev/devRail*100:NaN;
+    const futureBars=active.map(p=>{const d=t0Price>0?(p.y/t0Price-1)*100:0;const maxF=Math.max(.1,...active.map(q=>Math.abs(t0Price>0?(q.y/t0Price-1)*100:0)));const hp=Math.min(46,Math.abs(d)/Math.max(.1,maxF)*46);const xx=xFuture(p.x);const yy=d>=0?(T+PH+74)-hp:(T+PH+74);return `<rect x="${xx-9}" y="${yy}" width="18" height="${Math.max(3,hp)}" rx="4" fill="${d>=0?'#31d7a2':'#ff718e'}" opacity=".9"><title>Movimiento proyectado ${d.toFixed(3)}% · +${p.h}</title></rect>`;}).join('');
+    const labelHours=[1,3,6,12,18,24]; const labels=active.map(p=>{const hh=Number(String(p.h).replace(/[^0-9]/g,''));const xx=xFuture(p.x),yy=y(p.y);if(!labelHours.includes(hh))return `<circle cx="${xx}" cy="${yy}" r="3.6" fill="#c084fc" stroke="#06101b" stroke-width="2"><title>+${hh}H · ${F(p.y)} USDT · ${vet(p.x)} VET</title></circle>`;const anchor=hh===24?'end':'start',tx=hh===24?xx-12:xx+12,dy=hh===24?-30:-34;return `<circle cx="${xx}" cy="${yy}" r="6.5" fill="#c084fc" stroke="#06101b" stroke-width="4"/><line x1="${xx}" y1="${yy}" x2="${tx}" y2="${yy+dy}" stroke="#c084fc" stroke-opacity=".35"/><text x="${tx}" y="${yy+dy}" text-anchor="${anchor}" fill="#f5f3ff" font-size="12" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="5">+${hh}H · ${F(p.y)} USDT</text><text x="${tx}" y="${yy+dy+13}" text-anchor="${anchor}" fill="#8d9db3" font-size="9" font-weight="800" paint-order="stroke" stroke="#06101b" stroke-width="4">${vet(p.x)} VET</text>`;}).join('');
+    const actualPoint=snapActual.map(p=>`<circle cx="${xFuture(p.x)}" cy="${y(p.y)}" r="5" fill="#34d399" stroke="#06101b" stroke-width="3"><title>Real +${p.h}H · ${F(p.y)} USDT</title></circle>`).join('');
+    const devMarkup=Number.isFinite(devRail)&&live>0?`<line x1="${xFuture(nowTs)}" y1="${y(devRail)}" x2="${xFuture(nowTs)}" y2="${y(live)}" stroke="#5ddcff" stroke-width="2.2" stroke-dasharray="5 5"/><circle cx="${xFuture(nowTs)}" cy="${y(devRail)}" r="5" fill="#c084fc" stroke="#06101b" stroke-width="3"/><circle cx="${xFuture(nowTs)}" cy="${y(live)}" r="7" fill="#34d399" stroke="#06101b" stroke-width="4"/><rect x="${Math.min(futureRight-350,futureLeft+300)}" y="${T+20}" width="340" height="58" rx="11" fill="#07131f" fill-opacity=".92" stroke="#26405d"/><text x="${Math.min(futureRight-335,futureLeft+315)}" y="${T+41}" fill="#dbe7f8" font-size="11" font-weight="900">AHORA VS CARRIL FUTURO</text><text x="${Math.min(futureRight-335,futureLeft+315)}" y="${T+60}" fill="#63dfff" font-size="10" font-weight="900">${Number.isFinite(dev)?`${dev>=0?'+':''}${F(dev)} USDT (${devPct>=0?'+':''}${devPct.toFixed(2)}%)`:'n/d'}</text>`:'';
+    const roof=Math.max(...active.map(p=>p.y).filter(Number.isFinite)); const floor=Math.min(...active.map(p=>p.y).filter(Number.isFinite)); const remaining=Math.max(0,24-Math.max(0,(nowTs-a)/3600000));
+    const svg=`<div class="vp2p-shell"><style>.vp2p-shell{position:relative;width:100%;height:100%;min-height:100%;background:#070d18;border-radius:14px;overflow:hidden}.vp2p-scroll{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain}.vp2p-stage{width:100%;min-width:1680px;height:100%;min-height:820px}.vp2p-svg{display:block;width:100%;height:100%;min-height:820px;user-select:none;-webkit-user-select:none}.vp2p-toolbar{position:absolute;right:12px;top:12px;z-index:5;display:flex;gap:6px}.vp2p-toolbar button{border:1px solid rgba(93,220,255,.28);background:rgba(6,14,26,.92);color:#a9edff;border-radius:9px;padding:7px 10px;font-size:11px;font-weight:900;cursor:pointer}</style><div class="vp2p-toolbar"><button type="button" data-vp="minus">−</button><button type="button" data-vp="reset">1×</button><button type="button" data-vp="plus">＋</button><button type="button" data-vp="full">⛶</button></div><div class="vp2p-scroll"><div class="vp2p-stage"><svg class="vp2p-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"><defs><linearGradient id="vpsFuture" x1="0" x2="1"><stop offset="0" stop-color="#6548a0" stop-opacity=".10"/><stop offset="1" stop-color="#6548a0" stop-opacity=".025"/></linearGradient><linearGradient id="vpsBand" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#c084fc" stop-opacity=".08"/><stop offset="1" stop-color="#5ddcff" stop-opacity=".02"/></linearGradient><clipPath id="vpsClip"><rect x="${L}" y="${T}" width="${PW}" height="${PH}" rx="12"/></clipPath></defs><rect width="${W}" height="${H}" fill="#070d18"/><text x="${L}" y="29" fill="#edf3fc" font-size="22" font-weight="900">PROYECCIÓN DE FLUCTUACIÓN · SPOT VENBOT</text><text x="${futureRight}" y="29" text-anchor="end" fill="${trendColor}" font-size="21" font-weight="900">${trendLabel}</text><text x="${L}" y="50" fill="#60718b" font-size="10" font-weight="850">T0 ${vet(a)} VET · CICLO 24H · ${esc(options.symbol||'SPOT')}</text><text x="${futureRight}" y="50" text-anchor="end" fill="#60718b" font-size="10" font-weight="800">SNAPSHOT #${esc(snapshot?.id||'—')} · CONGELADO</text><g><rect x="${L}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3048"/><text x="${L+14}" y="84" fill="#64758e" font-size="9" font-weight="900">ACTUAL</text><text x="${L+14}" y="107" fill="#5ddcff" font-size="19" font-weight="900">${F(live)} USDT</text><rect x="${L+222}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3048"/><text x="${L+236}" y="84" fill="#64758e" font-size="9" font-weight="900">PROYECCIÓN 24H</text><text x="${L+236}" y="107" fill="#c084fc" font-size="19" font-weight="900">${F(p24.y)} USDT</text><rect x="${L+444}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3048"/><text x="${L+458}" y="84" fill="#64758e" font-size="9" font-weight="900">CAMBIO 24H</text><text x="${L+458}" y="107" fill="${trendColor}" font-size="19" font-weight="900">${delta24>=0?'+':''}${delta24.toFixed(2)}%</text><rect x="${L+666}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3048"/><text x="${L+680}" y="84" fill="#64758e" font-size="9" font-weight="900">MERCADO</text><text x="${L+680}" y="107" fill="${trendColor}" font-size="17" font-weight="900">${trend}</text><rect x="${L+888}" y="65" width="212" height="56" rx="10" fill="#0a1422" stroke="#1d3048"/><text x="${L+902}" y="84" fill="#64758e" font-size="9" font-weight="900">AHORA · VET</text><text x="${L+902}" y="107" fill="#5ddcff" font-size="17" font-weight="900">${vet(nowTs)}</text><rect x="${L+1110}" y="65" width="190" height="56" rx="10" fill="#0a1422" stroke="#1d3048"/><text x="${L+1124}" y="84" fill="#64758e" font-size="9" font-weight="900">QUEDA POR VENIR</text><text x="${L+1124}" y="107" fill="#edf3fc" font-size="17" font-weight="900">${remaining.toFixed(1)} h</text></g><rect x="${futureLeft}" y="${T}" width="${futureRight-futureLeft}" height="${PH}" fill="url(#vpsFuture)"/>${grid.join('')}${ticks.join('')}${levelMarkup.join('')}<text x="${L+12}" y="${T-19}" fill="#64758c" font-size="11" font-weight="900">HISTÓRICO REAL · PRECIO POR HORA</text><text x="${futureLeft+14}" y="${T-19}" fill="#9f86c9" font-size="11" font-weight="900">CARRIL FUTURO · PROYECCIÓN SPOT VENBOT</text><line x1="${futureLeft}" y1="${T}" x2="${futureLeft}" y2="${T+PH}" stroke="#f2c65b" stroke-width="3" stroke-dasharray="9 9"/><text x="${futureLeft+13}" y="${T+24}" fill="#f2c65b" font-size="15" font-weight="900">T0 · ${vet(a)} VET</text><text x="${futureLeft+13}" y="${T+42}" fill="#7889a1" font-size="10" font-weight="850">SNAPSHOT CONGELADO</text><line x1="${xFuture(nowTs)}" y1="${T}" x2="${xFuture(nowTs)}" y2="${T+PH}" stroke="#5ddcff" stroke-width="2.4" stroke-dasharray="5 7"/><text x="${Math.min(futureLeft+245,xFuture(nowTs)+10)}" y="${T+68}" fill="#5ddcff" font-size="13" font-weight="900">AHORA · ${vet(nowTs)} VET</text><g clip-path="url(#vpsClip)">${path(histView)?`<path d="${path(histView)}" fill="none" stroke="#22d3ee" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}${path(post)?`<path d="${path(post)}" fill="none" stroke="#34d399" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}${path(activeLow)?`<path d="${path(activeLow)}" fill="none" stroke="rgba(192,132,252,.22)" stroke-width="1.2" stroke-dasharray="2 5"/>`:''}${path(activeHigh)?`<path d="${path(activeHigh)}" fill="none" stroke="rgba(192,132,252,.22)" stroke-width="1.2" stroke-dasharray="2 5" fill="url(#vpsBand)"/>`:''}${path(activePath)?`<path d="${path(activePath)}" fill="none" stroke="#c084fc" stroke-width="6" stroke-dasharray="13 10" stroke-linecap="round" stroke-linejoin="round"/>`:''}${path(snapPath)?`<path d="${path(snapPath)}" fill="none" stroke="#f2c65b" stroke-width="3" stroke-dasharray="6 8" stroke-linecap="round" opacity=".8"/>`:''}${labels}${actualPoint}</g>${devMarkup}${live>0?`<circle cx="${xFuture(nowTs)}" cy="${y(live)}" r="8" fill="#34d399" stroke="#06101b" stroke-width="4"/>`:''}<text x="${L}" y="${T+PH+32}" fill="#65758d" font-size="10" font-weight="900">MOVIMIENTO REAL / PROYECTADO</text><line x1="${L}" y1="${T+PH+74}" x2="${futureRight}" y2="${T+PH+74}" stroke="#21324a" stroke-width="1.5"/>${futureBars}<text x="${futureLeft+12}" y="${T+PH+132}" fill="#8a70b0" font-size="10" font-weight="900">CARRIL DE PROYECCIÓN · +1H → +24H</text><rect x="${futureLeft+18}" y="${T+PH+145}" width="${futureRight-futureLeft-36}" height="86" rx="12" fill="#091420" stroke="#20344c"/><line x1="${futureLeft+36}" y1="${T+PH+174}" x2="${futureLeft+74}" y2="${T+PH+174}" stroke="#c084fc" stroke-width="5" stroke-dasharray="10 8"/><text x="${futureLeft+85}" y="${T+PH+178}" fill="#a8b6ca" font-size="12" font-weight="850">Proyección Spot · trayectoria central + rango</text><line x1="${futureLeft+470}" y1="${T+PH+174}" x2="${futureLeft+508}" y2="${T+PH+174}" stroke="#f2c65b" stroke-width="4" stroke-dasharray="6 8"/><text x="${futureLeft+519}" y="${T+PH+178}" fill="#a8b6ca" font-size="12" font-weight="850">Snapshot T0 · congelado</text><text x="${futureLeft+36}" y="${T+PH+207}" fill="#64758c" font-size="10" font-weight="800">Todos los puntos horarios son salidas experimentales del mismo motor Spot; no son una garantía de precio.</text><text x="${L}" y="${H-25}" fill="#566780" font-size="10" font-weight="750">Spot opera 24/7 · VET (UTC−4) · cada punto futuro conserva su hora objetivo.</text><text x="${futureRight}" y="${H-25}" text-anchor="end" fill="#63758e" font-size="10" font-weight="850">REAL → PROYECCIÓN → SEGUIMIENTO</text></svg></div></div></div>`;
+    host.innerHTML=svg;
+    const hourlyReadout=document.getElementById('adv-hourly-readout');
+    if(hourlyReadout){hourlyReadout.innerHTML=`<div class="vp2p-hourly-readout"><div class="vp2p-hourly-title">PROYECCIÓN SPOT · +1H → +24H <span>SHADOW EXPERIMENTAL · T0 ${vet(a)} VET</span></div><div class="vp2p-hourly-grid">${active.map(p=>`<div class="vp2p-hour-cell"><b>+${String(p.h).replace('h','')}H</b><small>${vet(p.x)} VET</small><strong>${F(p.y)} USDT</strong><span>${Number.isFinite(Number(p.change))?advPct(p.change):''}</span></div>`).join('')}</div></div>`;}
+    const shell=host.querySelector('.vp2p-shell'),scrollEl=host.querySelector('.vp2p-scroll'),stage=host.querySelector('.vp2p-stage'),svgEl=host.querySelector('.vp2p-svg');
+    const fitZoom=()=>Math.min(1,Math.max(.10,Math.max(260,(scrollEl?.clientWidth||shell?.clientWidth||window.innerWidth)-10)/W)); let zoomLevel=fitZoom(); const ZMIN=.10,ZMAX=1; const clamp=v=>Math.min(ZMAX,Math.max(ZMIN,Number(v)||fitZoom())); const zoomLabel=()=>`${Math.round(zoomLevel*100)}%`;
+    const margins=(w,h)=>({x:Math.max(0,((scrollEl?.clientWidth||W)-w)/2),y:Math.max(0,((scrollEl?.clientHeight||H)-h)/2)});
+    const apply=(px=null,py=null)=>{const old=zoomLevel,ow=Math.max(1,Math.round(W*old)),oh=Math.max(1,Math.round(H*old)),om=margins(ow,oh),fx=px==null?(scrollEl.clientWidth/2):px,fy=py==null?(scrollEl.clientHeight/2):py,cx=(scrollEl.scrollLeft+fx-om.x)/old,cy=(scrollEl.scrollTop+fy-om.y)/old,w=Math.max(1,Math.round(W*zoomLevel)),hh=Math.max(1,Math.round(H*zoomLevel)),m=margins(w,hh);stage.style.setProperty('width',`${w}px`,'important');stage.style.setProperty('min-width',`${w}px`,'important');stage.style.setProperty('height',`${hh}px`,'important');stage.style.setProperty('min-height',`${hh}px`,'important');stage.style.setProperty('margin-left',`${Math.round(m.x)}px`,'important');stage.style.setProperty('margin-top',`${Math.round(m.y)}px`,'important');svgEl.style.setProperty('width',`${w}px`,'important');svgEl.style.setProperty('height',`${hh}px`,'important');svgEl.style.setProperty('min-width','0px','important');svgEl.style.setProperty('min-height','0px','important');requestAnimationFrame(()=>{const maxX=Math.max(0,scrollEl.scrollWidth-scrollEl.clientWidth),maxY=Math.max(0,scrollEl.scrollHeight-scrollEl.clientHeight);scrollEl.scrollLeft=Math.max(0,Math.min(maxX,cx*zoomLevel+m.x-fx));scrollEl.scrollTop=Math.max(0,Math.min(maxY,cy*zoomLevel+m.y-fy));const b=host.querySelector('[data-vp="reset"]');if(b)b.textContent=zoomLabel();});};
+    host.querySelector('[data-vp="minus"]')?.addEventListener('click',()=>{zoomLevel=clamp(zoomLevel-.05);apply();});host.querySelector('[data-vp="plus"]')?.addEventListener('click',()=>{zoomLevel=clamp(zoomLevel+.05);apply();});host.querySelector('[data-vp="reset"]')?.addEventListener('click',()=>{zoomLevel=fitZoom();apply();});host.querySelector('[data-vp="full"]')?.addEventListener('click',async()=>{try{if(!document.fullscreenElement)await shell.requestFullscreen?.();else await document.exitFullscreen?.();}catch(e){}});
+    const pointers=new Map();let pan=null,pinch=null;const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),mid=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
+    scrollEl.addEventListener('pointerdown',e=>{if(e.target.closest('.vp2p-toolbar'))return;scrollEl.setPointerCapture?.(e.pointerId);pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});if(pointers.size===1)pan={x:e.clientX,y:e.clientY,left:scrollEl.scrollLeft,top:scrollEl.scrollTop};else if(pointers.size===2){const pts=[...pointers.values()];pinch={d:Math.max(1,dist(pts[0],pts[1])),z:zoomLevel,m:mid(pts[0],pts[1])};pan=null;}e.preventDefault();},{passive:false});
+    scrollEl.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId))return;pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});if(pointers.size===2&&pinch){const pts=[...pointers.values()],scale=dist(pts[0],pts[1])/pinch.d,mm=mid(pts[0],pts[1]),r=scrollEl.getBoundingClientRect();zoomLevel=clamp(pinch.z*scale);apply(mm.x-r.left,mm.y-r.top);}else if(pointers.size===1&&pan){scrollEl.scrollLeft=pan.left-(e.clientX-pan.x);scrollEl.scrollTop=pan.top-(e.clientY-pan.y);}e.preventDefault();},{passive:false});
+    const end=e=>{pointers.delete(e.pointerId);try{scrollEl.releasePointerCapture?.(e.pointerId);}catch{}if(!pointers.size){pan=null;pinch=null;}else if(pointers.size===1){const [id,p]=[...pointers.entries()][0];pan={x:p.clientX,y:p.clientY,left:scrollEl.scrollLeft,top:scrollEl.scrollTop};pinch=null;}e.preventDefault();};scrollEl.addEventListener('pointerup',end,{passive:false});scrollEl.addEventListener('pointercancel',end,{passive:false});scrollEl.addEventListener('wheel',e=>{if(!(e.ctrlKey||e.metaKey))return;e.preventDefault();const r=scrollEl.getBoundingClientRect();zoomLevel=clamp(zoomLevel+(e.deltaY<0?.02:-.02));apply(e.clientX-r.left,e.clientY-r.top);},{passive:false});
+    const resize=()=>{if(Math.abs(zoomLevel-fitZoom())<.03){zoomLevel=fitZoom();apply();}};window.addEventListener('resize',resize,{passive:true});requestAnimationFrame(()=>{zoomLevel=fitZoom();apply();});
+    advancedChart={destroy:()=>{},resize:()=>{},_venbotMeta:{dualP2P:false,anchor:a,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'spot-hourly-shadow-v31.59'}};
+    const t0El=document.getElementById('adv-t0-label');if(t0El)t0El.textContent=`T0 · ${vet(a)} VET · snapshot fijo`;const badge=document.getElementById('adv-snapshot-badge');if(badge)badge.textContent=snapshot?`T0 #${snapshot.id} · ${vet(a)} VET · 24H`:'sin snapshot';
+  }
+
   function advRenderChartSpotLegacy(points, forecast, unit, snapshot=null, options={}){
     const canvas=document.getElementById('advancedPredictiveChart'); if(!canvas) return;
     advDestroyChart();
@@ -3375,12 +3485,14 @@
   }
   function advRenderSnapshotTrace(snapshot, unit){
     const box=document.getElementById('adv-trace-table'); if(!box) return;
-    const labels=['1h','3h','7h','24h'];
+    const isSpot=advancedGraphKind==='spot';
+    const labels=isSpot?Object.keys(snapshot?.horizons||{}).filter(h=>/^\d+h$/.test(h)).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))):['1h','3h','7h','24h'];
+    const total=isSpot?24:4;
     if(!snapshot){ box.innerHTML='<div class="text-[9px] text-slate-600">Aún no existe un snapshot registrado para comparar.</div>'; return; }
     const snapTime=snapshot.created_at?new Date(snapshot.created_at):null;
     const status=String(snapshot.status||'pendiente');
     const count=Number(snapshot.evaluated_count||0);
-    box.innerHTML=`<div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-[9px] text-slate-500">Snapshot #${advEsc(snapshot.id)} · T0 ${snapTime?advEsc(snapTime.toLocaleString('es-VE')):'n/d'} · ${advEsc(status)}</div><span class="adv-snapshot-badge">${count}/4 evaluadas</span></div><div class="overflow-x-auto"><table class="w-full min-w-[560px] text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción T0</th><th class="py-2 pr-3">Resultado real</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{
+    box.innerHTML=`<div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-[9px] text-slate-500">Snapshot #${advEsc(snapshot.id)} · T0 ${snapTime?advEsc(snapTime.toLocaleString('es-VE')):'n/d'} · ${advEsc(status)}</div><span class="adv-snapshot-badge">${count}/${total} evaluadas</span></div><div class="overflow-x-auto"><table class="w-full min-w-[560px] text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción T0</th><th class="py-2 pr-3">Resultado real</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{
       const q=snapshot.horizons?.[h]||{};
       const predicted=advNum(q.predicted);
       const actualNum=advNum(q.actual);
@@ -3401,7 +3513,9 @@
     const coverage=Number(motor.coverage_hours||0); const hvals=motor.horizons||{};
     box.innerHTML=`<div class="adv-learning-kpi"><span>Motor</span><strong>${kind==='spot'?'SPOT':'P2P'}</strong></div><div class="adv-learning-kpi"><span>Cobertura</span><strong>${coverage.toFixed(2)} h</strong></div><div class="adv-learning-kpi"><span>Etapa</span><strong>${advEsc(stage.stage||'ACUMULANDO')}</strong></div><div class="adv-learning-kpi"><span>Modo</span><strong>EN SOMBRA</strong></div>`;
     const covGoal=Number(motor.stage?.next_target_hours||700); const covPct=Math.max(0,Math.min(100,(coverage/covGoal)*100)); const covMeta=document.getElementById('adv-learning-coverage-meta'); const covFill=document.getElementById('adv-learning-coverage-fill'); if(covMeta) covMeta.textContent=`${coverage.toFixed(2)} / ${covGoal.toFixed(0)} h`; if(covFill) covFill.style.width=`${covPct.toFixed(1)}%`;
-    hzbox.innerHTML=['1h','3h','7h','24h'].map(h=>{const v=hvals[h]||{};const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'n/d';const mae=Number.isFinite(Number(v.mae_pct))?`${Number(v.mae_pct).toFixed(3)}% MAE`:'n/d';const cand=v.shadow_candidate?.status||'ACUMULANDO';return `<div class="adv-learning-kpi"><span>${h.toUpperCase()}</span><strong>${Number(v.evaluated||0)} eval.</strong><small class="text-slate-500">${acc} · ${mae}</small><small class="text-purple-300">${advEsc(cand)}</small></div>`;}).join('');
+    const displayHorizons=kind==='spot'&&motor?.hourly_shadow?.horizons ? Object.keys(motor.hourly_shadow.horizons).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))) : ['1h','3h','7h','24h'];
+    const displayData=kind==='spot'&&motor?.hourly_shadow?.horizons ? motor.hourly_shadow.horizons : hvals;
+    hzbox.innerHTML=displayHorizons.map(h=>{const v=displayData[h]||{};const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'n/d';const mae=Number.isFinite(Number(v.mae_pct))?`${Number(v.mae_pct).toFixed(3)}% MAE`:'n/d';const cand=v.shadow_candidate?.status||'ACUMULANDO';return `<div class="adv-learning-kpi"><span>${h.toUpperCase()}</span><strong>${Number(v.evaluated||0)} eval.</strong><small class="text-slate-500">${acc} · ${mae}</small><small class="text-purple-300">${advEsc(cand)}</small></div>`;}).join('');
     if(badge) badge.textContent=motor.stage?.stage||'lectura';
     if(note) note.textContent='La capa adaptativa observa errores y sesgos, separa entrenamiento de OOS y mantiene los candidatos en sombra. Una medición no modifica el motor productivo.';
   }
@@ -3416,9 +3530,13 @@
     const src=analysis?.proyecciones_horizontes||{};
     return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};});
   }
-  function advProjectionRowsSpot(d){
-    const src=d?.projections||{};
-    return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.central,low:q.low,high:q.high,bullish:q.bullish,bearish:q.bearish,change:q.change_pct,direction:Math.abs(Number(q.change_pct||0))<0.08?'RANGO':Number(q.change_pct)>0?'ALCISTA':'BAJISTA',confidence:q.confidence};});
+  function advProjectionRowsSpot(d, hourlySnapshot=null){
+    if(hourlySnapshot?.horizons){
+      return Object.keys(hourlySnapshot.horizons).filter(h=>/^\d+h$/.test(h)).map(h=>{const q=hourlySnapshot.horizons[h]||{}; return {h,central:q.predicted,low:q.low,high:q.high,change:q.change,direction:Number(q.change||0)>0.08?'ALCISTA':Number(q.change||0)<-0.08?'BAJISTA':'RANGO',confidence:q.confidence,actual:q.actual,evaluated_at:q.evaluated_at,target_at:q.target_at};}).filter(r=>Number.isFinite(Number(r.central))).sort((a,b)=>Number(a.h.replace('h',''))-Number(b.h.replace('h','')));
+    }
+    const hourly=d?.proyecciones_horarias_24h||{};
+    const src=Object.keys(hourly).length?hourly:(d?.projections||{});
+    return Object.keys(src).filter(h=>/^\d+h$/.test(h)).map(h=>{const q=src[h]||{};return {h,central:q.central,low:q.low,high:q.high,bullish:q.bullish,bearish:q.bearish,change:q.change_pct,direction:Math.abs(Number(q.change_pct||0))<0.08?'RANGO':Number(q.change_pct)>0?'ALCISTA':'BAJISTA',confidence:q.confidence};}).filter(r=>Number.isFinite(Number(r.central))).sort((a,b)=>Number(a.h.replace('h',''))-Number(b.h.replace('h','')));
   }
   function advSetChartLegend(kind){
     const ids=['adv-leg-a','adv-leg-b','adv-leg-c','adv-leg-d'];
@@ -3505,21 +3623,28 @@
   }
   async function loadAdvancedSpot(){
     const rangeCfg = advancedPeriod==='24h' ? {interval:'1h',limit:80} : advancedPeriod==='7d' ? {interval:'1h',limit:180} : {interval:'4h',limit:220};
-    const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/spot?symbol=${encodeURIComponent(advancedSpotSymbol)}&interval=${rangeCfg.interval}&limit=${rangeCfg.limit}&t=${Date.now()}`);
-    advPopulateSnapshotSelector(d); const pred=d.prediction||{}; const o=pred.observed||{}; const a=pred.analysis||{}; const proj=advProjectionRowsSpot(pred); const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
-    const points=(d.candles||[]).map(c=>({x:Number(c.open_time||c.timestamp||c.time),y:Number(c.close)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
-    const projectionBase=Date.now();
-    const forecast=proj.map(r=>{const hrs=advHorizonHours(r.h); return {x:Number.isFinite(hrs)?projectionBase+hrs*3600000:NaN,y:Number(r.central),low:Number(r.low),high:Number(r.high),h:r.h};}).filter(p=>Number.isFinite(p.x));
-    const selected=proj.find(x=>x.h==='24h')||proj[proj.length-1];
-    advSetText('adv-m-current',advMoney(o.price,4)); advSetText('adv-m-current-unit','USDT'); advSetText('adv-m-projection',advMoney(selected?.central,4)); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change)); advSetText('adv-m-range',selected?`${advMoney(selected.low,4)}–${advMoney(selected.high,4)}`:'n/d'); advSetText('adv-m-confidence',Number.isFinite(Number(a.confidence))?advMoney(a.confidence,0):'n/d'); advSetText('adv-m-r2',Number.isFinite(Number(a.regression_r2))?advMoney(a.regression_r2,3):'n/d');
-    const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number(perf?.horizons?.[hz]?.evaluated??0),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advSetText('adv-chart-mode-label',`${advancedSpotSymbol} · trayectoria cuantitativa con escenarios`); advSetChartLegend('spot'); advRenderHorizonCards(proj,'USDT'); advRenderTimeline(proj,'USDT',false); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(points,forecast,'USDT',snapshot,{referenceTime:projectionBase,currentPrice:advNum(o.price),snapshotHistory:d.snapshots,support:Number(a.support),resistance:Number(a.resistance),scenarioBear:Number((pred.scenarios_24h||{}).bearish),scenarioBull:Number((pred.scenarios_24h||{}).bullish)});
-    const sctx=document.getElementById('adv-spot-context'); const sctxCard=document.getElementById('adv-spot-context-card'); if(sctx&&sctxCard){sctxCard.classList.remove('hidden'); const vol=Number(o.quote_volume_24h); const volText=Number.isFinite(vol)&&vol>0?(vol>=1e9?(vol/1e9).toFixed(2)+' B':vol>=1e6?(vol/1e6).toFixed(2)+' M':vol>=1e3?(vol/1e3).toFixed(2)+' K':vol.toFixed(0)):'n/d'; const mom=Number(a.momentum_score); const v1=Number(a.volatility_1h_pct); const ts=Number(a.trend_score); sctx.innerHTML=`<div class="adv-spot-context-card"><span class="k">Régimen</span><strong class="v">${advDirectionText(a.trend)}</strong><small class="m">score ${Number.isFinite(ts)?ts.toFixed(3):'n/d'}</small></div><div class="adv-spot-context-card"><span class="k">Momentum</span><strong class="v">${Number.isFinite(mom)?(mom>=0?'+':'')+mom.toFixed(3)+'%':'n/d'}</strong><small class="m">multiventana</small></div><div class="adv-spot-context-card"><span class="k">Volatilidad 1H</span><strong class="v">${Number.isFinite(v1)?v1.toFixed(3)+'%':'n/d'}</strong><small class="m">histórica</small></div><div class="adv-spot-context-card"><span class="k">Volumen 24H</span><strong class="v">${volText}</strong><small class="m">quote volume real</small></div><div class="adv-spot-context-card"><span class="k">Variación 24H</span><strong class="v">${advPct(o.change_24h_pct)}</strong><small class="m">precio observado</small></div><div class="adv-spot-context-card"><span class="k">R²</span><strong class="v">${Number.isFinite(Number(a.regression_r2))?Number(a.regression_r2).toFixed(3):'n/d'}</strong><small class="m">ajuste temporal</small></div>`;}
-    const sbox=document.getElementById('adv-scenarios'); if(sbox){const sc=pred.scenarios_24h||{}; const p=advNum(o.price); const dist=(v)=>Number.isFinite(p)&&Number.isFinite(Number(v))?advPct((Number(v)/p-1)*100):'n/d'; sbox.innerHTML=`<div class="mb-2 grid grid-cols-1 md:grid-cols-3 gap-2"><div class="adv-spot-scenario bear"><span class="k">Bajista 24H</span><strong class="v">${advMoney(sc.bearish,4)} USDT</strong><small class="d">Desde actual ${dist(sc.bearish)}</small></div><div class="adv-spot-scenario base"><span class="k">Central 24H</span><strong class="v">${advMoney(sc.central,4)} USDT</strong><small class="d">Desde actual ${dist(sc.central)}</small></div><div class="adv-spot-scenario bull"><span class="k">Alcista 24H</span><strong class="v">${advMoney(sc.bullish,4)} USDT</strong><small class="d">Desde actual ${dist(sc.bullish)}</small></div></div><div class="grid grid-cols-2 gap-2"><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(a.support,4)} USDT</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(a.resistance,4)} USDT</strong></div></div>`;}
-    const vbox=document.getElementById('adv-validation'); if(vbox){const hz=perf?.horizons||{}; vbox.innerHTML=['1h','3h','7h','24h'].map(hzKey=>{const x=hz[hzKey]||{};return `<div class="adv-horizon-row"><div class="flex items-center justify-between"><span class="font-black text-slate-300">${hzKey.toUpperCase()}</span><span class="text-slate-500">${Number.isFinite(Number(x.evaluated??x.count))?(x.evaluated??x.count):'n/d'} evaluadas</span></div><strong class="block mt-1">${Number.isFinite(Number(x.direction_accuracy_pct??x.accuracy_pct))?advMoney(x.direction_accuracy_pct??x.accuracy_pct,1)+'% dirección':'n/d'}</strong></div>`}).join('');}
-    advRenderSnapshotTrace(snapshot,'USDT');
-    advLoadLearning('spot');
-    advSetStatus(`${advancedSpotSymbol} · ${advancedPeriod.toUpperCase()} de histórico real + proyección activa + snapshot verificable · ${new Date(pred.generated_at||Date.now()).toLocaleTimeString('es-VE')}`,'ok');
+    const lock=spotReadLock();
+    const lockQuery=lock?.snapshotId?`&snapshot_id=${encodeURIComponent(lock.snapshotId)}`:'';
+    const forceQuery=advancedForceNewT0?'&new_t0=true':'';
+    const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/spot?symbol=${encodeURIComponent(advancedSpotSymbol)}&interval=${rangeCfg.interval}&limit=${rangeCfg.limit}&t=${Date.now()}${lockQuery}${forceQuery}`);
+    advancedForceNewT0=false;
+    advPopulateSnapshotSelector(d);
+    const pred=d.prediction||{}; const o=pred.observed||{}; const a=pred.analysis||{}; const perf=d.performance||{};
+    const snapshot=advSelectedSpotHourlySnapshot(d);
+    const proj=advProjectionRowsSpot(pred,snapshot);
+    const hist=(d.candles||[]).map(c=>({x:Number(c.x||c.open_time||c.timestamp||c.time),y:Number(c.c??c.close??c.price)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.y>0);
+    const anchor=snapshot?.created_at?Number(new Date(snapshot.created_at).getTime()):Number(new Date(pred.generated_at||Date.now()).getTime());
+    const hourlySource=snapshot?.horizons ? proj : advProjectionRowsSpot(pred,null);
+    const forecast=hourlySource.map(r=>({x:anchor+Number(r.h.replace('h',''))*3600000,y:Number(r.central),low:Number(r.low),high:Number(r.high),h:r.h,change:Number(r.change)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+    const selected=forecast.find(x=>x.h==='24h')||forecast[forecast.length-1];
+    advSetText('adv-m-current',advMoney(o.price,4)); advSetText('adv-m-current-unit','USDT'); advSetText('adv-m-projection',advMoney(selected?.y,4)); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change)); advSetText('adv-m-range',selected?`${advMoney(selected.low,4)}–${advMoney(selected.high,4)}`:'n/d'); advSetText('adv-m-confidence',Number.isFinite(Number(a.confidence))?advMoney(a.confidence,0):'n/d'); advSetText('adv-m-r2',Number.isFinite(Number(a.regression_r2))?advMoney(a.regression_r2,3):'n/d');
+    const totalEval=Object.values(snapshot?.horizons||{}).filter(q=>q?.evaluated_at).length; advSetText('adv-m-evaluated',String(totalEval||0));
+    advSetText('adv-chart-mode-label',`${advancedSpotSymbol} · proyección horaria 1H → 24H · sombra`); advSetChartLegend('spot');
+    advRenderHorizonCards(proj,'USDT'); advRenderTimeline(proj,'USDT',false); advRenderSnapshotHistory(d.hourly_shadow?.snapshots||[],snapshot); advRenderMemorySummary(d.hourly_shadow?.snapshots||[],snapshot);
+    advRenderChart(hist,forecast,'USDT',snapshot,{spotModern:true,referenceTime:anchor,hourlyAnchor:anchor,nowTs:Date.now(),currentPrice:Number(o.price),support:Number(a.support),resistance:Number(a.resistance),snapshotOriginPrice:Number(snapshot?.origin_price||o.price),symbol:advancedSpotSymbol});
+    const sctx=document.getElementById('adv-spot-context'),sctxCard=document.getElementById('adv-spot-context-card'); if(sctx&&sctxCard){sctxCard.classList.remove('hidden');const vol=Number(o.quote_volume_24h);const volText=Number.isFinite(vol)&&vol>0?(vol>=1e9?(vol/1e9).toFixed(2)+' B':vol>=1e6?(vol/1e6).toFixed(2)+' M':vol>=1e3?(vol/1e3).toFixed(2)+' K':vol.toFixed(0)):'n/d';const mom=Number(a.momentum_score),v1=Number(a.volatility_1h_pct),ts=Number(a.trend_score);sctx.innerHTML=`<div class="adv-spot-context-card"><span class="k">Régimen</span><strong class="v">${advDirectionText(a.trend)}</strong><small class="m">score ${Number.isFinite(ts)?ts.toFixed(3):'n/d'}</small></div><div class="adv-spot-context-card"><span class="k">Momentum</span><strong class="v">${Number.isFinite(mom)?(mom>=0?'+':'')+mom.toFixed(3)+'%':'n/d'}</strong><small class="m">multiventana</small></div><div class="adv-spot-context-card"><span class="k">Volatilidad 1H</span><strong class="v">${Number.isFinite(v1)?v1.toFixed(3)+'%':'n/d'}</strong><small class="m">histórica</small></div><div class="adv-spot-context-card"><span class="k">Volumen 24H</span><strong class="v">${volText}</strong><small class="m">quote volume real</small></div><div class="adv-spot-context-card"><span class="k">Variación 24H</span><strong class="v">${advPct(o.change_24h_pct)}</strong><small class="m">precio observado</small></div><div class="adv-spot-context-card"><span class="k">R²</span><strong class="v">${Number.isFinite(Number(a.regression_r2))?Number(a.regression_r2).toFixed(3):'n/d'}</strong><small class="m">ajuste temporal</small></div>`;}
+    advRenderSnapshotTrace(snapshot,'USDT'); advLoadLearning('spot');
+    advSetStatus(`${advancedSpotSymbol} · histórico real + proyección horaria + snapshot verificable · ${new Date(pred.generated_at||Date.now()).toLocaleTimeString('es-VE')}`,'ok');
   }
   window.openAdvancedGraphs=async function(){
     if(!window.venbotUser?.is_developer){alert('🔐 Centro Predictivo reservado al administrador de Venbot.');return;}
@@ -3528,15 +3653,19 @@
   window.closeAdvancedGraphs=function(){ const modal=document.getElementById('advancedGraphsModal'); if(modal) modal.classList.add('hidden'); document.body.classList.remove('overflow-hidden'); advancedBusy=false; advDestroyChart(); };
   window.setAdvancedGraphKind=async function(kind){advancedGraphKind=kind==='spot'?'spot':'p2p';advSetKindUI();advSetButtons();await loadAdvancedGraphs();};
   window.setAdvancedP2PBank=async function(bank){advancedP2PBank=['GENERAL','MERCANTIL','PROVINCIAL','BNC'].includes(bank)?bank:'GENERAL';advSetButtons();await loadAdvancedGraphs();};
-  window.setAdvancedSpotSymbol=async function(symbol){advancedSpotSymbol=['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'].includes(symbol)?symbol:'BTCUSDT';await loadAdvancedGraphs();};
+  window.setAdvancedSpotSymbol=async function(symbol){advancedSpotSymbol=['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'].includes(symbol)?symbol:'BTCUSDT';advancedSpotHourlySnapshotId=null;await loadAdvancedGraphs();};
   window.setAdvancedSnapshot=async function(id){
-    advancedSnapshotId=id||null;
-    if(id) p2pWriteLock({snapshotId:String(id),created_at:null});
+    if(advancedGraphKind==='spot'){
+      advancedSpotHourlySnapshotId=id||null;
+      if(id) spotWriteLock({snapshotId:String(id),created_at:null});
+    }else{
+      advancedSnapshotId=id||null;
+      if(id) p2pWriteLock({snapshotId:String(id),created_at:null});
+    }
     await loadAdvancedGraphs();
   };
   window.newAdvancedP2PSnapshot=async function(){
-    p2pClearLock();
-    advancedSnapshotId=null;
+    if(advancedGraphKind==='spot'){spotClearLock();advancedSpotHourlySnapshotId=null;advancedForceNewT0=true;}else{p2pClearLock();advancedSnapshotId=null;}
     await loadAdvancedGraphs();
   };
   window.setAdvancedPeriod=async function(p){advancedPeriod=['24h','7d','30d'].includes(p)?p:'24h';advSetButtons();await loadAdvancedGraphs();};
