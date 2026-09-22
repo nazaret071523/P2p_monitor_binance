@@ -312,13 +312,14 @@
 @media(max-width:760px){#adv-canvas-wrap{min-height:560px!important}}
 </style>
 
-<style id="venbot-v31-52-chart-responsive">
-/* v31.53: responsive fit + working touch/click zoom. No motor changes. */
+<style id="venbot-v31-54-chart-interaction">
+/* v31.54: responsive fit + continuous touch zoom/pan. No motor changes. */
 .adv-chart-viewport{position:relative;overflow:hidden!important}
 .vp2p-shell{display:flex!important;flex-direction:column!important;height:auto!important;min-height:0!important;width:100%!important;max-width:100%!important}
-.vp2p-scroll{position:relative!important;inset:auto!important;flex:0 0 auto!important;width:100%!important;height:clamp(320px,64vw,720px)!important;min-height:320px!important;max-height:720px!important;overflow:auto!important;overscroll-behavior:contain!important;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
-.vp2p-stage{width:1680px;height:1040px;min-width:1680px;min-height:1040px;transform-origin:top left}
-.vp2p-svg{display:block;width:1680px;height:1040px;min-width:0;min-height:0;touch-action:none}
+.vp2p-scroll{position:relative!important;inset:auto!important;flex:0 0 auto!important;width:100%!important;height:clamp(320px,64vw,720px)!important;min-height:320px!important;max-height:720px!important;overflow:hidden!important;overscroll-behavior:contain!important;-webkit-overflow-scrolling:auto!important;touch-action:none!important;cursor:grab}
+.vp2p-scroll.vp2p-dragging{cursor:grabbing!important}
+.vp2p-stage{width:1680px;height:1040px;min-width:1680px;min-height:1040px;transform-origin:top left;will-change:width,height;margin-left:0;margin-top:0}
+.vp2p-svg{display:block;width:1680px;height:1040px;min-width:0;min-height:0;touch-action:none;user-select:none;-webkit-user-select:none}
 .vp2p-toolbar{right:10px!important;top:10px!important}
 .vp2p-toolbar button{min-width:42px;min-height:40px;padding:7px 10px!important;touch-action:manipulation}
 .vp2p-hourly-readout{background:#07101c;border:1px solid #1d3048;border-radius:12px;padding:12px 14px;overflow-x:auto}
@@ -3073,49 +3074,166 @@
     const stage=host.querySelector('.vp2p-stage');
     const svgEl=host.querySelector('.vp2p-svg');
 
-    // v31.53: fit the full SVG to the available width first, then allow manual zoom.
-    // The previous v31.52 CSS forced 1680px with !important, so the buttons could not
-    // actually change the rendered size. This version removes that conflict.
+    // v31.54: interaction-only renderer layer. It never changes the forecast arrays or motor output.
+    // FIT uses the available width; manual zoom is continuous; touch supports pan + pinch zoom.
     const fitZoom=()=>{
       const available=Math.max(260,(scrollEl?.clientWidth||shell?.clientWidth||window.innerWidth)-10);
       return Math.min(1,Math.max(.10,available/W));
     };
     let zoomLevel=fitZoom();
-    const clampZoom=v=>Math.min(1,Math.max(.10,Number(v)||fitZoom()));
+    const ZOOM_MIN=0.10, ZOOM_MAX=1.00, ZOOM_STEP=0.05;
+    const clampZoom=v=>Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,Number.isFinite(Number(v))?Number(v):fitZoom()));
     const zoomLabel=()=>`${Math.round(zoomLevel*100)}%`;
+    const getMargins=(w,h)=>({
+      x:Math.max(0,((scrollEl?.clientWidth||W)-w)/2),
+      y:Math.max(0,((scrollEl?.clientHeight||H)-h)/2)
+    });
+    const clampScroll=()=>{
+      const maxX=Math.max(0,scrollEl.scrollWidth-scrollEl.clientWidth);
+      const maxY=Math.max(0,scrollEl.scrollHeight-scrollEl.clientHeight);
+      scrollEl.scrollLeft=Math.max(0,Math.min(maxX,scrollEl.scrollLeft));
+      scrollEl.scrollTop=Math.max(0,Math.min(maxY,scrollEl.scrollTop));
+    };
     const updateZoomButton=()=>{
       const b=host.querySelector('[data-vp="reset"]');
-      if(b){b.textContent=zoomLabel();b.title=`Restablecer a ajuste de pantalla (${Math.round(fitZoom()*100)}%)`;b.setAttribute('aria-label','Restablecer zoom a ajuste de pantalla');}
+      if(b){
+        b.textContent=zoomLabel();
+        b.title=`Zoom actual ${zoomLabel()} · toque para ajustar a pantalla`;
+        b.setAttribute('aria-label',`Zoom actual ${zoomLabel()}, restablecer a ajuste de pantalla`);
+      }
     };
-    const applyZoom=()=>{
-      zoomLevel=clampZoom(zoomLevel);
+    const applyZoom=(pivotX=null,pivotY=null)=>{
+      const oldZoom=zoomLevel;
+      const oldW=Math.max(1,Math.round(W*oldZoom)),oldH=Math.max(1,Math.round(H*oldZoom));
+      const oldM=getMargins(oldW,oldH);
+      const focusX=pivotX==null?(scrollEl.clientWidth/2):pivotX;
+      const focusY=pivotY==null?(scrollEl.clientHeight/2):pivotY;
+      const contentX=(scrollEl.scrollLeft+focusX-oldM.x)/oldZoom;
+      const contentY=(scrollEl.scrollTop+focusY-oldM.y)/oldZoom;
+
       const w=Math.max(1,Math.round(W*zoomLevel)),h=Math.max(1,Math.round(H*zoomLevel));
       stage.style.setProperty('width',`${w}px`,'important');
       stage.style.setProperty('min-width',`${w}px`,'important');
       stage.style.setProperty('height',`${h}px`,'important');
       stage.style.setProperty('min-height',`${h}px`,'important');
+      const margin=getMargins(w,h);
+      stage.style.setProperty('margin-left',`${Math.round(margin.x)}px`,'important');
+      stage.style.setProperty('margin-top',`${Math.round(margin.y)}px`,'important');
       svgEl.style.setProperty('width',`${w}px`,'important');
       svgEl.style.setProperty('height',`${h}px`,'important');
       svgEl.style.setProperty('min-width','0px','important');
       svgEl.style.setProperty('min-height','0px','important');
+
+      // Preserve the point under the finger/mouse while changing zoom.
+      const desiredLeft=contentX*zoomLevel+margin.x-focusX;
+      const desiredTop=contentY*zoomLevel+margin.y-focusY;
+      requestAnimationFrame(()=>{
+        const maxX=Math.max(0,scrollEl.scrollWidth-scrollEl.clientWidth);
+        const maxY=Math.max(0,scrollEl.scrollHeight-scrollEl.clientHeight);
+        scrollEl.scrollLeft=Math.max(0,Math.min(maxX,desiredLeft));
+        scrollEl.scrollTop=Math.max(0,Math.min(maxY,desiredTop));
+        updateZoomButton();
+      });
       updateZoomButton();
     };
     const setZoom=delta=>{zoomLevel=clampZoom(zoomLevel+delta);applyZoom();return false;};
     const resetZoom=()=>{zoomLevel=fitZoom();applyZoom();return false;};
-    // Global handlers are deliberate: inline invocation remains reliable on mobile even
-    // when the surrounding page has its own touch/click delegation.
+
     window.__venbotVp2pSetZoom=setZoom;
     window.__venbotVp2pResetZoom=resetZoom;
     host.querySelector('[data-vp="minus"]')?.setAttribute('onclick','return window.__venbotVp2pSetZoom(-0.05)');
     host.querySelector('[data-vp="plus"]')?.setAttribute('onclick','return window.__venbotVp2pSetZoom(0.05)');
     host.querySelector('[data-vp="reset"]')?.setAttribute('onclick','return window.__venbotVp2pResetZoom()');
-    host.querySelector('[data-vp="minus"]')?.addEventListener('touchend',e=>{e.preventDefault();setZoom(-0.05);},{passive:false});
-    host.querySelector('[data-vp="plus"]')?.addEventListener('touchend',e=>{e.preventDefault();setZoom(0.05);},{passive:false});
-    host.querySelector('[data-vp="reset"]')?.addEventListener('touchend',e=>{e.preventDefault();resetZoom();},{passive:false});
-    host.querySelector('[data-vp="full"]')?.addEventListener('click',async()=>{try{if(!document.fullscreenElement)await shell.requestFullscreen?.();else await document.exitFullscreen?.();}catch(e){console.error(e);}});
 
-    // Keep the FIT size responsive when rotating the phone or resizing the desktop window.
-    const onResize=()=>{if(Math.abs(zoomLevel-fitZoom())<0.03){zoomLevel=fitZoom();applyZoom();}};
+    const minusBtn=host.querySelector('[data-vp="minus"]');
+    const plusBtn=host.querySelector('[data-vp="plus"]');
+    const resetBtn=host.querySelector('[data-vp="reset"]');
+    [minusBtn,plusBtn,resetBtn].forEach(btn=>btn?.addEventListener('touchstart',e=>e.stopPropagation(),{passive:true}));
+    minusBtn?.addEventListener('pointerup',e=>{e.stopPropagation();});
+    plusBtn?.addEventListener('pointerup',e=>{e.stopPropagation();});
+    resetBtn?.addEventListener('pointerup',e=>{e.stopPropagation();});
+
+    const fullBtn=host.querySelector('[data-vp="full"]');
+    fullBtn?.addEventListener('click',async()=>{try{if(!document.fullscreenElement)await shell.requestFullscreen?.();else await document.exitFullscreen?.();}catch(e){console.error(e);}});
+
+    // Drag/pan + pinch zoom. Pointer events unify Android, iOS, mouse and pen input.
+    const pointers=new Map();
+    let panStart=null;
+    let pinchStart=null;
+    const distance=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    const midpoint=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
+    const localPoint=pt=>{const r=scrollEl.getBoundingClientRect();return {x:pt.x-r.left,y:pt.y-r.top};};
+
+    scrollEl.addEventListener('pointerdown',e=>{
+      if(e.target.closest('.vp2p-toolbar')) return;
+      scrollEl.setPointerCapture?.(e.pointerId);
+      pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});
+      if(pointers.size===1){
+        panStart={pointerId:e.pointerId,x:e.clientX,y:e.clientY,left:scrollEl.scrollLeft,top:scrollEl.scrollTop};
+        pinchStart=null;
+        scrollEl.classList.add('vp2p-dragging');
+      }else if(pointers.size===2){
+        const pts=[...pointers.values()];
+        pinchStart={
+          distance:Math.max(1,distance(pts[0],pts[1])),
+          zoom:zoomLevel,
+          mid:midpoint(pts[0],pts[1])
+        };
+        panStart=null;
+        scrollEl.classList.add('vp2p-dragging');
+      }
+      e.preventDefault();
+    },{passive:false});
+
+    scrollEl.addEventListener('pointermove',e=>{
+      if(!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});
+      if(pointers.size===2 && pinchStart){
+        const pts=[...pointers.values()];
+        const scale=distance(pts[0],pts[1])/pinchStart.distance;
+        const mid=midpoint(pts[0],pts[1]);
+        const local=localPoint(mid);
+        zoomLevel=clampZoom(pinchStart.zoom*scale);
+        applyZoom(local.x,local.y);
+      }else if(pointers.size===1 && panStart){
+        const dx=e.clientX-panStart.x,dy=e.clientY-panStart.y;
+        scrollEl.scrollLeft=panStart.left-dx;
+        scrollEl.scrollTop=panStart.top-dy;
+      }
+      e.preventDefault();
+    },{passive:false});
+
+    const endPointer=e=>{
+      pointers.delete(e.pointerId);
+      try{scrollEl.releasePointerCapture?.(e.pointerId);}catch{}
+      if(pointers.size===0){panStart=null;pinchStart=null;scrollEl.classList.remove('vp2p-dragging');}
+      else if(pointers.size===1){
+        const p=[...pointers.entries()][0];
+        const cur=p[1];
+        panStart={pointerId:p[0],x:cur.clientX,y:cur.clientY,left:scrollEl.scrollLeft,top:scrollEl.scrollTop};
+        pinchStart=null;
+      }
+      e.preventDefault();
+    };
+    scrollEl.addEventListener('pointerup',endPointer,{passive:false});
+    scrollEl.addEventListener('pointercancel',endPointer,{passive:false});
+    scrollEl.addEventListener('pointerleave',()=>{}, {passive:true});
+
+    // Desktop: Ctrl/Cmd + wheel = smooth zoom at cursor. Normal wheel remains available for future upgrades.
+    scrollEl.addEventListener('wheel',e=>{
+      if(!(e.ctrlKey||e.metaKey)) return;
+      e.preventDefault();
+      const rect=scrollEl.getBoundingClientRect();
+      const pivotX=e.clientX-rect.left,pivotY=e.clientY-rect.top;
+      zoomLevel=clampZoom(zoomLevel+(e.deltaY<0?0.02:-0.02));
+      applyZoom(pivotX,pivotY);
+    },{passive:false});
+
+    // Keep FIT responsive when rotating the phone or resizing the desktop window.
+    const onResize=()=>{
+      if(Math.abs(zoomLevel-fitZoom())<0.03){zoomLevel=fitZoom();applyZoom();}
+      else {clampScroll();}
+    };
     window.addEventListener('resize',onResize,{passive:true});
     window.__venbotVp2pCleanupZoom=()=>window.removeEventListener('resize',onResize);
     requestAnimationFrame(()=>{zoomLevel=fitZoom();applyZoom();});
@@ -3123,7 +3241,7 @@
     advancedChart={
       destroy:()=>{},
       resize:()=>{},
-      _venbotMeta:{dualP2P:true,anchor,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'p2p-reference-v31.53'}
+      _venbotMeta:{dualP2P:true,anchor,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'p2p-touch-pan-v31.54'}
     };
     const t0El=document.getElementById('adv-t0-label');if(t0El)t0El.textContent=`T0 · ${vet(anchor)} VET · snapshot fijo`;
     const badge=document.getElementById('adv-snapshot-badge');if(badge)badge.textContent=snapshot?`T0 #${snapshot.id} · ${vet(anchor)} VET · congelado`:'sin snapshot';
