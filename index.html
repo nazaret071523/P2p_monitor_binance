@@ -10,6 +10,7 @@
   <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com">
 
   <title>Venbot · USDT/VES</title>
+  <script src="./venbot-ads-config.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
@@ -30,7 +31,11 @@
     .voice-listening{animation:pulseVoice 1.15s ease-in-out infinite}
     @keyframes pulseVoice{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
 
-    .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
+    .ad-slot{position:relative;min-height:54px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
+    .venbot-ad-inner{width:100%;min-height:42px;display:flex;align-items:center;justify-content:center}
+    .venbot-ad-inner .adsbygoogle{display:block!important;width:100%;min-height:40px}
+    .venbot-ad-fallback{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.15rem;min-height:42px}
+    .venbot-ad-consent-note{font-size:9px;line-height:1.35;color:#64748b;text-align:center;padding:0 8px}
     body.venbot-no-ads .ad-slot{display:none!important}
     .ad-label{letter-spacing:.12em}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
@@ -352,7 +357,7 @@
           <p id="header-market-context" class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
         </div>
         <div class="hidden md:block flex-1 max-w-xl mx-3">
-          <div class="ad-slot rounded-xl px-4 py-2 text-center">
+          <div class="ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="header">
             <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
             <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
           </div>
@@ -381,7 +386,7 @@
     </div>
 
     <div class="w-full px-4 pt-2">
-      <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="banner-top">
+      <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="top">
         <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
         <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
       </div>
@@ -881,7 +886,7 @@
           <a href="https://www.tiktok.com/@venbotquant" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
         </div>
 
-        <div class="ad-slot rounded-xl p-4 text-center">
+        <div class="ad-slot rounded-xl p-4 text-center" data-ad-placement="footer">
           <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
           <div class="text-[10px] text-slate-600 mt-1">Espacio publicitario · FREE / promoción · debajo de las redes</div>
         </div>
@@ -1719,13 +1724,95 @@
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
 
-    // Publicidad: el modo lanzamiento puede liberar funciones, pero conserva anuncios para cuentas FREE.
-    // PREMIUM/VIP pagados quedan sin publicidad. La cuenta/proveedor publicitario real se configura después.
-    window.VENBOT_AD_CONFIG = window.VENBOT_AD_CONFIG || { webEnabled: true, providerConfigured: false, appReady: true };
+    // Publicidad v31.69: capa aislada del motor productivo.
+    // FREE/promoción => anuncios; PREMIUM/VIP => sin anuncios.
+    // El proveedor real se configura fuera del motor (venbot-ads-config.js).
+    const _defaultAdsConfig = { webEnabled:true, provider:'adsense', publisherId:'', slots:{}, providerConfigured:false, consentRequired:false, appReady:true };
+    window.VENBOT_AD_CONFIG = Object.assign(_defaultAdsConfig, window.VENBOT_AD_CONFIG || {});
+    window.VENBOT_AD_CONFIG.slots = Object.assign({}, _defaultAdsConfig.slots, window.VENBOT_AD_CONFIG.slots || {});
+    let _venbotAdsScriptPromise = null;
+
     function getAdvertisingPlan() {
       const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
+
+    function _venbotAdsConsentGranted() {
+      if (!window.VENBOT_AD_CONFIG?.consentRequired) return true;
+      try { return localStorage.getItem(window.VENBOT_AD_CONFIG.consentStorageKey || 'venbot-ads-consent') === 'granted'; }
+      catch(e) { return false; }
+    }
+
+    function _venbotAdsPublisherIsValid() {
+      return /^ca-pub-\\d{16}$/.test(String(window.VENBOT_AD_CONFIG?.publisherId || '').trim());
+    }
+
+    function _venbotAdsConfigured() {
+      if (window.VENBOT_AD_CONFIG?.provider !== 'adsense') return false;
+      if (!_venbotAdsPublisherIsValid()) return false;
+      const slots = window.VENBOT_AD_CONFIG?.slots || {};
+      return ['header','top','footer'].some(k => /^\\d+$/.test(String(slots[k] || '')));
+    }
+
+    function _venbotAdsFallbackHTML(message='Espacio publicitario') {
+      return `<div class="venbot-ad-fallback"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600">${message}</div></div>`;
+    }
+
+    function _venbotLoadAdSense() {
+      if (_venbotAdsScriptPromise) return _venbotAdsScriptPromise;
+      if (!_venbotAdsPublisherIsValid()) return Promise.reject(new Error('adsense_publisher_not_configured'));
+      _venbotAdsScriptPromise = new Promise((resolve, reject) => {
+        const existing = document.querySelector('script[data-venbot-adsense="1"]');
+        if (existing) {
+          existing.addEventListener('load', resolve, {once:true});
+          existing.addEventListener('error', reject, {once:true});
+          if (window.adsbygoogle) resolve();
+          return;
+        }
+        const s = document.createElement('script');
+        s.async = true;
+        s.crossOrigin = 'anonymous';
+        s.dataset.venbotAdsense = '1';
+        s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(window.VENBOT_AD_CONFIG.publisherId)}`;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('adsense_script_load_failed'));
+        document.head.appendChild(s);
+      });
+      return _venbotAdsScriptPromise;
+    }
+
+    function _venbotRenderAdSlot(el) {
+      if (!el) return;
+      const placement = el.dataset.adPlacement || '';
+      const slot = String(window.VENBOT_AD_CONFIG?.slots?.[placement] || '').trim();
+      if (!slot) { el.innerHTML = _venbotAdsFallbackHTML('Espacio publicitario · configuración pendiente'); return; }
+      el.innerHTML = `<div class="venbot-ad-inner"><ins class="adsbygoogle" data-ad-client="${window.VENBOT_AD_CONFIG.publisherId}" data-ad-slot="${slot}" data-ad-format="auto" data-full-width-responsive="true"></ins></div>`;
+      try { (window.adsbygoogle = window.adsbygoogle || []).push({}); }
+      catch(e) { el.innerHTML = _venbotAdsFallbackHTML('Publicidad temporalmente no disponible'); }
+    }
+
+    async function refreshVenbotWebAds() {
+      const enabled = window.VENBOT_AD_CONFIG?.webEnabled !== false;
+      const plan = getAdvertisingPlan();
+      const paid = plan === 'PREMIUM' || plan === 'VIP';
+      const allowed = enabled && !paid && _venbotAdsConfigured() && _venbotAdsConsentGranted();
+      window.VENBOT_AD_CONFIG.providerConfigured = _venbotAdsConfigured();
+
+      document.querySelectorAll('.ad-slot').forEach(el => {
+        if (!enabled || paid) {
+          el.innerHTML = '';
+          return;
+        }
+        if (!allowed) {
+          el.innerHTML = _venbotAdsConsentGranted()
+            ? _venbotAdsFallbackHTML(window.VENBOT_AD_CONFIG.providerConfigured ? 'Publicidad disponible al completar la configuración' : 'Espacio publicitario · proveedor pendiente')
+            : `<div class="venbot-ad-fallback"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="venbot-ad-consent-note">La publicidad requiere tu preferencia de privacidad.</div></div>`;
+          return;
+        }
+        _venbotLoadAdSense().then(()=>_venbotRenderAdSlot(el)).catch(()=>{ el.innerHTML=_venbotAdsFallbackHTML('Publicidad temporalmente no disponible'); });
+      });
+    }
+
     function applyVenbotAdPolicy() {
       const plan = getAdvertisingPlan();
       const paid = plan === 'PREMIUM' || plan === 'VIP';
@@ -1735,10 +1822,13 @@
       const web = document.getElementById('admin-ads-web');
       const free = document.getElementById('admin-ads-free');
       const paidEl = document.getElementById('admin-ads-paid');
-      if (badge && window.venbotUser?.is_developer) badge.textContent = window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'PREPARADA';
-      if (web && window.venbotUser?.is_developer) web.textContent = enabled ? (window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'ESPACIOS ACTIVOS') : 'DESACTIVADA';
+      const configured = _venbotAdsConfigured();
+      window.VENBOT_AD_CONFIG.providerConfigured = configured;
+      if (badge && window.venbotUser?.is_developer) badge.textContent = configured ? 'CONECTADA' : 'PREPARADA';
+      if (web && window.venbotUser?.is_developer) web.textContent = enabled ? (configured ? 'CONECTADA' : 'ESPACIOS ACTIVOS') : 'DESACTIVADA';
       if (free && window.venbotUser?.is_developer) free.textContent = enabled ? 'CON ANUNCIOS' : 'DESACTIVADOS';
       if (paidEl && window.venbotUser?.is_developer) paidEl.textContent = 'SIN ANUNCIOS';
+      refreshVenbotWebAds();
     }
 
     function allowedP2PHorizons(plan = getFrontendPlan()) {
