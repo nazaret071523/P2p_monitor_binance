@@ -1,11 +1,22 @@
-VENBOT — v31.69
-FASE 16: MONETIZACIÓN FREE + PUBLICIDAD WEB
+VENBOT FASE 17 · v31.70
+=========================
 
-- bot.py conservado sin cambios.
-- FREE/promoción: anuncios cuando exista configuración publicitaria real.
-- PREMIUM/VIP: sin anuncios.
-- Zonas publicitarias: header, top, footer.
-- Sin anuncios dentro de gráficas, calculadora, precios ni controles.
-- Configuración pública separada en venbot-ads-config.js.
-- publisherId y slots vacíos por seguridad hasta disponer de los valores reales.
-- P2P/Spot/Quant/Tracking/Telegram y 1H/3H/7H/24H preservados.
+Objetivo:
+- Corregir navegación de documentos legales desde el menú principal.
+- Endurecer y alinear documentos públicos de privacidad, términos, riesgos, publicidad, eliminación, ayuda y contacto.
+
+Cambios productivos:
+- NO se modifica bot.py.
+- NO se modifica database.py.
+- NO se modifica schema.sql.
+- NO se modifica la lógica P2P/Spot/Quant/Tracking/Telegram.
+- NO se modifican los cuatro horizontes productivos 1H/3H/7H/24H.
+
+Navegación:
+- Los documentos internos usan enlaces HTML directos y target=_blank/rel=noopener noreferrer.
+
+Play Store:
+- La privacidad debe ser una URL pública, accesible desde la app y coherente con Data safety.
+- La eliminación de cuenta debe ser clara dentro de la app y mediante un recurso web externo.
+- El estado real de proveedores publicitarios y terceros debe coincidir con lo implementado.
+- La declaración de funciones financieras debe completarse en Play Console según las funciones reales.
