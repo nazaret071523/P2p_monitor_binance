@@ -4609,15 +4609,19 @@ def obtener_quant_adaptive_status(symbol=None):
     p2p_cov=_coverage_p2p("GENERAL")
     spot_cov=_coverage_spot()
     hs=("1h","3h","7h","24h")
+    all_hs=tuple(f"{h}h" for h in range(1,25))
     p2p_h={h:_adaptive_p2p_stats("GENERAL",h) for h in hs}
     spot_h={h:_adaptive_spot_stats(symbol,h) for h in hs}
     p2p_hourly=_adaptive_hourly_summary("GENERAL")
+    spot_hourly=_adaptive_spot_hourly_summary(symbol)
     p2p_stage=_adaptive_stage_for_hours(p2p_cov)
     spot_stage=_adaptive_stage_for_hours(spot_cov["median_hours"])
+    p2p_hourly_gates={h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in all_hs}
+    spot_hourly_gates={h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in all_hs}
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
-      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN},
-      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"hourly_shadow":p2p_hourly,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
-      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"hourly_shadow":_adaptive_spot_hourly_summary(symbol),"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON"},
+      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"hourly_shadow":p2p_hourly,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"hourly_promotion_gates":p2p_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"hourly_shadow":spot_hourly,"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"hourly_promotion_gates":spot_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
       "generated_at":datetime.now(VET).isoformat()}
     # Persistimos una instantánea liviana para auditoría del aprendizaje.
     try:
@@ -4654,6 +4658,14 @@ def obtener_quant_adaptive_status(symbol=None):
                         ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
                             coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,generated_at=CURRENT_TIMESTAMP
                     """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+                for h,stats in spot_hourly.get("horizons",{}).items():
+                    shadow=stats.get("shadow_candidate") or {}
+                    cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
+                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,generated_at=CURRENT_TIMESTAMP
+                    """,("SPOT",symbol or "ALL",spot_cov["median_hours"],float(spot_stage["milestone_hours"]),int(spot_stage["next_target_hours"] or spot_stage["milestone_hours"]),0, int(stats.get("evaluated") or 0), stats.get("mae_pct"), stats.get("bias_pct"), stats.get("direction_accuracy_pct"), stats.get("p75_abs_error_pct"), stats.get("candidate_bias_factor"), stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
     return status
