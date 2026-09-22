@@ -1,9 +1,19 @@
 /*
  * VENBOT AI · PUBLICIDAD WEB
- * Fase 16 · v31.69
+ * Fase 18 · v31.72
  *
- * Completar únicamente con los valores reales de tu cuenta publicitaria.
- * Mientras publisherId/slots estén vacíos, no se carga ninguna red externa.
+ * Esta configuración está preparada para Google AdSense.
+ * NO colocar aquí datos ficticios. Mantener publisherId/slots vacíos
+ * hasta disponer de los valores reales de la cuenta aprobada.
+ *
+ * Flujo:
+ * 1) Crear/validar la cuenta AdSense.
+ * 2) Añadir el sitio Venbot y completar su revisión.
+ * 3) Crear unidades de anuncio Display para header/top/footer.
+ * 4) Pegar aquí el publisherId y los IDs de cada slot.
+ * 5) Si Google exige consentimiento para una región, configurar
+ *    Privacy & messaging/CMP en AdSense antes de servir anuncios
+ *    personalizados en esa región.
  */
 window.VENBOT_AD_CONFIG = {
   webEnabled: true,
