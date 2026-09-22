@@ -1,22 +1,28 @@
-VENBOT FASE 17 · v31.70
-=========================
+VENBOT — Fase 18 Monetización Web — v31.72
 
-Objetivo:
-- Corregir navegación de documentos legales desde el menú principal.
-- Endurecer y alinear documentos públicos de privacidad, términos, riesgos, publicidad, eliminación, ayuda y contacto.
+BASE: v31.71 (Legal Menu Fix)
 
-Cambios productivos:
-- NO se modifica bot.py.
-- NO se modifica database.py.
-- NO se modifica schema.sql.
-- NO se modifica la lógica P2P/Spot/Quant/Tracking/Telegram.
-- NO se modifican los cuatro horizontes productivos 1H/3H/7H/24H.
+CAMBIOS:
+- Se incorpora venbot-ads-config.js al paquete de despliegue.
+- Se conserva el motor publicitario existente del index.html.
+- FREE/promoción: espacios publicitarios.
+- PREMIUM/VIP: sin anuncios.
+- IDs reales pendientes de la cuenta publicitaria del operador.
+- Se documenta el flujo de AdSense, consentimiento y ads.txt.
 
-Navegación:
-- Los documentos internos usan enlaces HTML directos y target=_blank/rel=noopener noreferrer.
+NO TOCAR:
+- bot.py
+- P2P
+- Spot
+- Quant
+- Predicciones
+- Horizontes productivos 1H/3H/7H/24H
+- Telegram
+- Base de datos
 
-Play Store:
-- La privacidad debe ser una URL pública, accesible desde la app y coherente con Data safety.
-- La eliminación de cuenta debe ser clara dentro de la app y mediante un recurso web externo.
-- El estado real de proveedores publicitarios y terceros debe coincidir con lo implementado.
-- La declaración de funciones financieras debe completarse en Play Console según las funciones reales.
+PRÓXIMO PASO OPERATIVO:
+1) Crear/validar AdSense.
+2) Añadir/revisar sitio Venbot.
+3) Obtener publisher ID + slots reales.
+4) Completar venbot-ads-config.js.
+5) Desplegar y verificar anuncios FREE/promoción y ocultación PREMIUM/VIP.
