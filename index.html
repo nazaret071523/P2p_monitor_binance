@@ -313,14 +313,14 @@
 </style>
 
 <style id="venbot-v31-52-chart-responsive">
-/* v31.52: responsive chart viewport + true zoom-out range. No motor changes. */
+/* v31.53: responsive fit + working touch/click zoom. No motor changes. */
 .adv-chart-viewport{position:relative;overflow:hidden!important}
 .vp2p-shell{display:flex!important;flex-direction:column!important;height:auto!important;min-height:0!important;width:100%!important;max-width:100%!important}
-.vp2p-scroll{position:relative!important;inset:auto!important;flex:0 0 auto!important;width:100%!important;height:clamp(360px,64vw,720px)!important;min-height:360px!important;max-height:720px!important;overflow:auto!important;overscroll-behavior:contain!important;-webkit-overflow-scrolling:touch}
-.vp2p-stage{width:1680px!important;height:1040px!important;min-width:1680px!important;min-height:1040px!important;transform-origin:top left!important}
-.vp2p-svg{display:block!important;width:1680px!important;height:1040px!important;min-width:1680px!important;min-height:1040px!important}
+.vp2p-scroll{position:relative!important;inset:auto!important;flex:0 0 auto!important;width:100%!important;height:clamp(320px,64vw,720px)!important;min-height:320px!important;max-height:720px!important;overflow:auto!important;overscroll-behavior:contain!important;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
+.vp2p-stage{width:1680px;height:1040px;min-width:1680px;min-height:1040px;transform-origin:top left}
+.vp2p-svg{display:block;width:1680px;height:1040px;min-width:0;min-height:0;touch-action:none}
 .vp2p-toolbar{right:10px!important;top:10px!important}
-.vp2p-toolbar button{min-width:42px;min-height:40px;padding:7px 10px!important}
+.vp2p-toolbar button{min-width:42px;min-height:40px;padding:7px 10px!important;touch-action:manipulation}
 .vp2p-hourly-readout{background:#07101c;border:1px solid #1d3048;border-radius:12px;padding:12px 14px;overflow-x:auto}
 .vp2p-hourly-title{font-size:11px;font-weight:900;color:#cfd9e9;letter-spacing:.03em;margin-bottom:8px}.vp2p-hourly-title span{color:#8a73b3;font-weight:800;margin-left:8px}
 .vp2p-hourly-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;min-width:0}
@@ -3013,7 +3013,7 @@
             <text x="${futureLeft+13}" y="${T+42}" fill="#7889a1" font-size="10" font-weight="850">SNAPSHOT CONGELADO</text>
 
             <line x1="${xFuture(nowTs)}" y1="${T}" x2="${xFuture(nowTs)}" y2="${T+PH}" stroke="#5ddcff" stroke-width="2.4" stroke-dasharray="5 7"/>
-            <text x="${futureLeft+13}" y="${T+66}" fill="#5ddcff" font-size="13" font-weight="900">AHORA · ${vet(nowTs)} VET</text>
+            <text x="${Math.min(futureLeft+245, xFuture(nowTs)+10)}" y="${T+68}" fill="#5ddcff" font-size="13" font-weight="900">AHORA · ${vet(nowTs)} VET</text>
 
             <g clip-path="url(#vp2pClip)">
               ${path(buyHist)?`<path d="${path(buyHist)}" fill="none" stroke="#31d7a2" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}
@@ -3069,24 +3069,61 @@
     }
 
     const shell=host.querySelector('.vp2p-shell');
+    const scrollEl=host.querySelector('.vp2p-scroll');
     const stage=host.querySelector('.vp2p-stage');
     const svgEl=host.querySelector('.vp2p-svg');
-    let zoomLevel=window.innerWidth<=760?0.72:1;
-    const applyZoom=()=>{
-      const w=Math.round(W*zoomLevel),h=Math.round(H*zoomLevel);
-      stage.style.width=`${w}px`;stage.style.minWidth=`${w}px`;stage.style.height=`${h}px`;stage.style.minHeight=`${h}px`;
-      svgEl.style.width=`${w}px`;svgEl.style.height=`${h}px`;
+
+    // v31.53: fit the full SVG to the available width first, then allow manual zoom.
+    // The previous v31.52 CSS forced 1680px with !important, so the buttons could not
+    // actually change the rendered size. This version removes that conflict.
+    const fitZoom=()=>{
+      const available=Math.max(260,(scrollEl?.clientWidth||shell?.clientWidth||window.innerWidth)-10);
+      return Math.min(1,Math.max(.10,available/W));
     };
-    host.querySelector('[data-vp="plus"]')?.addEventListener('click',()=>{zoomLevel=Math.min(2.8,zoomLevel+.10);applyZoom();});
-    host.querySelector('[data-vp="minus"]')?.addEventListener('click',()=>{zoomLevel=Math.max(.20,zoomLevel-.10);applyZoom();});
-    host.querySelector('[data-vp="reset"]')?.addEventListener('click',()=>{zoomLevel=window.innerWidth<=760?0.72:1;applyZoom();});
+    let zoomLevel=fitZoom();
+    const clampZoom=v=>Math.min(1,Math.max(.10,Number(v)||fitZoom()));
+    const zoomLabel=()=>`${Math.round(zoomLevel*100)}%`;
+    const updateZoomButton=()=>{
+      const b=host.querySelector('[data-vp="reset"]');
+      if(b){b.textContent=zoomLabel();b.title=`Restablecer a ajuste de pantalla (${Math.round(fitZoom()*100)}%)`;b.setAttribute('aria-label','Restablecer zoom a ajuste de pantalla');}
+    };
+    const applyZoom=()=>{
+      zoomLevel=clampZoom(zoomLevel);
+      const w=Math.max(1,Math.round(W*zoomLevel)),h=Math.max(1,Math.round(H*zoomLevel));
+      stage.style.setProperty('width',`${w}px`,'important');
+      stage.style.setProperty('min-width',`${w}px`,'important');
+      stage.style.setProperty('height',`${h}px`,'important');
+      stage.style.setProperty('min-height',`${h}px`,'important');
+      svgEl.style.setProperty('width',`${w}px`,'important');
+      svgEl.style.setProperty('height',`${h}px`,'important');
+      svgEl.style.setProperty('min-width','0px','important');
+      svgEl.style.setProperty('min-height','0px','important');
+      updateZoomButton();
+    };
+    const setZoom=delta=>{zoomLevel=clampZoom(zoomLevel+delta);applyZoom();return false;};
+    const resetZoom=()=>{zoomLevel=fitZoom();applyZoom();return false;};
+    // Global handlers are deliberate: inline invocation remains reliable on mobile even
+    // when the surrounding page has its own touch/click delegation.
+    window.__venbotVp2pSetZoom=setZoom;
+    window.__venbotVp2pResetZoom=resetZoom;
+    host.querySelector('[data-vp="minus"]')?.setAttribute('onclick','return window.__venbotVp2pSetZoom(-0.05)');
+    host.querySelector('[data-vp="plus"]')?.setAttribute('onclick','return window.__venbotVp2pSetZoom(0.05)');
+    host.querySelector('[data-vp="reset"]')?.setAttribute('onclick','return window.__venbotVp2pResetZoom()');
+    host.querySelector('[data-vp="minus"]')?.addEventListener('touchend',e=>{e.preventDefault();setZoom(-0.05);},{passive:false});
+    host.querySelector('[data-vp="plus"]')?.addEventListener('touchend',e=>{e.preventDefault();setZoom(0.05);},{passive:false});
+    host.querySelector('[data-vp="reset"]')?.addEventListener('touchend',e=>{e.preventDefault();resetZoom();},{passive:false});
     host.querySelector('[data-vp="full"]')?.addEventListener('click',async()=>{try{if(!document.fullscreenElement)await shell.requestFullscreen?.();else await document.exitFullscreen?.();}catch(e){console.error(e);}});
-    applyZoom();
+
+    // Keep the FIT size responsive when rotating the phone or resizing the desktop window.
+    const onResize=()=>{if(Math.abs(zoomLevel-fitZoom())<0.03){zoomLevel=fitZoom();applyZoom();}};
+    window.addEventListener('resize',onResize,{passive:true});
+    window.__venbotVp2pCleanupZoom=()=>window.removeEventListener('resize',onResize);
+    requestAnimationFrame(()=>{zoomLevel=fitZoom();applyZoom();});
 
     advancedChart={
       destroy:()=>{},
       resize:()=>{},
-      _venbotMeta:{dualP2P:true,anchor,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'p2p-reference-v31.52'}
+      _venbotMeta:{dualP2P:true,anchor,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'p2p-reference-v31.53'}
     };
     const t0El=document.getElementById('adv-t0-label');if(t0El)t0El.textContent=`T0 · ${vet(anchor)} VET · snapshot fijo`;
     const badge=document.getElementById('adv-snapshot-badge');if(badge)badge.textContent=snapshot?`T0 #${snapshot.id} · ${vet(anchor)} VET · congelado`:'sin snapshot';
