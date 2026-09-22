@@ -13,6 +13,7 @@ import uuid
 from urllib.parse import urlparse
 import re
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlencode
@@ -28,6 +29,7 @@ except Exception:
 
 import pytz
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 import requests
 import certifi
 from bs4 import BeautifulSoup
@@ -364,6 +366,11 @@ _CACHE_TTL_AI = 15.0
 _CACHE_TTL_QUANT = 90.0
 _QUANT_CACHE_STALE_GRACE_SECONDS = 180.0
 _QUANT_CACHE = {}
+# Estado adaptativo: evita recalcular el panel completo ante cada render/reintento.
+# La caché solo afecta observabilidad; no modifica datos productivos ni el aprendizaje.
+_ADAPTIVE_STATUS_CACHE_SECONDS = max(15, int(os.getenv("ADAPTIVE_STATUS_CACHE_SECONDS", "60")))
+_ADAPTIVE_STATUS_CACHE = {}
+_ADAPTIVE_STATUS_LOCK = threading.Lock()
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
@@ -375,6 +382,95 @@ _LAST_SPOT_COLLECTION_TS = 0.0
 # ==========================================
 # BASE DE DATOS POSTGRESQL / SUPABASE
 # ==========================================
+# v31.61 usaba psycopg2.connect() por operación. El contexto de conexión no
+# cerraba físicamente la sesión, por lo que las conexiones podían acumularse
+# contra el pooler de Supabase hasta producir EMAXCONNSESSION.
+#
+# v31.62 mantiene intacta la lógica de negocio y controla únicamente el ciclo
+# de vida de las conexiones mediante un pool interno conservador.
+DB_POOL_MIN = max(1, int(os.getenv("VENBOT_DB_POOL_MIN", "1")))
+DB_POOL_MAX = min(10, max(DB_POOL_MIN, int(os.getenv("VENBOT_DB_POOL_MAX", "6"))))
+DB_POOL_WAIT_SECONDS = max(3, int(os.getenv("VENBOT_DB_POOL_WAIT_SECONDS", "12")))
+_DB_POOL = None
+_DB_POOL_LOCK = threading.Lock()
+_DB_POOL_SEMAPHORE = threading.BoundedSemaphore(DB_POOL_MAX)
+
+def _get_db_pool():
+    global _DB_POOL
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL no configurada")
+    if _DB_POOL is not None:
+        return _DB_POOL
+    with _DB_POOL_LOCK:
+        if _DB_POOL is None:
+            _DB_POOL = ThreadedConnectionPool(
+                DB_POOL_MIN,
+                DB_POOL_MAX,
+                dsn=DATABASE_URL,
+                connect_timeout=10,
+            )
+            logger.info("DB pool listo min=%s max=%s wait=%ss", DB_POOL_MIN, DB_POOL_MAX, DB_POOL_WAIT_SECONDS)
+    return _DB_POOL
+
+
+@contextmanager
+def obtener_conexion():
+    """Entrega una conexión reutilizable y la devuelve al pool al terminar.
+
+    Conserva la semántica usada por el proyecto: éxito => commit y excepción
+    => rollback. La diferencia es que la sesión se devuelve al pool en vez de
+    quedar abierta en Supabase después de cada operación.
+    """
+    pool = _get_db_pool()
+    acquired = _DB_POOL_SEMAPHORE.acquire(timeout=DB_POOL_WAIT_SECONDS)
+    if not acquired:
+        raise RuntimeError(
+            f"Pool DB ocupado: no hubo conexión disponible en {DB_POOL_WAIT_SECONDS}s "
+            f"(pool={DB_POOL_MAX})"
+        )
+    conn = None
+    close_conn = False
+    try:
+        conn = pool.getconn()
+        if conn is None or getattr(conn, "closed", 0):
+            close_conn = True
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            conn = pool.getconn()
+        try:
+            yield conn
+        except Exception:
+            if conn is not None and not getattr(conn, "closed", 0):
+                try:
+                    conn.rollback()
+                except Exception:
+                    close_conn = True
+            raise
+        else:
+            if conn is not None and not getattr(conn, "closed", 0):
+                try:
+                    conn.commit()
+                except Exception:
+                    close_conn = True
+                    raise
+    finally:
+        try:
+            if conn is not None:
+                if getattr(conn, "closed", 0):
+                    close_conn = True
+                try:
+                    pool.putconn(conn, close=close_conn)
+                except Exception:
+                    try:
+                        if not getattr(conn, "closed", 0):
+                            conn.close()
+                    except Exception:
+                        pass
+        finally:
+            _DB_POOL_SEMAPHORE.release()
+
 def validar_configuracion():
     if not DATABASE_URL:
         logger.warning("DATABASE_URL no está configurada. La persistencia no funcionará.")
@@ -382,12 +478,6 @@ def validar_configuracion():
         logger.warning("TELEGRAM_BOT_TOKEN no está configurado. El bot de Telegram no iniciará.")
     if not RENDER_EXTERNAL_URL:
         logger.warning("RENDER_EXTERNAL_URL no está configurado. No se registrará webhook automáticamente.")
-
-
-def obtener_conexion():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL no configurada")
-    return psycopg2.connect(DATABASE_URL, connect_timeout=10)
 
 
 def inicializar_db():
@@ -4599,12 +4689,119 @@ def _adaptive_promotion_gate(motor, scope, horizon):
         logger.warning("Adaptive promotion gate falló %s %s %s: %s", motor, scope, horizon, e)
         return {"status":"TEMPORALMENTE_NO_DISPONIBLE","stable_passes":0,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES}
 
-def obtener_quant_adaptive_status(symbol=None):
-    """Panel de madurez, cobertura y calibración en sombra.
+def _adaptive_promotion_gates(motor, scope, horizons):
+    """Lee los gates de varios horizontes con una sola consulta de PostgreSQL.
 
-    La capa adaptativa amplía la observabilidad del aprendizaje y prepara candidatos por régimen
-    sin modificar por sí sola las predicciones de producción.
+    La regla de promoción es la misma que en _adaptive_promotion_gate(); solo
+    cambia la estrategia de lectura para evitar decenas de consultas separadas.
     """
+    horizon_list = [str(h) for h in horizons]
+    if not DATABASE_URL:
+        return {h: {"status":"SIN_DATOS","stable_passes":0,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES} for h in horizon_list}
+    out = {}
+    for h in horizon_list:
+        out[h] = {
+            "status":"BLOQUEADO",
+            "stable_passes":0,
+            "required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,
+            "reason":"Se requieren validaciones OOS consecutivas y estables antes de promover.",
+        }
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    WITH ranked AS (
+                        SELECT horizon, readiness, shadow_status, oos_improvement_pct,
+                               candidate_bias_factor, evaluated, generated_at, evidence_at,
+                               ROW_NUMBER() OVER (PARTITION BY horizon ORDER BY generated_at DESC) AS rn
+                        FROM venbot_quant_adaptive_snapshots
+                        WHERE motor=%s
+                          AND scope=%s
+                          AND horizon = ANY(%s)
+                          AND evidence_at IS NOT NULL
+                    )
+                    SELECT horizon, readiness, shadow_status, oos_improvement_pct,
+                           candidate_bias_factor, evaluated, generated_at, evidence_at
+                    FROM ranked
+                    WHERE rn <= %s
+                    ORDER BY horizon, generated_at DESC
+                    """,
+                    (str(motor), str(scope), horizon_list, ADAPTIVE_PROMOTION_STABLE_PASSES * 4),
+                )
+                rows = cur.fetchall()
+
+        grouped = {h: [] for h in horizon_list}
+        for row in rows:
+            grouped.setdefault(str(row[0]), []).append(row[1:])
+
+        for h in horizon_list:
+            stable=0
+            factors=[]
+            improvements=[]
+            seen_evidence=set()
+            for r in grouped.get(h, []):
+                readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at = r
+                evidence_key = evidence_at.isoformat() if hasattr(evidence_at, "isoformat") else str(evidence_at)
+                if evidence_key in seen_evidence:
+                    continue
+                seen_evidence.add(evidence_key)
+                if (shadow_status == "CANDIDATO_VALIDO"
+                    and readiness == "CANDIDATO_EN_SOMBRA"
+                    and improvement is not None
+                    and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
+                    and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON):
+                    stable += 1
+                    if factor is not None: factors.append(float(factor))
+                    if improvement is not None: improvements.append(float(improvement))
+                    if stable >= ADAPTIVE_PROMOTION_STABLE_PASSES:
+                        break
+                else:
+                    break
+
+            if stable < ADAPTIVE_PROMOTION_STABLE_PASSES:
+                out[h] = {
+                    "status":"BLOQUEADO",
+                    "stable_passes":stable,
+                    "required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,
+                    "reason":"Se requieren validaciones OOS consecutivas y estables antes de promover.",
+                }
+                continue
+
+            factor_avg=float(np.mean(factors)) if factors else None
+            factor_spread=(max(factors)-min(factors)) if len(factors)>1 else 0.0
+            if factor_spread > 0.003:
+                out[h] = {
+                    "status":"BLOQUEADO",
+                    "stable_passes":stable,
+                    "required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,
+                    "reason":"El factor candidato cambió demasiado entre mediciones; continúa en sombra.",
+                    "factor_spread":round(factor_spread,6),
+                }
+            else:
+                out[h] = {
+                    "status":"LISTO_PARA_REVISION",
+                    "stable_passes":stable,
+                    "required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,
+                    "candidate_factor":round(factor_avg,6) if factor_avg is not None else None,
+                    "oos_improvement_avg_pct":round(float(np.mean(improvements)),2) if improvements else None,
+                    "production_change":"DISABLED_REVIEW_REQUIRED",
+                }
+        return out
+    except Exception as e:
+        logger.warning("Adaptive promotion gates batch falló %s %s: %s", motor, scope, e)
+        return {
+            h:{
+                "status":"TEMPORALMENTE_NO_DISPONIBLE",
+                "stable_passes":0,
+                "required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,
+            }
+            for h in horizon_list
+        }
+
+
+def _obtener_quant_adaptive_status_uncached(symbol=None):
+    """Cálculo completo del panel adaptativo; llamado detrás de una caché corta."""
     if not DATABASE_URL: return {"ok":False,"error":"database_unavailable"}
     p2p_cov=_coverage_p2p("GENERAL")
     spot_cov=_coverage_spot()
@@ -4616,12 +4813,14 @@ def obtener_quant_adaptive_status(symbol=None):
     spot_hourly=_adaptive_spot_hourly_summary(symbol)
     p2p_stage=_adaptive_stage_for_hours(p2p_cov)
     spot_stage=_adaptive_stage_for_hours(spot_cov["median_hours"])
-    p2p_hourly_gates={h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in all_hs}
-    spot_hourly_gates={h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in all_hs}
+    p2p_hourly_gates=_adaptive_promotion_gates("P2P","GENERAL",all_hs)
+    spot_hourly_gates=_adaptive_promotion_gates("SPOT",symbol or "ALL",all_hs)
+    p2p_primary_gates=_adaptive_promotion_gates("P2P","GENERAL",hs)
+    spot_primary_gates=_adaptive_promotion_gates("SPOT",symbol or "ALL",hs)
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
       "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON"},
-      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"hourly_shadow":p2p_hourly,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"hourly_promotion_gates":p2p_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
-      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"hourly_shadow":spot_hourly,"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"hourly_promotion_gates":spot_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"hourly_shadow":p2p_hourly,"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"hourly_shadow":spot_hourly,"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
       "generated_at":datetime.now(VET).isoformat()}
     # Persistimos una instantánea liviana para auditoría del aprendizaje.
     try:
@@ -4669,6 +4868,42 @@ def obtener_quant_adaptive_status(symbol=None):
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
     return status
+
+
+def obtener_quant_adaptive_status(symbol=None):
+    """Panel adaptativo con caché corta y coalescencia de solicitudes.
+
+    Reduce lecturas repetidas del panel sin congelar P2P/Spot ni alterar
+    predicciones, tracking o aprendizaje.
+    """
+    key = str(symbol or "ALL").upper()
+    now = time.monotonic()
+    with _ADAPTIVE_STATUS_LOCK:
+        cached = _ADAPTIVE_STATUS_CACHE.get(key)
+        if cached and now < cached.get("expires", 0.0):
+            status = dict(cached.get("value") or {})
+            status["cache"] = "FRESH"
+            return status
+
+        try:
+            status = _obtener_quant_adaptive_status_uncached(symbol)
+        except Exception as exc:
+            if cached and cached.get("value"):
+                status = dict(cached["value"])
+                status["cache"] = "STALE"
+                status["warning"] = "Lectura adaptativa temporalmente no disponible; mostrando última lectura válida."
+                logger.warning("Adaptive status refresco falló; se conserva caché: %s", exc)
+                return status
+            raise
+
+        if isinstance(status, dict) and status.get("ok"):
+            _ADAPTIVE_STATUS_CACHE[key] = {
+                "value": status,
+                "expires": time.monotonic() + _ADAPTIVE_STATUS_CACHE_SECONDS,
+            }
+            status = dict(status)
+            status["cache"] = "REFRESHED"
+        return status
 
 
 class QuantEngineV2:
@@ -10121,7 +10356,7 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global collector_task, telegram_app
+    global collector_task, telegram_app, _DB_POOL
     if collector_task:
         collector_task.cancel()
         try:
@@ -10131,6 +10366,13 @@ async def shutdown_event():
     if telegram_app:
         await telegram_app.stop()
         await telegram_app.shutdown()
+    if _DB_POOL is not None:
+        try:
+            _DB_POOL.closeall()
+        except Exception:
+            logger.exception("No se pudo cerrar el pool DB durante shutdown")
+        finally:
+            _DB_POOL = None
 
 
 if __name__ == "__main__":
