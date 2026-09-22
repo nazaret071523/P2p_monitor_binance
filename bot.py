@@ -734,6 +734,22 @@ def inicializar_db():
                     WHERE evaluated_24h_at IS NULL;
                 """)
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS venbot_spot_hourly_prediction_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        symbol TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        observed_price DOUBLE PRECISION NOT NULL,
+                        projection JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        evaluations JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        promotion_status TEXT NOT NULL DEFAULT 'SHADOW_EXPERIMENTAL',
+                        last_evaluated_at TIMESTAMPTZ
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_spot_hourly_projection_symbol_created
+                    ON venbot_spot_hourly_prediction_events(symbol, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_spot_hourly_projection_created
+                    ON venbot_spot_hourly_prediction_events(created_at DESC);
+                """)
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_quant_adaptive_snapshots (
                         id BIGSERIAL PRIMARY KEY,
                         motor TEXT NOT NULL,
@@ -1623,11 +1639,10 @@ def analizar_spot_predictivo(symbol):
     confidence = int(round(max(35.0, min(92.0, 45.0 + 18.0*r2_score + 15.0*agreement + 12.0*history_score + 5.0*min(1.0, abs(trend_score))))))
     quality = _spot_calidad_label(confidence)
 
-    horizons = {"1h": 1, "3h": 3, "7h": 7, "24h": 24}
-    projections = {}
-    for label, hours in horizons.items():
+    def _spot_projection_for_hours(hours):
+        hours = float(hours)
         raw_delta = drift * hours
-        # La banda crece con la raíz del tiempo; se limita para evitar extrapolaciones extremas.
+        # Misma matemática del motor Spot actual; solo se amplía el horizonte para sombra.
         uncertainty = max(0.0025, vol_1h) * np.sqrt(hours) * 1.05
         max_move = min(0.18, max(0.012, uncertainty * 2.4 + 0.008))
         central_delta = max(-max_move, min(max_move, raw_delta / 100.0))
@@ -1637,7 +1652,7 @@ def analizar_spot_predictivo(symbol):
         high = price * np.exp(central_delta + band)
         bull_delta = min(max_move, central_delta + band * 0.75)
         bear_delta = max(-max_move, central_delta - band * 0.75)
-        projections[label] = {
+        return {
             "central": round(central, 8),
             "low": round(low, 8),
             "high": round(high, 8),
@@ -1646,6 +1661,23 @@ def analizar_spot_predictivo(symbol):
             "bearish": round(price * np.exp(bear_delta), 8),
             "uncertainty_pct": round(band * 100.0, 3),
         }
+
+    horizons = {"1h": 1, "3h": 3, "7h": 7, "24h": 24}
+    projections = {label: _spot_projection_for_hours(hours) for label, hours in horizons.items()}
+    hourly_shadow = {}
+    generated_at = datetime.now(VET)
+    for h in range(1, 25):
+        row = _spot_projection_for_hours(h)
+        row.update({
+            "horizonte_horas": h,
+            "target_at": (generated_at + timedelta(hours=h)).isoformat(),
+            "generated_at": generated_at.isoformat(),
+            "status": "SHADOW_EXPERIMENTAL",
+            "regimen": trend,
+            "trend": trend,
+            "confidence": confidence,
+        })
+        hourly_shadow[f"{h}h"] = row
 
     source_ts = ticker.get("timestamp")
     result = {
@@ -1682,8 +1714,9 @@ def analizar_spot_predictivo(symbol):
             "central": projections["24h"]["central"],
             "bullish": projections["24h"]["bullish"],
         },
+        "proyecciones_horarias_24h": hourly_shadow,
         "method": "Pendiente temporal + momentum multiventana + volatilidad + niveles recientes; escenarios estadísticos, no precios garantizados.",
-        "generated_at": datetime.now(VET).isoformat(),
+        "generated_at": generated_at.isoformat(),
     }
     SPOT_ANALYSIS_CACHE[sym] = {"value": result, "expires": time.monotonic() + 30.0}
     return result
@@ -1826,6 +1859,169 @@ def evaluar_predicciones_spot_pendientes(limit=200):
     except Exception as e:
         logger.warning("Evaluación de predicciones Spot falló: %s", e)
         return {"evaluated": total, "error": "tracking Spot temporalmente no disponible"}
+
+
+def registrar_proyeccion_horaria_spot_shadow(analysis):
+    """Guarda +1H..+24H de Spot como trayectoria experimental del mismo motor.
+    No modifica las cuatro proyecciones productivas ni activa promoción automática.
+    """
+    if not DATABASE_URL or not ADAPTIVE_LEARNING_ENABLED:
+        return False
+    try:
+        symbol = _normalizar_spot_symbol(analysis.get("symbol"))
+        observed = float((analysis.get("observed") or {}).get("price") or 0)
+        projection = analysis.get("proyecciones_horarias_24h") or {}
+        if symbol not in SPOT_SYMBOLS or observed <= 0 or len(projection) < 24:
+            return False
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                force_new = bool(analysis.get("_force_new_t0"))
+                if not force_new:
+                    cur.execute("""
+                        SELECT id FROM venbot_spot_hourly_prediction_events
+                        WHERE symbol=%s AND created_at >= CURRENT_TIMESTAMP - INTERVAL '4 minutes'
+                        ORDER BY created_at DESC LIMIT 1
+                    """, (symbol,))
+                    if cur.fetchone():
+                        return True
+                cur.execute("""
+                    INSERT INTO venbot_spot_hourly_prediction_events
+                    (symbol, observed_price, projection, promotion_status)
+                    VALUES (%s,%s,%s,'SHADOW_EXPERIMENTAL')
+                """, (symbol, observed, json.dumps(projection, ensure_ascii=False)))
+        return True
+    except Exception as e:
+        logger.warning("No se pudo registrar proyección horaria Spot %s: %s", analysis.get("symbol"), e)
+        return False
+
+
+def evaluar_proyecciones_horarias_spot_pendientes(limit=60):
+    """Evalúa +1H..+24H vencidas contra snapshots Spot reales, sin tocar producción."""
+    if not DATABASE_URL or not SPOT_PREDICTION_TRACKING_ENABLED:
+        return {"evaluated":0}
+    total=0
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,symbol,created_at,observed_price,projection,evaluations
+                    FROM venbot_spot_hourly_prediction_events
+                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '21 days'
+                    ORDER BY created_at ASC LIMIT %s
+                """, (int(limit),))
+                rows=cur.fetchall()
+                for pid,symbol,created_at,observed_price,projection,evaluations in rows:
+                    proj = projection if isinstance(projection,dict) else _safe_json_payload(projection)
+                    evs = evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
+                    changed=False
+                    for label,item in (proj or {}).items():
+                        if evs.get(label,{}).get("evaluated_at"): continue
+                        h=int(item.get("horizonte_horas") or 0)
+                        if h<1 or h>24: continue
+                        target=created_at+timedelta(hours=h)
+                        if datetime.now(VET) < target.astimezone(VET): continue
+                        future=_buscar_snapshot_spot_futuro(symbol,target)
+                        if not future: continue
+                        pred=float(item.get("central") or 0); actual=float(future.get("price") or 0)
+                        if pred<=0 or actual<=0: continue
+                        error_pct=abs(actual-pred)/actual*100.0
+                        signed_error_pct=(actual-pred)/pred*100.0
+                        origin=float(observed_price or 0)
+                        predicted_move=pred/origin-1.0 if origin else 0.0
+                        actual_move=actual/origin-1.0 if origin else 0.0
+                        direction_correct=(predicted_move==0 and abs(actual_move)<1e-12) or (predicted_move*actual_move>0)
+                        evs[label]={"actual":actual,"predicted":pred,"error_pct":error_pct,"signed_error_pct":signed_error_pct,"direction_correct":direction_correct,"evaluated_at":future["fecha"].isoformat() if hasattr(future["fecha"],"isoformat") else str(future["fecha"])}
+                        changed=True
+                    if changed:
+                        cur.execute("UPDATE venbot_spot_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s",(json.dumps(evs,ensure_ascii=False),pid))
+                        total+=1
+        if total: logger.info("[SPOT HOURLY TRACKING] eventos evaluados=%s", total)
+        return {"evaluated":total}
+    except Exception as e:
+        logger.warning("Evaluación horaria Spot falló: %s", e)
+        return {"evaluated":total,"error":"tracking_horario_spot_temporalmente_no_disponible"}
+
+
+def obtener_spot_hourly_prediction_snapshots(symbol=None, limit=40, snapshot_id=None):
+    """Snapshots Spot horarios congelados +1H..+24H para gráfica y aprendizaje."""
+    if not DATABASE_URL:
+        return {"ok":False,"snapshots":[],"tracked":0}
+    sym=_normalizar_spot_symbol(symbol) if symbol else None
+    if sym and sym not in SPOT_SYMBOLS: sym="BTCUSDT"
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                where=[]; params=[]
+                if sym:
+                    where.append("symbol=%s"); params.append(sym)
+                where_sql=("WHERE "+" AND ".join(where)) if where else ""
+                params.append(int(limit))
+                cur.execute(f"SELECT id,symbol,created_at,observed_price,projection,evaluations,promotion_status FROM venbot_spot_hourly_prediction_events {where_sql} ORDER BY created_at DESC LIMIT %s",tuple(params))
+                rows=cur.fetchall()
+                if snapshot_id is not None and sym:
+                    ids={int(r[0]) for r in rows}
+                    if int(snapshot_id) not in ids:
+                        cur.execute("SELECT id,symbol,created_at,observed_price,projection,evaluations,promotion_status FROM venbot_spot_hourly_prediction_events WHERE id=%s AND symbol=%s LIMIT 1",(int(snapshot_id),sym))
+                        extra=cur.fetchone()
+                        if extra: rows.append(extra)
+        snapshots=[]
+        for pid,row_sym,created_at,origin,projection,evaluations,promotion_status in rows:
+            proj=projection if isinstance(projection,dict) else _safe_json_payload(projection)
+            evs=evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
+            horizons={}
+            for hlabel in [f"{h}h" for h in range(1,25)]:
+                q=proj.get(hlabel) or {}; ev=evs.get(hlabel) or {}
+                hours=int(q.get("horizonte_horas") or re.sub(r"\D","",hlabel) or 0)
+                pred=float(q.get("central")) if q.get("central") is not None else None
+                unc=float(q.get("uncertainty_pct")) if q.get("uncertainty_pct") is not None else None
+                low=float(q.get("low")) if q.get("low") is not None else (pred*(1-unc/100.0) if pred and unc is not None else None)
+                high=float(q.get("high")) if q.get("high") is not None else (pred*(1+unc/100.0) if pred and unc is not None else None)
+                horizons[hlabel]={"hours":hours,"predicted":pred,"low":low,"high":high,"change":q.get("change_pct"),"confidence":q.get("confidence"),"target_at":q.get("target_at"),"actual":ev.get("actual"),"error_pct":ev.get("error_pct"),"signed_error_pct":ev.get("signed_error_pct"),"direction_correct":ev.get("direction_correct"),"evaluated_at":ev.get("evaluated_at"),"status":"EVALUADA" if ev.get("evaluated_at") else "PENDIENTE"}
+            evaluated_count=sum(1 for q in horizons.values() if q.get("evaluated_at"))
+            snapshots.append({"id":int(pid),"symbol":str(row_sym),"created_at":created_at.isoformat(),"origin_price":float(origin),"status":"COMPLETAMENTE_EVALUADA" if evaluated_count>=24 else ("PARCIALMENTE_EVALUADA" if evaluated_count else "PENDIENTE"),"evaluated_count":evaluated_count,"promotion_status":promotion_status,"horizons":horizons})
+        return {"ok":True,"symbol":sym or "ALL","snapshots":snapshots,"tracked":len(snapshots),"evaluable":sum(1 for s in snapshots if s["evaluated_count"]>0)}
+    except Exception as e:
+        logger.warning("Snapshots horarios Spot no disponibles %s: %s",sym or "ALL",e)
+        return {"ok":False,"symbol":sym or "ALL","snapshots":[],"tracked":0,"error":"snapshots_horarios_spot_temporalmente_no_disponibles"}
+
+
+def _adaptive_spot_hourly_stats(symbol=None, horizon="1h", limit=5000):
+    if not DATABASE_URL or not ADAPTIVE_LEARNING_ENABLED:
+        return {"evaluated":0,"readiness":"SIN_DATOS","hourly":True,"horizon":horizon}
+    label=str(horizon or "1h").lower()
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT observed_price,projection,evaluations,created_at FROM venbot_spot_hourly_prediction_events WHERE (%s IS NULL OR symbol=%s) AND created_at>=CURRENT_TIMESTAMP-INTERVAL '45 days' ORDER BY created_at DESC LIMIT %s",(symbol.upper() if symbol else None,symbol.upper() if symbol else None,int(limit)))
+                source_rows=cur.fetchall()
+        normalized=[]
+        for origin,projection,evaluations,created_at in source_rows:
+            proj=projection if isinstance(projection,dict) else _safe_json_payload(projection); evs=evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
+            item=proj.get(label) or {}; ev=evs.get(label) or {}
+            pred=float(item.get("central") or 0); actual=float(ev.get("actual") or 0)
+            if pred<=0 or actual<=0 or not ev.get("evaluated_at"): continue
+            direction=ev.get("direction_correct")
+            group=str(item.get("regimen") or item.get("trend") or "SIN_CLASIFICAR").upper()
+            normalized.append({"observed":float(origin or 0),"pred":pred,"actual":actual,"direction":direction,"group":group,"created_at":created_at})
+        n=len(normalized)
+        abs_errors=[abs(r["actual"]-r["pred"])/r["actual"]*100.0 for r in normalized if r["actual"]]
+        signed=[(r["actual"]-r["pred"])/r["pred"]*100.0 for r in normalized if r["pred"]]
+        dirs=[bool(r["direction"]) for r in normalized if r.get("direction") is not None]
+        bias=float(np.mean(signed)) if signed else None; mae=float(np.mean(abs_errors)) if abs_errors else None; acc=100.0*sum(dirs)/len(dirs) if dirs else None; p75=float(np.percentile(abs_errors,75)) if abs_errors else None
+        factor=float(np.clip(1.0+(bias or 0.0)/100.0,0.95,1.05)) if bias is not None else None
+        groups={}
+        for r in normalized: groups[r["group"]]=groups.get(r["group"],0)+1
+        ready=n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and any(v>=10 for v in groups.values())
+        shadow=_build_shadow_candidate(normalized,"spot_hourly") if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else {"status":"ACUMULANDO_EVIDENCIA"}
+        return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","shadow_candidate":shadow,"regimes":{g:{"evaluated":v,"ready":v>=10} for g,v in groups.items()},"regimes_informativos":sum(1 for v in groups.values() if v>=10),"latest_event_at":normalized[0]["created_at"] if normalized else None,"hourly":True,"horizon":label,"source":"venbot_spot_hourly_prediction_events"}
+    except Exception as e:
+        logger.warning("Adaptive Spot hourly stats falló %s %s: %s",symbol or "ALL",label,e)
+        return {"evaluated":0,"readiness":"TEMPORALMENTE_NO_DISPONIBLE","hourly":True,"horizon":label}
+
+
+def _adaptive_spot_hourly_summary(symbol=None):
+    data={f"{h}h":_adaptive_spot_hourly_stats(symbol,f"{h}h") for h in range(1,25)}
+    return {"horizons":data,"evaluated_total":sum(int(v.get("evaluated") or 0) for v in data.values()),"evidence_ready_horizons":sum(1 for v in data.values() if int(v.get("evaluated") or 0)>=ADAPTIVE_MIN_EVAL_PER_HORIZON),"scope":symbol or "ALL","status":"SHADOW_ONLY","note":"Los 24 horizontes Spot se entrenan/evalúan individualmente en sombra; no sustituyen los cuatro horizontes productivos."}
 
 
 def obtener_spot_prediction_performance(symbol=None):
@@ -4421,7 +4617,7 @@ def obtener_quant_adaptive_status(symbol=None):
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
       "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN},
       "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"hourly_shadow":p2p_hourly,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
-      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"hourly_shadow":_adaptive_spot_hourly_summary(symbol),"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
       "generated_at":datetime.now(VET).isoformat()}
     # Persistimos una instantánea liviana para auditoría del aprendizaje.
     try:
@@ -6809,10 +7005,12 @@ async def tarea_recoleccion_automatica():
             if SPOT_PREDICTION_TRACKING_ENABLED and time.monotonic() - _LAST_SPOT_PREDICTION_TRACKING_TS >= SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS:
                 try:
                     await asyncio.to_thread(evaluar_predicciones_spot_pendientes, 50)
+                    await asyncio.to_thread(evaluar_proyecciones_horarias_spot_pendientes, 60)
                     for _sym in SPOT_SYMBOLS:
                         try:
                             _spot_analysis = await asyncio.to_thread(analizar_spot_predictivo, _sym)
                             await asyncio.to_thread(registrar_prediccion_spot_tracking, _spot_analysis)
+                            await asyncio.to_thread(registrar_proyeccion_horaria_spot_shadow, _spot_analysis)
                         except Exception as _spot_pred_exc:
                             logger.warning("Predicción Spot %s no registrada: %s", _sym, _spot_pred_exc)
                     _LAST_SPOT_PREDICTION_TRACKING_TS = time.monotonic()
@@ -8033,6 +8231,8 @@ def admin_predictive_spot(
     symbol: str = Query("BTCUSDT"),
     interval: str = Query("1h", pattern="^(5m|15m|30m|1h|4h|1d)$"),
     limit: int = Query(250, ge=50, le=500),
+    snapshot_id: Optional[int] = Query(None, ge=1),
+    new_t0: bool = Query(False),
 ):
     """Lectura administrativa de Spot para la nueva visualización."""
     _require_developer_session(request)
@@ -8040,9 +8240,25 @@ def admin_predictive_spot(
     if sym not in SPOT_SYMBOLS:
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
     prediction = analizar_spot_predictivo(sym)
+    # La lectura administrativa garantiza que exista un snapshot horario persistente.
+    # new_t0 fuerza uno nuevo para que el control "Nuevo T0" sea realmente manual.
+    if new_t0 and DATABASE_URL:
+        try:
+            _force = dict(prediction)
+            _force["_force_new_t0"] = True
+            registrar_proyeccion_horaria_spot_shadow(_force)
+        except Exception as exc:
+            logger.warning("No se pudo crear nuevo T0 Spot %s: %s", sym, exc)
+    elif DATABASE_URL:
+        try:
+            hourly_existing = obtener_spot_hourly_prediction_snapshots(sym, 1).get("snapshots") or []
+            if not hourly_existing:
+                registrar_proyeccion_horaria_spot_shadow(prediction)
+        except Exception as exc:
+            logger.warning("No se pudo inicializar T0 Spot %s: %s", sym, exc)
     candles = obtener_spot_klines(sym, interval, limit)
     performance = obtener_spot_prediction_performance(sym)
-    return {"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance, "snapshots": obtener_spot_prediction_snapshots(sym, 40)}
+    return {"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance, "snapshots": obtener_spot_prediction_snapshots(sym, 40), "hourly_shadow": obtener_spot_hourly_prediction_snapshots(sym, 40, snapshot_id)}
 
 
 @app.get("/api/admin/launch-mode")
