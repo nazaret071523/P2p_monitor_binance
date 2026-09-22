@@ -1891,7 +1891,7 @@ def _prediction_snapshot_status(horizons):
     return "PENDIENTE"
 
 
-def obtener_prediction_snapshots(banco="GENERAL", limit=40):
+def obtener_prediction_snapshots(banco="GENERAL", limit=40, snapshot_id=None):
     """Devuelve snapshots P2P congelados para trazabilidad visual.
 
     No genera nuevas predicciones: lee los eventos que ya registra el
@@ -1905,7 +1905,12 @@ def obtener_prediction_snapshots(banco="GENERAL", limit=40):
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                params=[bank]
+                where="WHERE banco=%s"
+                if snapshot_id is not None:
+                    where += " AND id=%s"
+                    params.append(int(snapshot_id))
+                cur.execute(f"""
                     SELECT id,banco,created_at,actual_mid,
                            pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
                            pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
@@ -1915,9 +1920,9 @@ def obtener_prediction_snapshots(banco="GENERAL", limit=40):
                            evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at,
                            confidence,tendencia,regimen,support_7h,resistance_7h,volatility_pct,payload
                     FROM venbot_prediction_events
-                    WHERE banco=%s
+                    {where}
                     ORDER BY created_at DESC LIMIT %s
-                """, (bank, int(limit)))
+                """, (*params, 1 if snapshot_id is not None else int(limit)))
                 rows = cur.fetchall()
         labels = ("1h", "3h", "7h", "24h")
         snapshots=[]
@@ -7976,6 +7981,7 @@ def admin_predictive_p2p(
     request: Request,
     banco: str = Query("GENERAL"),
     limit: int = Query(1200, ge=100, le=5000),
+    snapshot_id: Optional[int] = Query(None, ge=1),
 ):
     """Lectura administrativa de P2P para la nueva visualización.
 
@@ -7997,6 +8003,16 @@ def admin_predictive_p2p(
             continue
     performance = obtener_prediction_performance(bank, min(1000, max(100, int(limit)))) if DATABASE_URL else {"ok": False}
     hourly = obtener_ultima_proyeccion_horaria_p2p(bank) if DATABASE_URL else None
+    snapshots = obtener_prediction_snapshots(bank, 40)
+    selected_snapshot = obtener_prediction_snapshots(bank, 1, snapshot_id) if (DATABASE_URL and snapshot_id is not None) else {"ok": True, "snapshots": []}
+    selected_rows = selected_snapshot.get("snapshots") or []
+    selected_ids = {str(x.get("id")) for x in (snapshots.get("snapshots") or [])}
+    if selected_rows:
+        for row in selected_rows:
+            if str(row.get("id")) not in selected_ids:
+                snapshots.setdefault("snapshots", []).append(row)
+                snapshots["tracked"] = len(snapshots.get("snapshots") or [])
+    
     if hourly is None:
         try:
             mercado = obtener_ultimo_mercado_banco(bank) or {}
@@ -8008,7 +8024,7 @@ def admin_predictive_p2p(
                     hourly=obtener_ultima_proyeccion_horaria_p2p(bank)
         except Exception as _hourly_now_exc:
             logger.warning("Proyección horaria administrativa no disponible %s: %s",bank,_hourly_now_exc)
-    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": obtener_prediction_snapshots(bank, 40), "hourly_projection": hourly}
+    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": snapshots, "selected_snapshot_id": snapshot_id, "hourly_projection": hourly}
 
 
 @app.get("/api/admin/predictive/spot")
