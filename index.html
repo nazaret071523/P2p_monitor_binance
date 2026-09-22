@@ -2884,8 +2884,15 @@
     for(let h=0;h<=24;h++){
       const xx=xFuture(anchor+h*3600000);
       ticks.push(`<line x1="${xx}" y1="${T}" x2="${xx}" y2="${T+PH}" stroke="${h===0?'#f2c65b':'#192940'}" stroke-width="${h===0?3:1}" ${h===0?'stroke-dasharray="8 8"':''}/>`);
-      // One compact label per hour, with the forecast price label near only the 4 motor horizons.
-      ticks.push(`<text x="${xx}" y="${T+PH+28}" text-anchor="middle" fill="#7f8ea5" font-size="11" font-weight="800">${vet(anchor+h*3600000)}</text>`);
+      // v31.58: emphasize the Venezuelan market reading window 08:00 a.m. → 08:00 p.m. VET.
+      // Keep the full hourly grid, but only print the market-hour labels; the rest are intentionally quiet.
+      const tickTs=anchor+h*3600000;
+      const tickHour=Number(new Intl.DateTimeFormat('es-VE',{timeZone:'America/Caracas',hour:'2-digit',hour12:false}).format(new Date(tickTs)));
+      const marketHour=tickHour>=8 && tickHour<=20;
+      const edgeHour=tickHour===8 || tickHour===20;
+      if(marketHour){
+        ticks.push(`<text x="${xx}" y="${T+PH+28}" text-anchor="middle" fill="${edgeHour?'#f2c65b':'#b9c8dc'}" font-size="${edgeHour?13:12}" font-weight="${edgeHour?900:850}">${vet(tickTs)}</text>`);
+      }
     }
 
     const grid=[];
@@ -3074,6 +3081,7 @@
             ${realBars.join('')}
 
             <text x="${futureLeft+12}" y="${barBase-barMaxH-24}" fill="#8a70b0" font-size="10" font-weight="900">MOVIMIENTO PROYECTADO · CAMBIO DEL MOTOR</text>
+            <text x="${futureLeft}" y="${T+PH+56}" fill="#6fdcff" font-size="12" font-weight="900">HORARIO DE MERCADO · 08:00 a.m. → 08:00 p.m. VET</text>
             <line x1="${futureLeft}" y1="${barBase}" x2="${futureRight}" y2="${barBase}" stroke="#21324a" stroke-width="1.5"/>
             ${futureBars.join('')}
 
