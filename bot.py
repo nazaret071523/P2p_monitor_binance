@@ -8964,7 +8964,10 @@ def obtener_spot_prediction_performance_api(request: Request, symbol: Optional[s
 
 @app.get("/api/quant/adaptive/status")
 def obtener_quant_adaptive_status_api(request: Request, symbol: Optional[str] = Query(None)):
-    _require_plan_user(request, "VIP")
+    # El panel de evolución adaptativa es ADMIN y solo lectura.
+    # Un desarrollador autenticado puede consultarlo aunque su plan comercial
+    # no sea VIP; la lectura no modifica ningún motor productivo.
+    _require_developer_session(request)
     sym = _normalizar_spot_symbol(symbol) if symbol else None
     if sym and sym not in SPOT_SYMBOLS:
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
