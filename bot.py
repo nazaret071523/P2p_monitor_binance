@@ -4509,6 +4509,95 @@ def _fit_shadow_bias_correction(train, min_regime_train=ADAPTIVE_SHADOW_MIN_REGI
     return global_factor, by_regime, train_bias
 
 
+def _shadow_sequence_quality(rows):
+    """Auditoría ligera de calidad temporal para datos de aprendizaje en sombra.
+
+    Es informativa: no modifica el candidato ni la producción. Solo ayuda a
+    detectar duplicados, huecos temporales grandes y timestamps inválidos antes
+    de interpretar una validación walk-forward.
+    """
+    items=[]
+    invalid=0
+    for r in rows or []:
+        dt=r.get("created_at") or r.get("evaluated_at") or r.get("timestamp")
+        if isinstance(dt,str):
+            try:
+                dt=datetime.fromisoformat(dt.replace("Z","+00:00"))
+            except Exception:
+                dt=None
+        if dt is None:
+            invalid += 1
+            continue
+        if getattr(dt,"tzinfo",None) is None:
+            dt=VET.localize(dt)
+        items.append(dt.astimezone(VET))
+    items.sort()
+    unique=sorted(set(items))
+    duplicate_count=max(0, len(items)-len(unique))
+    gaps=[(b-a).total_seconds()/60.0 for a,b in zip(items,items[1:]) if b>=a]
+    median_gap=float(np.median(gaps)) if gaps else None
+    max_gap=float(max(gaps)) if gaps else None
+    threshold=max(30.0, median_gap*4.0) if median_gap is not None else 30.0
+    large_gaps=sum(1 for g in gaps if g>threshold)
+    warnings=[]
+    if invalid: warnings.append("TIMESTAMPS_INVALIDOS")
+    if duplicate_count: warnings.append("TIMESTAMPS_DUPLICADOS")
+    if large_gaps: warnings.append("HUECOS_TEMPORALES")
+    return {
+        "status":"OK" if not warnings else "OBSERVACION_CALIDAD",
+        "rows":len(rows or []),
+        "timestamps_validos":len(items),
+        "timestamps_invalidos":invalid,
+        "timestamps_unicos":len(unique),
+        "timestamps_duplicados":duplicate_count,
+        "gap_mediano_min":round(median_gap,2) if median_gap is not None else None,
+        "gap_max_min":round(max_gap,2) if max_gap is not None else None,
+        "huecos_mayores_umbral":large_gaps,
+        "umbral_gap_min":round(threshold,2),
+        "warnings":warnings,
+    }
+
+
+def _spot_300h_audit(spot_cov=None):
+    """Hito de cobertura Spot para los nueve activos configurados.
+
+    Solo lectura de cobertura histórica. No ejecuta backfills ni modifica
+    predicciones; sirve para que UI y auditoría compartan el mismo criterio.
+    """
+    cov=spot_cov or _coverage_spot()
+    by=cov.get("by_symbol",{}) if isinstance(cov,dict) else {}
+    assets=[]
+    for sym in SPOT_SYMBOLS:
+        v=by.get(sym,{}) if isinstance(by,dict) else {}
+        hours=float(v.get("coverage_hours") or 0.0)
+        assets.append({"symbol":sym,"coverage_hours":round(hours,2),"snapshots":int(v.get("snapshots") or 0),"reached_300h":hours>=300.0})
+    reached=sum(1 for x in assets if x["reached_300h"])
+    median=float(cov.get("median_hours") or 0.0) if isinstance(cov,dict) else 0.0
+    return {
+        "status":"HITO_ALCANZADO" if reached==len(SPOT_SYMBOLS) and median>=300.0 else "PENDIENTE_COBERTURA_COMPLETA",
+        "target_hours":300,
+        "coverage_median_hours":round(median,2),
+        "assets_reached":reached,
+        "assets_total":len(SPOT_SYMBOLS),
+        "all_assets_reached":reached==len(SPOT_SYMBOLS),
+        "assets":assets,
+        "read_only":True,
+        "production_change":"DISABLED",
+    }
+
+
+def _p2p_300h_audit(coverage_hours):
+    h=max(0.0,float(coverage_hours or 0.0))
+    return {
+        "status":"HITO_ALCANZADO" if h>=300.0 else "PENDIENTE_COBERTURA",
+        "target_hours":300,
+        "coverage_hours":round(h,2),
+        "reached":h>=300.0,
+        "read_only":True,
+        "production_change":"DISABLED",
+    }
+
+
 def _rolling_oos_validation(rows, mode="p2p", folds=ADAPTIVE_ROLLING_FOLDS):
     """Validación temporal walk-forward adicional para madurar candidatos.
 
@@ -4517,10 +4606,20 @@ def _rolling_oos_validation(rows, mode="p2p", folds=ADAPTIVE_ROLLING_FOLDS):
     Reporta estabilidad global y por régimen. Nunca modifica producción.
     """
     try:
-        ordered=list(reversed(rows or []))  # más antiguo -> más reciente
+        raw_rows=list(rows or [])
+        quality=_shadow_sequence_quality(raw_rows)
+        def _sort_dt(r):
+            dt=r.get("created_at") or r.get("evaluated_at") or r.get("timestamp")
+            if isinstance(dt,str):
+                try: dt=datetime.fromisoformat(dt.replace("Z","+00:00"))
+                except Exception: dt=None
+            if dt is None: return VET.localize(datetime.min)
+            if getattr(dt,"tzinfo",None) is None: dt=VET.localize(dt)
+            return dt.astimezone(VET)
+        ordered=sorted(raw_rows, key=_sort_dt)
         n=len(ordered)
         if n < ADAPTIVE_ROLLING_MIN_TRAIN + ADAPTIVE_ROLLING_MIN_OOS:
-            return {"status":"EVIDENCIA_INSUFICIENTE","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"train_min":ADAPTIVE_ROLLING_MIN_TRAIN,"oos_min":ADAPTIVE_ROLLING_MIN_OOS}
+            return {"status":"EVIDENCIA_INSUFICIENTE","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"train_min":ADAPTIVE_ROLLING_MIN_TRAIN,"oos_min":ADAPTIVE_ROLLING_MIN_OOS,"data_quality":quality}
         oos_size=max(ADAPTIVE_ROLLING_MIN_OOS, min(12, n//6))
         train_floor=max(ADAPTIVE_ROLLING_MIN_TRAIN, int(round(n*0.40)))
         possible=[]
@@ -4564,7 +4663,7 @@ def _rolling_oos_validation(rows, mode="p2p", folds=ADAPTIVE_ROLLING_FOLDS):
                 regime_acc.setdefault(g,[]).append(gi if gi is not None else None)
             fold_rows.append({"fold":idx,"train_evaluated":len(train),"oos_evaluated":len(oos),"train_bias_pct":round(train_bias,4) if train_bias is not None else None,"candidate_factor":round(float(factor),6),"baseline_mae_pct":round(baseline,4) if baseline is not None else None,"candidate_mae_pct":round(candidate,4) if candidate is not None else None,"improvement_pct":round(float(imp),2),"regimes":reg_metrics})
         if not fold_rows:
-            return {"status":"EVIDENCIA_INSUFICIENTE","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"train_min":ADAPTIVE_ROLLING_MIN_TRAIN,"oos_min":ADAPTIVE_ROLLING_MIN_OOS}
+            return {"status":"EVIDENCIA_INSUFICIENTE","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"train_min":ADAPTIVE_ROLLING_MIN_TRAIN,"oos_min":ADAPTIVE_ROLLING_MIN_OOS,"data_quality":quality}
         valid=sum(1 for x in improvements if x>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT)
         avg=float(np.mean(improvements)) if improvements else None
         std=float(np.std(improvements)) if len(improvements)>1 else 0.0
@@ -4574,10 +4673,10 @@ def _rolling_oos_validation(rows, mode="p2p", folds=ADAPTIVE_ROLLING_FOLDS):
             vv=[float(v) for v in vals if v is not None]
             regime_summary[g]={"folds":len(vals),"avg_improvement_pct":round(float(np.mean(vv)),2) if vv else None,"informative":sum(1 for v in vals if v is not None and v>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT)>=ADAPTIVE_ROLLING_MIN_VALID_FOLDS}
         ok=valid>=ADAPTIVE_ROLLING_MIN_VALID_FOLDS and len(fold_rows)>=ADAPTIVE_ROLLING_MIN_VALID_FOLDS
-        return {"status":"VALIDACION_ROLLING_OK" if ok else "VALIDACION_ROLLING_OBSERVACION","folds":fold_rows,"folds_validos":valid,"folds_totales":len(fold_rows),"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"avg_improvement_pct":round(avg,2) if avg is not None else None,"min_improvement_pct":round(min_imp,2) if min_imp is not None else None,"stdev_improvement_pct":round(std,2),"regime_oos":regime_summary,"walk_forward":True,"production_change":"DISABLED"}
+        return {"status":"VALIDACION_ROLLING_OK" if ok else "VALIDACION_ROLLING_OBSERVACION","folds":fold_rows,"folds_validos":valid,"folds_totales":len(fold_rows),"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"avg_improvement_pct":round(avg,2) if avg is not None else None,"min_improvement_pct":round(min_imp,2) if min_imp is not None else None,"stdev_improvement_pct":round(std,2),"regime_oos":regime_summary,"walk_forward":True,"data_quality":quality,"production_change":"DISABLED"}
     except Exception as exc:
         logger.warning("Adaptive rolling OOS falló mode=%s: %s",mode,exc)
-        return {"status":"ERROR_VALIDACION_ROLLING","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"error":str(exc)[:160]}
+        return {"status":"ERROR_VALIDACION_ROLLING","folds":[],"folds_validos":0,"folds_requeridos":ADAPTIVE_ROLLING_MIN_VALID_FOLDS,"data_quality":locals().get("quality",{}),"error":str(exc)[:160]}
 
 
 def _build_shadow_candidate(rows, mode="p2p"):
@@ -5092,6 +5191,7 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
     if not DATABASE_URL: return {"ok":False,"error":"database_unavailable"}
     p2p_cov=_coverage_p2p("GENERAL")
     spot_cov=_coverage_spot()
+    milestones={"p2p_300h":_p2p_300h_audit(p2p_cov),"spot_300h":_spot_300h_audit(spot_cov)}
     hs=("1h","3h","7h","24h")
     all_hs=tuple(f"{h}h" for h in range(1,25))
     p2p_h=_adaptive_p2p_stats_batch("GENERAL",hs)
@@ -5106,9 +5206,9 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
     spot_primary_gates=_adaptive_promotion_gates("SPOT",symbol or "ALL",hs)
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
       "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS}},
-      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":p2p_h,"hourly_shadow":p2p_hourly,"maturity":_adaptive_maturity_summary(p2p_hourly),"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
-      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":spot_h,"hourly_shadow":spot_hourly,"maturity":_adaptive_maturity_summary(spot_hourly),"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"note":"Candidatos de calibración en sombra; no modifican producción."},
-      "generated_at":datetime.now(VET).isoformat()}
+      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":p2p_h,"hourly_shadow":p2p_hourly,"maturity":_adaptive_maturity_summary(p2p_hourly),"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"milestone_300h":milestones["p2p_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":spot_h,"hourly_shadow":spot_hourly,"maturity":_adaptive_maturity_summary(spot_hourly),"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"milestone_300h":milestones["spot_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "milestones":milestones,"generated_at":datetime.now(VET).isoformat()}
     # Persistimos una instantánea liviana para auditoría del aprendizaje.
     try:
         with obtener_conexion() as conn:
@@ -9103,6 +9203,30 @@ def obtener_spot_prediction_performance_api(request: Request, symbol: Optional[s
     # La evaluación es un trabajo de fondo programado; este endpoint solo lee métricas
     # ya calculadas para no bloquear la interfaz ni competir por locks de PostgreSQL.
     return obtener_spot_prediction_performance(sym)
+
+
+@app.get("/api/quant/maturity/audit")
+def obtener_quant_maturity_audit_api(request: Request):
+    """Auditoría consolidada de madurez/cobertura. Solo lectura."""
+    _require_developer_session(request)
+    if not DATABASE_URL:
+        return {"ok":False,"error":"database_unavailable"}
+    try:
+        p2p_cov=_coverage_p2p("GENERAL")
+        spot_cov=_coverage_spot()
+        return {
+            "ok":True,
+            "p2p_300h":_p2p_300h_audit(p2p_cov),
+            "spot_300h":_spot_300h_audit(spot_cov),
+            "production_horizons":["1h","3h","7h","24h"],
+            "research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),
+            "mode":"SHADOW_ONLY",
+            "production_change":"DISABLED",
+            "generated_at":datetime.now(VET).isoformat(),
+        }
+    except Exception as exc:
+        logger.warning("Auditoría de madurez falló: %s", exc)
+        return {"ok":False,"error":"auditoria_temporalmente_no_disponible"}
 
 
 @app.get("/api/quant/adaptive/status")
