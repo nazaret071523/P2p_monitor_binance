@@ -300,8 +300,8 @@
 <style id="venbot-v31-46-p2p-reference-style">
 #advancedPredictiveChart{display:none!important}
 .venbot-p2p-refgraph{min-height:100%!important}
-@media(max-width:640px){
-  .venbot-p2p-refgraph{min-width:980px!important}
+@media(max-width:760px){
+  .venbot-p2p-refgraph{min-width:0!important;width:100%!important;max-width:100%!important}
 }
 </style>
 
@@ -312,23 +312,25 @@
 @media(max-width:760px){#adv-canvas-wrap{min-height:560px!important}}
 </style>
 
-<style id="venbot-v31-51-chart-viewport">
-.adv-chart-viewport{overflow:hidden!important}
-@media(max-width:760px){.adv-chart-viewport{height:560px!important;min-height:560px!important}}
-</style>
-
-<style id="venbot-v31-51-hourly-render-fix">
-/* v31.51: the hourly readout lives outside the chart viewport so it cannot collapse the SVG height. */
+<style id="venbot-v31-52-chart-responsive">
+/* v31.52: responsive chart viewport + true zoom-out range. No motor changes. */
 .adv-chart-viewport{position:relative;overflow:hidden!important}
-.vp2p-shell{display:flex!important;flex-direction:column!important;height:auto!important;min-height:1040px!important}
-.vp2p-scroll{position:relative!important;inset:auto!important;flex:0 0 1040px!important;width:100%!important;height:1040px!important;min-height:1040px!important;overflow:auto!important;overscroll-behavior:contain!important}
-.vp2p-stage{width:1680px!important;height:1040px!important;min-width:1680px!important;min-height:1040px!important}
+.vp2p-shell{display:flex!important;flex-direction:column!important;height:auto!important;min-height:0!important;width:100%!important;max-width:100%!important}
+.vp2p-scroll{position:relative!important;inset:auto!important;flex:0 0 auto!important;width:100%!important;height:clamp(360px,64vw,720px)!important;min-height:360px!important;max-height:720px!important;overflow:auto!important;overscroll-behavior:contain!important;-webkit-overflow-scrolling:touch}
+.vp2p-stage{width:1680px!important;height:1040px!important;min-width:1680px!important;min-height:1040px!important;transform-origin:top left!important}
 .vp2p-svg{display:block!important;width:1680px!important;height:1040px!important;min-width:1680px!important;min-height:1040px!important}
+.vp2p-toolbar{right:10px!important;top:10px!important}
+.vp2p-toolbar button{min-width:42px;min-height:40px;padding:7px 10px!important}
 .vp2p-hourly-readout{background:#07101c;border:1px solid #1d3048;border-radius:12px;padding:12px 14px;overflow-x:auto}
 .vp2p-hourly-title{font-size:11px;font-weight:900;color:#cfd9e9;letter-spacing:.03em;margin-bottom:8px}.vp2p-hourly-title span{color:#8a73b3;font-weight:800;margin-left:8px}
 .vp2p-hourly-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;min-width:0}
 .vp2p-hour-cell{border:1px solid #1b2e46;border-radius:8px;background:#091521;padding:6px 7px;display:grid;gap:2px}.vp2p-hour-cell b{color:#f3c75f;font-size:11px}.vp2p-hour-cell small{color:#71839c;font-size:9px}.vp2p-hour-cell strong{font-size:10px;color:#aeefff}.vp2p-hour-cell strong:last-child{color:#f3aebd}
-@media(max-width:760px){.vp2p-grid-placeholder{min-width:0}.vp2p-hourly-grid{grid-template-columns:repeat(4,minmax(110px,1fr));min-width:520px}.vp2p-hourly-readout{max-width:100%;overflow-x:auto}.vp2p-shell{min-height:1040px!important}}
+@media(max-width:760px){
+  .adv-chart-viewport{height:460px!important;min-height:460px!important}
+  .vp2p-scroll{height:460px!important;min-height:460px!important}
+  .vp2p-hourly-grid{grid-template-columns:repeat(2,minmax(0,1fr));min-width:0}
+  .vp2p-hourly-readout{max-width:100%;overflow:visible}
+}
 </style>
 
 </head>
@@ -2926,15 +2928,21 @@
       futureBars.push(`<rect x="${cx-11}" y="${yy}" width="22" height="${Math.max(3,hp)}" rx="4" fill="${p.d>=0?'#31d7a2':'#ff718e'}" opacity=".9"><title>${esc(`Movimiento proyectado ${p.d.toFixed(3)}% · +${p.h}H`)}</title></rect>`);
     });
 
-    // Label lanes prevent collisions: each horizon has its own slot.
-    const sellDy={1:-40,3:-68,7:-40,24:-68},buyDy={1:40,3:70,7:43,24:72};
+    // v31.52: label only selected hourly anchors to keep the projection readable.
+    // Every hourly point is still drawn and remains available in the hourly readout/tooltips.
+    const labelHoursSell=new Set([1,6,12,18,24]);
+    const labelHoursBuy=new Set([3,9,15,21]);
+    const sellDy={1:-44,6:-36,12:-40,18:-36,24:-54},buyDy={3:44,9:38,15:42,21:38};
     const marker=(p,color,side)=>{
-      const xx=xFuture(p.x),yy=y(p.y),dy=(side==='sell'?sellDy[p.h]:buyDy[p.h])||40;
+      const show=(side==='sell'?labelHoursSell:labelHoursBuy).has(Number(p.h));
+      const xx=xFuture(p.x),yy=y(p.y);
+      if(!show) return `<circle cx="${xx}" cy="${yy}" r="3.6" fill="${color}" stroke="#06101b" stroke-width="2"><title>+${p.h}H · ${F(p.y)} Bs · ${vet(p.x)} VET</title></circle>`;
+      const dy=(side==='sell'?sellDy[p.h]:buyDy[p.h])||40;
       const tx=p.h===24?xx-12:xx+12,ta=p.h===24?'end':'start';
-      return `<circle cx="${xx}" cy="${yy}" r="8" fill="${color}" stroke="#06101b" stroke-width="5"/>
-        <line x1="${xx}" y1="${yy}" x2="${tx}" y2="${yy+dy}" stroke="${color}" stroke-opacity=".32" stroke-width="1.2"/>
-        <text x="${tx}" y="${yy+dy}" text-anchor="${ta}" fill="${color}" font-size="14" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="6">+${p.h}H · ${F(p.y)} Bs</text>
-        <text x="${tx}" y="${yy+dy+14}" text-anchor="${ta}" fill="#8d9db3" font-size="10" font-weight="800" paint-order="stroke" stroke="#06101b" stroke-width="5">${vet(p.x)} VET</text>`;
+      return `<circle cx="${xx}" cy="${yy}" r="7" fill="${color}" stroke="#06101b" stroke-width="4"/>
+        <line x1="${xx}" y1="${yy}" x2="${tx}" y2="${yy+dy}" stroke="${color}" stroke-opacity=".32" stroke-width="1.1"/>
+        <text x="${tx}" y="${yy+dy}" text-anchor="${ta}" fill="${color}" font-size="12" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="5">+${p.h}H · ${F(p.y)} Bs</text>
+        <text x="${tx}" y="${yy+dy+13}" text-anchor="${ta}" fill="#8d9db3" font-size="9" font-weight="800" paint-order="stroke" stroke="#06101b" stroke-width="4">${vet(p.x)} VET</text>`;
     };
     const hourlyPointMarkers=(hourlyFrozen.length?hourlyFrozen:[]).map(p=>{
       const pieces=[];
@@ -3001,11 +3009,11 @@
             <text x="${futureLeft+14}" y="${T-19}" fill="#9f86c9" font-size="11" font-weight="900">CARRIL FUTURO · PROYECCIÓN VENBOT</text>
 
             <line x1="${futureLeft}" y1="${T}" x2="${futureLeft}" y2="${T+PH}" stroke="#f2c65b" stroke-width="3" stroke-dasharray="9 9"/>
-            <text x="${futureLeft+13}" y="${T+25}" fill="#f2c65b" font-size="16" font-weight="900">T0 · ${vet(anchor)} VET</text>
-            <text x="${futureLeft+13}" y="${T+43}" fill="#7889a1" font-size="10" font-weight="850">SNAPSHOT CONGELADO</text>
+            <text x="${futureLeft+13}" y="${T+24}" fill="#f2c65b" font-size="15" font-weight="900">T0 · ${vet(anchor)} VET</text>
+            <text x="${futureLeft+13}" y="${T+42}" fill="#7889a1" font-size="10" font-weight="850">SNAPSHOT CONGELADO</text>
 
             <line x1="${xFuture(nowTs)}" y1="${T}" x2="${xFuture(nowTs)}" y2="${T+PH}" stroke="#5ddcff" stroke-width="2.4" stroke-dasharray="5 7"/>
-            <text x="${Math.min(xFuture(nowTs)+10,futureRight-180)}" y="${T+25}" fill="#5ddcff" font-size="15" font-weight="900">AHORA · ${vet(nowTs)} VET</text>
+            <text x="${futureLeft+13}" y="${T+66}" fill="#5ddcff" font-size="13" font-weight="900">AHORA · ${vet(nowTs)} VET</text>
 
             <g clip-path="url(#vp2pClip)">
               ${path(buyHist)?`<path d="${path(buyHist)}" fill="none" stroke="#31d7a2" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>`:''}
@@ -3021,8 +3029,11 @@
             ${sellLabels}
             ${buyLabels}
 
-            ${liveBuy>0?`<circle cx="${xFuture(nowTs)}" cy="${y(liveBuy)}" r="9" fill="#31d7a2" stroke="#06101b" stroke-width="5"/><text x="${Math.min(xFuture(nowTs)+14,futureRight-260)}" y="${y(liveBuy)-13}" fill="#6fe5b7" font-size="13" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="6">REAL COMPRA · ${F(liveBuy)} Bs</text>`:''}
-            ${liveSell>0?`<circle cx="${xFuture(nowTs)}" cy="${y(liveSell)}" r="9" fill="#ff718e" stroke="#06101b" stroke-width="5"/><text x="${Math.min(xFuture(nowTs)+14,futureRight-260)}" y="${y(liveSell)+22}" fill="#ff9aac" font-size="13" font-weight="900" paint-order="stroke" stroke="#06101b" stroke-width="6">REAL VENTA · ${F(liveSell)} Bs</text>`:''}
+            ${liveBuy>0?`<circle cx="${xFuture(nowTs)}" cy="${y(liveBuy)}" r="8" fill="#31d7a2" stroke="#06101b" stroke-width="4"/>`:''}
+            ${liveSell>0?`<circle cx="${xFuture(nowTs)}" cy="${y(liveSell)}" r="8" fill="#ff718e" stroke="#06101b" stroke-width="4"/>`:''}
+            ${liveBuy>0||liveSell>0?`<rect x="${futureLeft+12}" y="${T+78}" width="310" height="46" rx="10" fill="#06101b" fill-opacity=".88" stroke="#20334b"/>
+              ${liveSell>0?`<text x="${futureLeft+26}" y="${T+97}" fill="#ff9aac" font-size="11" font-weight="900">REAL VENTA · ${F(liveSell)} Bs</text>`:''}
+              ${liveBuy>0?`<text x="${futureLeft+26}" y="${T+113}" fill="#6fe5b7" font-size="11" font-weight="900">REAL COMPRA · ${F(liveBuy)} Bs</text>`:''}`:''}
 
             <text x="${L}" y="${barBase-barMaxH-24}" fill="#65758d" font-size="10" font-weight="900">MOMENTUM REAL · ÚLTIMAS 12H</text>
             <line x1="${L}" y1="${barBase}" x2="${histRight}" y2="${barBase}" stroke="#21324a" stroke-width="1.5"/>
@@ -3060,22 +3071,22 @@
     const shell=host.querySelector('.vp2p-shell');
     const stage=host.querySelector('.vp2p-stage');
     const svgEl=host.querySelector('.vp2p-svg');
-    let zoomLevel=1;
+    let zoomLevel=window.innerWidth<=760?0.72:1;
     const applyZoom=()=>{
       const w=Math.round(W*zoomLevel),h=Math.round(H*zoomLevel);
       stage.style.width=`${w}px`;stage.style.minWidth=`${w}px`;stage.style.height=`${h}px`;stage.style.minHeight=`${h}px`;
       svgEl.style.width=`${w}px`;svgEl.style.height=`${h}px`;
     };
-    host.querySelector('[data-vp="plus"]')?.addEventListener('click',()=>{zoomLevel=Math.min(2.8,zoomLevel+.15);applyZoom();});
-    host.querySelector('[data-vp="minus"]')?.addEventListener('click',()=>{zoomLevel=Math.max(.50,zoomLevel-.15);applyZoom();});
-    host.querySelector('[data-vp="reset"]')?.addEventListener('click',()=>{zoomLevel=1;applyZoom();});
+    host.querySelector('[data-vp="plus"]')?.addEventListener('click',()=>{zoomLevel=Math.min(2.8,zoomLevel+.10);applyZoom();});
+    host.querySelector('[data-vp="minus"]')?.addEventListener('click',()=>{zoomLevel=Math.max(.20,zoomLevel-.10);applyZoom();});
+    host.querySelector('[data-vp="reset"]')?.addEventListener('click',()=>{zoomLevel=window.innerWidth<=760?0.72:1;applyZoom();});
     host.querySelector('[data-vp="full"]')?.addEventListener('click',async()=>{try{if(!document.fullscreenElement)await shell.requestFullscreen?.();else await document.exitFullscreen?.();}catch(e){console.error(e);}});
     applyZoom();
 
     advancedChart={
       destroy:()=>{},
       resize:()=>{},
-      _venbotMeta:{dualP2P:true,anchor,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'p2p-reference-v31.48'}
+      _venbotMeta:{dualP2P:true,anchor,nowTs,snapshotId:snapshot?.id||null,frozen:true,timezone:'America/Caracas',renderer:'p2p-reference-v31.52'}
     };
     const t0El=document.getElementById('adv-t0-label');if(t0El)t0El.textContent=`T0 · ${vet(anchor)} VET · snapshot fijo`;
     const badge=document.getElementById('adv-snapshot-badge');if(badge)badge.textContent=snapshot?`T0 #${snapshot.id} · ${vet(anchor)} VET · congelado`:'sin snapshot';
