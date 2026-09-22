@@ -563,6 +563,7 @@
           </div>
           <div id="quant-adaptive-status" class="text-[10px] text-slate-500">Acceso reservado al administrador de Venbot.</div>
           <div id="quant-adaptive-content" class="grid grid-cols-1 md:grid-cols-2 gap-2.5"></div>
+          <div id="quant-adaptive-maturity" class="mt-3"></div>
         </section>
 
         <div id="analysis-content-slot"></div>
@@ -2358,7 +2359,26 @@
           cards.push(`<div class="rounded-2xl bg-slate-950/60 border border-slate-800 p-3 space-y-2.5"><div class="flex items-center justify-between gap-2"><div class="font-black text-slate-100">Motor ${motor.motor}</div><span class="text-[9px] font-bold text-purple-300 uppercase">Etapa ${st.stage_index||'—'} · ${st.stage||'—'}</span></div><div class="text-[11px] text-slate-300"><b>${Number(motor.coverage_hours||0).toFixed(2)} h</b> históricas${next?` · próxima meta ${next} h`:' · meta máxima alcanzada'}</div><div class="text-[9px] text-slate-500">${next?`A 24 h/día: ${st.eta_days_at_24h_day} días teóricos`:'Sin ETA adicional'} · mínimo ${Number(d.minimum_evaluations_per_horizon||30)} evaluaciones/horizonte · mínimo 10 por régimen · promoción exige ${Number(d?.rules?.promotion_stable_passes||2)} validaciones estables.</div>${symbolLine}${horizons}${regimeInfo}${shadowInfo}${hourlyShadow}${gateInfo}</div>`);
         }
         content.innerHTML=cards.join('');
-        status.textContent='Medición adaptativa en sombra: ninguna recomendación modifica aún las predicciones de producción.';
+        const maturity=document.getElementById('quant-adaptive-maturity');
+        const research=['2h','4h','5h','6h','8h','9h','10h','12h','18h'];
+        const production=['1h','3h','7h','24h'];
+        const motorLab=(motor)=>{
+          const hs=motor?.hourly_shadow?.horizons||{};
+          const rows=research.map(h=>{
+            const v=hs[h]||{}; const c=v.shadow_candidate||{}; const r=c.rolling_oos||{};
+            const ev=Number(v.evaluated||0); const roll=r.status||'EVIDENCIA_INSUFICIENTE';
+            const imp=Number.isFinite(Number(r.avg_improvement_pct))?`${Number(r.avg_improvement_pct).toFixed(2)}%`:'—';
+            const minImp=Number.isFinite(Number(r.min_improvement_pct))?`${Number(r.min_improvement_pct).toFixed(2)}%`:'—';
+            const folds=`${Number(r.folds_validos||0)}/${Number(r.folds_totales||0)}`;
+            const cls=roll==='VALIDACION_ROLLING_OK'?'text-emerald-300':'text-slate-500';
+            return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/50 border border-slate-800 px-2 py-1.5"><span class="font-black text-slate-300">${h.toUpperCase()}</span><span class="${cls} text-right">${ev} eval. · OOS ${imp} · mín ${minImp} · folds ${folds}</span></div>`;
+          }).join('');
+          const valid=research.filter(h=>(hs[h]?.shadow_candidate?.rolling_oos?.status||'')==='VALIDACION_ROLLING_OK').length;
+          const evidence=research.filter(h=>Number(hs[h]?.evaluated||0)>=Number(d.minimum_evaluations_per_horizon||30)).length;
+          return `<div class="rounded-2xl bg-slate-950/60 border border-indigo-500/15 p-3 md:p-4 mt-3"><div class="flex items-center justify-between gap-2"><div><div class="font-black text-slate-100">Laboratorio de maduración · ${motor.motor}</div><div class="text-[9px] text-slate-500 mt-1">Walk-forward OOS adicional para nuevos horizontes. No modifica producción.</div></div><span class="text-[8px] uppercase font-black text-indigo-200 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-full">SOMBRA</span></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Producción</span><strong class="block text-emerald-300">${production.map(x=>x.toUpperCase()).join(' · ')}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Investigación</span><strong class="block text-purple-200">${research.length} horizontes</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-300">${evidence}/${research.length}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${valid?'text-emerald-300':'text-slate-400'}">${valid}/${research.length}</strong></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-3">${rows}</div><div class="text-[8px] text-slate-600 mt-2">La validación walk-forward requiere evidencia consecutiva; una mejora aislada no puede cambiar el motor. Los cuatro horizontes productivos permanecen bloqueados a cambios automáticos.</div></div>`;
+        };
+        if(maturity) maturity.innerHTML=[d.p2p,d.spot].map(motorLab).join('');
+        status.textContent='Medición adaptativa + maduración walk-forward en sombra: ninguna recomendación modifica las predicciones de producción.';
       }catch(e){
         console.error('Venbot evolución adaptativa:', e);
         status.textContent='No se pudo cargar la evolución adaptativa.';
