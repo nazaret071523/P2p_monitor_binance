@@ -2353,8 +2353,9 @@
           }
           const regimeInfo=Object.entries(motor.horizons||{}).map(([label,v])=>{ const rr=v.regimes||{}; const names=Object.entries(rr).filter(([,x])=>x.ready).map(([k,x])=>`${k}: ${x.evaluated}`).join(' · '); return names?`<div class="text-[8px] text-slate-500">${label} · regímenes informativos: ${names}</div>`:''; }).join('');
           const shadowInfo=Object.entries(motor.horizons||{}).map(([label,v])=>{ const c=v.shadow_candidate||{}; if(!c||!c.status) return ''; const ok=c.status==='CANDIDATO_VALIDO'; const imp=Number.isFinite(Number(c.oos_improvement_pct))?` · mejora OOS ${Number(c.oos_improvement_pct).toFixed(2)}%`:''; const factor=Number.isFinite(Number(c.candidate_factor))?` · factor ${Number(c.candidate_factor).toFixed(5)}`:''; return `<div class="text-[8px] ${ok?'text-emerald-300':'text-slate-500'}">${label} · ${ok?'candidato validado en sombra':'candidato en observación'}${imp}${factor}</div>`; }).join('');
+          const hourlyShadow=motor.motor==='P2P'&&motor.hourly_shadow?(()=>{const hs=Object.entries(motor.hourly_shadow.horizons||{}); const total=Number(motor.hourly_shadow.evaluated_total||0); const valid=Number(motor.hourly_shadow.validated_shadow_horizons||0); const evidence=Number(motor.hourly_shadow.evidence_ready_horizons||0); const sample=hs.filter(([,v])=>Number(v.evaluated||0)>0).slice(0,6).map(([label,v])=>`${label}: ${v.evaluated}`).join(' · '); return `<div class="mt-2 rounded-lg bg-purple-500/5 border border-purple-500/15 px-2.5 py-2 text-[8px] text-slate-400"><b class="text-purple-200">Aprendizaje de desviación · +1H → +24H</b> · ${total} evaluaciones acumuladas · ${evidence}/24 con evidencia mínima · ${valid} candidatos OOS válidos${sample?`<br><span class="text-slate-600">Muestra: ${sample}</span>`:''}<br><span class="text-slate-600">La desviación real alimenta calibración en sombra; no modifica producción.</span></div>`;})():'';
           const gateInfo=Object.entries(motor.promotion_gates||{}).map(([label,g])=>{ if(!g||!g.status) return ''; const ready=g.status==='LISTO_PARA_REVISION'; return `<div class="text-[8px] ${ready?'text-amber-200':'text-slate-600'}">${label} · ${ready?'listo para revisión':'promoción bloqueada'} · ${g.stable_passes||0}/${g.required_passes||2} validaciones estables${Number.isFinite(Number(g.oos_improvement_avg_pct))?` · OOS ${Number(g.oos_improvement_avg_pct).toFixed(2)}%`:''}</div>`; }).join('');
-          cards.push(`<div class="rounded-2xl bg-slate-950/60 border border-slate-800 p-3 space-y-2.5"><div class="flex items-center justify-between gap-2"><div class="font-black text-slate-100">Motor ${motor.motor}</div><span class="text-[9px] font-bold text-purple-300 uppercase">Etapa ${st.stage_index||'—'} · ${st.stage||'—'}</span></div><div class="text-[11px] text-slate-300"><b>${Number(motor.coverage_hours||0).toFixed(2)} h</b> históricas${next?` · próxima meta ${next} h`:' · meta máxima alcanzada'}</div><div class="text-[9px] text-slate-500">${next?`A 24 h/día: ${st.eta_days_at_24h_day} días teóricos`:'Sin ETA adicional'} · mínimo ${Number(d.minimum_evaluations_per_horizon||30)} evaluaciones/horizonte · mínimo 10 por régimen · promoción exige ${Number(d?.rules?.promotion_stable_passes||2)} validaciones estables.</div>${symbolLine}${horizons}${regimeInfo}${shadowInfo}${gateInfo}</div>`);
+          cards.push(`<div class="rounded-2xl bg-slate-950/60 border border-slate-800 p-3 space-y-2.5"><div class="flex items-center justify-between gap-2"><div class="font-black text-slate-100">Motor ${motor.motor}</div><span class="text-[9px] font-bold text-purple-300 uppercase">Etapa ${st.stage_index||'—'} · ${st.stage||'—'}</span></div><div class="text-[11px] text-slate-300"><b>${Number(motor.coverage_hours||0).toFixed(2)} h</b> históricas${next?` · próxima meta ${next} h`:' · meta máxima alcanzada'}</div><div class="text-[9px] text-slate-500">${next?`A 24 h/día: ${st.eta_days_at_24h_day} días teóricos`:'Sin ETA adicional'} · mínimo ${Number(d.minimum_evaluations_per_horizon||30)} evaluaciones/horizonte · mínimo 10 por régimen · promoción exige ${Number(d?.rules?.promotion_stable_passes||2)} validaciones estables.</div>${symbolLine}${horizons}${regimeInfo}${shadowInfo}${hourlyShadow}${gateInfo}</div>`);
         }
         content.innerHTML=cards.join('');
         status.textContent='Medición adaptativa en sombra: ninguna recomendación modifica aún las predicciones de producción.';
@@ -2954,6 +2955,36 @@
     const sellLabels=sellPts.map(p=>marker(p,'#f2c65b','sell')).join('');
     const buyLabels=buyPts.map(p=>marker(p,'#5ddcff','buy')).join('');
 
+    // v31.55: tracking visual. The frozen T0 rail remains untouched; we only compare it with the live price at the current time.
+    const interpRail=(pts,ts)=>{
+      const a=Array.isArray(pts)?pts.filter(p=>Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y))).sort((m,n)=>Number(m.x)-Number(n.x)):[];
+      if(!a.length)return NaN;
+      if(ts<=Number(a[0].x))return Number(a[0].y);
+      if(ts>=Number(a[a.length-1].x))return Number(a[a.length-1].y);
+      for(let i=1;i<a.length;i++){
+        const p0=a[i-1],p1=a[i],x0=Number(p0.x),x1=Number(p1.x);
+        if(ts<=x1){const span=Math.max(1,x1-x0),q=(ts-x0)/span;return Number(p0.y)+(Number(p1.y)-Number(p0.y))*q;}
+      }
+      return Number(a[a.length-1].y);
+    };
+    const railBuyNow=interpRail(buyProj,nowTs),railSellNow=interpRail(sellProj,nowTs);
+    const devBuy=liveBuy>0&&Number.isFinite(railBuyNow)?liveBuy-railBuyNow:NaN;
+    const devSell=liveSell>0&&Number.isFinite(railSellNow)?liveSell-railSellNow:NaN;
+    const devBuyPct=Number.isFinite(devBuy)&&railBuyNow>0?(devBuy/railBuyNow)*100:NaN;
+    const devSellPct=Number.isFinite(devSell)&&railSellNow>0?(devSell/railSellNow)*100:NaN;
+    const xNow=xFuture(nowTs);
+    const devMarkup=(Number.isFinite(railBuyNow)||Number.isFinite(railSellNow))?`
+      ${Number.isFinite(railBuyNow)?`<line x1="${xNow}" y1="${y(railBuyNow)}" x2="${xNow}" y2="${y(liveBuy)}" stroke="#5ddcff" stroke-width="2.2" stroke-dasharray="5 5" opacity=".9"/>`:''}
+      ${Number.isFinite(railSellNow)?`<line x1="${xNow}" y1="${y(railSellNow)}" x2="${xNow}" y2="${y(liveSell)}" stroke="#f2c65b" stroke-width="2.2" stroke-dasharray="5 5" opacity=".9"/>`:''}
+      ${Number.isFinite(railBuyNow)?`<circle cx="${xNow}" cy="${y(railBuyNow)}" r="5" fill="#5ddcff" stroke="#06101b" stroke-width="3"><title>Carril compra ahora · ${F(railBuyNow)} Bs</title></circle>`:''}
+      ${Number.isFinite(railSellNow)?`<circle cx="${xNow}" cy="${y(railSellNow)}" r="5" fill="#f2c65b" stroke="#06101b" stroke-width="3"><title>Carril venta ahora · ${F(railSellNow)} Bs</title></circle>`:''}
+      <g>
+        <rect x="${futureLeft+335}" y="${T+20}" width="330" height="58" rx="11" fill="#07131f" fill-opacity=".92" stroke="#26405d"/>
+        <text x="${futureLeft+350}" y="${T+41}" fill="#dbe7f8" font-size="11" font-weight="900">AHORA VS CARRIL FUTURO</text>
+        <text x="${futureLeft+350}" y="${T+60}" fill="#63dfff" font-size="10" font-weight="900">Compra ${Number.isFinite(devBuy)?`${devBuy>=0?'+':''}${F(devBuy)} Bs (${devBuyPct>=0?'+':''}${devBuyPct.toFixed(2)}%)`:'n/d'}</text>
+        <text x="${futureLeft+520}" y="${T+60}" fill="#f5cf70" font-size="10" font-weight="900">Venta ${Number.isFinite(devSell)?`${devSell>=0?'+':''}${F(devSell)} Bs (${devSellPct>=0?'+':''}${devSellPct.toFixed(2)}%)`:'n/d'}</text>
+      </g>`:'';
+
     const roof=Math.max(...primarySellPts.concat(primaryBuyPts).map(p=>p.y).filter(Number.isFinite),-Infinity);
     const floor=Math.min(...primarySellPts.concat(primaryBuyPts).map(p=>p.y).filter(Number.isFinite),Infinity);
     const spreads=frozen.map(p=>p.sell-p.buy).filter(v=>Number.isFinite(v)&&v>=0);
@@ -3035,6 +3066,8 @@
             ${liveBuy>0||liveSell>0?`<rect x="${futureLeft+12}" y="${T+78}" width="310" height="46" rx="10" fill="#06101b" fill-opacity=".88" stroke="#20334b"/>
               ${liveSell>0?`<text x="${futureLeft+26}" y="${T+97}" fill="#ff9aac" font-size="11" font-weight="900">REAL VENTA · ${F(liveSell)} Bs</text>`:''}
               ${liveBuy>0?`<text x="${futureLeft+26}" y="${T+113}" fill="#6fe5b7" font-size="11" font-weight="900">REAL COMPRA · ${F(liveBuy)} Bs</text>`:''}`:''}
+
+            ${devMarkup}
 
             <text x="${L}" y="${barBase-barMaxH-24}" fill="#65758d" font-size="10" font-weight="900">MOMENTUM REAL · ÚLTIMAS 12H</text>
             <line x1="${L}" y1="${barBase}" x2="${histRight}" y2="${barBase}" stroke="#21324a" stroke-width="1.5"/>
