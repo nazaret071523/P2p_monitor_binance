@@ -12,6 +12,7 @@ import base64
 import uuid
 from urllib.parse import urlparse
 import re
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -9058,6 +9059,44 @@ def _legal_html(title, body):
 def legal_privacy():
     contact = PRIVACY_CONTACT_EMAIL or "el canal oficial de soporte publicado dentro de la aplicación"
     return _legal_html("Política de privacidad", f"""<h1>Política de privacidad</h1><p>Venbot procesa únicamente los datos necesarios para operar las funciones que el usuario solicite, mantener la seguridad, medir el funcionamiento del servicio y, cuando corresponda, administrar una cuenta, alertas, suscripciones o publicidad.</p><h2>Datos que podemos procesar</h2><ul><li>Identificadores técnicos o de sesión necesarios para el funcionamiento y el contador aproximado de usuarios conectados.</li><li>Datos de cuenta que el usuario proporcione voluntariamente cuando se habiliten cuentas.</li><li>Preferencias de funciones, alertas y plan.</li><li>Datos técnicos necesarios para prevenir abuso, errores y problemas de seguridad.</li></ul><h2>Proveedores externos</h2><p>Venbot puede utilizar Binance P2P, fuentes oficiales del BCV, alojamiento, bases de datos, proveedores de IA, analítica y publicidad. Cada proveedor puede procesar datos conforme a sus propias condiciones y políticas.</p><h2>Publicidad y consentimiento</h2><p>La versión gratuita podrá mostrar publicidad. Cuando la normativa lo requiera, Venbot solicitará el consentimiento correspondiente antes de utilizar tecnologías publicitarias que lo necesiten. Las preferencias podrán cambiarse mediante los mecanismos disponibles en la aplicación.</p><h2>Suscripciones y pagos</h2><p>Los planes Premium y VIP están diseñados para utilizar un checkout externo cuando la normativa y las reglas de distribución aplicables lo permitan. Venbot no almacena números completos de tarjetas ni credenciales de pago.</p><h2>Conservación y eliminación</h2><p>Conservaremos los datos durante el tiempo necesario para prestar el servicio, cumplir obligaciones legales, resolver disputas y proteger el sistema. Cuando exista una cuenta, el usuario podrá solicitar su eliminación mediante el mecanismo de eliminación de cuenta disponible en el servicio.</p><h2>Contacto</h2><p>Contacto de privacidad: {contact}</p>""")
+
+# v31.71: páginas legales públicas servidas por el backend oficial.
+# Esto evita que el catch-all del frontend Vercel redirija los .html al SPA.
+PUBLIC_LEGAL_ROOT = Path(__file__).resolve().parent
+
+def _serve_public_legal_document(filename: str):
+    path = PUBLIC_LEGAL_ROOT / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="legal_document_not_found")
+    return HTMLResponse(path.read_text(encoding="utf-8"))
+
+@app.get("/legal/privacy-document", response_class=HTMLResponse)
+def legal_privacy_document():
+    return _serve_public_legal_document("privacy.html")
+
+@app.get("/legal/terms-document", response_class=HTMLResponse)
+def legal_terms_document():
+    return _serve_public_legal_document("terms.html")
+
+@app.get("/legal/tutorial-document", response_class=HTMLResponse)
+def legal_tutorial_document():
+    return _serve_public_legal_document("help.html")
+
+@app.get("/legal/risk-document", response_class=HTMLResponse)
+def legal_risk_document():
+    return _serve_public_legal_document("risk.html")
+
+@app.get("/legal/advertising-document", response_class=HTMLResponse)
+def legal_advertising_document():
+    return _serve_public_legal_document("advertising.html")
+
+@app.get("/legal/delete-account-document", response_class=HTMLResponse)
+def legal_delete_account_document():
+    return _serve_public_legal_document("delete-account.html")
+
+@app.get("/legal/contact-document", response_class=HTMLResponse)
+def legal_contact_document():
+    return _serve_public_legal_document("contact.html")
 
 @app.get("/legal/terms", response_class=HTMLResponse)
 def legal_terms():
