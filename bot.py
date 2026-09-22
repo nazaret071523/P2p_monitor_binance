@@ -3710,9 +3710,11 @@ def _generar_proyeccion_horaria_p2p(actual_compra, actual_venta, banco_filtro="G
     if not isinstance(calib,dict):calib=_obtener_24h_calibration_for_hourly(fechas,mids,mid)
     proj=_proyecciones_horarias_24h_quant(fechas,mids,compras,ventas,mid,spread,vol,typ,calib)
     generated=now;out={}
+    regime_meta=(q_context or {}).get('regimen') if isinstance(q_context,dict) else None
+    regime_label=(regime_meta.get('regimen') if isinstance(regime_meta,dict) else str(regime_meta or '')).strip().upper() or 'SIN_CLASIFICAR'
     for label,item in proj.items():
         row=dict(item);h=int(row.get('horizonte_horas',0) or 0)
-        row['target_at']=(generated+timedelta(hours=h)).isoformat();row['generated_at']=generated.isoformat();row['status']='SHADOW_EXPERIMENTAL'
+        row['target_at']=(generated+timedelta(hours=h)).isoformat();row['generated_at']=generated.isoformat();row['status']='SHADOW_EXPERIMENTAL';row['regimen']=regime_label
         out[label]=row
     coverage=max(0.0,(fechas[-1]-fechas[0]).total_seconds()/3600.0) if len(fechas)>1 else 0.0
     return {"ok":bool(out),"bank":banco_filtro,"generated_at":generated.isoformat(),"origin":{"compra":compra,"venta":venta,"mid":mid,"timestamp":generated.isoformat()},"coverage_hours":round(coverage,3),"status":"SHADOW_EXPERIMENTAL","promotion":"BLOQUEADA","points":out}
@@ -3759,10 +3761,15 @@ def evaluar_proyecciones_horarias_p2p(limit=40):
                         actual=_buscar_muestra_futura(banco,target)
                         if not actual:continue
                         pred=float(item.get('midpoint') or 0);actual_mid=float(actual.get('mid') or 0)
+                        pred_buy=float(item.get('compra') or 0);pred_sell=float(item.get('venta') or 0)
+                        actual_buy=float(actual.get('compra') or 0);actual_sell=float(actual.get('venta') or 0)
                         err=abs(actual_mid-pred)/actual_mid*100.0 if actual_mid else None
+                        err_buy=abs(actual_buy-pred_buy)/actual_buy*100.0 if actual_buy and pred_buy else None
+                        err_sell=abs(actual_sell-pred_sell)/actual_sell*100.0 if actual_sell and pred_sell else None
+                        signed_mid=((actual_mid-pred)/pred*100.0) if pred else None
                         direction=None
                         if origin_mid and pred and actual_mid:direction=((pred-origin_mid)*(actual_mid-origin_mid))>0
-                        ev[label]={'actual_mid':actual_mid,'actual_compra':actual.get('compra'),'actual_venta':actual.get('venta'),'error_pct':err,'direction_correct':direction,'evaluated_at':actual['fecha'].isoformat() if hasattr(actual['fecha'],'isoformat') else str(actual['fecha'])}
+                        ev[label]={'actual_mid':actual_mid,'actual_compra':actual_buy,'actual_venta':actual_sell,'pred_compra':pred_buy,'pred_venta':pred_sell,'error_pct':err,'error_compra_pct':err_buy,'error_venta_pct':err_sell,'signed_error_pct':signed_mid,'direction_correct':direction,'evaluated_at':actual['fecha'].isoformat() if hasattr(actual['fecha'],'isoformat') else str(actual['fecha'])}
                         changed=True
                     if changed:
                         cur.execute('UPDATE venbot_p2p_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s',(json.dumps(ev,ensure_ascii=False),pid));total+=1
@@ -4281,6 +4288,69 @@ def _adaptive_spot_stats(symbol=None, horizon="1h", limit=5000):
 
 
 
+
+def _adaptive_hourly_stats(banco="GENERAL", horizon="1h", limit=5000):
+    """Evalúa desviaciones de +1H..+24H ya vencidas y construye candidato en sombra."""
+    if not DATABASE_URL or not ADAPTIVE_LEARNING_ENABLED:
+        return {"evaluated":0,"readiness":"SIN_DATOS","hourly":True,"horizon":horizon}
+    label=str(horizon or "1h").lower()
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT actual_mid, projection, evaluations, created_at
+                    FROM venbot_p2p_hourly_prediction_events
+                    WHERE banco=%s AND created_at>=CURRENT_TIMESTAMP-INTERVAL '45 days'
+                    ORDER BY created_at DESC LIMIT %s
+                """, ((banco or "GENERAL").upper(), int(limit)))
+                source_rows=cur.fetchall()
+        normalized=[]
+        for origin_mid, projection, evaluations, created_at in source_rows:
+            proj = projection if isinstance(projection,dict) else _safe_json_payload(projection)
+            evs = evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
+            item = proj.get(label) or {}
+            ev = evs.get(label) or {}
+            try:
+                pred=float(item.get("midpoint") or 0)
+                actual=float(ev.get("actual_mid") or 0)
+                if pred<=0 or actual<=0 or not ev.get("evaluated_at"):
+                    continue
+                group=str(item.get("regimen") or ev.get("regimen") or item.get("direccion") or "SIN_CLASIFICAR").upper()
+                normalized.append({"observed":float(origin_mid or 0) if origin_mid is not None else None, "pred":pred,"actual":actual,"direction":ev.get("direction_correct"),"group":group,"created_at":created_at,"error_buy_pct":ev.get("error_compra_pct"),"error_sell_pct":ev.get("error_venta_pct")})
+            except Exception:
+                continue
+        abs_errors=[]; signed_bias=[]; dirs=[]; groups={}
+        for r in normalized:
+            actual=float(r["actual"]); pred=float(r["pred"])
+            if actual: abs_errors.append(abs(actual-pred)/actual*100.0)
+            if pred: signed_bias.append((actual-pred)/pred*100.0)
+            if r.get("direction") is not None: dirs.append(bool(r["direction"]))
+            g=str(r.get("group") or "SIN_CLASIFICAR").upper(); groups[g]=groups.get(g,0)+1
+        n=len(abs_errors)
+        bias=float(np.mean(signed_bias)) if signed_bias else None
+        mae=float(np.mean(abs_errors)) if abs_errors else None
+        p75=float(np.percentile(abs_errors,75)) if abs_errors else None
+        acc=(100.0*sum(dirs)/len(dirs)) if dirs else None
+        factor=float(np.clip(1.0+bias/100.0,0.95,1.05)) if bias is not None else None
+        regime_out={g:{"evaluated":cnt,"ready":cnt>=10} for g,cnt in groups.items()}
+        ready=n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and any(v>=10 for v in groups.values())
+        shadow=_build_shadow_candidate(normalized,"hourly") if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else {"status":"ACUMULANDO_EVIDENCIA"}
+        buy_err=[float(r["error_buy_pct"]) for r in normalized if r.get("error_buy_pct") is not None]
+        sell_err=[float(r["error_sell_pct"]) for r in normalized if r.get("error_sell_pct") is not None]
+        return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"buy_mae_pct":round(float(np.mean(buy_err)),4) if buy_err else None,"sell_mae_pct":round(float(np.mean(sell_err)),4) if sell_err else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":sum(1 for v in groups.values() if v>=10),"shadow_candidate":shadow,"latest_event_at":normalized[0].get("created_at") if normalized else None,"source":"venbot_p2p_hourly_prediction_events","hourly":True,"horizon":label}
+    except Exception as e:
+        logger.warning("Adaptive hourly stats falló %s %s: %s",banco,horizon,e)
+        return {"evaluated":0,"readiness":"TEMPORALMENTE_NO_DISPONIBLE","hourly":True,"horizon":label}
+
+
+def _adaptive_hourly_summary(banco="GENERAL"):
+    horizons=[f"{h}h" for h in range(1,25)]
+    data={h:_adaptive_hourly_stats(banco,h) for h in horizons}
+    evaluated_total=sum(int(v.get("evaluated") or 0) for v in data.values())
+    valid=sum(1 for v in data.values() if v.get("shadow_candidate",{}).get("status")=="CANDIDATO_VALIDO")
+    evidence=sum(1 for v in data.values() if int(v.get("evaluated") or 0)>=ADAPTIVE_MIN_EVAL_PER_HORIZON)
+    return {"horizons":data,"evaluated_total":evaluated_total,"validated_shadow_horizons":valid,"evidence_ready_horizons":evidence,"scope":(banco or "GENERAL").upper(),"status":"SHADOW_ONLY","note":"Las desviaciones horarias alimentan candidatos en sombra; producción permanece sin cambios."}
+
 def _adaptive_promotion_gate(motor, scope, horizon):
     """Gate conservador de promoción: requiere validación OOS estable en dos snapshots consecutivos.
     Nunca activa producción por sí solo; solo indica si un candidato está listo para revisión/promoción.
@@ -4340,11 +4410,12 @@ def obtener_quant_adaptive_status(symbol=None):
     hs=("1h","3h","7h","24h")
     p2p_h={h:_adaptive_p2p_stats("GENERAL",h) for h in hs}
     spot_h={h:_adaptive_spot_stats(symbol,h) for h in hs}
+    p2p_hourly=_adaptive_hourly_summary("GENERAL")
     p2p_stage=_adaptive_stage_for_hours(p2p_cov)
     spot_stage=_adaptive_stage_for_hours(spot_cov["median_hours"])
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
       "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN},
-      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
+      "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"horizons":p2p_h,"hourly_shadow":p2p_hourly,"promotion_gates":{h:_adaptive_promotion_gate("P2P","GENERAL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
       "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"horizons":spot_h,"by_symbol":spot_cov["by_symbol"],"promotion_gates":{h:_adaptive_promotion_gate("SPOT",symbol or "ALL",h) for h in hs},"note":"Candidatos de calibración en sombra; no modifican producción."},
       "generated_at":datetime.now(VET).isoformat()}
     # Persistimos una instantánea liviana para auditoría del aprendizaje.
@@ -4374,6 +4445,14 @@ def obtener_quant_adaptive_status(symbol=None):
                                 generated_at=CURRENT_TIMESTAMP
                             """,
                             (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+                for h,stats in p2p_hourly.get("horizons",{}).items():
+                    shadow=stats.get("shadow_candidate") or {}
+                    cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
+                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,generated_at=CURRENT_TIMESTAMP
+                    """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
     return status
@@ -8267,6 +8346,15 @@ def obtener_quant_adaptive_status_api(request: Request, symbol: Optional[str] = 
     if sym and sym not in SPOT_SYMBOLS:
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
     return obtener_quant_adaptive_status(sym)
+
+
+@app.get("/api/quant/adaptive/hourly")
+def obtener_quant_adaptive_hourly_api(request: Request, banco: str = Query("GENERAL")):
+    _require_developer_session(request)
+    bank=(banco or "GENERAL").upper().strip()
+    if bank not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}:
+        bank="GENERAL"
+    return _adaptive_hourly_summary(bank)
 
 
 @app.get("/api/quant/v2")
