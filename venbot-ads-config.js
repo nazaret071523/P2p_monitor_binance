@@ -18,7 +18,7 @@
 window.VENBOT_AD_CONFIG = {
   webEnabled: true,
   provider: "adsense",
-  publisherId: "",
+  publisherId: "ca-pub-1110097120437683",
   slots: {
     header: "",
     top: "",
