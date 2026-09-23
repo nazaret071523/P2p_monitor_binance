@@ -1,28 +1,14 @@
-VENBOT — Fase 18 Monetización Web — v31.72
+VENBOT FASE 18.1 — CONEXIÓN ADSENSE
+VERSION: 31.73
 
-BASE: v31.71 (Legal Menu Fix)
+Cambios:
+- index.html: añade el fragmento oficial de AdSense proporcionado por la cuenta del propietario.
+- venbot-ads-config.js: configura publisherId real ca-pub-1110097120437683.
+- No se configuran todavía IDs de unidades (ad slots); no se inventan valores.
+- bot.py y lógica productiva no modificados.
+- P2P/Spot/Quant/Telegram/horizontes 1H/3H/7H/24H preservados.
 
-CAMBIOS:
-- Se incorpora venbot-ads-config.js al paquete de despliegue.
-- Se conserva el motor publicitario existente del index.html.
-- FREE/promoción: espacios publicitarios.
-- PREMIUM/VIP: sin anuncios.
-- IDs reales pendientes de la cuenta publicitaria del operador.
-- Se documenta el flujo de AdSense, consentimiento y ads.txt.
-
-NO TOCAR:
-- bot.py
-- P2P
-- Spot
-- Quant
-- Predicciones
-- Horizontes productivos 1H/3H/7H/24H
-- Telegram
-- Base de datos
-
-PRÓXIMO PASO OPERATIVO:
-1) Crear/validar AdSense.
-2) Añadir/revisar sitio Venbot.
-3) Obtener publisher ID + slots reales.
-4) Completar venbot-ads-config.js.
-5) Desplegar y verificar anuncios FREE/promoción y ocultación PREMIUM/VIP.
+Siguiente paso:
+1) Desplegar estos cambios.
+2) Volver a AdSense y pulsar Verificar.
+3) Si Google confirma la conexión, crear las unidades de anuncio Display y completar los slots reales.
