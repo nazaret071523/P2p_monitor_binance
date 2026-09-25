@@ -105,7 +105,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger("venbot")
-logger.info("Venbot v31.73.2 Memory Stability: lazy ML/plots + periodic GC + memory checkpoints")
+logger.info("Venbot v31.73.4 Evaluation Expansion: evidencia histórica + backtest 48 + compatibilidad legacy")
 
 
 async def _safe_callback_answer(update: Update, *args, **kwargs):
@@ -3810,7 +3810,11 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=BACKT
             if any_eval: evaluated_origins+=1
 
         reported_coverage_hours = min(float(coverage_hours), float(validation_target_hours))
-        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(reported_coverage_hours,2),"history_coverage_actual_hours":round(coverage_hours,2),"history_target_hours":validation_target_hours,"history_progress_pct":round(min(100.0, coverage_hours/validation_target_hours*100.0),1),"history_required_hours":72,"history_window_requested_hours":round(history_window_hours,1),"raw_samples_loaded":raw_sample_count,"effective_validation_samples":effective_sample_count,"validation_bucket_minutes":VALIDATION_SAMPLE_BUCKET_MINUTES,"spacing_minutes":spacing_minutes,"selection_method":"spaced_even_across_history","future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"evaluation_capacity":max_evaluaciones,"horizons":{}}
+        # Auditoría explícita de cobertura/evaluación: deja claro cuánta historia
+        # se leyó y cuántos orígenes se usaron realmente, evitando confundir
+        # muestras representadas con evidencia independiente.
+        future_window_overlap_by_horizon={label: bool(spacing_minutes < int(hours * 60)) for label, hours in horizons}
+        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(reported_coverage_hours,2),"history_coverage_actual_hours":round(coverage_hours,2),"history_target_hours":validation_target_hours,"history_progress_pct":round(min(100.0, coverage_hours/validation_target_hours*100.0),1),"history_required_hours":72,"history_window_requested_hours":round(history_window_hours,1),"raw_samples_loaded":raw_sample_count,"effective_validation_samples":effective_sample_count,"validation_bucket_minutes":VALIDATION_SAMPLE_BUCKET_MINUTES,"spacing_minutes":spacing_minutes,"spacing_hours":round(spacing_minutes/60.0,2),"selection_method":"spaced_even_across_history","future_windows_overlap":any(future_window_overlap_by_horizon.values()),"future_window_overlap_by_horizon":future_window_overlap_by_horizon,"evaluations":evaluated_origins,"evaluation_capacity":max_evaluaciones,"evaluation_capacity_requested":max_evaluaciones,"evaluation_capacity_effective":max_evaluaciones,"selected_origin_first":times[selected[0]].isoformat() if selected else None,"selected_origin_last":times[selected[-1]].isoformat() if selected else None,"horizons":{}}
         for label,_ in horizons:
             m=metrics[label]; n=m["samples"]
             out["horizons"][label]={"evaluated":n,"mae_ves":round(float(np.mean(m["mae"])),4) if n else None,"mape_pct":round(float(np.mean(m["mape"])),4) if n else None,"rmse_ves":round(float(np.sqrt(np.mean(m["sqe"]))),4) if n else None,"bias_ves":round(float(np.mean(m["bias"])),4) if n else None,"median_abs_error_ves":round(float(np.median(m["mae"])),4) if n else None,"direction_accuracy_pct":round(sum(m["direction"])/len(m["direction"])*100,2) if m["direction"] else None,"direction_evaluated":len(m["direction"]),"interval_coverage_pct":round(sum(m["coverage"])/len(m["coverage"])*100,2) if m["coverage"] else None,"interval_evaluated":len(m["coverage"]),"recent":m["rows"][-5:]}
@@ -9469,13 +9473,29 @@ def obtener_quant_v2_api(request: Request, include_spot: bool = Query(True)):
 def obtener_quant_backtest(
     request: Request,
     banco: str = Query("GENERAL"),
-    max_evaluaciones: int = Query(24, ge=1, le=100),
-    spacing_minutes: int = Query(360, ge=15, le=1440),
+    max_evaluaciones: int = Query(BACKTEST_MAX_EVALUATIONS, ge=1, le=100),
+    spacing_minutes: int = Query(BACKTEST_SPACING_MINUTES, ge=15, le=1440),
 ):
     user = _require_plan_user(request, "VIP")
     banco = (banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         banco = "GENERAL"
+
+    # Compatibilidad con la interfaz anterior: algunas pantallas todavía
+    # envían max_evaluaciones=24. Desde v31.73.4 ese valor histórico se
+    # interpreta como el perfil por defecto expandido (48), evitando que una
+    # UI anterior vuelva a limitar la evidencia sin necesidad de cambiar
+    # frontend. Si otra versión necesita menos evaluaciones, puede enviar un
+    # valor distinto de 24 explícitamente.
+    requested_max_evaluaciones = max(1, min(int(max_evaluaciones), 100))
+    legacy_24 = (
+        requested_max_evaluaciones == 24
+        and BACKTEST_MAX_EVALUATIONS >= 48
+        and str(request.query_params.get("max_evaluaciones", "")).strip() == "24"
+    )
+    effective_max_evaluaciones = BACKTEST_MAX_EVALUATIONS if legacy_24 else requested_max_evaluaciones
+    requested_spacing_minutes = max(15, min(int(spacing_minutes), 1440))
+    effective_spacing_minutes = requested_spacing_minutes
 
     now = time.time()
     with QUANT_BACKTEST_LOCK:
@@ -9496,8 +9516,10 @@ def obtener_quant_backtest(
             "updated_at": now,
             "external_user_id": user["external_user_id"],
             "bank": banco,
-            "max_evaluaciones": max_evaluaciones,
-            "spacing_minutes": spacing_minutes,
+            "max_evaluaciones": effective_max_evaluaciones,
+            "max_evaluaciones_requested": requested_max_evaluaciones,
+            "max_evaluaciones_legacy_alias": legacy_24,
+            "spacing_minutes": effective_spacing_minutes,
             "result": None,
             "error": None,
         }
@@ -9510,11 +9532,17 @@ def obtener_quant_backtest(
             job["status"] = "running"
             job["updated_at"] = time.time()
         logger.info(
-            "Backtest Quant multihorizonte iniciado: banco=%s evaluaciones=%s spacing=%s min job=%s",
-            banco, max_evaluaciones, spacing_minutes, job_id,
+            "Backtest Quant multihorizonte iniciado: banco=%s evaluaciones=%s solicitadas=%s alias_24=%s spacing=%s min job=%s",
+            banco, effective_max_evaluaciones, requested_max_evaluaciones, legacy_24, effective_spacing_minutes, job_id,
         )
         try:
-            result = backtest_quant_multihorizonte(banco, max_evaluaciones, spacing_minutes)
+            result = backtest_quant_multihorizonte(banco, effective_max_evaluaciones, effective_spacing_minutes)
+            if isinstance(result, dict):
+                result["evaluation_capacity_requested"] = requested_max_evaluaciones
+                result["evaluation_capacity_effective"] = effective_max_evaluaciones
+                result["legacy_24_alias"] = legacy_24
+                result["spacing_requested_minutes"] = requested_spacing_minutes
+                result["spacing_effective_minutes"] = effective_spacing_minutes
             with QUANT_BACKTEST_LOCK:
                 job = QUANT_BACKTEST_JOBS.get(job_id)
                 if job:
@@ -9541,6 +9569,10 @@ def obtener_quant_backtest(
         "status": "queued",
         "job_id": job_id,
         "bank": banco,
+        "max_evaluaciones_requested": requested_max_evaluaciones,
+        "max_evaluaciones_effective": effective_max_evaluaciones,
+        "legacy_24_alias": legacy_24,
+        "spacing_minutes": effective_spacing_minutes,
         "message": "Backtest encolado. Consulta el estado con el mismo job_id.",
     }
 
