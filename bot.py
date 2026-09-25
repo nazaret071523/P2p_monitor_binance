@@ -421,6 +421,10 @@ _QUANT_CACHE = {}
 _ADAPTIVE_STATUS_CACHE_SECONDS = max(15, int(os.getenv("ADAPTIVE_STATUS_CACHE_SECONDS", "60")))
 _ADAPTIVE_STATUS_CACHE = {}
 _ADAPTIVE_STATUS_LOCK = threading.Lock()
+_ADAPTIVE_HEALTH_VERSION = "31.73.8"
+_ADAPTIVE_HEALTH_CACHE_SECONDS = max(15, int(os.getenv("ADAPTIVE_HEALTH_CACHE_SECONDS", "30")))
+_ADAPTIVE_HEALTH_CACHE = {}
+_ADAPTIVE_HEALTH_LOCK = threading.Lock()
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
@@ -800,6 +804,14 @@ def inicializar_db():
                     ON venbot_prediction_events(banco, created_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_due
                     ON venbot_prediction_events(created_at DESC, evaluated_7h_at);
+                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_1h
+                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_1h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_3h
+                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_3h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_7h
+                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_7h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_24h
+                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_24h_at IS NULL;
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_p2p_hourly_prediction_events (
@@ -5555,6 +5567,220 @@ def _adaptive_maturity_summary(hourly_shadow):
     }
 
 
+
+def _dt_iso(value):
+    if value is None:
+        return None
+    try:
+        if getattr(value, "tzinfo", None) is None:
+            value=VET.localize(value)
+        return value.astimezone(VET).isoformat()
+    except Exception:
+        return str(value)
+
+
+def _age_seconds(value, now_dt=None):
+    if value is None:
+        return None
+    try:
+        dt=value
+        if isinstance(dt,str):
+            dt=datetime.fromisoformat(dt.replace("Z","+00:00"))
+        if getattr(dt,"tzinfo",None) is None:
+            dt=VET.localize(dt)
+        now_dt=now_dt or datetime.now(VET)
+        return max(0.0,(now_dt-dt.astimezone(VET)).total_seconds())
+    except Exception:
+        return None
+
+
+def _adaptive_snapshot_persistence_health(since_minutes=15):
+    """Lectura de verificación de snapshots adaptativos recientes."""
+    if not DATABASE_URL:
+        return {"status":"SIN_DB","verified":False,"rows_recent":0,"total_rows":0}
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*),MAX(generated_at),MAX(evidence_at)
+                    FROM venbot_quant_adaptive_snapshots
+                    WHERE generated_at >= CURRENT_TIMESTAMP - (%s * INTERVAL '1 minute')
+                """,(int(since_minutes),))
+                recent,last_generated,last_evidence=cur.fetchone() or (0,None,None)
+                cur.execute("""
+                    SELECT motor,scope,horizon,generated_at,evidence_at,quality_status,readiness,shadow_status,evaluated
+                    FROM venbot_quant_adaptive_snapshots
+                    ORDER BY generated_at DESC LIMIT 1
+                """)
+                latest=cur.fetchone()
+                cur.execute("SELECT COUNT(*) FROM venbot_quant_adaptive_snapshots")
+                total_rows=int((cur.fetchone() or (0,))[0] or 0)
+        verified=bool(latest and int(recent or 0)>0 and latest[3] is not None)
+        return {
+            "status":"OK" if verified else ("SIN_EVIDENCIA_RECIENTE" if total_rows else "SIN_SNAPSHOTS"),
+            "verified":verified,
+            "rows_recent":int(recent or 0),
+            "total_rows":total_rows,
+            "last_generated_at":_dt_iso(latest[3] if latest else last_generated),
+            "last_generated_age_seconds":round(_age_seconds(latest[3] if latest else last_generated) or 0.0,1) if (latest or last_generated) else None,
+            "last_evidence_at":_dt_iso(latest[4] if latest else last_evidence),
+            "readback":"OK" if verified else "PENDIENTE",
+        }
+    except Exception as exc:
+        logger.warning("Adaptive persistence health falló: %s",exc)
+        return {"status":"ERROR","verified":False,"rows_recent":0,"total_rows":0,"error":str(exc)[:180]}
+
+
+def _tracking_health_p2p(banco="GENERAL"):
+    if not DATABASE_URL:
+        return {"status":"SIN_DB"}
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*),COUNT(actual_mid_1h),COUNT(actual_mid_3h),COUNT(actual_mid_7h),COUNT(actual_mid_24h),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '1 hour' < CURRENT_TIMESTAMP AND actual_mid_1h IS NULL),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '3 hour' < CURRENT_TIMESTAMP AND actual_mid_3h IS NULL),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '7 hour' < CURRENT_TIMESTAMP AND actual_mid_7h IS NULL),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '24 hour' < CURRENT_TIMESTAMP AND actual_mid_24h IS NULL),
+                           MAX(created_at),MAX(evaluated_24h_at)
+                    FROM venbot_prediction_events
+                    WHERE banco=%s AND created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+                """,((banco or "GENERAL").upper(),))
+                r=cur.fetchone()
+        return {"status":"OK","scope":(banco or "GENERAL").upper(),"created_45d":int(r[0] or 0),
+                "evaluated":{"1h":int(r[1] or 0),"3h":int(r[2] or 0),"7h":int(r[3] or 0),"24h":int(r[4] or 0)},
+                "due_pending":{"1h":int(r[5] or 0),"3h":int(r[6] or 0),"7h":int(r[7] or 0),"24h":int(r[8] or 0)},
+                "latest_created_at":_dt_iso(r[9]),"latest_24h_evaluated_at":_dt_iso(r[10])}
+    except Exception as exc:
+        logger.warning("P2P tracking health falló %s: %s",banco,exc)
+        return {"status":"ERROR","scope":(banco or "GENERAL").upper(),"error":str(exc)[:180]}
+
+
+def _tracking_health_spot(symbol=None):
+    if not DATABASE_URL:
+        return {"status":"SIN_DB"}
+    try:
+        where="WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'"
+        params=[]
+        scope="ALL"
+        if symbol:
+            scope=str(symbol).upper(); where += " AND symbol=%s"; params.append(scope)
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*),COUNT(actual_1h),COUNT(actual_3h),COUNT(actual_7h),COUNT(actual_24h),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '1 hour' < CURRENT_TIMESTAMP AND actual_1h IS NULL),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '3 hour' < CURRENT_TIMESTAMP AND actual_3h IS NULL),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '7 hour' < CURRENT_TIMESTAMP AND actual_7h IS NULL),
+                           COUNT(*) FILTER (WHERE created_at + INTERVAL '24 hour' < CURRENT_TIMESTAMP AND actual_24h IS NULL),
+                           MAX(created_at),MAX(evaluated_24h_at)
+                    FROM venbot_spot_prediction_events {where}
+                """,tuple(params))
+                r=cur.fetchone()
+        return {"status":"OK","scope":scope,"created_45d":int(r[0] or 0),
+                "evaluated":{"1h":int(r[1] or 0),"3h":int(r[2] or 0),"7h":int(r[3] or 0),"24h":int(r[4] or 0)},
+                "due_pending":{"1h":int(r[5] or 0),"3h":int(r[6] or 0),"7h":int(r[7] or 0),"24h":int(r[8] or 0)},
+                "latest_created_at":_dt_iso(r[9]),"latest_24h_evaluated_at":_dt_iso(r[10])}
+    except Exception as exc:
+        logger.warning("Spot tracking health falló %s: %s",symbol or "ALL",exc)
+        return {"status":"ERROR","scope":str(symbol or "ALL").upper(),"error":str(exc)[:180]}
+
+
+def _ingestion_health():
+    if not DATABASE_URL:
+        return {"status":"SIN_DB","p2p":{},"spot":{}}
+    now_dt=datetime.now(VET); out={"p2p":{},"spot":{}}
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT banco,COUNT(*) FILTER (WHERE fecha >= CURRENT_TIMESTAMP - INTERVAL '15 minutes'),MAX(fecha)
+                    FROM muestras_p2p GROUP BY banco ORDER BY banco
+                """)
+                for banco,cnt,last_at in cur.fetchall():
+                    out["p2p"][str(banco).upper()]={"recent_15m":int(cnt or 0),"last_sample_at":_dt_iso(last_at),"age_seconds":round(_age_seconds(last_at,now_dt) or 0.0,1) if last_at else None}
+                cur.execute("""
+                    SELECT symbol,COUNT(*) FILTER (WHERE fecha >= CURRENT_TIMESTAMP - INTERVAL '5 minutes'),MAX(fecha)
+                    FROM spot_market_snapshots GROUP BY symbol ORDER BY symbol
+                """)
+                for sym,cnt,last_at in cur.fetchall():
+                    out["spot"][str(sym).upper()]={"recent_5m":int(cnt or 0),"last_sample_at":_dt_iso(last_at),"age_seconds":round(_age_seconds(last_at,now_dt) or 0.0,1) if last_at else None}
+        p2p_stale=[k for k,v in out["p2p"].items() if v.get("age_seconds") is not None and v["age_seconds"]>180]
+        spot_stale=[k for k,v in out["spot"].items() if v.get("age_seconds") is not None and v["age_seconds"]>90]
+        out["p2p_stale_scopes"]=p2p_stale; out["spot_stale_symbols"]=spot_stale
+        out["status"]="OK" if not p2p_stale and not spot_stale else "OBSERVACION"
+        return out
+    except Exception as exc:
+        logger.warning("Ingestion health falló: %s",exc)
+        return {"status":"ERROR","p2p":{},"spot":{},"error":str(exc)[:180]}
+
+
+def _active_backtest_health():
+    now=time.time()
+    with QUANT_BACKTEST_LOCK:
+        active=[]
+        recent=sorted(QUANT_BACKTEST_JOBS.items(),key=lambda kv:float(kv[1].get("updated_at") or 0),reverse=True)[:3]
+        latest=[]
+        for jid,j in recent:
+            latest.append({"job_id":jid,"status":j.get("status"),"bank":j.get("bank"),"evaluations":(j.get("result") or {}).get("evaluations"),"updated_at":datetime.fromtimestamp(float(j.get("updated_at") or now),tz=timezone.utc).astimezone(VET).isoformat()})
+        for jid,j in QUANT_BACKTEST_JOBS.items():
+            if j.get("status") in {"queued","running"}:
+                age=max(0.0,now-float(j.get("created_at") or now))
+                active.append({"job_id":jid,"status":j.get("status"),"bank":j.get("bank"),"evaluations_effective":j.get("max_evaluaciones"),"spacing_minutes":j.get("spacing_minutes"),"age_seconds":round(age,1)})
+    return {"status":"OK" if all(x["age_seconds"]<1800 for x in active) else "OBSERVACION","active":active,"latest":latest}
+
+
+def _adaptive_system_health(status_parts=None, symbol=None, persistence_runtime=None, p2p_production=None, spot_production=None, p2p_gates=None, spot_gates=None):
+    status_parts=status_parts or {}
+    ingestion=_ingestion_health()
+    p2p_track=_tracking_health_p2p("GENERAL")
+    spot_track=_tracking_health_spot(symbol)
+    persistence_readback=_adaptive_snapshot_persistence_health()
+    p2p_hourly=status_parts.get("p2p_hourly") or {}
+    spot_hourly=status_parts.get("spot_hourly") or {}
+    p2p_maturity=status_parts.get("p2p_maturity") or {}
+    spot_maturity=status_parts.get("spot_maturity") or {}
+    lab={
+        "p2p":{"status":p2p_hourly.get("status","UNKNOWN"),"evaluated_total":int(p2p_hourly.get("evaluated_total") or 0),"evidence_ready_horizons":int(p2p_hourly.get("evidence_ready_horizons") or 0),"validated_shadow_horizons":int(p2p_hourly.get("validated_shadow_horizons") or 0),"rolling_validated":int(p2p_maturity.get("research_rolling_validated") or 0),"total_horizons":24},
+        "spot":{"status":spot_hourly.get("status","UNKNOWN"),"evaluated_total":int(spot_hourly.get("evaluated_total") or 0),"evidence_ready_horizons":int(spot_hourly.get("evidence_ready_horizons") or 0),"validated_shadow_horizons":int(spot_hourly.get("validated_shadow_horizons") or 0),"rolling_validated":int(spot_maturity.get("research_rolling_validated") or 0),"total_horizons":24},
+    }
+    def _production_metrics(hdata, gates):
+        out={}
+        for h,stats in (hdata or {}).items():
+            gate=(gates or {}).get(h) or {}
+            out[str(h)]={
+                "evaluated":int(stats.get("evaluated") or 0),
+                "mae_pct":stats.get("mae_pct"),
+                "bias_pct":stats.get("bias_pct"),
+                "direction_accuracy_pct":stats.get("direction_accuracy_pct"),
+                "p75_abs_error_pct":stats.get("p75_abs_error_pct"),
+                "readiness":stats.get("readiness"),
+                "quality_gate":gate.get("status") or (stats.get("quality_gate") or {}).get("status"),
+                "range_calibration":(stats.get("quality_gate") or {}).get("range_calibration") or {},
+            }
+        return out
+    production={"p2p":_production_metrics(p2p_production,p2p_gates),"spot":_production_metrics(spot_production,spot_gates)}
+    components={
+        "database":persistence_readback.get("status") not in {"ERROR","SIN_DB"},
+        "ingestion":ingestion.get("status") in {"OK","OBSERVACION"},
+        "p2p_tracking":p2p_track.get("status")=="OK",
+        "spot_tracking":spot_track.get("status")=="OK",
+        "adaptive_persistence":bool((persistence_runtime or {}).get("verified_rows") or persistence_readback.get("verified")),
+    }
+    if all(components.values()): overall="OK"
+    elif components["database"] and components["ingestion"]: overall="OBSERVACION"
+    else: overall="ERROR"
+    return {
+        "version":_ADAPTIVE_HEALTH_VERSION,"overall":overall,"components":components,
+        "ingestion":ingestion,"tracking":{"p2p":p2p_track,"spot":spot_track},
+        "laboratory":lab,"production_metrics":production,"adaptive_persistence":persistence_readback,
+        "adaptive_persistence_runtime":persistence_runtime or {},"backtest":_active_backtest_health(),
+        "production_horizons":["1h","3h","7h","24h"],"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),
+        "promotion":"DISABLED_REVIEW_REQUIRED","generated_at":datetime.now(VET).isoformat()
+    }
+
+
 def _obtener_quant_adaptive_status_uncached(symbol=None):
     """Cálculo completo del panel adaptativo; llamado detrás de una caché corta."""
     if not DATABASE_URL: return {"ok":False,"error":"database_unavailable"}
@@ -5578,58 +5804,51 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
       "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":p2p_h,"hourly_shadow":p2p_hourly,"maturity":_adaptive_maturity_summary(p2p_hourly),"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"milestone_300h":milestones["p2p_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":spot_h,"hourly_shadow":spot_hourly,"maturity":_adaptive_maturity_summary(spot_hourly),"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"milestone_300h":milestones["spot_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "milestones":milestones,"generated_at":datetime.now(VET).isoformat()}
-    # Persistimos una instantánea liviana para auditoría del aprendizaje.
+    persistence=_persist_adaptive_status_snapshots(p2p_cov,p2p_stage,p2p_h,spot_cov,spot_stage,spot_h,p2p_hourly,spot_hourly,symbol)
+    status["adaptive_persistence"]=persistence
+    status["system_health"]=_adaptive_system_health({
+        "p2p_hourly":p2p_hourly,"spot_hourly":spot_hourly,
+        "p2p_maturity":_adaptive_maturity_summary(p2p_hourly),
+        "spot_maturity":_adaptive_maturity_summary(spot_hourly),
+    },symbol,persistence,p2p_h,spot_h,p2p_primary_gates,spot_primary_gates)
+    return status
+
+
+
+def _persist_adaptive_status_snapshots(p2p_cov,p2p_stage,p2p_h,spot_cov,spot_stage,spot_h,p2p_hourly,spot_hourly,symbol=None):
+    """Persiste métricas adaptativas en lote y verifica readback en PostgreSQL."""
+    started=datetime.now(VET)
+    rows=[]
+    def add_rows(motor,scope,coverage,stage,hdata):
+        for h,stats in (hdata or {}).items():
+            shadow=stats.get("shadow_candidate") or {}; gate=stats.get("quality_gate") or {}
+            rows.append((motor,scope,h,float(coverage or 0.0),str(stage.get("stage") or "BASE"),int(stage.get("next_target_hours") or stage.get("milestone_hours") or 0),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),gate.get("status"),gate.get("baseline_mae_pct"),gate.get("persistence_improvement_pct"),gate.get("direction_lower_bound_pct"),json.dumps(gate,ensure_ascii=False),json.dumps({"point":shadow.get("point_calibration") or {},"interval":shadow.get("interval_calibration") or {},"interval_fit":shadow.get("interval_calibration_fit") or {}},ensure_ascii=False)))
+    add_rows("P2P","GENERAL",p2p_cov,p2p_stage,p2p_h)
+    add_rows("SPOT",symbol or "ALL",spot_cov.get("median_hours",0.0),spot_stage,spot_h)
+    add_rows("P2P","GENERAL",p2p_cov,p2p_stage,(p2p_hourly or {}).get("horizons",{}))
+    add_rows("SPOT",symbol or "ALL",spot_cov.get("median_hours",0.0),spot_stage,(spot_hourly or {}).get("horizons",{}))
+    if not DATABASE_URL:
+        return {"status":"SIN_DB","attempted":len(rows),"verified_rows":0,"verified_unique":0,"readback":"PENDIENTE","started_at":started.isoformat(),"error":"database_unavailable"}
+    sql="""INSERT INTO venbot_quant_adaptive_snapshots
+        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
+            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,calibration_shadow=EXCLUDED.calibration_shadow,generated_at=CURRENT_TIMESTAMP"""
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                for motor,scope,coverage,stage,hdata in [("P2P","GENERAL",p2p_cov,p2p_stage,p2p_h),("SPOT",symbol or "ALL",spot_cov["median_hours"],spot_stage,spot_h)]:
-                    for h,stats in hdata.items():
-                        shadow=stats.get("shadow_candidate") or {}
-                        cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                            ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
-                                coverage_hours=EXCLUDED.coverage_hours,
-                                stage=EXCLUDED.stage,
-                                target_hours=EXCLUDED.target_hours,
-                                evaluated=EXCLUDED.evaluated,
-                                mae_pct=EXCLUDED.mae_pct,
-                                bias_pct=EXCLUDED.bias_pct,
-                                direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,
-                                p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,
-                                candidate_bias_factor=EXCLUDED.candidate_bias_factor,
-                                readiness=EXCLUDED.readiness,
-                                shadow_status=EXCLUDED.shadow_status,
-                                oos_improvement_pct=EXCLUDED.oos_improvement_pct,
-                                required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,
-                                quality_status=EXCLUDED.quality_status,
-                                baseline_mae_pct=EXCLUDED.baseline_mae_pct,
-                                persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,
-                                direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,
-                                quality_gate=EXCLUDED.quality_gate,
-                                calibration_shadow=EXCLUDED.calibration_shadow,
-                                generated_at=CURRENT_TIMESTAMP
-                            """,
-                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False), json.dumps({"point":(stats.get("shadow_candidate") or {}).get("point_calibration",{}),"interval":(stats.get("shadow_candidate") or {}).get("interval_calibration",{}),"interval_fit":(stats.get("shadow_candidate") or {}).get("interval_calibration_fit",{})},ensure_ascii=False)))
-                for h,stats in p2p_hourly.get("horizons",{}).items():
-                    shadow=stats.get("shadow_candidate") or {}
-                    cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
-                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,generated_at=CURRENT_TIMESTAMP
-                    """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False), json.dumps({"point":(stats.get("shadow_candidate") or {}).get("point_calibration",{}),"interval":(stats.get("shadow_candidate") or {}).get("interval_calibration",{}),"interval_fit":(stats.get("shadow_candidate") or {}).get("interval_calibration_fit",{})},ensure_ascii=False)))
-                for h,stats in spot_hourly.get("horizons",{}).items():
-                    shadow=stats.get("shadow_candidate") or {}
-                    cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
-                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,generated_at=CURRENT_TIMESTAMP
-                    """,("SPOT",symbol or "ALL",h,spot_cov["median_hours"],float(spot_stage["milestone_hours"]),int(spot_stage["next_target_hours"] or spot_stage["milestone_hours"]),int(stats.get("evaluated") or 0), stats.get("mae_pct"), stats.get("bias_pct"), stats.get("direction_accuracy_pct"), stats.get("p75_abs_error_pct"), stats.get("candidate_bias_factor"), stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False), json.dumps({"point":(stats.get("shadow_candidate") or {}).get("point_calibration",{}),"interval":(stats.get("shadow_candidate") or {}).get("interval_calibration",{}),"interval_fit":(stats.get("shadow_candidate") or {}).get("interval_calibration_fit",{})},ensure_ascii=False)))
-    except Exception as e:
-        logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
-    return status
+                cur.executemany(sql,rows)
+            conn.commit()
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*),COUNT(DISTINCT (motor,scope,horizon,evidence_at)),MAX(generated_at) FROM venbot_quant_adaptive_snapshots WHERE generated_at >= %s",(started,))
+                verified_rows,verified_unique,last_generated=cur.fetchone() or (0,0,None)
+        verified=bool(rows) and int(verified_rows or 0)>0 and int(verified_unique or 0)>0
+        result={"status":"OK" if verified else "SIN_EVIDENCIA_RECIENTE","attempted":len(rows),"verified_rows":int(verified_rows or 0),"verified_unique":int(verified_unique or 0),"readback":"OK" if verified else "PENDIENTE","started_at":started.isoformat(),"last_generated_at":_dt_iso(last_generated),"error":None}
+        if verified: logger.info("[ADAPTIVE] snapshot persistido y verificado filas=%s unicas=%s",int(verified_rows or 0),int(verified_unique or 0))
+        return result
+    except Exception as exc:
+        logger.warning("No se pudo persistir snapshot adaptativo: %s",exc)
+        return {"status":"ERROR","attempted":len(rows),"verified_rows":0,"verified_unique":0,"readback":"ERROR","started_at":started.isoformat(),"error":str(exc)[:180]}
 
 
 def obtener_quant_adaptive_status(symbol=None):
@@ -9649,6 +9868,25 @@ def obtener_quant_adaptive_status_api(request: Request, symbol: Optional[str] = 
     if sym and sym not in SPOT_SYMBOLS:
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
     return obtener_quant_adaptive_status(sym)
+
+
+@app.get("/api/quant/health")
+def obtener_quant_health_api(request: Request, symbol: Optional[str] = Query(None)):
+    """Estado consolidado de captura, tracking, laboratorio y persistencia."""
+    _require_developer_session(request)
+    sym=_normalizar_spot_symbol(symbol) if symbol else None
+    if sym and sym not in SPOT_SYMBOLS:
+        raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    key=str(sym or "ALL").upper(); now=time.monotonic()
+    with _ADAPTIVE_HEALTH_LOCK:
+        cached=_ADAPTIVE_HEALTH_CACHE.get(key)
+        if cached and now < cached.get("expires",0.0):
+            out=dict(cached.get("value") or {}); out["cache"]="FRESH"; return out
+        status=obtener_quant_adaptive_status(sym)
+        health=dict(status.get("system_health") or {})
+        health["cache"]="REFRESHED"
+        _ADAPTIVE_HEALTH_CACHE[key]={"value":health,"expires":time.monotonic()+_ADAPTIVE_HEALTH_CACHE_SECONDS}
+        return health
 
 
 @app.get("/api/quant/adaptive/hourly")
