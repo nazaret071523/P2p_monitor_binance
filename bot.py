@@ -105,7 +105,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger("venbot")
-logger.info("Venbot v31.73.4 Evaluation Expansion: evidencia histórica + backtest 48 + compatibilidad legacy")
+logger.info("Venbot v31.73.5 Quality Gate: evidencia + baseline persistencia + dirección + OOS por horizonte")
 
 
 async def _safe_callback_answer(update: Update, *args, **kwargs):
@@ -354,6 +354,10 @@ ADAPTIVE_ROLLING_FOLDS = max(2, min(5, int(os.getenv("ADAPTIVE_ROLLING_FOLDS", "
 ADAPTIVE_ROLLING_MIN_TRAIN = max(12, int(os.getenv("ADAPTIVE_ROLLING_MIN_TRAIN", "15")))
 ADAPTIVE_ROLLING_MIN_OOS = max(5, int(os.getenv("ADAPTIVE_ROLLING_MIN_OOS", "5")))
 ADAPTIVE_ROLLING_MIN_VALID_FOLDS = max(2, int(os.getenv("ADAPTIVE_ROLLING_MIN_VALID_FOLDS", "2")))
+# Quality Gate por horizonte: diagnóstica y conservadora; no modifica producción.
+ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT = max(0.0, float(os.getenv("ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT", str(ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT))))
+ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT = min(99.0, max(50.0, float(os.getenv("ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT", "50.0"))))
+ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT = max(0.05, float(os.getenv("ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT", "0.75")))
 _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
@@ -906,6 +910,11 @@ def inicializar_db():
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS oos_improvement_pct DOUBLE PRECISION;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS required_oos_improvement_pct DOUBLE PRECISION;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS evidence_at TIMESTAMPTZ;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS quality_status TEXT;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS baseline_mae_pct DOUBLE PRECISION;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS persistence_improvement_pct DOUBLE PRECISION;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS direction_lower_bound_pct DOUBLE PRECISION;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS quality_gate JSONB;
                     CREATE INDEX IF NOT EXISTS idx_quant_adaptive_motor_scope_created
                     ON venbot_quant_adaptive_snapshots(motor, scope, generated_at DESC);
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_quant_adaptive_evidence
@@ -4574,6 +4583,83 @@ def _coverage_spot():
     return {"median_hours":round(float(np.median(vals)),2) if vals else 0.0,"by_symbol":out}
 
 
+def _wilson_lower_bound_pct(successes, total, z=1.6448536269514722):
+    """Límite inferior Wilson unilateral aproximado al 95% para dirección."""
+    try:
+        n=int(total or 0); k=int(successes or 0)
+        if n <= 0: return None
+        phat=k/n
+        denom=1.0+(z*z/n)
+        center=phat+(z*z/(2.0*n))
+        margin=z*((phat*(1.0-phat)/n + z*z/(4.0*n*n))**0.5)
+        lower=(center-margin)/denom
+        return float(max(0.0,min(1.0,lower))*100.0)
+    except Exception:
+        return None
+
+
+def _adaptive_quality_gate(normalized, mae_pct, bias_pct, direction_accuracy_pct, shadow_candidate=None):
+    """Evalúa calidad por horizonte sin tocar la predicción productiva.
+
+    Compara contra persistencia (precio observado en T0), mide evidencia
+    direccional con un límite Wilson y exige OOS rolling estable para marcar
+    el horizonte como listo para revisión. El gate es diagnóstico; no promete
+    rendimiento futuro ni activa promociones.
+    """
+    n=len(normalized or [])
+    model_vals=[]; baseline_vals=[]; direction_success=0; direction_n=0
+    for r in normalized or []:
+        try:
+            actual=float(r.get("actual")); pred=float(r.get("pred"))
+            if actual:
+                model_vals.append(abs(actual-pred)/abs(actual)*100.0)
+            observed=r.get("observed")
+            if observed is not None and actual:
+                obs=float(observed)
+                if obs:
+                    baseline_vals.append(abs(actual-obs)/abs(actual)*100.0)
+            d=r.get("direction")
+            if d is not None:
+                direction_n += 1
+                direction_success += int(bool(d))
+        except Exception:
+            continue
+    baseline_mae=float(np.mean(baseline_vals)) if baseline_vals else None
+    model_mae=float(mae_pct) if mae_pct is not None else (float(np.mean(model_vals)) if model_vals else None)
+    persistence_improvement=None
+    if baseline_mae is not None and model_mae is not None and baseline_mae > 0:
+        persistence_improvement=(baseline_mae-model_mae)/baseline_mae*100.0
+    direction_lb=_wilson_lower_bound_pct(direction_success, direction_n)
+    evidence_ready=n>=ADAPTIVE_MIN_EVAL_PER_HORIZON
+    persistence_pass=(persistence_improvement is not None and persistence_improvement>=ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT)
+    direction_pass=(direction_lb is not None and direction_lb>=ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT)
+    bias_pass=(bias_pct is not None and abs(float(bias_pct))<=ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT)
+    rolling=shadow_candidate.get("rolling_oos",{}) if isinstance(shadow_candidate,dict) else {}
+    rolling_pass=rolling.get("status")=="VALIDACION_ROLLING_OK"
+    checks={
+        "evidence": {"pass":evidence_ready,"evaluated":n,"required":ADAPTIVE_MIN_EVAL_PER_HORIZON},
+        "vs_persistence": {"pass":persistence_pass,"baseline_mae_pct":round(baseline_mae,4) if baseline_mae is not None else None,"model_mae_pct":round(model_mae,4) if model_mae is not None else None,"improvement_pct":round(persistence_improvement,2) if persistence_improvement is not None else None,"required_improvement_pct":ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT},
+        "direction": {"pass":direction_pass,"accuracy_pct":round(float(direction_accuracy_pct),2) if direction_accuracy_pct is not None else None,"wilson_lower_bound_pct":round(direction_lb,2) if direction_lb is not None else None,"required_lower_bound_pct":ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT,"successes":direction_success,"evaluated":direction_n},
+        "bias": {"pass":bias_pass,"bias_pct":round(float(bias_pct),4) if bias_pct is not None else None,"max_abs_bias_pct":ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT},
+        "rolling_oos": {"pass":rolling_pass,"status":rolling.get("status"),"folds_validos":rolling.get("folds_validos"),"folds_requeridos":rolling.get("folds_requeridos")},
+    }
+    if not evidence_ready:
+        status="SIN_EVIDENCIA"
+    elif all((v.get("pass") is True) for v in checks.values()):
+        status="LISTO_PARA_REVISION"
+    else:
+        status="EN_OBSERVACION"
+    return {
+        "status":status,
+        "production_change":"DISABLED_REVIEW_REQUIRED",
+        "checks":checks,
+        "baseline_mae_pct":round(baseline_mae,4) if baseline_mae is not None else None,
+        "persistence_improvement_pct":round(persistence_improvement,2) if persistence_improvement is not None else None,
+        "direction_lower_bound_pct":round(direction_lb,2) if direction_lb is not None else None,
+        "direction_evaluated":direction_n,
+    }
+
+
 def _adaptive_stats_from_rows(rows, mode="p2p"):
     abs_errors=[]; signed_bias=[]; dirs=[]; groups={}
     normalized=[]
@@ -4581,9 +4667,13 @@ def _adaptive_stats_from_rows(rows, mode="p2p"):
     for row in rows:
         try:
             if mode=="p2p":
-                pbuy,psell,actual,err,direction,group,event_at=row
+                if len(row)>=8:
+                    observed,pbuy,psell,actual,err,direction,group,event_at=row[:8]
+                else:
+                    pbuy,psell,actual,err,direction,group,event_at=row[:7]
+                    observed=None
                 pred=(float(pbuy)+float(psell))/2.0
-                observed=None
+                observed=float(observed) if observed is not None else None
             else:
                 observed,pred,actual,err,direction,group,event_at=row
                 pred=float(pred); observed=float(observed) if observed is not None else None
@@ -4615,7 +4705,8 @@ def _adaptive_stats_from_rows(rows, mode="p2p"):
         regime_out[g]={"evaluated":info["evaluated"],"direction_accuracy_pct":round(100.0*sum(a)/len(a),1) if a else None,"ready":info["evaluated"]>=10}
     ready = n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and eligible_regimes>=1
     shadow = _build_shadow_candidate(normalized, mode) if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else {"status":"ACUMULANDO_EVIDENCIA"}
-    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":eligible_regimes,"shadow_candidate":shadow,"latest_event_at":latest_event_at}
+    quality_gate=_adaptive_quality_gate(normalized, mae, bias, acc, shadow)
+    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":eligible_regimes,"shadow_candidate":shadow,"quality_gate":quality_gate,"latest_event_at":latest_event_at}
 
 
 def _mae_percent(items):
@@ -4940,7 +5031,7 @@ def _adaptive_p2p_stats_from_batch_rows(rows, horizons, limit=5000):
         "24h":("pred_compra_24h","pred_venta_24h","actual_mid_24h","error_pct_24h","direction_correct_24h"),
     }
     # Cada fila viene como: 5 campos por horizonte + regimen + created_at.
-    offsets={h:i*5 for i,h in enumerate(hs)}
+    offsets={h:1+i*5 for i,h in enumerate(hs)}
     out={h:{"evaluated":0,"readiness":"ACUMULANDO_EVIDENCIA"} for h in hs if h in specs}
     for h in hs:
         if h not in specs:
@@ -4952,7 +5043,7 @@ def _adaptive_p2p_stats_from_batch_rows(rows, horizons, limit=5000):
                 actual=row[i+2]; err=row[i+3]
                 if actual is None or err is None:
                     continue
-                extracted.append((row[i],row[i+1],actual,err,row[i+4],row[-2],row[-1]))
+                extracted.append((row[0],row[i],row[i+1],actual,err,row[i+4],row[-2],row[-1]))
             except Exception:
                 continue
         out[h]=_adaptive_stats_from_rows(extracted,"p2p")
@@ -4965,7 +5056,7 @@ def _adaptive_p2p_stats_batch(banco="GENERAL", horizons=("1h","3h","7h","24h"), 
     hs=tuple(str(h).lower() for h in horizons)
     out={}
     try:
-        columns=[]
+        columns=["actual_mid"]
         for h in hs:
             spec={
                 "1h":("pred_compra_1h","pred_venta_1h","actual_mid_1h","error_pct_1h","direction_correct_1h"),
@@ -5109,12 +5200,13 @@ def _adaptive_hourly_stat_from_source_rows(source_rows, label, mode="p2p"):
     regime_out={g:{"evaluated":cnt,"ready":cnt>=10} for g,cnt in groups.items()}
     ready=n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and any(v>=10 for v in groups.values())
     shadow=_build_shadow_candidate(normalized,"hourly" if mode=="p2p" else "spot_hourly") if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else {"status":"ACUMULANDO_EVIDENCIA"}
+    quality_gate=_adaptive_quality_gate(normalized, mae, bias, acc, shadow)
     extra={}
     if mode=="p2p":
         buy_err=[float(r["error_buy_pct"]) for r in normalized if r.get("error_buy_pct") is not None]
         sell_err=[float(r["error_sell_pct"]) for r in normalized if r.get("error_sell_pct") is not None]
         extra={"buy_mae_pct":round(float(np.mean(buy_err)),4) if buy_err else None,"sell_mae_pct":round(float(np.mean(sell_err)),4) if sell_err else None}
-    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":sum(1 for v in groups.values() if v>=10),"shadow_candidate":shadow,"latest_event_at":normalized[0].get("created_at") if normalized else None,"source":"venbot_p2p_hourly_prediction_events" if mode=="p2p" else "venbot_spot_hourly_prediction_events","hourly":True,"horizon":label,**extra}
+    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":sum(1 for v in groups.values() if v>=10),"shadow_candidate":shadow,"quality_gate":quality_gate,"latest_event_at":normalized[0].get("created_at") if normalized else None,"source":"venbot_p2p_hourly_prediction_events" if mode=="p2p" else "venbot_spot_hourly_prediction_events","hourly":True,"horizon":label,**extra}
 
 
 def _adaptive_hourly_summary(banco="GENERAL"):
@@ -5181,7 +5273,7 @@ def _adaptive_promotion_gate(motor, scope, horizon):
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT readiness, shadow_status, oos_improvement_pct, candidate_bias_factor, evaluated, generated_at, evidence_at
+                    """SELECT readiness, shadow_status, oos_improvement_pct, candidate_bias_factor, evaluated, generated_at, evidence_at, quality_status
                        FROM venbot_quant_adaptive_snapshots
                        WHERE motor=%s AND scope=%s AND horizon=%s AND evidence_at IS NOT NULL
                        ORDER BY generated_at DESC LIMIT %s""",
@@ -5193,12 +5285,12 @@ def _adaptive_promotion_gate(motor, scope, horizon):
         improvements=[]
         seen_evidence=set()
         for r in rows:
-            readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at = r
+            readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at, quality_status = r
             evidence_key = evidence_at.isoformat() if hasattr(evidence_at, "isoformat") else str(evidence_at)
             if evidence_key in seen_evidence:
                 continue
             seen_evidence.add(evidence_key)
-            if shadow_status == "CANDIDATO_VALIDO" and readiness == "CANDIDATO_EN_SOMBRA" and (improvement is not None and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT) and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON:
+            if shadow_status == "CANDIDATO_VALIDO" and readiness == "CANDIDATO_EN_SOMBRA" and quality_status == "LISTO_PARA_REVISION" and (improvement is not None and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT) and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON:
                 stable += 1
                 if factor is not None: factors.append(float(factor))
                 if improvement is not None: improvements.append(float(improvement))
@@ -5242,7 +5334,7 @@ def _adaptive_promotion_gates(motor, scope, horizons):
                     """
                     WITH ranked AS (
                         SELECT horizon, readiness, shadow_status, oos_improvement_pct,
-                               candidate_bias_factor, evaluated, generated_at, evidence_at,
+                               candidate_bias_factor, evaluated, generated_at, evidence_at, quality_status,
                                ROW_NUMBER() OVER (PARTITION BY horizon ORDER BY generated_at DESC) AS rn
                         FROM venbot_quant_adaptive_snapshots
                         WHERE motor=%s
@@ -5251,7 +5343,7 @@ def _adaptive_promotion_gates(motor, scope, horizons):
                           AND evidence_at IS NOT NULL
                     )
                     SELECT horizon, readiness, shadow_status, oos_improvement_pct,
-                           candidate_bias_factor, evaluated, generated_at, evidence_at
+                           candidate_bias_factor, evaluated, generated_at, evidence_at, quality_status
                     FROM ranked
                     WHERE rn <= %s
                     ORDER BY horizon, generated_at DESC
@@ -5270,13 +5362,14 @@ def _adaptive_promotion_gates(motor, scope, horizons):
             improvements=[]
             seen_evidence=set()
             for r in grouped.get(h, []):
-                readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at = r
+                readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at, quality_status = r
                 evidence_key = evidence_at.isoformat() if hasattr(evidence_at, "isoformat") else str(evidence_at)
                 if evidence_key in seen_evidence:
                     continue
                 seen_evidence.add(evidence_key)
                 if (shadow_status == "CANDIDATO_VALIDO"
                     and readiness == "CANDIDATO_EN_SOMBRA"
+                    and quality_status == "LISTO_PARA_REVISION"
                     and improvement is not None
                     and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
                     and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON):
@@ -5337,8 +5430,10 @@ def _adaptive_maturity_summary(hourly_shadow):
         return sum(1 for v in data.values() if (v.get(key) or "") in {"VALIDACION_ROLLING_OK","CANDIDATO_VALIDO"})
     rolling_ok=sum(1 for v in research.values() if (v.get("shadow_candidate") or {}).get("rolling_oos",{}).get("status")=="VALIDACION_ROLLING_OK")
     evidence=sum(1 for v in research.values() if int(v.get("evaluated") or 0)>=ADAPTIVE_MIN_EVAL_PER_HORIZON)
+    quality_ready=sum(1 for v in horizons.values() if (v.get("quality_gate") or {}).get("status")=="LISTO_PARA_REVISION")
     return {
         "production_horizons":production,
+        "quality_ready_horizons":quality_ready,
         "research_horizons":research,
         "research_evidence_ready":evidence,
         "research_horizons_total":len(ADAPTIVE_RESEARCH_HORIZONS),
@@ -5368,7 +5463,7 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
     p2p_primary_gates=_adaptive_promotion_gates("P2P","GENERAL",hs)
     spot_primary_gates=_adaptive_promotion_gates("SPOT",symbol or "ALL",hs)
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
-      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS}},
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS},"quality_gate":{"min_persistence_improvement_pct":ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT,"min_direction_wilson_lower_bound_pct":ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT,"max_abs_bias_pct":ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT,"production_change":"DISABLED_REVIEW_REQUIRED"}},
       "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":p2p_h,"hourly_shadow":p2p_hourly,"maturity":_adaptive_maturity_summary(p2p_hourly),"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"milestone_300h":milestones["p2p_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":spot_h,"hourly_shadow":spot_hourly,"maturity":_adaptive_maturity_summary(spot_hourly),"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"milestone_300h":milestones["spot_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "milestones":milestones,"generated_at":datetime.now(VET).isoformat()}
@@ -5380,8 +5475,8 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
                     for h,stats in hdata.items():
                         shadow=stats.get("shadow_candidate") or {}
                         cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
                                 coverage_hours=EXCLUDED.coverage_hours,
                                 stage=EXCLUDED.stage,
@@ -5396,25 +5491,30 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
                                 shadow_status=EXCLUDED.shadow_status,
                                 oos_improvement_pct=EXCLUDED.oos_improvement_pct,
                                 required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,
+                                quality_status=EXCLUDED.quality_status,
+                                baseline_mae_pct=EXCLUDED.baseline_mae_pct,
+                                persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,
+                                direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,
+                                quality_gate=EXCLUDED.quality_gate,
                                 generated_at=CURRENT_TIMESTAMP
                             """,
-                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False)))
                 for h,stats in p2p_hourly.get("horizons",{}).items():
                     shadow=stats.get("shadow_candidate") or {}
                     cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
-                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,generated_at=CURRENT_TIMESTAMP
-                    """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,generated_at=CURRENT_TIMESTAMP
+                    """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False)))
                 for h,stats in spot_hourly.get("horizons",{}).items():
                     shadow=stats.get("shadow_candidate") or {}
                     cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
-                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,generated_at=CURRENT_TIMESTAMP
-                    """,("SPOT",symbol or "ALL",h,spot_cov["median_hours"],float(spot_stage["milestone_hours"]),int(spot_stage["next_target_hours"] or spot_stage["milestone_hours"]),int(stats.get("evaluated") or 0), stats.get("mae_pct"), stats.get("bias_pct"), stats.get("direction_accuracy_pct"), stats.get("p75_abs_error_pct"), stats.get("candidate_bias_factor"), stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,generated_at=CURRENT_TIMESTAMP
+                    """,("SPOT",symbol or "ALL",h,spot_cov["median_hours"],float(spot_stage["milestone_hours"]),int(spot_stage["next_target_hours"] or spot_stage["milestone_hours"]),int(stats.get("evaluated") or 0), stats.get("mae_pct"), stats.get("bias_pct"), stats.get("direction_accuracy_pct"), stats.get("p75_abs_error_pct"), stats.get("candidate_bias_factor"), stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False)))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
     return status
