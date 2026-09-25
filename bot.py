@@ -5,6 +5,8 @@ import logging
 import time
 import json
 import threading
+import gc
+import resource
 from bisect import bisect_left, bisect_right
 import secrets
 import hashlib
@@ -35,11 +37,20 @@ import certifi
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 import numpy as np
-import xgboost as xgb
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+
+# v31.73.2: XGBoost/Matplotlib are loaded only when a feature actually needs them.
+# This lowers baseline RAM on the Render Free instance (512 MB).
+xgb = None
+XGB_IMPORT_LOCK = threading.Lock()
+def _get_xgb():
+    global xgb
+    if xgb is None:
+        with XGB_IMPORT_LOCK:
+            if xgb is None:
+                import xgboost as _xgb
+                xgb = _xgb
+    return xgb
+
 
 from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
@@ -94,6 +105,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger("venbot")
+logger.info("Venbot v31.73.2 Memory Stability: lazy ML/plots + periodic GC + memory checkpoints")
 
 
 async def _safe_callback_answer(update: Update, *args, **kwargs):
@@ -358,6 +370,21 @@ QUANT_BACKTEST_JOB_TTL_SECONDS = max(900, int(os.getenv("QUANT_BACKTEST_JOB_TTL_
 ONLINE_SESSIONS = {}
 ONLINE_LOCK = threading.Lock()
 ONLINE_TTL_SECONDS = max(45, int(os.getenv("ONLINE_TTL_SECONDS", "90")))
+
+# v31.73.2: control conservador del recolector cíclico y diagnóstico de memoria.
+# ru_maxrss es la memoria residente máxima observada por el proceso (diagnóstico;
+# no cambia la lógica de negocio). Se registra con baja frecuencia para no llenar logs.
+VENBOT_GC_COLLECT_EVERY_CYCLES = max(6, int(os.getenv("VENBOT_GC_COLLECT_EVERY_CYCLES", "12")))
+VENBOT_MEMORY_LOG_EVERY_CYCLES = max(6, int(os.getenv("VENBOT_MEMORY_LOG_EVERY_CYCLES", "12")))
+_COLLECTOR_CYCLES = 0
+
+def _log_memory_checkpoint(tag: str):
+    try:
+        # Linux: KiB -> MiB. En otros entornos puede variar, pero Render es Linux.
+        peak_mb = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
+        logger.info("[MEMORY] checkpoint=%s peak_rss_mb=%.1f", tag, peak_mb)
+    except Exception:
+        pass
 
 # Cachés cortas para que el monitor y la IA no repitan consultas pesadas a Supabase
 # mientras el usuario está navegando. Los datos siguen siendo reales; solo se
@@ -3729,7 +3756,7 @@ def _quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid):
         split=int(len(usable)*.75)
         if split<QUANT_ML_MIN_SAMPLES-30 or len(usable)-split<30: return None
         tr,va=usable[:split],usable[split:]
-        model=xgb.XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
+        model=_get_xgb().XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
         model.fit(np.vstack([r[1] for r in tr]),np.asarray([r[2] for r in tr]),verbose=False)
         ml=np.asarray(model.predict(np.vstack([r[1] for r in va])),dtype=float)
         # Baseline comparable: momentum/regresión de la misma ventana histórica.
@@ -3751,7 +3778,7 @@ def _quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid):
         bacc=float(np.mean(bd[mask]==ad[mask])) if np.any(mask) else 0; macc=float(np.mean(md[maskm]==ad[maskm])) if np.any(maskm) else 0
         improvement=(bmae-mmae)/max(bmae,1e-9)
         accepted=improvement>=.03 and macc>=bacc-.03
-        final=xgb.XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
+        final=_get_xgb().XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
         final.fit(np.vstack([r[1] for r in usable]),np.asarray([r[2] for r in usable]),verbose=False)
         xnow=_quant_feature_vector(f,m,c,v,len(m)-1)
         if xnow is None: return None
@@ -3768,7 +3795,14 @@ def _quant_ml_cached(fechas,mids,compras,ventas,horizon_hours,current_mid):
             cached=QUANT_ML_CACHE.get(key)
             if cached and now-cached['ts']<QUANT_ML_REFRESH_SECONDS: return cached['info']
         info=_quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid)
-        with QUANT_ML_LOCK: QUANT_ML_CACHE[key]={'ts':now,'info':info}
+        with QUANT_ML_LOCK:
+            QUANT_ML_CACHE[key]={'ts':now,'info':info}
+            # La caché solo contiene metadatos/resultados compactos, pero el bucket
+            # cambiaba cada 30 min y podía crecer indefinidamente durante días.
+            if len(QUANT_ML_CACHE) > 8:
+                oldest = sorted(QUANT_ML_CACHE.items(), key=lambda kv: float(kv[1].get('ts', 0)))
+                for old_key, _ in oldest[:max(0, len(QUANT_ML_CACHE)-8)]:
+                    QUANT_ML_CACHE.pop(old_key, None)
         return info
     except Exception: return None
 
@@ -5327,6 +5361,13 @@ def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 5:
         return None
 
+    # Importación diferida: el servidor web no paga el coste de Matplotlib
+    # mientras nadie solicite esta gráfica de Telegram.
+    import matplotlib as _matplotlib
+    _matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+
     compras = np.array([f[0] for f in filas], dtype=float)
     ventas = np.array([f[1] for f in filas], dtype=float)
     fechas = [f[3] for f in filas]
@@ -5350,8 +5391,8 @@ def generar_imagen_grafica_cuantica(filas, banco):
     c_fut, v_fut = [float(compras[-1])], [float(ventas[-1])]
 
     if len(X):
-        mc = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
-        mv = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
+        mc = _get_xgb().XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
+        mv = _get_xgb().XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
         mc.fit(X, y_c)
         mv.fit(X, y_v)
         sim_c = list(compras[-window_size:])
@@ -5396,9 +5437,13 @@ def generar_imagen_grafica_cuantica(filas, banco):
     plt.tight_layout()
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=160)
-    buf.seek(0)
-    plt.close(fig)
+    try:
+        plt.savefig(buf, format="png", dpi=160)
+        buf.seek(0)
+    finally:
+        plt.close(fig)
+        # Libera referencias Python/cíclicas antes de devolver el buffer.
+        gc.collect()
     return buf
 
 
@@ -7625,6 +7670,10 @@ async def tarea_recoleccion_automatica():
                     await asyncio.to_thread(guardar_mercado_actual, c, v, l, tasas["usd"], tasas["eur"], tasas["source"])
                     mercado = {"compra": c, "venta": v, "liquidez": l, "bcv": tasas["usd"], "eur": tasas["eur"], "fuente_bcv": tasas["source"], "timestamp": now}
 
+            # v31.73.2: las respuestas de Binance pueden contener estructuras anidadas
+            # de anuncios; ya no son necesarias después de calcular VWAP/resultados.
+            del raw_sell, raw_buy, bank_sell, bank_buy
+
             global _LAST_SPOT_COLLECTION_TS
             if time.monotonic() - _LAST_SPOT_COLLECTION_TS >= SPOT_REFRESH_SECONDS:
                 try:
@@ -7736,6 +7785,14 @@ async def tarea_recoleccion_automatica():
             raise
         except Exception as e:
             logger.exception("Error en tarea autónoma: %s", e)
+        finally:
+            # v31.73.2: limpieza periódica de ciclos Python sin forzar GC en cada ciclo.
+            global _COLLECTOR_CYCLES
+            _COLLECTOR_CYCLES += 1
+            if _COLLECTOR_CYCLES % VENBOT_GC_COLLECT_EVERY_CYCLES == 0:
+                gc.collect()
+            if _COLLECTOR_CYCLES % VENBOT_MEMORY_LOG_EVERY_CYCLES == 0:
+                _log_memory_checkpoint("collector")
         await asyncio.sleep(COLLECT_INTERVAL_SECONDS)
 
 
@@ -8233,16 +8290,6 @@ app.add_middleware(
 )
 
 
-@app.head("/")
-def head_root():
-    """Respuesta ligera para monitores HTTP que usan HEAD (p.ej. UptimeRobot).
-
-    No consulta DB, Binance, Spot ni ejecuta tareas del motor.
-    Solo confirma que el Web Service está vivo.
-    """
-    return Response(status_code=200)
-
-
 @app.get("/")
 def read_root():
     return {
@@ -8266,12 +8313,6 @@ def read_root():
     }
 
 
-@app.head("/api/health")
-def head_health():
-    """Health check HEAD ultra-ligero; evita lecturas de mercado/DB."""
-    return Response(status_code=200)
-
-
 @app.get("/api/health")
 def health():
     mercado = obtener_mercado_actual_db()
@@ -8288,6 +8329,18 @@ def health():
         "spot_prediction_tracking": {"enabled": SPOT_PREDICTION_TRACKING_ENABLED, "interval_seconds": SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS},
         "timestamp": datetime.now(VET).isoformat(),
     }
+
+
+# v31.73.1/v31.73.2: UptimeRobot Free sends HEAD requests. These routes are
+# deliberately constant-time and do not touch DB, Binance, Spot or Quant.
+@app.head("/")
+def head_root():
+    return Response(status_code=200)
+
+
+@app.head("/api/health")
+def head_health():
+    return Response(status_code=200)
 
 def _validar_alerta_banco(banco):
     banco = (banco or "GENERAL").upper().strip()
