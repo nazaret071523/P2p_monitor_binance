@@ -358,6 +358,11 @@ ADAPTIVE_ROLLING_MIN_VALID_FOLDS = max(2, int(os.getenv("ADAPTIVE_ROLLING_MIN_VA
 ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT = max(0.0, float(os.getenv("ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT", str(ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT))))
 ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT = min(99.0, max(50.0, float(os.getenv("ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT", "50.0"))))
 ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT = max(0.05, float(os.getenv("ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT", "0.75")))
+# v31.73.6: calibración de punto + intervalo en sombra. No modifica producción.
+ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT = min(95.0, max(60.0, float(os.getenv("ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT", "80.0"))))
+ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT = min(90.0, max(50.0, float(os.getenv("ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT", "65.0"))))
+ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT = min(99.0, max(ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT, float(os.getenv("ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT", "95.0"))))
+ADAPTIVE_CALIBRATION_QUANTILE = min(0.95, max(0.60, float(os.getenv("ADAPTIVE_CALIBRATION_QUANTILE", "0.80"))))
 _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
@@ -915,6 +920,7 @@ def inicializar_db():
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS persistence_improvement_pct DOUBLE PRECISION;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS direction_lower_bound_pct DOUBLE PRECISION;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS quality_gate JSONB;
+                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS calibration_shadow JSONB;
                     CREATE INDEX IF NOT EXISTS idx_quant_adaptive_motor_scope_created
                     ON venbot_quant_adaptive_snapshots(motor, scope, generated_at DESC);
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_quant_adaptive_evidence
@@ -4598,6 +4604,98 @@ def _wilson_lower_bound_pct(successes, total, z=1.6448536269514722):
         return None
 
 
+def _fit_shadow_interval_calibration(train, point_factor=None, min_regime_train=ADAPTIVE_SHADOW_MIN_REGIME_TRAIN):
+    """Estima en entrenamiento el ancho de intervalo por cuantiles de error.
+
+    Se usa únicamente para generar un candidato de calibración en sombra.
+    El ancho se aprende sobre errores absolutos porcentuales después de aplicar
+    la corrección de punto del candidato; el bloque OOS nunca participa en el fit.
+    """
+    factor_global = float(point_factor if point_factor is not None else 1.0)
+    residuals=[]
+    by_regime={}
+    for r in train or []:
+        try:
+            pred=float(r.get("pred")); actual=float(r.get("actual"))
+            if pred <= 0 or actual <= 0:
+                continue
+            g=str(r.get("group") or "SIN_CLASIFICAR").upper()
+            factor=factor_global
+            corrected=pred*factor
+            if corrected <= 0:
+                continue
+            err=abs(actual-corrected)/corrected*100.0
+            residuals.append(err)
+            by_regime.setdefault(g,[]).append(err)
+        except Exception:
+            continue
+    if not residuals:
+        return {"status":"CALIBRACION_SIN_EVIDENCIA"}
+
+    def _quantile(vals,q):
+        return float(np.percentile(np.asarray(vals,dtype=float), q*100.0)) if vals else None
+
+    width_global=_quantile(residuals, ADAPTIVE_CALIBRATION_QUANTILE)
+    regime_widths={}
+    for g,vals in by_regime.items():
+        if len(vals) >= int(min_regime_train):
+            q=_quantile(vals, ADAPTIVE_CALIBRATION_QUANTILE)
+            if q is not None:
+                regime_widths[g]={"train_evaluated":len(vals),"half_width_pct":round(float(q),4)}
+    return {
+        "status":"CALIBRACION_LISTA_SOMBRA",
+        "method":f"quantil_abs_error_p{int(round(ADAPTIVE_CALIBRATION_QUANTILE*100))}",
+        "target_coverage_pct":ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT,
+        "half_width_pct":round(float(width_global),4) if width_global is not None else None,
+        "by_regime":regime_widths,
+        "train_evaluated":len(residuals),
+        "production_change":"DISABLED"
+    }
+
+
+def _evaluate_shadow_interval_calibration(oos, point_factor=1.0, interval_fit=None, by_regime_fallback=None):
+    """Evalúa en OOS la cobertura y el ancho del intervalo aprendido en train."""
+    fit=interval_fit if isinstance(interval_fit,dict) else {}
+    global_half=float(fit.get("half_width_pct") or 0.0)
+    by_regime=fit.get("by_regime",{}) if isinstance(fit,dict) else {}
+    widths=[]; covered=0; evaluated=0; abs_errors=[]
+    for r in oos or []:
+        try:
+            pred=float(r.get("pred")); actual=float(r.get("actual"))
+            if pred<=0 or actual<=0:
+                continue
+            g=str(r.get("group") or "SIN_CLASIFICAR").upper()
+            regime_half=float(by_regime.get(g,{}).get("half_width_pct") or global_half)
+            center=pred*float(point_factor)
+            low=center*(1.0-regime_half/100.0)
+            high=center*(1.0+regime_half/100.0)
+            covered += int(low <= actual <= high)
+            evaluated += 1
+            widths.append(2.0*regime_half)
+            abs_errors.append(abs(actual-center)/center*100.0)
+        except Exception:
+            continue
+    if evaluated<=0:
+        return {"status":"CALIBRACION_OOS_SIN_EVIDENCIA","evaluated":0}
+    coverage=100.0*covered/evaluated
+    mean_width=float(np.mean(widths)) if widths else None
+    mean_abs_error=float(np.mean(abs_errors)) if abs_errors else None
+    passes_min=coverage>=ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT
+    not_pathological=coverage<=ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT
+    return {
+        "status":"CALIBRACION_OOS_OK" if passes_min and not_pathological else "CALIBRACION_OOS_OBSERVACION",
+        "evaluated":evaluated,
+        "coverage_pct":round(coverage,2),
+        "covered":covered,
+        "target_coverage_pct":ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT,
+        "min_coverage_pct":ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT,
+        "max_coverage_pct":ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT,
+        "mean_interval_width_pct":round(mean_width,4) if mean_width is not None else None,
+        "mean_abs_error_pct_after_point_correction":round(mean_abs_error,4) if mean_abs_error is not None else None,
+        "production_change":"DISABLED"
+    }
+
+
 def _adaptive_quality_gate(normalized, mae_pct, bias_pct, direction_accuracy_pct, shadow_candidate=None):
     """Evalúa calidad por horizonte sin tocar la predicción productiva.
 
@@ -4636,12 +4734,15 @@ def _adaptive_quality_gate(normalized, mae_pct, bias_pct, direction_accuracy_pct
     bias_pass=(bias_pct is not None and abs(float(bias_pct))<=ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT)
     rolling=shadow_candidate.get("rolling_oos",{}) if isinstance(shadow_candidate,dict) else {}
     rolling_pass=rolling.get("status")=="VALIDACION_ROLLING_OK"
+    range_calibration=shadow_candidate.get("interval_calibration",{}) if isinstance(shadow_candidate,dict) else {}
+    range_pass=range_calibration.get("status")=="CALIBRACION_OOS_OK"
     checks={
         "evidence": {"pass":evidence_ready,"evaluated":n,"required":ADAPTIVE_MIN_EVAL_PER_HORIZON},
         "vs_persistence": {"pass":persistence_pass,"baseline_mae_pct":round(baseline_mae,4) if baseline_mae is not None else None,"model_mae_pct":round(model_mae,4) if model_mae is not None else None,"improvement_pct":round(persistence_improvement,2) if persistence_improvement is not None else None,"required_improvement_pct":ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT},
         "direction": {"pass":direction_pass,"accuracy_pct":round(float(direction_accuracy_pct),2) if direction_accuracy_pct is not None else None,"wilson_lower_bound_pct":round(direction_lb,2) if direction_lb is not None else None,"required_lower_bound_pct":ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT,"successes":direction_success,"evaluated":direction_n},
         "bias": {"pass":bias_pass,"bias_pct":round(float(bias_pct),4) if bias_pct is not None else None,"max_abs_bias_pct":ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT},
         "rolling_oos": {"pass":rolling_pass,"status":rolling.get("status"),"folds_validos":rolling.get("folds_validos"),"folds_requeridos":rolling.get("folds_requeridos")},
+        "range_calibration": {"pass":range_pass,"status":range_calibration.get("status"),"coverage_pct":range_calibration.get("coverage_pct"),"target_coverage_pct":range_calibration.get("target_coverage_pct"),"min_coverage_pct":range_calibration.get("min_coverage_pct")},
     }
     if not evidence_ready:
         status="SIN_EVIDENCIA"
@@ -4999,6 +5100,9 @@ def _build_shadow_candidate(rows, mode="p2p"):
         corrected.append(rr)
     corrected_mae=_mae_percent(corrected)
     improvement=((baseline-corrected_mae)/baseline*100.0) if baseline and corrected_mae is not None else None
+    # Calibración de rango: el ancho se aprende SOLO con train y se evalúa OOS.
+    interval_fit=_fit_shadow_interval_calibration(train, global_factor)
+    interval_oos=_evaluate_shadow_interval_calibration(oos, global_factor, interval_fit)
     ready=improvement is not None and improvement>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
     rolling=_rolling_oos_validation(rows, mode)
 
@@ -5018,6 +5122,13 @@ def _build_shadow_candidate(rows, mode="p2p"):
         "oos_interpretation":("MEJORA" if improvement is not None and improvement > 0 else ("DEGRADACION" if improvement is not None and improvement < 0 else "NEUTRO")),
         "required_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,
         "by_regime":by_regime,
+        "interval_calibration_fit":interval_fit,
+        "interval_calibration":interval_oos,
+        "point_calibration":{
+            "global_factor":round(global_factor,6),
+            "train_bias_pct":round(train_bias_pct,4),
+            "production_change":"DISABLED"
+        },
     }
 
 
@@ -5463,7 +5574,7 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
     p2p_primary_gates=_adaptive_promotion_gates("P2P","GENERAL",hs)
     spot_primary_gates=_adaptive_promotion_gates("SPOT",symbol or "ALL",hs)
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
-      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS},"quality_gate":{"min_persistence_improvement_pct":ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT,"min_direction_wilson_lower_bound_pct":ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT,"max_abs_bias_pct":ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT,"production_change":"DISABLED_REVIEW_REQUIRED"}},
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS},"quality_gate":{"min_persistence_improvement_pct":ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT,"min_direction_wilson_lower_bound_pct":ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT,"max_abs_bias_pct":ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT,"range_calibration":{"target_coverage_pct":ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT,"min_coverage_pct":ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT,"max_coverage_pct":ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT,"quantile":ADAPTIVE_CALIBRATION_QUANTILE},"production_change":"DISABLED_REVIEW_REQUIRED"}},
       "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":p2p_h,"hourly_shadow":p2p_hourly,"maturity":_adaptive_maturity_summary(p2p_hourly),"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"milestone_300h":milestones["p2p_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":spot_h,"hourly_shadow":spot_hourly,"maturity":_adaptive_maturity_summary(spot_hourly),"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"milestone_300h":milestones["spot_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "milestones":milestones,"generated_at":datetime.now(VET).isoformat()}
@@ -5475,7 +5586,7 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
                     for h,stats in hdata.items():
                         shadow=stats.get("shadow_candidate") or {}
                         cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate)
+                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                             ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
                                 coverage_hours=EXCLUDED.coverage_hours,
@@ -5496,25 +5607,26 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
                                 persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,
                                 direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,
                                 quality_gate=EXCLUDED.quality_gate,
+                                calibration_shadow=EXCLUDED.calibration_shadow,
                                 generated_at=CURRENT_TIMESTAMP
                             """,
-                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False)))
+                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False), json.dumps({"point":(stats.get("shadow_candidate") or {}).get("point_calibration",{}),"interval":(stats.get("shadow_candidate") or {}).get("interval_calibration",{}),"interval_fit":(stats.get("shadow_candidate") or {}).get("interval_calibration_fit",{})},ensure_ascii=False)))
                 for h,stats in p2p_hourly.get("horizons",{}).items():
                     shadow=stats.get("shadow_candidate") or {}
                     cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate)
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
                             coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,generated_at=CURRENT_TIMESTAMP
-                    """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False)))
+                    """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False), json.dumps({"point":(stats.get("shadow_candidate") or {}).get("point_calibration",{}),"interval":(stats.get("shadow_candidate") or {}).get("interval_calibration",{}),"interval_fit":(stats.get("shadow_candidate") or {}).get("interval_calibration_fit",{})},ensure_ascii=False)))
                 for h,stats in spot_hourly.get("horizons",{}).items():
                     shadow=stats.get("shadow_candidate") or {}
                     cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
-                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate)
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
                             coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,generated_at=CURRENT_TIMESTAMP
-                    """,("SPOT",symbol or "ALL",h,spot_cov["median_hours"],float(spot_stage["milestone_hours"]),int(spot_stage["next_target_hours"] or spot_stage["milestone_hours"]),int(stats.get("evaluated") or 0), stats.get("mae_pct"), stats.get("bias_pct"), stats.get("direction_accuracy_pct"), stats.get("p75_abs_error_pct"), stats.get("candidate_bias_factor"), stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False)))
+                    """,("SPOT",symbol or "ALL",h,spot_cov["median_hours"],float(spot_stage["milestone_hours"]),int(spot_stage["next_target_hours"] or spot_stage["milestone_hours"]),int(stats.get("evaluated") or 0), stats.get("mae_pct"), stats.get("bias_pct"), stats.get("direction_accuracy_pct"), stats.get("p75_abs_error_pct"), stats.get("candidate_bias_factor"), stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),stats.get("quality_gate",{}).get("status"),stats.get("quality_gate",{}).get("baseline_mae_pct"),stats.get("quality_gate",{}).get("persistence_improvement_pct"),stats.get("quality_gate",{}).get("direction_lower_bound_pct"),json.dumps(stats.get("quality_gate",{}),ensure_ascii=False), json.dumps({"point":(stats.get("shadow_candidate") or {}).get("point_calibration",{}),"interval":(stats.get("shadow_candidate") or {}).get("interval_calibration",{}),"interval_fit":(stats.get("shadow_candidate") or {}).get("interval_calibration_fit",{})},ensure_ascii=False)))
     except Exception as e:
         logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
     return status
