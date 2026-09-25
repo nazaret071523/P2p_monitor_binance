@@ -317,6 +317,13 @@ QUANT_ML_BLEND_MAX = max(0.10, min(0.60, float(os.getenv("QUANT_ML_BLEND_MAX", "
 QUANT_ML_REFRESH_SECONDS = max(300, int(os.getenv("QUANT_ML_REFRESH_SECONDS", "1800")))
 QUANT_ML_CACHE = {}
 QUANT_ML_LOCK = threading.Lock()
+# Validación de evidencia: las muestras crudas P2P son muy densas (colector 10s)
+# y no deben confundirse con observaciones temporales independientes. Estas
+# variables afectan únicamente backtests/auditoría; producción permanece igual.
+VALIDATION_SAMPLE_BUCKET_MINUTES = max(1, min(15, int(os.getenv("VALIDATION_SAMPLE_BUCKET_MINUTES", "5"))))
+BACKTEST_MAX_EVALUATIONS = max(24, min(60, int(os.getenv("BACKTEST_MAX_EVALUATIONS", "48"))))
+BACKTEST_SPACING_MINUTES = max(60, min(24 * 60, int(os.getenv("BACKTEST_SPACING_MINUTES", "360"))))
+BACKTEST_HISTORY_HOURS = max(240, min(720, int(os.getenv("BACKTEST_HISTORY_HOURS", "600"))))
 # Seguimiento de predicciones: registra una lectura cada pocos minutos y evalúa
 # sus horizontes contra datos P2P reales posteriores. No modifica el motor Quant.
 PREDICTION_TRACKING_ENABLED = os.getenv("PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -3566,12 +3573,109 @@ def _buscar_futuro_series(series, objetivo, tolerance_minutes=20):
     return None
 
 
-def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, spacing_minutes=360):
-    """Backtest de precio completo 1H/3H/7H/24H contra muestras P2P reales.
+def _agrupar_serie_validacion(series, bucket_minutes=VALIDATION_SAMPLE_BUCKET_MINUTES):
+    """Reduce redundancia temporal solo para validación/backtest.
+
+    El colector puede guardar una muestra cada ~10s. Miles de filas cercanas
+    entre sí representan casi el mismo estado de mercado y no equivalen a miles
+    de observaciones independientes. Para auditar el modelo usamos buckets
+    temporales y la mediana por bucket, conservando cobertura y estructura.
+
+    No se usa en el cálculo productivo ni modifica la base de datos.
+    """
+    rows=list(series or [])
+    if not rows or bucket_minutes <= 1:
+        return rows
+    size=int(bucket_minutes) * 60
+    buckets={}
+    order=[]
+    for item in rows:
+        try:
+            dt,mid,compra,venta=item
+            ts=float(dt.timestamp())
+            key=int(ts // size)
+            if key not in buckets:
+                buckets[key]=[dt,[],[],[]]
+                order.append(key)
+            b=buckets[key]
+            b[1].append(float(mid)); b[2].append(float(compra)); b[3].append(float(venta))
+        except Exception:
+            continue
+    out=[]
+    for key in sorted(order):
+        b=buckets.get(key)
+        if not b or not b[1]:
+            continue
+        try:
+            representative_dt=datetime.fromtimestamp(key*size, tz=b[0].tzinfo or VET)
+            out.append((
+                representative_dt,
+                float(np.median(b[1])),
+                float(np.median(b[2])),
+                float(np.median(b[3])),
+            ))
+        except Exception:
+            continue
+    return out
+
+
+def _obtener_serie_validacion_p2p_db(banco, desde, hasta, bucket_minutes=VALIDATION_SAMPLE_BUCKET_MINUTES):
+    """Lee toda la ventana de validación mediante agregación temporal en DB.
+
+    Evita el cuello de botella anterior: LIMIT 50000 sobre muestras crudas podía
+    recortar una historia de cientos de horas cuando el colector guardaba cada
+    ~10 segundos. PostgreSQL calcula una mediana por bucket y devuelve solo la
+    serie representativa para el backtest, manteniendo el número de muestras
+    crudas representadas como auditoría.
+    """
+    if not DATABASE_URL:
+        return [], 0
+    bucket_seconds=max(60, int(bucket_minutes)*60)
+    banco=(banco or "GENERAL").upper()
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        to_timestamp(floor(extract(epoch FROM fecha) / %s) * %s) AS bucket,
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY compra) AS compra_mediana,
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY venta) AS venta_mediana,
+                        AVG(liquidez_score) AS liquidez_mediana,
+                        COUNT(*) AS raw_count
+                    FROM muestras_p2p
+                    WHERE banco=%s AND fecha >= %s AND fecha <= %s
+                      AND compra > 0 AND venta > 0
+                    GROUP BY bucket
+                    ORDER BY bucket ASC
+                """, (bucket_seconds,bucket_seconds,banco,desde,hasta))
+                rows=cur.fetchall()
+        series=[]; represented=0
+        for bucket,compra,venta,_,raw_count in rows:
+            try:
+                if not bucket or float(compra)<=0 or float(venta)<=0: continue
+                dt=bucket.astimezone(VET) if getattr(bucket,'tzinfo',None) else VET.localize(bucket)
+                series.append((dt,(float(compra)+float(venta))/2.0,float(compra),float(venta)))
+                represented += int(raw_count or 0)
+            except Exception:
+                continue
+        return series, represented
+    except Exception as exc:
+        logger.warning("Agregación SQL de validación no disponible; usando fallback acotado: %s", exc)
+        return [], 0
+
+
+def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=BACKTEST_MAX_EVALUATIONS, spacing_minutes=BACKTEST_SPACING_MINUTES):
+    """Backtest 1H/3H/7H/24H con evidencia temporal representativa.
 
     Cada origen solo ve historia anterior o igual al origen. Las cuatro
     predicciones se generan con el mismo helper productivo de escenarios y
     luego se comparan con la primera muestra real dentro de la tolerancia.
+
+    Para evitar que miles de muestras casi consecutivas pesen como si fueran
+    evidencia independiente, la serie se comprime en buckets temporales solo
+    dentro del backtest. Además, las evaluaciones se distribuyen a lo largo de
+    la historia disponible en lugar de concentrarse únicamente en las últimas
+    24 ventanas.
     """
     horizons = (("1h", 1.0), ("3h", 3.0), ("7h", 7.0), ("24h", 24.0))
     try:
@@ -3579,30 +3683,38 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
         spacing_minutes = max(60, min(int(spacing_minutes), 24 * 60))
         spacing = timedelta(minutes=spacing_minutes)
         prehistory = timedelta(hours=72)
-        # El indicador de validación usa una meta fija de 300H, pero la
-        # ventana de lectura necesita margen para absorber gaps y no hacer
-        # que la cobertura aparente baje solo porque una muestra quedó fuera
-        # del borde temporal. El backtest sigue limitando su objetivo a 300H.
+        # El hito de madurez sigue siendo 300H, pero la validación debe poder
+        # aprovechar toda la historia reciente que ya existe. La agregación se
+        # hace en PostgreSQL para no truncar cientos de horas por un LIMIT de
+        # filas crudas ni llevar cientos de miles de muestras a RAM.
         query_now = datetime.now(VET)
         validation_target_hours = 300
-        validation_buffer_hours = 60
-        filas = obtener_estadisticas_db(
-            limit=50000,
-            banco=banco_filtro,
-            desde=query_now - timedelta(hours=validation_target_hours + validation_buffer_hours),
+        required_for_selection = 72 + ((max_evaluaciones - 1) * spacing_minutes / 60.0) + 24
+        history_window_hours = max(float(BACKTEST_HISTORY_HOURS), float(required_for_selection), 384.0)
+        history_window_hours = min(720.0, history_window_hours)
+        desde_validacion=query_now - timedelta(hours=history_window_hours)
+        raw_series, raw_sample_count = _obtener_serie_validacion_p2p_db(
+            banco_filtro, desde_validacion, query_now, VALIDATION_SAMPLE_BUCKET_MINUTES
         )
-        logger.info("Backtest histórico cargado: banco=%s muestras=%s", banco_filtro, len(filas))
-        series = []
-        for c, v, _, fecha in filas:
-            try:
-                c, v = float(c), float(v)
-                if c <= 0 or v <= 0 or not fecha:
+        # Fallback: si el SQL agregado no está disponible, mantenemos la ruta
+        # anterior en un límite controlado y volvemos a compactar en Python.
+        if not raw_series:
+            filas = obtener_estadisticas_db(limit=50000, banco=banco_filtro, desde=desde_validacion)
+            raw_sample_count = len(filas)
+            for c,v,_,fecha in filas:
+                try:
+                    c,v=float(c),float(v)
+                    if c<=0 or v<=0 or not fecha: continue
+                    dt=fecha.astimezone(VET) if getattr(fecha,'tzinfo',None) else VET.localize(fecha)
+                    raw_series.append((dt,(c+v)/2.0,c,v))
+                except Exception:
                     continue
-                dt = fecha.astimezone(VET) if getattr(fecha, "tzinfo", None) else VET.localize(fecha)
-                series.append((dt, (c + v) / 2.0, c, v))
-            except Exception:
-                continue
-        series.sort(key=lambda x: x[0])
+            raw_series.sort(key=lambda x:x[0])
+            series=_agrupar_serie_validacion(raw_series,VALIDATION_SAMPLE_BUCKET_MINUTES)
+        else:
+            series=raw_series
+        effective_sample_count=len(series)
+        logger.info("Backtest evidencia: banco=%s crudas_representadas=%s efectivas=%s ventana_h=%s bucket_min=%s", banco_filtro, raw_sample_count, effective_sample_count, round(history_window_hours,1), VALIDATION_SAMPLE_BUCKET_MINUTES)
         times = [x[0] for x in series]
         coverage_hours = ((series[-1][0] - series[0][0]).total_seconds() / 3600.0) if len(series) > 1 else 0.0
         required_span = 72 + 24
@@ -3616,14 +3728,26 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
             return {"status":"insufficient_history","evaluations":0,"history_coverage_hours":round(coverage_hours,2),"message":"No hay ventanas completas para los cuatro horizontes."}
 
         eligible_times=[times[i] for i in eligible]
-        selected=[]
+        # Primero respetamos una separación mínima; después distribuimos las
+        # evaluaciones elegidas a lo largo de toda la historia disponible.
+        spaced_candidates=[]
         pos=len(eligible)-1
-        while pos >= 0 and len(selected)<max_evaluaciones:
+        while pos >= 0:
             cursor=eligible[pos]
-            selected.append(cursor)
+            spaced_candidates.append(cursor)
             cutoff=times[cursor]-spacing
             pos=bisect_right(eligible_times, cutoff, 0, pos+1)-1
-        selected.reverse()
+        spaced_candidates.reverse()
+        if len(spaced_candidates) <= max_evaluaciones:
+            selected=spaced_candidates
+        else:
+            picks=np.linspace(0, len(spaced_candidates)-1, max_evaluaciones)
+            selected=[]; seen=set()
+            for pidx in picks:
+                idx=spaced_candidates[int(round(float(pidx)))]
+                if idx not in seen:
+                    selected.append(idx); seen.add(idx)
+            selected=sorted(selected, key=lambda i: times[i])
 
         metrics={h: {"samples":0,"mae":[],"mape":[],"sqe":[],"bias":[],"direction":[],"coverage":[],"rows":[]} for h,_ in horizons}
         evaluated_origins=0
@@ -3686,7 +3810,7 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, s
             if any_eval: evaluated_origins+=1
 
         reported_coverage_hours = min(float(coverage_hours), float(validation_target_hours))
-        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(reported_coverage_hours,2),"history_coverage_actual_hours":round(coverage_hours,2),"history_target_hours":validation_target_hours,"history_progress_pct":round(min(100.0, coverage_hours/validation_target_hours*100.0),1),"history_required_hours":72,"spacing_minutes":spacing_minutes,"future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"horizons":{}}
+        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(reported_coverage_hours,2),"history_coverage_actual_hours":round(coverage_hours,2),"history_target_hours":validation_target_hours,"history_progress_pct":round(min(100.0, coverage_hours/validation_target_hours*100.0),1),"history_required_hours":72,"history_window_requested_hours":round(history_window_hours,1),"raw_samples_loaded":raw_sample_count,"effective_validation_samples":effective_sample_count,"validation_bucket_minutes":VALIDATION_SAMPLE_BUCKET_MINUTES,"spacing_minutes":spacing_minutes,"selection_method":"spaced_even_across_history","future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"evaluation_capacity":max_evaluaciones,"horizons":{}}
         for label,_ in horizons:
             m=metrics[label]; n=m["samples"]
             out["horizons"][label]={"evaluated":n,"mae_ves":round(float(np.mean(m["mae"])),4) if n else None,"mape_pct":round(float(np.mean(m["mape"])),4) if n else None,"rmse_ves":round(float(np.sqrt(np.mean(m["sqe"]))),4) if n else None,"bias_ves":round(float(np.mean(m["bias"])),4) if n else None,"median_abs_error_ves":round(float(np.median(m["mae"])),4) if n else None,"direction_accuracy_pct":round(sum(m["direction"])/len(m["direction"])*100,2) if m["direction"] else None,"direction_evaluated":len(m["direction"]),"interval_coverage_pct":round(sum(m["coverage"])/len(m["coverage"])*100,2) if m["coverage"] else None,"interval_evaluated":len(m["coverage"]),"recent":m["rows"][-5:]}
@@ -4796,6 +4920,7 @@ def _build_shadow_candidate(rows, mode="p2p"):
         "oos_mae_baseline_pct":round(baseline,4) if baseline is not None else None,
         "oos_mae_candidate_pct":round(corrected_mae,4) if corrected_mae is not None else None,
         "oos_improvement_pct":round(improvement,2) if improvement is not None else None,
+        "oos_interpretation":("MEJORA" if improvement is not None and improvement > 0 else ("DEGRADACION" if improvement is not None and improvement < 0 else "NEUTRO")),
         "required_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,
         "by_regime":by_regime,
     }
