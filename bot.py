@@ -42,7 +42,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat, BotCommandScopeChatAdministrators, BotCommandScopeChatMember, BotCommandScopeAllPrivateChats
@@ -164,7 +164,7 @@ TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS = 3600
 # Publicación automática por categoría: botones sin convertir Telegram en un chat de consultas.
 TELEGRAM_AUTO_BUTTON_CACHE_SECONDS = max(30, int(os.getenv("TELEGRAM_AUTO_BUTTON_CACHE_SECONDS", "120")))
 _TELEGRAM_AUTO_SUMMARY_CACHE = {}
-VENBOT_BUILD = "31.73.6-head-health"
+VENBOT_BUILD = "31.73.7-head-health-fix"
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
