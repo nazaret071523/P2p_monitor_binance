@@ -164,7 +164,7 @@ TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS = 3600
 # Publicación automática por categoría: botones sin convertir Telegram en un chat de consultas.
 TELEGRAM_AUTO_BUTTON_CACHE_SECONDS = max(30, int(os.getenv("TELEGRAM_AUTO_BUTTON_CACHE_SECONDS", "120")))
 _TELEGRAM_AUTO_SUMMARY_CACHE = {}
-VENBOT_BUILD = "31.73.4-p2p-backlog-recovery"
+VENBOT_BUILD = "31.73.6-head-health"
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
@@ -8419,9 +8419,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.head("/")
+def head_root():
+    """Health check ultraligero para monitores HTTP que usan HEAD (p. ej. UptimeRobot Free)."""
+    return Response(status_code=200)
 
 
 @app.get("/")
