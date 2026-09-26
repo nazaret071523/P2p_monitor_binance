@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 import json
+import math
 import threading
 from bisect import bisect_left, bisect_right
 import secrets
@@ -310,11 +311,21 @@ QUANT_ML_LOCK = threading.Lock()
 PREDICTION_TRACKING_ENABLED = os.getenv("PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 PREDICTION_TRACKING_INTERVAL_SECONDS = max(60, int(os.getenv("PREDICTION_TRACKING_INTERVAL_SECONDS", "300")))
 PREDICTION_EVAL_TOLERANCE_MINUTES = max(2, int(os.getenv("PREDICTION_EVAL_TOLERANCE_MINUTES", "20")))
+# Drenaje continuo: la tolerancia base se mantiene, pero las colas atrasadas
+# pueden usar una ventana máxima controlada sin tomar datos anteriores al objetivo.
+PREDICTION_EVAL_MAX_TOLERANCE_MINUTES = max(
+    PREDICTION_EVAL_TOLERANCE_MINUTES,
+    int(os.getenv("PREDICTION_EVAL_MAX_TOLERANCE_MINUTES", "120")),
+)
 # Seguimiento del Motor Spot: mide predicciones 1H/3H/7H/24H contra snapshots
 # reales posteriores de Binance. Se mantiene separado del tracking P2P.
 SPOT_PREDICTION_TRACKING_ENABLED = os.getenv("SPOT_PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS = max(300, int(os.getenv("SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS", "300")))
 SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES = max(5, int(os.getenv("SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES", "20")))
+SPOT_PREDICTION_EVAL_MAX_TOLERANCE_MINUTES = max(
+    SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES,
+    int(os.getenv("SPOT_PREDICTION_EVAL_MAX_TOLERANCE_MINUTES", "120")),
+)
 
 # Quant Adaptive Learning v1: medición y candidatos de calibración en sombra.
 # No modifica las predicciones de producción en esta etapa.
@@ -970,96 +981,97 @@ def registrar_prediccion_tracking(banco, actual_compra, actual_venta, datos):
         return False
 
 
-def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None):
-    """Obtiene la primera muestra real posterior al horizonte; evita usar datos previos."""
+def _evaluation_tolerance_windows(base_minutes, max_minutes):
+    """Ventanas crecientes y acotadas para drenar colas sin usar datos previos."""
+    base = max(1, int(base_minutes or 1))
+    maximum = max(base, int(max_minutes or base))
+    values = {base, min(maximum, max(base * 2, 30)), maximum}
+    return tuple(sorted(values))
+
+
+def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None, cursor=None):
+    """Obtiene la primera muestra real posterior al objetivo.
+
+    La búsqueda puede ampliarse progresivamente hasta un máximo controlado. Nunca
+    utiliza una muestra anterior al objetivo. Con cursor compartido evita abrir una
+    conexión por cada horizonte durante el drenaje.
+    """
     if not DATABASE_URL:
         return None
-    tol = int(tolerance_minutes or PREDICTION_EVAL_TOLERANCE_MINUTES)
+    base_tol = int(tolerance_minutes or PREDICTION_EVAL_TOLERANCE_MINUTES)
+    windows = _evaluation_tolerance_windows(base_tol, PREDICTION_EVAL_MAX_TOLERANCE_MINUTES)
+
+    def _query(cur):
+        for tol in windows:
+            cur.execute("""
+                SELECT compra, venta, fecha FROM muestras_p2p
+                WHERE banco=%s
+                  AND fecha >= %s
+                  AND fecha <= %s
+                ORDER BY fecha ASC LIMIT 1
+            """, (banco, objetivo, objetivo + timedelta(minutes=tol)))
+            row = cur.fetchone()
+            if row:
+                c, v, f = row
+                return {"compra": float(c), "venta": float(v), "mid": (float(c)+float(v))/2.0, "fecha": f, "tolerance_minutes": tol}
+        return None
+
+    if cursor is not None:
+        try:
+            return _query(cursor)
+        except Exception as e:
+            logger.warning("No se pudo buscar muestra futura %s: %s", banco, e)
+            return None
+
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT compra, venta, fecha FROM muestras_p2p
-                    WHERE banco=%s
-                      AND fecha >= %s
-                      AND fecha <= %s
-                    ORDER BY fecha ASC LIMIT 1
-                """, (banco, objetivo, objetivo + timedelta(minutes=tol)))
-                row = cur.fetchone()
-                if not row:
-                    return None
-                c, v, f = row
-                return {"compra": float(c), "venta": float(v), "mid": (float(c)+float(v))/2.0, "fecha": f}
+                return _query(cur)
     except Exception as e:
         logger.warning("No se pudo buscar muestra futura %s: %s", banco, e)
         return None
 
 
 def evaluar_predicciones_pendientes(limit=100):
-    """Evalúa cada horizonte contra la primera muestra P2P real posterior al objetivo."""
+    """Drenaje justo 1H/3H/7H/24H: cada horizonte recibe su propio cupo."""
     if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
         return {"evaluated": 0}
-    horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
-    evaluated = 0
-    by_horizon = {"1h":0,"3h":0,"7h":0,"24h":0}
-    selected_priority = {"7h":0,"24h":0,"3h":0,"1h":0,"other":0}
+    horizon_specs = {
+        "1h": ("evaluated_1h_at", "pred_compra_1h", "pred_venta_1h", 1),
+        "3h": ("evaluated_3h_at", "pred_compra_3h", "pred_venta_3h", 3),
+        "7h": ("evaluated_7h_at", "pred_compra_7h", "pred_venta_7h", 7),
+        "24h": ("evaluated_24h_at", "pred_compra_24h", "pred_venta_24h", 24),
+    }
+    per_horizon = max(1, int(math.ceil(int(limit) / float(len(horizon_specs)))))
+    evaluated_horizons = 0
+    evaluated_events = set()
+    by_horizon = {k: 0 for k in horizon_specs}
+    selected = {k: 0 for k in horizon_specs}
+    waiting_data = {k: 0 for k in horizon_specs}
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id,banco,created_at,actual_mid,
-                           pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
-                           pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
-                           evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at
-                    FROM venbot_prediction_events
-                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
-                      AND (evaluated_1h_at IS NULL OR evaluated_3h_at IS NULL OR evaluated_7h_at IS NULL OR evaluated_24h_at IS NULL)
-                    ORDER BY
-                      CASE
-                        WHEN evaluated_7h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '7 hours' THEN 0
-                        WHEN evaluated_24h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '24 hours' THEN 1
-                        WHEN evaluated_3h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '3 hours' THEN 2
-                        WHEN evaluated_1h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '1 hour' THEN 3
-                        ELSE 4
-                      END,
-                      created_at ASC
-                    LIMIT %s
-                """, (int(limit),))
-                rows = cur.fetchall()
-                for row in rows:
-                    (pid,banco,created_at,origin_mid,
-                     pc1,pv1,pc3,pv3,pc7,pv7,pc24,pv24,
-                     ev1,ev3,ev7,ev24) = row
-                    predictions = {
-                        "1h": ((float(pc1)+float(pv1))/2.0) if pc1 is not None and pv1 is not None else None,
-                        "3h": ((float(pc3)+float(pv3))/2.0) if pc3 is not None and pv3 is not None else None,
-                        "7h": ((float(pc7)+float(pv7))/2.0) if pc7 is not None and pv7 is not None else None,
-                        "24h": ((float(pc24)+float(pv24))/2.0) if pc24 is not None and pv24 is not None else None,
-                    }
-                    evaluated_at = {"1h": ev1, "3h": ev3, "7h": ev7, "24h": ev24}
-                    # Clasificación de prioridad para observar si el cuello de botella 7H/24H está drenándose.
-                    now_utc = datetime.now(pytz.UTC)
-                    if ev7 is None and created_at + timedelta(hours=7) <= now_utc:
-                        selected_priority["7h"] += 1
-                    elif ev24 is None and created_at + timedelta(hours=24) <= now_utc:
-                        selected_priority["24h"] += 1
-                    elif ev3 is None and created_at + timedelta(hours=3) <= now_utc:
-                        selected_priority["3h"] += 1
-                    elif ev1 is None and created_at + timedelta(hours=1) <= now_utc:
-                        selected_priority["1h"] += 1
-                    else:
-                        selected_priority["other"] += 1
-                    updates = {}
-                    for label, hours in horizons:
-                        if evaluated_at[label] is not None or predictions[label] is None:
-                            continue
+                for label, (ev_col, pred_buy_col, pred_sell_col, hours) in horizon_specs.items():
+                    cur.execute(f"""
+                        SELECT id,banco,created_at,actual_mid,{pred_buy_col},{pred_sell_col},{ev_col}
+                        FROM venbot_prediction_events
+                        WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
+                          AND {ev_col} IS NULL
+                          AND {pred_buy_col} IS NOT NULL
+                          AND {pred_sell_col} IS NOT NULL
+                          AND created_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 hour')
+                        ORDER BY created_at ASC, id ASC
+                        LIMIT %s
+                    """, (hours, per_horizon))
+                    rows = cur.fetchall()
+                    selected[label] = len(rows)
+                    for pid,banco,created_at,origin_mid,pred_buy,pred_sell,_ev in rows:
                         objetivo = created_at + timedelta(hours=hours)
-                        if datetime.now(pytz.UTC) < objetivo:
-                            continue
-                        actual = _buscar_muestra_futura(banco, objetivo)
+                        actual = _buscar_muestra_futura(banco, objetivo, cursor=cur)
                         if not actual:
+                            waiting_data[label] += 1
                             continue
-                        pred = float(predictions[label])
+                        pred = (float(pred_buy) + float(pred_sell)) / 2.0
                         actual_mid = float(actual["mid"])
                         err = abs(actual_mid - pred) / actual_mid * 100.0 if actual_mid else None
                         predicted_move = pred - float(origin_mid or 0)
@@ -1069,27 +1081,26 @@ def evaluar_predicciones_pendientes(limit=100):
                             direction_correct = (predicted_move * actual_move) > 0
                         elif abs(predicted_move) <= 1e-12 and abs(actual_move) <= 1e-12:
                             direction_correct = True
-                        updates[f"actual_mid_{label}"] = actual_mid
-                        updates[f"error_pct_{label}"] = err
-                        updates[f"evaluated_{label}_at"] = actual["fecha"]
-                        updates[f"direction_correct_{label}"] = direction_correct
+                        cur.execute(f"""
+                            UPDATE venbot_prediction_events
+                            SET actual_mid_{label}=%s,
+                                error_pct_{label}=%s,
+                                {ev_col}=%s,
+                                direction_correct_{label}=%s
+                            WHERE id=%s
+                        """, (actual_mid, err, actual["fecha"], direction_correct, pid))
+                        evaluated_horizons += 1
+                        evaluated_events.add(pid)
                         by_horizon[label] += 1
-                    if updates:
-                        sets=[]; vals=[]
-                        for key,val in updates.items():
-                            sets.append(f"{key}=%s"); vals.append(val)
-                        vals.append(pid)
-                        cur.execute(f"UPDATE venbot_prediction_events SET {', '.join(sets)} WHERE id=%s", vals)
-                        evaluated += 1
-        if evaluated or any(selected_priority.values()):
+        if evaluated_horizons or any(selected.values()) or any(waiting_data.values()):
             logger.info(
-                "[P2P TRACKING PRIORITY] filas=%s evaluadas=%s 1H=%s 3H=%s 7H=%s 24H=%s prioridad=%s",
-                len(rows), evaluated, by_horizon["1h"], by_horizon["3h"], by_horizon["7h"], by_horizon["24h"], selected_priority
+                "[P2P TRACKING DRAIN] seleccion=%s evaluadas_horizontes=%s eventos=%s 1H=%s 3H=%s 7H=%s 24H=%s esperando_dato=%s",
+                selected, evaluated_horizons, len(evaluated_events), by_horizon["1h"], by_horizon["3h"], by_horizon["7h"], by_horizon["24h"], waiting_data
             )
-        return {"evaluated": evaluated, "by_horizon": by_horizon, "priority_selected": selected_priority}
+        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "waiting_data": waiting_data}
     except Exception as e:
-        logger.warning("Evaluación de predicciones falló: %s", e)
-        return {"evaluated": evaluated, "error": "tracking temporalmente no disponible"}
+        logger.warning("Evaluación de predicciones P2P falló: %s", e)
+        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "waiting_data": waiting_data, "error": "tracking temporalmente no disponible"}
 
 
 def obtener_prediction_performance(banco="GENERAL", limit=100):
@@ -1982,36 +1993,46 @@ def registrar_prediccion_spot_tracking(analysis):
         return False
 
 
-def _buscar_snapshot_spot_futuro(symbol, objetivo, tolerance_minutes=None):
-    """Obtiene el precio real posterior al horizonte.
+def _buscar_snapshot_spot_futuro(symbol, objetivo, tolerance_minutes=None, cursor=None):
+    """Obtiene el precio real posterior al horizonte con tolerancia progresiva.
 
-    Primero usa snapshots persistidos de Venbot. Si no existe uno en la ventana,
-    consulta klines públicos de Binance para evitar que una predicción antigua
-    quede eternamente pendiente por falta de un snapshot local. Nunca usa datos
-    anteriores al objetivo para evaluar la predicción.
+    Prioriza snapshots persistidos de Venbot y usa klines públicas de Binance como
+    fallback. Nunca utiliza datos anteriores al objetivo.
     """
     if not DATABASE_URL:
         return None
-    tol = int(tolerance_minutes or SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES)
-    try:
-        with obtener_conexion() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT price, fecha FROM spot_market_snapshots
-                    WHERE symbol=%s AND fecha >= %s AND fecha <= %s
-                    ORDER BY fecha ASC LIMIT 1
-                """, (symbol, objetivo, objetivo + timedelta(minutes=tol)))
-                row = cur.fetchone()
-                if row:
-                    return {"price": float(row[0]), "fecha": row[1]}
+    base_tol = int(tolerance_minutes or SPOT_PREDICTION_EVAL_TOLERANCE_MINUTES)
+    windows = _evaluation_tolerance_windows(base_tol, SPOT_PREDICTION_EVAL_MAX_TOLERANCE_MINUTES)
 
-        # Fallback auditable: datos públicos históricos de Binance.
+    def _query(cur):
+        for tol in windows:
+            cur.execute("""
+                SELECT price, fecha FROM spot_market_snapshots
+                WHERE symbol=%s AND fecha >= %s AND fecha <= %s
+                ORDER BY fecha ASC LIMIT 1
+            """, (symbol, objetivo, objetivo + timedelta(minutes=tol)))
+            row = cur.fetchone()
+            if row:
+                return {"price": float(row[0]), "fecha": row[1], "source": "Venbot snapshot", "tolerance_minutes": tol}
+        return None
+
+    try:
+        if cursor is not None:
+            local = _query(cursor)
+        else:
+            with obtener_conexion() as conn:
+                with conn.cursor() as cur:
+                    local = _query(cur)
+        if local:
+            return local
+
         sym = _normalizar_spot_symbol(symbol)
+        maximum_tol = windows[-1]
         start_ms = int(objetivo.timestamp() * 1000)
-        end_ms = int((objetivo + timedelta(minutes=tol)).timestamp() * 1000)
+        end_ms = int((objetivo + timedelta(minutes=maximum_tol)).timestamp() * 1000)
         r = HTTP.get(
             f"{SPOT_BASE_URL}/api/v3/klines",
-            params={"symbol": sym, "interval": "1m", "startTime": start_ms, "endTime": end_ms, "limit": min(1000, tol + 2)},
+            params={"symbol": sym, "interval": "1m", "startTime": start_ms, "endTime": end_ms, "limit": min(1000, maximum_tol + 2)},
             timeout=SPOT_REQUEST_TIMEOUT,
         )
         r.raise_for_status()
@@ -2019,67 +2040,75 @@ def _buscar_snapshot_spot_futuro(symbol, objetivo, tolerance_minutes=None):
         if not data:
             return None
         k = data[0]
-        # close de la primera vela iniciada en/tras el objetivo.
         close = float(k[4])
         fecha = datetime.fromtimestamp(float(k[6]) / 1000.0, tz=timezone.utc).astimezone(VET)
-        return {"price": close, "fecha": fecha, "source": "Binance Spot public klines"}
+        return {"price": close, "fecha": fecha, "source": "Binance Spot public klines", "tolerance_minutes": maximum_tol}
     except Exception as e:
         logger.warning("No se pudo buscar precio Spot futuro %s: %s", symbol, e)
         return None
 
 
 def evaluar_predicciones_spot_pendientes(limit=200):
-    """Evalúa predicciones Spot vencidas contra snapshots reales posteriores de Binance."""
+    """Drenaje justo 1H/3H/7H/24H para el tracking clásico Spot."""
     if not DATABASE_URL or not SPOT_PREDICTION_TRACKING_ENABLED:
         return {"evaluated": 0}
-    horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
-    total = 0
+    horizon_specs = {
+        "1h": ("evaluated_1h_at", "pred_1h", "actual_1h", "error_pct_1h", "direction_correct_1h", 1),
+        "3h": ("evaluated_3h_at", "pred_3h", "actual_3h", "error_pct_3h", "direction_correct_3h", 3),
+        "7h": ("evaluated_7h_at", "pred_7h", "actual_7h", "error_pct_7h", "direction_correct_7h", 7),
+        "24h": ("evaluated_24h_at", "pred_24h", "actual_24h", "error_pct_24h", "direction_correct_24h", 24),
+    }
+    per_horizon = max(1, int(math.ceil(int(limit) / float(len(horizon_specs)))))
+    evaluated_horizons = 0
+    evaluated_events = set()
+    by_horizon = {k: 0 for k in horizon_specs}
+    selected = {k: 0 for k in horizon_specs}
+    waiting_data = {k: 0 for k in horizon_specs}
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, symbol, created_at, observed_price,
-                           pred_1h, pred_3h, pred_7h, pred_24h,
-                           evaluated_1h_at, evaluated_3h_at, evaluated_7h_at, evaluated_24h_at
-                    FROM venbot_spot_prediction_events
-                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
-                      AND (evaluated_1h_at IS NULL OR evaluated_3h_at IS NULL OR evaluated_7h_at IS NULL OR evaluated_24h_at IS NULL)
-                    ORDER BY created_at ASC LIMIT %s
-                """, (int(limit),))
-                rows = cur.fetchall()
-                for row in rows:
-                    pid, symbol, created_at, observed_price = row[:4]
-                    predictions = {"1h": row[4], "3h": row[5], "7h": row[6], "24h": row[7]}
-                    evaluated = {"1h": row[8], "3h": row[9], "7h": row[10], "24h": row[11]}
-                    for label, hours in horizons:
-                        if evaluated[label] is not None or predictions[label] is None:
-                            continue
+                for label, (ev_col, pred_col, actual_col, err_col, dir_col, hours) in horizon_specs.items():
+                    cur.execute(f"""
+                        SELECT id,symbol,created_at,observed_price,{pred_col},{ev_col}
+                        FROM venbot_spot_prediction_events
+                        WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+                          AND {ev_col} IS NULL
+                          AND {pred_col} IS NOT NULL
+                          AND created_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 hour')
+                        ORDER BY created_at ASC, id ASC
+                        LIMIT %s
+                    """, (hours, per_horizon))
+                    rows = cur.fetchall()
+                    selected[label] = len(rows)
+                    for pid,symbol,created_at,observed_price,predicted,_ev in rows:
                         objetivo = created_at + timedelta(hours=hours)
-                        if datetime.now(VET) < objetivo.astimezone(VET):
-                            continue
-                        future = _buscar_snapshot_spot_futuro(symbol, objetivo)
+                        future = _buscar_snapshot_spot_futuro(symbol, objetivo, cursor=cur)
                         if not future:
+                            waiting_data[label] += 1
                             continue
                         actual = float(future["price"])
-                        predicted = float(predictions[label])
+                        predicted = float(predicted)
                         error_pct = abs(actual - predicted) / actual * 100.0 if actual else None
                         predicted_move = predicted / float(observed_price) - 1.0 if observed_price else 0.0
                         actual_move = actual / float(observed_price) - 1.0 if observed_price else 0.0
                         direction_correct = (predicted_move == 0 and abs(actual_move) < 1e-12) or (predicted_move * actual_move > 0)
-                        col = {
-                            "1h": ("evaluated_1h_at", "actual_1h", "error_pct_1h", "direction_correct_1h"),
-                            "3h": ("evaluated_3h_at", "actual_3h", "error_pct_3h", "direction_correct_3h"),
-                            "7h": ("evaluated_7h_at", "actual_7h", "error_pct_7h", "direction_correct_7h"),
-                            "24h": ("evaluated_24h_at", "actual_24h", "error_pct_24h", "direction_correct_24h"),
-                        }[label]
-                        cur.execute(f"UPDATE venbot_spot_prediction_events SET {col[0]}=%s, {col[1]}=%s, {col[2]}=%s, {col[3]}=%s WHERE id=%s", (future["fecha"], actual, error_pct, direction_correct, pid))
-                        total += 1
-        if total:
-            logger.info("[SPOT TRACKING] evaluaciones nuevas=%s", total)
-        return {"evaluated": total}
+                        cur.execute(f"""
+                            UPDATE venbot_spot_prediction_events
+                            SET {ev_col}=%s, {actual_col}=%s, {err_col}=%s, {dir_col}=%s
+                            WHERE id=%s
+                        """, (future["fecha"], actual, error_pct, direction_correct, pid))
+                        evaluated_horizons += 1
+                        evaluated_events.add(pid)
+                        by_horizon[label] += 1
+        if evaluated_horizons or any(selected.values()) or any(waiting_data.values()):
+            logger.info(
+                "[SPOT TRACKING DRAIN] seleccion=%s evaluadas_horizontes=%s eventos=%s 1H=%s 3H=%s 7H=%s 24H=%s esperando_dato=%s",
+                selected, evaluated_horizons, len(evaluated_events), by_horizon["1h"], by_horizon["3h"], by_horizon["7h"], by_horizon["24h"], waiting_data
+            )
+        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "waiting_data": waiting_data}
     except Exception as e:
         logger.warning("Evaluación de predicciones Spot falló: %s", e)
-        return {"evaluated": total, "error": "tracking Spot temporalmente no disponible"}
+        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "waiting_data": waiting_data, "error": "tracking Spot temporalmente no disponible"}
 
 
 def registrar_proyeccion_horaria_spot_shadow(analysis):
@@ -2117,55 +2146,85 @@ def registrar_proyeccion_horaria_spot_shadow(analysis):
 
 
 def evaluar_proyecciones_horarias_spot_pendientes(limit=60):
-    """Evalúa +1H..+24H vencidas contra snapshots Spot reales, sin tocar producción."""
+    """Drenaje Spot +1H..+24H con cupo independiente por horizonte."""
     if not DATABASE_URL or not SPOT_PREDICTION_TRACKING_ENABLED:
         return {"evaluated":0}
-    total=0
+    horizon_count=24
+    per_horizon=max(1,int(limit)//horizon_count)
+    total_horizons=0
+    events_updated=set()
+    by_horizon={f"{h}h":0 for h in range(1,25)}
+    selected={f"{h}h":0 for h in range(1,25)}
+    waiting_data={f"{h}h":0 for h in range(1,25)}
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT DISTINCT e.id,e.symbol,e.created_at,e.observed_price,e.projection,e.evaluations
-                    FROM venbot_spot_hourly_prediction_events e
-                    CROSS JOIN LATERAL jsonb_each(COALESCE(e.projection, '{}'::jsonb)) p(label,item)
-                    WHERE e.created_at >= CURRENT_TIMESTAMP - INTERVAL '21 days'
-                      AND (p.item->>'horizonte_horas')::int BETWEEN 1 AND 24
-                      AND e.created_at + ((p.item->>'horizonte_horas')::int * INTERVAL '1 hour') <= CURRENT_TIMESTAMP
-                      AND NOT (COALESCE(e.evaluations, '{}'::jsonb) ? p.label)
-                    ORDER BY e.created_at ASC LIMIT %s
-                """, (int(limit),))
+                    WITH candidates AS (
+                        SELECT e.id,e.symbol,e.created_at,e.observed_price,e.evaluations,
+                               p.label,p.item,
+                               ROW_NUMBER() OVER (PARTITION BY p.label ORDER BY e.created_at ASC,e.id ASC) AS rn
+                        FROM venbot_spot_hourly_prediction_events e
+                        CROSS JOIN LATERAL jsonb_each(COALESCE(e.projection,'{}'::jsonb)) p(label,item)
+                        WHERE e.created_at >= CURRENT_TIMESTAMP - INTERVAL '21 days'
+                          AND (p.item->>'horizonte_horas')::int BETWEEN 1 AND 24
+                          AND e.created_at + ((p.item->>'horizonte_horas')::int * INTERVAL '1 hour') <= CURRENT_TIMESTAMP
+                          AND NOT (COALESCE(e.evaluations,'{}'::jsonb) ? p.label)
+                    )
+                    SELECT id,symbol,created_at,observed_price,evaluations,label,item
+                    FROM candidates
+                    WHERE rn <= %s
+                    ORDER BY (item->>'horizonte_horas')::int ASC, created_at ASC, id ASC
+                """,(per_horizon,))
                 rows=cur.fetchall()
-                logger.info("[SPOT HOURLY TRACKING] candidatos=%s", len(rows))
-                for pid,symbol,created_at,observed_price,projection,evaluations in rows:
-                    proj = projection if isinstance(projection,dict) else _safe_json_payload(projection)
-                    evs = evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
+                grouped={}
+                for pid,symbol,created_at,observed_price,evaluations,label,item in rows:
+                    label=str(label)
+                    if label not in by_horizon:continue
+                    selected[label]+=1
+                    g=grouped.setdefault(pid,{
+                        'symbol':symbol,'created_at':created_at,'observed_price':observed_price,
+                        'ev':evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations),
+                        'items':[]
+                    })
+                    g['items'].append((label,item))
+
+                for pid,g in grouped.items():
+                    evs=g['ev'] or {}
                     changed=False
-                    for label,item in (proj or {}).items():
-                        if evs.get(label,{}).get("evaluated_at"): continue
-                        h=int(item.get("horizonte_horas") or 0)
-                        if h<1 or h>24: continue
-                        target=created_at+timedelta(hours=h)
-                        if datetime.now(VET) < target.astimezone(VET): continue
-                        future=_buscar_snapshot_spot_futuro(symbol,target)
-                        if not future: continue
-                        pred=float(item.get("central") or 0); actual=float(future.get("price") or 0)
-                        if pred<=0 or actual<=0: continue
+                    for label,item in g['items']:
+                        if evs.get(label,{}).get('evaluated_at'):continue
+                        h=int(item.get('horizonte_horas') or 0)
+                        target=g['created_at']+timedelta(hours=h)
+                        future=_buscar_snapshot_spot_futuro(g['symbol'],target,cursor=cur)
+                        if not future:
+                            waiting_data[label]+=1
+                            continue
+                        pred=float(item.get('central') or 0)
+                        actual=float(future.get('price') or 0)
+                        if pred<=0 or actual<=0:continue
                         error_pct=abs(actual-pred)/actual*100.0
                         signed_error_pct=(actual-pred)/pred*100.0
-                        origin=float(observed_price or 0)
+                        origin=float(g['observed_price'] or 0)
                         predicted_move=pred/origin-1.0 if origin else 0.0
                         actual_move=actual/origin-1.0 if origin else 0.0
                         direction_correct=(predicted_move==0 and abs(actual_move)<1e-12) or (predicted_move*actual_move>0)
-                        evs[label]={"actual":actual,"predicted":pred,"error_pct":error_pct,"signed_error_pct":signed_error_pct,"direction_correct":direction_correct,"evaluated_at":future["fecha"].isoformat() if hasattr(future["fecha"],"isoformat") else str(future["fecha"])}
+                        evs[label]={
+                            'actual':actual,'predicted':pred,'error_pct':error_pct,'signed_error_pct':signed_error_pct,
+                            'direction_correct':direction_correct,'evaluated_at':future['fecha'].isoformat() if hasattr(future['fecha'],'isoformat') else str(future['fecha']),
+                            'match_tolerance_minutes': future.get('tolerance_minutes')
+                        }
+                        total_horizons+=1
+                        events_updated.add(pid)
+                        by_horizon[label]+=1
                         changed=True
                     if changed:
                         cur.execute("UPDATE venbot_spot_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s",(json.dumps(evs,ensure_ascii=False),pid))
-                        total+=1
-        logger.info("[SPOT HOURLY TRACKING] eventos evaluados=%s", total)
-        return {"evaluated":total}
+        logger.info('[SPOT 24H DRAIN] candidatos=%s evaluadas_horas=%s eventos=%s por_horizonte=%s esperando_dato=%s',len(rows),total_horizons,len(events_updated),by_horizon,waiting_data)
+        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'waiting_data':waiting_data}
     except Exception as e:
-        logger.warning("Evaluación horaria Spot falló: %s", e)
-        return {"evaluated":total,"error":"tracking_horario_spot_temporalmente_no_disponible"}
+        logger.warning('Evaluación horaria Spot falló: %s',e)
+        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'waiting_data':waiting_data,'error':'tracking_horario_spot_temporalmente_no_disponible'}
 
 
 def obtener_spot_hourly_prediction_snapshots(symbol=None, limit=40, snapshot_id=None):
@@ -4164,45 +4223,97 @@ def guardar_proyeccion_horaria_p2p(banco, datos):
 
 
 def evaluar_proyecciones_horarias_p2p(limit=40):
-    if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:return {'evaluated':0}
-    total=0
+    """Drenaje 1H..24H con cupo independiente por horizonte."""
+    if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
+        return {"evaluated": 0}
+    horizon_count = 24
+    per_horizon = max(1, int(limit) // horizon_count)
+    total_horizons = 0
+    events_updated = set()
+    by_horizon = {f"{h}h": 0 for h in range(1, 25)}
+    selected = {f"{h}h": 0 for h in range(1, 25)}
+    waiting_data = {f"{h}h": 0 for h in range(1, 25)}
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id,banco,created_at,actual_mid,projection,evaluations
-                    FROM venbot_p2p_hourly_prediction_events
-                    WHERE created_at>=CURRENT_TIMESTAMP-INTERVAL '14 days'
-                    ORDER BY created_at ASC LIMIT %s
-                """,(int(limit),))
-                rows=cur.fetchall()
-                for pid,banco,created_at,origin_mid,projection,evaluations in rows:
-                    proj=projection if isinstance(projection,dict) else _safe_json_payload(projection)
-                    ev=evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
-                    changed=False
-                    origin_mid=float(origin_mid) if origin_mid is not None else None
-                    for label,item in (proj or {}).items():
-                        if ev.get(label,{}).get('evaluated_at'):continue
-                        h=int(item.get('horizonte_horas',0) or 0);target=created_at+timedelta(hours=h)
-                        if datetime.now(pytz.UTC)<target:continue
-                        actual=_buscar_muestra_futura(banco,target)
-                        if not actual:continue
-                        pred=float(item.get('midpoint') or 0);actual_mid=float(actual.get('mid') or 0)
-                        pred_buy=float(item.get('compra') or 0);pred_sell=float(item.get('venta') or 0)
-                        actual_buy=float(actual.get('compra') or 0);actual_sell=float(actual.get('venta') or 0)
-                        err=abs(actual_mid-pred)/actual_mid*100.0 if actual_mid else None
-                        err_buy=abs(actual_buy-pred_buy)/actual_buy*100.0 if actual_buy and pred_buy else None
-                        err_sell=abs(actual_sell-pred_sell)/actual_sell*100.0 if actual_sell and pred_sell else None
-                        signed_mid=((actual_mid-pred)/pred*100.0) if pred else None
-                        direction=None
-                        if origin_mid and pred and actual_mid:direction=((pred-origin_mid)*(actual_mid-origin_mid))>0
-                        ev[label]={'actual_mid':actual_mid,'actual_compra':actual_buy,'actual_venta':actual_sell,'pred_compra':pred_buy,'pred_venta':pred_sell,'error_pct':err,'error_compra_pct':err_buy,'error_venta_pct':err_sell,'signed_error_pct':signed_mid,'direction_correct':direction,'evaluated_at':actual['fecha'].isoformat() if hasattr(actual['fecha'],'isoformat') else str(actual['fecha'])}
-                        changed=True
+                    WITH candidates AS (
+                        SELECT e.id,e.banco,e.created_at,e.actual_mid,e.evaluations,
+                               p.label,p.item,
+                               ROW_NUMBER() OVER (PARTITION BY p.label ORDER BY e.created_at ASC,e.id ASC) AS rn
+                        FROM venbot_p2p_hourly_prediction_events e
+                        CROSS JOIN LATERAL jsonb_each(COALESCE(e.projection,'{}'::jsonb)) p(label,item)
+                        WHERE e.created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
+                          AND (p.item->>'horizonte_horas')::int BETWEEN 1 AND 24
+                          AND e.created_at + ((p.item->>'horizonte_horas')::int * INTERVAL '1 hour') <= CURRENT_TIMESTAMP
+                          AND NOT (COALESCE(e.evaluations,'{}'::jsonb) ? p.label)
+                    )
+                    SELECT id,banco,created_at,actual_mid,evaluations,label,item
+                    FROM candidates
+                    WHERE rn <= %s
+                    ORDER BY (item->>'horizonte_horas')::int ASC, created_at ASC, id ASC
+                """, (per_horizon,))
+                rows = cur.fetchall()
+                grouped = {}
+                for pid,banco,created_at,origin_mid,evaluations,label,item in rows:
+                    label = str(label)
+                    if label not in by_horizon:
+                        continue
+                    selected[label] += 1
+                    g = grouped.setdefault(pid, {
+                        "banco": banco,
+                        "created_at": created_at,
+                        "origin_mid": origin_mid,
+                        "ev": evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations),
+                        "items": [],
+                    })
+                    g["items"].append((label, item))
+
+                for pid,g in grouped.items():
+                    ev = g["ev"] or {}
+                    changed = False
+                    for label,item in g["items"]:
+                        if ev.get(label,{}).get("evaluated_at"):
+                            continue
+                        h = int(item.get("horizonte_horas") or 0)
+                        target = g["created_at"] + timedelta(hours=h)
+                        actual = _buscar_muestra_futura(g["banco"], target, cursor=cur)
+                        if not actual:
+                            waiting_data[label] += 1
+                            continue
+                        pred = float(item.get("midpoint") or 0)
+                        actual_mid = float(actual.get("mid") or 0)
+                        pred_buy = float(item.get("compra") or 0)
+                        pred_sell = float(item.get("venta") or 0)
+                        actual_buy = float(actual.get("compra") or 0)
+                        actual_sell = float(actual.get("venta") or 0)
+                        if pred <= 0 or actual_mid <= 0:
+                            continue
+                        err = abs(actual_mid-pred)/actual_mid*100.0
+                        err_buy = abs(actual_buy-pred_buy)/actual_buy*100.0 if actual_buy and pred_buy else None
+                        err_sell = abs(actual_sell-pred_sell)/actual_sell*100.0 if actual_sell and pred_sell else None
+                        signed_mid = ((actual_mid-pred)/pred*100.0) if pred else None
+                        direction = None
+                        if g["origin_mid"] and pred and actual_mid:
+                            direction = ((pred-g["origin_mid"])*(actual_mid-g["origin_mid"])) > 0
+                        ev[label] = {
+                            'actual_mid':actual_mid,'actual_compra':actual_buy,'actual_venta':actual_sell,
+                            'pred_compra':pred_buy,'pred_venta':pred_sell,'error_pct':err,
+                            'error_compra_pct':err_buy,'error_venta_pct':err_sell,'signed_error_pct':signed_mid,
+                            'direction_correct':direction,'evaluated_at':actual['fecha'].isoformat() if hasattr(actual['fecha'],'isoformat') else str(actual['fecha']),
+                            'match_tolerance_minutes': actual.get('tolerance_minutes')
+                        }
+                        total_horizons += 1
+                        events_updated.add(pid)
+                        by_horizon[label] += 1
+                        changed = True
                     if changed:
-                        cur.execute('UPDATE venbot_p2p_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s',(json.dumps(ev,ensure_ascii=False),pid));total+=1
-        return {'evaluated':total}
+                        cur.execute('UPDATE venbot_p2p_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s',(json.dumps(ev,ensure_ascii=False),pid))
+        logger.info('[P2P 24H DRAIN] candidatos=%s evaluadas_horas=%s eventos=%s por_horizonte=%s esperando_dato=%s',len(rows),total_horizons,len(events_updated),by_horizon,waiting_data)
+        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'waiting_data':waiting_data}
     except Exception as e:
-        logger.warning('Evaluación horaria P2P falló: %s',e);return {'evaluated':total,'error':'tracking_horario_temporalmente_no_disponible'}
+        logger.warning('Evaluación horaria P2P falló: %s',e)
+        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'waiting_data':waiting_data,'error':'tracking_horario_temporalmente_no_disponible'}
 
 
 def obtener_ultima_proyeccion_horaria_p2p(banco='GENERAL'):
