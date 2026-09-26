@@ -1068,7 +1068,8 @@ def evaluar_predicciones_pendientes(limit=120):
                     # pendientes para buscar solo los vencidos que sí son evaluables.
                     cur.execute(
                         f"""
-                        SELECT c.id, c.actual_mid, c.pred_buy, c.pred_sell,
+                        SELECT c.id, c.actual_mid,
+                               c.{spec['pred_buy']}, c.{spec['pred_sell']},
                                s.compra, s.venta, s.fecha
                         FROM venbot_prediction_events c
                         JOIN LATERAL (
