@@ -42,7 +42,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat, BotCommandScopeChatAdministrators, BotCommandScopeChatMember, BotCommandScopeAllPrivateChats
@@ -164,11 +164,10 @@ TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS = 3600
 # Publicación automática por categoría: botones sin convertir Telegram en un chat de consultas.
 TELEGRAM_AUTO_BUTTON_CACHE_SECONDS = max(30, int(os.getenv("TELEGRAM_AUTO_BUTTON_CACHE_SECONDS", "120")))
 _TELEGRAM_AUTO_SUMMARY_CACHE = {}
-VENBOT_BUILD = "31.73.7-head-health-fix"
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
-MARKET_MAX_AGE_SECONDS = max(30, int(os.getenv("MARKET_MAX_AGE_SECONDS", "90")))
+MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
 BCV_REFRESH_SECONDS = max(60, int(os.getenv("BCV_REFRESH_SECONDS", "60")))
 BCV_REQUEST_TIMEOUT = max(3, int(os.getenv("BCV_REQUEST_TIMEOUT", "10")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -379,12 +378,6 @@ _QUANT_CACHE = {}
 _ADAPTIVE_STATUS_CACHE_SECONDS = max(15, int(os.getenv("ADAPTIVE_STATUS_CACHE_SECONDS", "60")))
 _ADAPTIVE_STATUS_CACHE = {}
 _ADAPTIVE_STATUS_LOCK = threading.Lock()
-# Métricas P2P: la agregación completa se cachea brevemente porque /api/estado
-# puede ser consultado varias veces por la interfaz. La caché solo afecta
-# observabilidad, nunca las predicciones ni la evaluación.
-_P2P_PERF_CACHE_SECONDS = max(15, int(os.getenv("P2P_PERF_CACHE_SECONDS", "30")))
-_P2P_PERF_CACHE = {}
-_P2P_PERF_CACHE_LOCK = threading.Lock()
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
@@ -764,18 +757,6 @@ def inicializar_db():
                     ON venbot_prediction_events(banco, created_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_due
                     ON venbot_prediction_events(created_at DESC, evaluated_7h_at);
-                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_1h
-                    ON venbot_prediction_events(banco, created_at)
-                    WHERE evaluated_1h_at IS NULL;
-                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_3h
-                    ON venbot_prediction_events(banco, created_at)
-                    WHERE evaluated_3h_at IS NULL;
-                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_7h
-                    ON venbot_prediction_events(banco, created_at)
-                    WHERE evaluated_7h_at IS NULL;
-                    CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_24h
-                    ON venbot_prediction_events(banco, created_at)
-                    WHERE evaluated_24h_at IS NULL;
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_p2p_hourly_prediction_events (
@@ -1002,285 +983,122 @@ def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None):
         return None
 
 
-def evaluar_predicciones_pendientes(limit=120):
-    """Recupera el backlog P2P sin dejar que eventos sin muestra bloqueen la cola.
-
-    El fallo observado en 31.73.3 era de priorización: se tomaban primero los
-    eventos más antiguos y, si esos eventos no tenían una muestra P2P dentro de
-    la tolerancia histórica, podían ocupar permanentemente el lote y evitar que
-    predicciones más nuevas y evaluables llegaran a procesarse.
-
-    Esta versión selecciona directamente eventos vencidos que sí tienen una
-    muestra real futura dentro de la tolerancia, usando JOIN LATERAL y un límite
-    por horizonte. Los eventos sin muestra siguen pendientes y permanecen
-    visibles en /api/estado, pero ya no bloquean la evaluación de los demás.
-    """
+def evaluar_predicciones_pendientes(limit=100):
+    """Evalúa cada horizonte contra la primera muestra P2P real posterior al objetivo."""
     if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
-        return {"evaluated": 0, "evaluations_total": 0,
-                "evaluated_by_horizon": {"1h": 0, "3h": 0, "7h": 0, "24h": 0},
-                "waiting_for_sample": {"1h": 0, "3h": 0, "7h": 0, "24h": 0}}
-
-    horizons = {
-        "1h": {"hours": 1, "pred_buy": "pred_compra_1h", "pred_sell": "pred_venta_1h",
-               "eval_at": "evaluated_1h_at", "actual": "actual_mid_1h",
-               "error": "error_pct_1h", "direction": "direction_correct_1h"},
-        "3h": {"hours": 3, "pred_buy": "pred_compra_3h", "pred_sell": "pred_venta_3h",
-               "eval_at": "evaluated_3h_at", "actual": "actual_mid_3h",
-               "error": "error_pct_3h", "direction": "direction_correct_3h"},
-        "7h": {"hours": 7, "pred_buy": "pred_compra_7h", "pred_sell": "pred_venta_7h",
-               "eval_at": "evaluated_7h_at", "actual": "actual_mid_7h",
-               "error": "error_pct_7h", "direction": "direction_correct_7h"},
-        "24h": {"hours": 24, "pred_buy": "pred_compra_24h", "pred_sell": "pred_venta_24h",
-                "eval_at": "evaluated_24h_at", "actual": "actual_mid_24h",
-                "error": "error_pct_24h", "direction": "direction_correct_24h"},
-    }
-    evaluated_by = {h: 0 for h in horizons}
-    due_by = {h: 0 for h in horizons}
-    waiting_by = {h: 0 for h in horizons}
-    updated_ids = set()
+        return {"evaluated": 0}
+    horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
+    evaluated = 0
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                for label, spec in horizons.items():
-                    hours = int(spec["hours"])
-
-                    # Conteo de eventos vencidos con predicción válida. Este dato
-                    # conserva la visibilidad del backlog aunque algunos carezcan
-                    # de muestra futura dentro de la tolerancia.
-                    cur.execute(
-                        f"""
-                        SELECT COUNT(*)
-                        FROM venbot_prediction_events
-                        WHERE {spec['eval_at']} IS NULL
-                          AND {spec['pred_buy']} IS NOT NULL
-                          AND {spec['pred_sell']} IS NOT NULL
-                          AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
-                          AND CURRENT_TIMESTAMP >= created_at + make_interval(hours => %s)
-                        """,
-                        (hours,),
-                    )
-                    due_total = int(cur.fetchone()[0] or 0)
-                    due_by[label] = due_total
-
-                    # Importante: JOIN LATERAL aquí evita que una cabecera antigua
-                    # sin muestra futura bloquee el lote completo. PostgreSQL puede
-                    # usar los índices existentes de muestras_p2p y de eventos
-                    # pendientes para buscar solo los vencidos que sí son evaluables.
-                    cur.execute(
-                        f"""
-                        SELECT c.id, c.actual_mid,
-                               c.{spec['pred_buy']}, c.{spec['pred_sell']},
-                               s.compra, s.venta, s.fecha
-                        FROM venbot_prediction_events c
-                        JOIN LATERAL (
-                            SELECT compra, venta, fecha
-                            FROM muestras_p2p s
-                            WHERE s.banco = c.banco
-                              AND s.fecha >= c.created_at + make_interval(hours => %s)
-                              AND s.fecha <= c.created_at + make_interval(hours => %s)
-                                                       + make_interval(mins => %s)
-                            ORDER BY s.fecha ASC
-                            LIMIT 1
-                        ) s ON TRUE
-                        WHERE c.{spec['eval_at']} IS NULL
-                          AND c.{spec['pred_buy']} IS NOT NULL
-                          AND c.{spec['pred_sell']} IS NOT NULL
-                          AND c.created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
-                          AND CURRENT_TIMESTAMP >= c.created_at + make_interval(hours => %s)
-                        ORDER BY c.created_at ASC
-                        LIMIT %s
-                        """,
-                        (
-                            hours,
-                            hours,
-                            int(PREDICTION_EVAL_TOLERANCE_MINUTES),
-                            hours,
-                            int(limit),
-                        ),
-                    )
-                    rows = cur.fetchall()
-                    waiting_by[label] = max(0, due_total - len(rows))
-                    updates = []
-                    for pid, origin_mid, pred_buy, pred_sell, actual_buy, actual_sell, actual_at in rows:
-                        try:
-                            pred = (float(pred_buy) + float(pred_sell)) / 2.0
-                            actual_mid = (float(actual_buy) + float(actual_sell)) / 2.0
-                            if actual_mid <= 0:
-                                continue
-                            err = abs(actual_mid - pred) / actual_mid * 100.0
-                            predicted_move = pred - float(origin_mid or 0.0)
-                            actual_move = actual_mid - float(origin_mid or 0.0)
-                            if abs(predicted_move) > 1e-12 and abs(actual_move) > 1e-12:
-                                direction_correct = (predicted_move * actual_move) > 0
-                            elif abs(predicted_move) <= 1e-12 and abs(actual_move) <= 1e-12:
-                                direction_correct = True
-                            else:
-                                direction_correct = False
-                            updates.append((actual_mid, err, actual_at, direction_correct, pid))
-                            evaluated_by[label] += 1
-                            updated_ids.add(pid)
-                        except (TypeError, ValueError, OverflowError):
+                cur.execute("""
+                    SELECT id,banco,created_at,actual_mid,
+                           pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
+                           pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
+                           evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at
+                    FROM venbot_prediction_events
+                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
+                      AND (evaluated_1h_at IS NULL OR evaluated_3h_at IS NULL OR evaluated_7h_at IS NULL OR evaluated_24h_at IS NULL)
+                    ORDER BY created_at ASC LIMIT %s
+                """, (int(limit),))
+                rows = cur.fetchall()
+                for row in rows:
+                    (pid,banco,created_at,origin_mid,
+                     pc1,pv1,pc3,pv3,pc7,pv7,pc24,pv24,
+                     ev1,ev3,ev7,ev24) = row
+                    predictions = {
+                        "1h": ((float(pc1)+float(pv1))/2.0) if pc1 is not None and pv1 is not None else None,
+                        "3h": ((float(pc3)+float(pv3))/2.0) if pc3 is not None and pv3 is not None else None,
+                        "7h": ((float(pc7)+float(pv7))/2.0) if pc7 is not None and pv7 is not None else None,
+                        "24h": ((float(pc24)+float(pv24))/2.0) if pc24 is not None and pv24 is not None else None,
+                    }
+                    evaluated_at = {"1h": ev1, "3h": ev3, "7h": ev7, "24h": ev24}
+                    updates = {}
+                    for label, hours in horizons:
+                        if evaluated_at[label] is not None or predictions[label] is None:
                             continue
-
+                        objetivo = created_at + timedelta(hours=hours)
+                        if datetime.now(pytz.UTC) < objetivo:
+                            continue
+                        actual = _buscar_muestra_futura(banco, objetivo)
+                        if not actual:
+                            continue
+                        pred = float(predictions[label])
+                        actual_mid = float(actual["mid"])
+                        err = abs(actual_mid - pred) / actual_mid * 100.0 if actual_mid else None
+                        predicted_move = pred - float(origin_mid or 0)
+                        actual_move = actual_mid - float(origin_mid or 0)
+                        direction_correct = None
+                        if abs(predicted_move) > 1e-12 and abs(actual_move) > 1e-12:
+                            direction_correct = (predicted_move * actual_move) > 0
+                        elif abs(predicted_move) <= 1e-12 and abs(actual_move) <= 1e-12:
+                            direction_correct = True
+                        updates[f"actual_mid_{label}"] = actual_mid
+                        updates[f"error_pct_{label}"] = err
+                        updates[f"evaluated_{label}_at"] = actual["fecha"]
+                        updates[f"direction_correct_{label}"] = direction_correct
                     if updates:
-                        cur.executemany(
-                            f"""UPDATE venbot_prediction_events
-                                SET {spec['actual']}=%s,
-                                    {spec['error']}=%s,
-                                    {spec['eval_at']}=%s,
-                                    {spec['direction']}=%s
-                                WHERE id=%s""",
-                            updates,
-                        )
-
-        evaluations_total = sum(evaluated_by.values())
-        return {
-            "evaluated": len(updated_ids),
-            "evaluations_total": evaluations_total,
-            "evaluated_by_horizon": evaluated_by,
-            "due_by_horizon": due_by,
-            "waiting_for_sample": waiting_by,
-        }
+                        sets=[]; vals=[]
+                        for key,val in updates.items():
+                            sets.append(f"{key}=%s"); vals.append(val)
+                        vals.append(pid)
+                        cur.execute(f"UPDATE venbot_prediction_events SET {', '.join(sets)} WHERE id=%s", vals)
+                        evaluated += 1
+        return {"evaluated": evaluated}
     except Exception as e:
         logger.warning("Evaluación de predicciones falló: %s", e)
-        return {
-            "evaluated": len(updated_ids),
-            "evaluations_total": sum(evaluated_by.values()),
-            "evaluated_by_horizon": evaluated_by,
-            "due_by_horizon": due_by,
-            "waiting_for_sample": waiting_by,
-            "error": "tracking temporalmente no disponible",
-        }
+        return {"evaluated": evaluated, "error": "tracking temporalmente no disponible"}
 
 
 def obtener_prediction_performance(banco="GENERAL", limit=100):
-    """Resumen auditable P2P usando todo el histórico disponible del banco.
-
-    ``limit`` se conserva por compatibilidad de contrato, pero ya no recorta
-    las métricas: el panel debe medir la evidencia acumulada real y separar
-    pendientes de evaluadas.
-    """
+    """Resumen auditable por horizonte del tracking P2P real."""
     if not DATABASE_URL:
         return {"ok": False, "message": "Sin base de datos"}
     banco = (banco or "GENERAL").upper().strip()
-    now_mono = time.monotonic()
-    with _P2P_PERF_CACHE_LOCK:
-        cached = _P2P_PERF_CACHE.get(banco)
-        if cached and now_mono < float(cached.get("expires", 0.0) or 0.0):
-            result = dict(cached.get("value") or {})
-            result["cache"] = "FRESH"
-            result["requested_limit"] = int(limit)
-            return result
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT
-                        COUNT(*) AS tracked_total,
-                        COUNT(*) FILTER (WHERE evaluated_1h_at IS NOT NULL),
-                        COUNT(*) FILTER (WHERE evaluated_3h_at IS NOT NULL),
-                        COUNT(*) FILTER (WHERE evaluated_7h_at IS NOT NULL),
-                        COUNT(*) FILTER (WHERE evaluated_24h_at IS NOT NULL),
-                        AVG(ABS(error_pct_1h)) FILTER (WHERE evaluated_1h_at IS NOT NULL),
-                        AVG(ABS(error_pct_3h)) FILTER (WHERE evaluated_3h_at IS NOT NULL),
-                        AVG(ABS(error_pct_7h)) FILTER (WHERE evaluated_7h_at IS NOT NULL),
-                        AVG(ABS(error_pct_24h)) FILTER (WHERE evaluated_24h_at IS NOT NULL),
-                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_1h)) FILTER (WHERE evaluated_1h_at IS NOT NULL),
-                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_3h)) FILTER (WHERE evaluated_3h_at IS NOT NULL),
-                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_7h)) FILTER (WHERE evaluated_7h_at IS NOT NULL),
-                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_24h)) FILTER (WHERE evaluated_24h_at IS NOT NULL),
-                        100.0 * AVG(CASE WHEN direction_correct_1h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_1h IS NOT NULL),
-                        100.0 * AVG(CASE WHEN direction_correct_3h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_3h IS NOT NULL),
-                        100.0 * AVG(CASE WHEN direction_correct_7h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_7h IS NOT NULL),
-                        100.0 * AVG(CASE WHEN direction_correct_24h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_24h IS NOT NULL),
-                        COUNT(direction_correct_1h), COUNT(direction_correct_3h), COUNT(direction_correct_7h), COUNT(direction_correct_24h),
-                        COUNT(*) FILTER (WHERE evaluated_1h_at IS NULL),
-                        COUNT(*) FILTER (WHERE evaluated_3h_at IS NULL),
-                        COUNT(*) FILTER (WHERE evaluated_7h_at IS NULL),
-                        COUNT(*) FILTER (WHERE evaluated_24h_at IS NULL),
-                        COUNT(*) FILTER (WHERE evaluated_1h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '1 hour'),
-                        COUNT(*) FILTER (WHERE evaluated_3h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '3 hours'),
-                        COUNT(*) FILTER (WHERE evaluated_7h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '7 hours'),
-                        COUNT(*) FILTER (WHERE evaluated_24h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '24 hours'),
-                        MAX(created_at), MAX(evaluated_1h_at), MAX(evaluated_3h_at), MAX(evaluated_7h_at), MAX(evaluated_24h_at)
+                    SELECT error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,
+                           direction_correct_1h,direction_correct_3h,direction_correct_7h,direction_correct_24h,
+                           regimen,confidence,created_at
                     FROM venbot_prediction_events
-                    WHERE banco=%s
-                """, (banco,))
-                row = cur.fetchone()
-
-                cur.execute("""
-                    SELECT regimen,
-                           COUNT(direction_correct_1h) FILTER (WHERE direction_correct_1h IS NOT NULL),
-                           100.0 * AVG(CASE WHEN direction_correct_1h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_1h IS NOT NULL),
-                           COUNT(direction_correct_3h) FILTER (WHERE direction_correct_3h IS NOT NULL),
-                           100.0 * AVG(CASE WHEN direction_correct_3h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_3h IS NOT NULL),
-                           COUNT(direction_correct_7h) FILTER (WHERE direction_correct_7h IS NOT NULL),
-                           100.0 * AVG(CASE WHEN direction_correct_7h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_7h IS NOT NULL),
-                           COUNT(direction_correct_24h) FILTER (WHERE direction_correct_24h IS NOT NULL),
-                           100.0 * AVG(CASE WHEN direction_correct_24h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_24h IS NOT NULL)
-                    FROM venbot_prediction_events
-                    WHERE banco=%s
-                    GROUP BY regimen
-                """, (banco,))
-                regime_rows = cur.fetchall()
-
-        if not row:
-            return {"ok": True, "bank": banco, "tracked": 0,
-                    "horizons": {h: {"evaluated": 0, "mean_abs_error_pct": None,
-                                     "median_abs_error_pct": None, "direction_accuracy_pct": None,
-                                     "direction_evaluated": 0, "pending": 0, "overdue_pending": 0}
-                                  for h in ("1h", "3h", "7h", "24h")},
-                    "by_regime": {}, "last_prediction_at": None}
-
-        tracked = int(row[0] or 0)
-        labels = ("1h", "3h", "7h", "24h")
-        evaluated = [int(row[i] or 0) for i in range(1, 5)]
-        means = [round(float(row[i]), 4) if row[i] is not None else None for i in range(5, 9)]
-        medians = [round(float(row[i]), 4) if row[i] is not None else None for i in range(9, 13)]
-        dirs = [round(float(row[i]), 2) if row[i] is not None else None for i in range(13, 17)]
-        dir_eval = [int(row[i] or 0) for i in range(17, 21)]
-        pending = [int(row[i] or 0) for i in range(21, 25)]
-        overdue = [int(row[i] or 0) for i in range(25, 29)]
-        last_eval = [row[i].isoformat() if row[i] else None for i in range(30, 34)]
-
-        horizons_out = {}
-        for i, label in enumerate(labels):
-            horizons_out[label] = {
-                "evaluated": evaluated[i],
-                "mean_abs_error_pct": means[i],
-                "median_abs_error_pct": medians[i],
-                "direction_accuracy_pct": dirs[i],
-                "direction_evaluated": dir_eval[i],
-                "pending": pending[i],
-                "overdue_pending": overdue[i],
-                "last_evaluated_at": last_eval[i],
+                    WHERE banco=%s ORDER BY created_at DESC LIMIT %s
+                """, (banco,int(limit)))
+                rows=cur.fetchall()
+        def stats(error_idx, direction_idx):
+            vals=[float(r[error_idx]) for r in rows if r[error_idx] is not None]
+            dirs=[bool(r[direction_idx]) for r in rows if r[direction_idx] is not None]
+            return {
+                "evaluated": len(vals),
+                "mean_abs_error_pct": round(float(np.mean(np.abs(vals))),4) if vals else None,
+                "median_abs_error_pct": round(float(np.median(np.abs(vals))),4) if vals else None,
+                "direction_accuracy_pct": round(sum(dirs)/len(dirs)*100,2) if dirs else None,
+                "direction_evaluated": len(dirs),
             }
-
-        by_reg = {}
-        for rr in regime_rows:
-            reg = str(rr[0] or "SIN_DATOS")
-            vals = [(rr[1], rr[2]), (rr[3], rr[4]), (rr[5], rr[6]), (rr[7], rr[8])]
-            for label, (n, acc) in zip(labels, vals):
-                if n:
-                    by_reg.setdefault(label, {})[reg] = round(float(acc), 2) if acc is not None else None
-
-        result = {
-            "ok": True,
-            "bank": banco,
-            "tracked": tracked,
-            "metrics_scope": "historico_completo",
-            "requested_limit": int(limit),
-            "horizons": horizons_out,
-            "by_regime": by_reg,
-            "last_prediction_at": row[29].isoformat() if row[29] else None,
-            "cache": "REFRESHED",
+        by_reg={}
+        for r in rows:
+            reg=str(r[8] or "SIN_DATOS")
+            for label, idx in (("1h",4),("3h",5),("7h",6),("24h",7)):
+                if r[idx] is not None:
+                    by_reg.setdefault(label,{}).setdefault(reg,[]).append(bool(r[idx]))
+        return {
+            "ok":True,
+            "bank":banco,
+            "tracked":len(rows),
+            "horizons":{
+                "1h":stats(0,4), "3h":stats(1,5), "7h":stats(2,6), "24h":stats(3,7)
+            },
+            "by_regime":{
+                label:{reg:round(sum(vals)/len(vals)*100,2) for reg,vals in regs.items()}
+                for label,regs in by_reg.items()
+            },
+            "last_prediction_at":rows[0][10].isoformat() if rows else None,
         }
-        with _P2P_PERF_CACHE_LOCK:
-            _P2P_PERF_CACHE[banco] = {"value": dict(result), "expires": time.monotonic() + _P2P_PERF_CACHE_SECONDS}
-        return result
     except Exception as e:
         logger.warning("Performance tracking falló: %s", e)
-        return {"ok": False, "message": "Performance temporalmente no disponible"}
+        return {"ok":False,"message":"Performance temporalmente no disponible"}
 
 
 def evaluar_senal_operativa(datos, actual_compra, actual_venta):
@@ -2186,9 +2004,11 @@ def evaluar_proyecciones_horarias_spot_pendientes(limit=60):
                     SELECT id,symbol,created_at,observed_price,projection,evaluations
                     FROM venbot_spot_hourly_prediction_events
                     WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '21 days'
+                      AND jsonb_object_length(COALESCE(evaluations, '{}'::jsonb)) < jsonb_object_length(COALESCE(projection, '{}'::jsonb))
                     ORDER BY created_at ASC LIMIT %s
                 """, (int(limit),))
                 rows=cur.fetchall()
+                logger.info("[SPOT HOURLY TRACKING] candidatos=%s", len(rows))
                 for pid,symbol,created_at,observed_price,projection,evaluations in rows:
                     proj = projection if isinstance(projection,dict) else _safe_json_payload(projection)
                     evs = evaluations if isinstance(evaluations,dict) else _safe_json_payload(evaluations)
@@ -2214,7 +2034,7 @@ def evaluar_proyecciones_horarias_spot_pendientes(limit=60):
                     if changed:
                         cur.execute("UPDATE venbot_spot_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s",(json.dumps(evs,ensure_ascii=False),pid))
                         total+=1
-        if total: logger.info("[SPOT HOURLY TRACKING] eventos evaluados=%s", total)
+        logger.info("[SPOT HOURLY TRACKING] eventos evaluados=%s", total)
         return {"evaluated":total}
     except Exception as e:
         logger.warning("Evaluación horaria Spot falló: %s", e)
@@ -7847,16 +7667,7 @@ async def tarea_recoleccion_automatica():
                 global _LAST_PREDICTION_TRACKING_TS
                 if PREDICTION_TRACKING_ENABLED:
                     try:
-                        _tracking_eval = await asyncio.to_thread(evaluar_predicciones_pendientes, 120)
-                        logger.info(
-                            "[P2P TRACKING] filas=%s eval_total=%s 1H=%s 3H=%s 7H=%s 24H=%s",
-                            _tracking_eval.get("evaluated", 0),
-                            _tracking_eval.get("evaluations_total", 0),
-                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("1h", 0),
-                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("3h", 0),
-                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("7h", 0),
-                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("24h", 0),
-                        )
+                        await asyncio.to_thread(evaluar_predicciones_pendientes, 120)
                         if time.monotonic() - _LAST_PREDICTION_TRACKING_TS >= PREDICTION_TRACKING_INTERVAL_SECONDS:
                             for _banco, (_c, _v, _l) in resultados.items():
                                 if _c > 0 and _v > 0:
@@ -8419,15 +8230,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
-
-
-@app.head("/")
-def head_root():
-    """Health check ultraligero para monitores HTTP que usan HEAD (p. ej. UptimeRobot Free)."""
-    return Response(status_code=200)
 
 
 @app.get("/")
@@ -9635,30 +9440,7 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
     q,_=_obtener_quant_compartido(banco,c,v,int(mercado.get("liquidez",0) or 0)) if c>0 and v>0 else {}
     perf=obtener_prediction_performance(banco,100)
     spot_perf = obtener_spot_prediction_performance() if SPOT_PREDICTION_TRACKING_ENABLED else {"ok": False, "tracked": 0}
-    market_age=None
-    market_stale=None
-    if mercado.get("fecha"):
-        fecha_mercado=mercado.get("fecha")
-        if fecha_mercado.tzinfo is None:
-            fecha_mercado=VET.localize(fecha_mercado)
-        market_age=max(0.0,(datetime.now(VET)-fecha_mercado.astimezone(VET)).total_seconds())
-        market_stale=market_age>MARKET_MAX_AGE_SECONDS
-    p2p_h=perf.get("horizons",{}) if isinstance(perf,dict) else {}
-    tracking_health={
-        "p2p":{
-            "tracked":perf.get("tracked",0) if isinstance(perf,dict) else 0,
-            "evaluated":{h:(p2p_h.get(h,{}).get("evaluated",0) if isinstance(p2p_h.get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
-            "pending":{h:(p2p_h.get(h,{}).get("pending",0) if isinstance(p2p_h.get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
-            "overdue_pending":{h:(p2p_h.get(h,{}).get("overdue_pending",0) if isinstance(p2p_h.get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
-            "last_prediction_at":perf.get("last_prediction_at") if isinstance(perf,dict) else None,
-        },
-        "spot":{
-            "tracked":spot_perf.get("tracked",0) if isinstance(spot_perf,dict) else 0,
-            "evaluated":{h:(spot_perf.get("horizons",{}).get(h,{}).get("evaluated",0) if isinstance(spot_perf.get("horizons",{}).get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
-            "last_prediction_at":spot_perf.get("last_prediction_at") if isinstance(spot_perf,dict) else None,
-        },
-    }
-    return {"ok":True,"build":VENBOT_BUILD,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf,"freshness":{"market_age_seconds":round(market_age,1) if market_age is not None else None,"threshold_seconds":MARKET_MAX_AGE_SECONDS,"stale":market_stale},"tracking_health":tracking_health}}
+    return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
 
 
 def _programar_refresco_analysis(banco="GENERAL"):
