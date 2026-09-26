@@ -638,6 +638,46 @@
               <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-[8px] text-slate-500 uppercase font-black">Spot</span><strong class="block mt-1 text-emerald-300 text-[11px]">--</strong></div>
             </div>
           </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-cyan-500/15 p-3 space-y-3">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2"><i class="fa-solid fa-microscope text-cyan-300"></i><span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Auditoría predictiva</span></div>
+                <p class="text-[9px] text-slate-500 mt-1">Lectura exclusiva del administrador · calidad por horizonte · no modifica modelos ni promoción.</p>
+              </div>
+              <span id="admin-quality-audit-badge" class="text-[8px] font-black uppercase text-slate-400 bg-slate-900 border border-slate-700 px-2 py-1 rounded-full">SIN CONSULTAR</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+              <label class="text-[9px] text-slate-500 uppercase font-black">Activo Spot
+                <select id="admin-quality-audit-symbol" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 text-slate-300 px-2 py-2 text-[10px] font-black">
+                  <option>BTCUSDT</option><option>ETHUSDT</option><option>SOLUSDT</option><option>SUIUSDT</option><option>AAVEUSDT</option><option>UNIUSDT</option><option>KSMUSDT</option><option>ZECUSDT</option><option>XRPUSDT</option>
+                </select>
+              </label>
+              <label class="text-[9px] text-slate-500 uppercase font-black">Ventana
+                <select id="admin-quality-audit-lookback" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 text-slate-300 px-2 py-2 text-[10px] font-black">
+                  <option value="7">7 días</option><option value="14">14 días</option><option value="30" selected>30 días</option><option value="45">45 días</option><option value="90">90 días</option>
+                </select>
+              </label>
+              <button type="button" onclick="loadPredictiveQualityAudit()" class="focus-ring rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-cyan-200 px-3 py-2.5 text-[10px] font-black">Actualizar auditoría</button>
+            </div>
+            <div id="admin-quality-audit-summary" class="rounded-xl bg-slate-900/50 border border-slate-800 p-2.5 text-[9px] text-slate-500">Consulta la evidencia de calidad real acumulada por Venbot.</div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5">
+                <div class="text-[9px] font-black uppercase tracking-[0.15em] text-cyan-300 mb-2">P2P · producción</div>
+                <div id="admin-quality-audit-p2p-prod" class="overflow-x-auto text-[9px]">Pendiente…</div>
+              </div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5">
+                <div class="text-[9px] font-black uppercase tracking-[0.15em] text-cyan-300 mb-2">Spot · producción</div>
+                <div id="admin-quality-audit-spot-prod" class="overflow-x-auto text-[9px]">Pendiente…</div>
+              </div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5 lg:col-span-2">
+                <div class="flex items-center justify-between gap-2 mb-2"><div class="text-[9px] font-black uppercase tracking-[0.15em] text-cyan-300">Sombra · 24 horizontes</div><span class="text-[8px] text-slate-600">1H → 24H</span></div>
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                  <div><div class="text-[8px] uppercase font-black text-slate-500 mb-1">P2P</div><div id="admin-quality-audit-p2p-hourly" class="overflow-x-auto text-[8px]">Pendiente…</div></div>
+                  <div><div class="text-[8px] uppercase font-black text-slate-500 mb-1">Spot</div><div id="admin-quality-audit-spot-hourly" class="overflow-x-auto text-[8px]">Pendiente…</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
             <div class="flex items-center justify-between gap-2">
               <div><div class="flex items-center gap-2"><i class="fa-solid fa-rocket text-amber-300"></i><span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Modo lanzamiento</span></div><p class="text-[9px] text-slate-500 mt-1">Activa temporalmente el acceso promocional global. Se autoexpira.</p></div>
@@ -3787,6 +3827,72 @@
   const alertsOriginal=document.getElementById('sec-alertas');
   const communityOriginal=document.getElementById('sec-comunidad');
   const contextMap={market:'Mercado P2P · USDT / VES',analysis:'Análisis P2P · Tendencia y predicción',spot:'Spot · Predicción y proyección',alerts:'Alertas de precio P2P',international:'Mercado Internacional',more:'Comunidad · Cuenta · Soporte'};
+  function qualityAuditTable(horizons, opts={}){
+    const keys=opts.keys||Object.keys(horizons||{});
+    if(!keys.length) return '<div class="text-slate-600">Sin evidencia todavía.</div>';
+    const prod=!!opts.production;
+    const rows=keys.map(k=>{
+      const d=horizons?.[k]||{};
+      const h=d.horizon||k;
+      if(prod){
+        const ev=Number(d.evaluated||0);
+        const evs=Number.isFinite(ev)?ev.toLocaleString('es-VE'):'—';
+        const mae=d.mae_pct==null?'—':Number(d.mae_pct).toFixed(4)+'%';
+        const med=d.median_abs_error_pct==null?'—':Number(d.median_abs_error_pct).toFixed(4)+'%';
+        const p75=d.p75_abs_error_pct==null?'—':Number(d.p75_abs_error_pct).toFixed(4)+'%';
+        const acc=d.direction_accuracy_pct==null?'—':Number(d.direction_accuracy_pct).toFixed(2)+'%';
+        const bias=d.bias_pct==null?'—':Number(d.bias_pct).toFixed(4)+'%';
+        const st=d.evidence_status||'—';
+        return `<tr class="border-t border-slate-800"><td class="px-1.5 py-1 font-black text-slate-300">${h.toUpperCase()}</td><td class="px-1.5 py-1">${evs}</td><td class="px-1.5 py-1">${mae}</td><td class="px-1.5 py-1">${med}</td><td class="px-1.5 py-1">${p75}</td><td class="px-1.5 py-1">${acc}</td><td class="px-1.5 py-1">${bias}</td><td class="px-1.5 py-1 text-slate-500">${st.replaceAll('_',' ')}</td></tr>`;
+      }
+      const ev=Number(d.evaluated||0);
+      const readiness=d.readiness||'SIN_EVIDENCIA';
+      const shadow=d.shadow_status||'—';
+      const oos=d.oos_improvement_pct==null?'—':Number(d.oos_improvement_pct).toFixed(4)+'%';
+      const bias=d.candidate_bias_factor==null?'—':Number(d.candidate_bias_factor).toFixed(6);
+      return `<tr class="border-t border-slate-800"><td class="px-1.5 py-1 font-black text-slate-300">${h.toUpperCase()}</td><td class="px-1.5 py-1">${Number.isFinite(ev)?ev.toLocaleString('es-VE'):'—'}</td><td class="px-1.5 py-1">${readiness.replaceAll('_',' ')}</td><td class="px-1.5 py-1">${shadow.replaceAll('_',' ')}</td><td class="px-1.5 py-1">${oos}</td><td class="px-1.5 py-1">${bias}</td></tr>`;
+    }).join('');
+    const head=prod?'<tr><th class="px-1.5 py-1 text-left">H</th><th class="px-1.5 py-1">Eval</th><th class="px-1.5 py-1">MAE</th><th class="px-1.5 py-1">Med</th><th class="px-1.5 py-1">P75</th><th class="px-1.5 py-1">Dirección</th><th class="px-1.5 py-1">Bias</th><th class="px-1.5 py-1 text-left">Evidencia</th></tr>':'<tr><th class="px-1.5 py-1 text-left">H</th><th class="px-1.5 py-1">Eval</th><th class="px-1.5 py-1 text-left">Readiness</th><th class="px-1.5 py-1 text-left">Sombra</th><th class="px-1.5 py-1">OOS Δ</th><th class="px-1.5 py-1">Bias factor</th></tr>';
+    return `<table class="w-full border-collapse text-[8px] leading-tight"><thead class="text-slate-500 uppercase">${head}</thead><tbody>${rows}</tbody></table>`;
+  }
+  async function loadPredictiveQualityAudit(){
+    if(!window.venbotUser?.is_developer) return;
+    const badge=document.getElementById('admin-quality-audit-badge');
+    const summary=document.getElementById('admin-quality-audit-summary');
+    const p2pProd=document.getElementById('admin-quality-audit-p2p-prod');
+    const spotProd=document.getElementById('admin-quality-audit-spot-prod');
+    const p2pHourly=document.getElementById('admin-quality-audit-p2p-hourly');
+    const spotHourly=document.getElementById('admin-quality-audit-spot-hourly');
+    const symbol=(document.getElementById('admin-quality-audit-symbol')?.value||'BTCUSDT').toUpperCase();
+    const lookback=Number(document.getElementById('admin-quality-audit-lookback')?.value||30);
+    if(badge) badge.textContent='CONSULTANDO';
+    if(summary) summary.textContent='Consultando evidencia real de calidad predictiva…';
+    try{
+      const token=getAuthToken();
+      if(!token) throw new Error('Sesión de desarrollador no disponible.');
+      const r=await fetch(`${API_BASE_URL}/api/admin/predictive/quality-audit?symbol=${encodeURIComponent(symbol)}&lookback_days=${encodeURIComponent(lookback)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':token,'Accept':'application/json'},cache:'no-store'});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok || !d.ok) throw new Error(d.detail||d.error||`HTTP ${r.status}`);
+      const pp=d?.production?.p2p?.horizons||{};
+      const sp=d?.production?.spot?.horizons||{};
+      const ph=d?.hourly_shadow?.p2p?.horizons||{};
+      const sh=d?.hourly_shadow?.spot?.horizons||{};
+      if(p2pProd) p2pProd.innerHTML=qualityAuditTable(pp,{production:true,keys:['1h','3h','7h','24h']});
+      if(spotProd) spotProd.innerHTML=qualityAuditTable(sp,{production:true,keys:['1h','3h','7h','24h']});
+      if(p2pHourly) p2pHourly.innerHTML=qualityAuditTable(ph,{production:false,keys:Array.from({length:24},(_,i)=>`${i+1}h`)});
+      if(spotHourly) spotHourly.innerHTML=qualityAuditTable(sh,{production:false,keys:Array.from({length:24},(_,i)=>`${i+1}h`)});
+      const prodP=Object.values(pp).reduce((a,x)=>a+Number(x?.evaluated||0),0);
+      const prodS=Object.values(sp).reduce((a,x)=>a+Number(x?.evaluated||0),0);
+      const shadowP=Object.values(ph).filter(x=>Number(x?.evaluated||0)>0).length;
+      const shadowS=Object.values(sh).filter(x=>Number(x?.evaluated||0)>0).length;
+      if(badge){badge.textContent='AUDITORÍA LISTA';badge.className='text-[8px] font-black uppercase text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full';}
+      if(summary) summary.innerHTML=`Ventana ${lookback} días · Spot ${symbol} · producción P2P evaluaciones=${prodP.toLocaleString('es-VE')} · Spot=${prodS.toLocaleString('es-VE')} · evidencia sombra activa P2P=${shadowP}/24 · Spot=${shadowS}/24 · <span class="text-slate-600">solo lectura</span>`;
+    }catch(e){
+      if(badge){badge.textContent='ERROR';badge.className='text-[8px] font-black uppercase text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-full';}
+      if(summary) summary.textContent=`No se pudo consultar la auditoría: ${e.message||'error temporal'}`;
+    }
+  }
+
   async function loadAdminControlCenter(){
     if(!window.venbotUser?.is_developer) return;
     const statusEl=document.getElementById('admin-system-status');
@@ -3855,7 +3961,7 @@
   function applyDeveloperOnly(){
     const visible = !!window.venbotUser?.is_developer;
     [quantBacktest, quantAdaptive, document.getElementById('advanced-graphs-launcher'), document.getElementById('venbot-admin-center')].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
-    if(visible) loadAdminControlCenter();
+    if(visible){ loadAdminControlCenter(); loadPredictiveQualityAudit(); }
   }
   window.applyVenbotDeveloperUI = applyDeveloperOnly;
   function place(){
