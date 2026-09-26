@@ -10,8 +10,6 @@
   <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com">
 
   <title>Venbot · USDT/VES</title>
-  <script src="./venbot-ads-config.js"></script>
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1110097120437683" crossorigin="anonymous" data-venbot-adsense="1"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
@@ -32,11 +30,7 @@
     .voice-listening{animation:pulseVoice 1.15s ease-in-out infinite}
     @keyframes pulseVoice{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
 
-    .ad-slot{position:relative;min-height:54px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
-    .venbot-ad-inner{width:100%;min-height:42px;display:flex;align-items:center;justify-content:center}
-    .venbot-ad-inner .adsbygoogle{display:block!important;width:100%;min-height:40px}
-    .venbot-ad-fallback{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.15rem;min-height:42px}
-    .venbot-ad-consent-note{font-size:9px;line-height:1.35;color:#64748b;text-align:center;padding:0 8px}
+    .ad-slot{border:1px dashed rgba(148,163,184,.28);background:rgba(15,23,42,.34)}
     body.venbot-no-ads .ad-slot{display:none!important}
     .ad-label{letter-spacing:.12em}
     .period-btn[aria-selected="true"]{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.35);color:#6ee7b7}
@@ -358,7 +352,7 @@
           <p id="header-market-context" class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
         </div>
         <div class="hidden md:block flex-1 max-w-xl mx-3">
-          <div class="ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="header">
+          <div class="ad-slot rounded-xl px-4 py-2 text-center">
             <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
             <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
           </div>
@@ -387,7 +381,7 @@
     </div>
 
     <div class="w-full px-4 pt-2">
-      <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="top">
+      <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="banner-top">
         <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
         <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
       </div>
@@ -887,7 +881,7 @@
           <a href="https://www.tiktok.com/@venbotquant" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
         </div>
 
-        <div class="ad-slot rounded-xl p-4 text-center" data-ad-placement="footer">
+        <div class="ad-slot rounded-xl p-4 text-center">
           <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
           <div class="text-[10px] text-slate-600 mt-1">Espacio publicitario · FREE / promoción · debajo de las redes</div>
         </div>
@@ -1051,14 +1045,14 @@
         <div class="p-2 space-y-1">
           <button type="button" onclick="toggleTheme(); closeInfoMenu()" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold flex items-center gap-3"><i id="theme-menu-icon" class="fa-solid fa-sun text-amber-300 w-5"></i><span id="theme-menu-label">Cambiar a tema claro</span></button>
           <div class="px-3 py-2 text-[9px] uppercase tracking-[.16em] font-black text-slate-500">Ayuda y legal</div>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="https://p2p-monitor-binance.onrender.com/legal/privacy-document" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-shield-halved text-emerald-400 w-5 mr-2"></i>Política de privacidad</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="https://p2p-monitor-binance.onrender.com/legal/terms-document" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-file-contract text-sky-400 w-5 mr-2"></i>Términos de uso</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('privacy.html', '_blank'); return false;"><i class="fa-solid fa-shield-halved text-emerald-400 w-5 mr-2"></i>Política de privacidad</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('terms.html', '_blank'); return false;"><i class="fa-solid fa-file-contract text-sky-400 w-5 mr-2"></i>Términos de uso</a>
           <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open(API_BASE_URL + '/blog', '_blank'); return false;"><i class="fa-solid fa-newspaper text-amber-300 w-5 mr-2"></i>Blog Venbot</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="https://p2p-monitor-binance.onrender.com/legal/tutorial-document" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-circle-play text-rose-400 w-5 mr-2"></i>Tutorial de la app</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="https://p2p-monitor-binance.onrender.com/legal/risk-document" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-triangle-exclamation text-amber-300 w-5 mr-2"></i>Riesgos y predicciones</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="https://p2p-monitor-binance.onrender.com/legal/advertising-document" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-rectangle-ad text-purple-300 w-5 mr-2"></i>Publicidad y cookies</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="https://p2p-monitor-binance.onrender.com/legal/delete-account-document" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-user-slash text-rose-300 w-5 mr-2"></i>Eliminar mi cuenta</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="https://p2p-monitor-binance.onrender.com/legal/contact-document" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-envelope text-cyan-300 w-5 mr-2"></i>Responsables y contacto</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('help.html', '_blank'); return false;"><i class="fa-solid fa-circle-play text-rose-400 w-5 mr-2"></i>Tutorial de la app</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('risk.html', '_blank'); return false;"><i class="fa-solid fa-triangle-exclamation text-amber-300 w-5 mr-2"></i>Riesgos y predicciones</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('advertising.html', '_blank'); return false;"><i class="fa-solid fa-rectangle-ad text-purple-300 w-5 mr-2"></i>Publicidad y cookies</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('delete-account.html', '_blank'); return false;"><i class="fa-solid fa-user-slash text-rose-300 w-5 mr-2"></i>Eliminar mi cuenta</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('contact.html', '_blank'); return false;"><i class="fa-solid fa-envelope text-cyan-300 w-5 mr-2"></i>Responsables y contacto</a>
           <button type="button" onclick="alert('Usuarios activos: ' + (document.getElementById('online-count')?.textContent || '--'))" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold"><i class="fa-solid fa-users text-sky-400 w-5 mr-2"></i>Usuarios en línea: <span id="menu-online-count">--</span></button>
         </div>
         <div class="p-3 border-t border-slate-800 text-[9px] text-slate-500 leading-relaxed">Venbot no solicita claves de Binance ni custodia fondos. Los análisis son informativos.</div>
@@ -1725,95 +1719,13 @@
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
 
-    // Publicidad v31.69: capa aislada del motor productivo.
-    // FREE/promoción => anuncios; PREMIUM/VIP => sin anuncios.
-    // El proveedor real se configura fuera del motor (venbot-ads-config.js).
-    const _defaultAdsConfig = { webEnabled:true, provider:'adsense', publisherId:'', slots:{}, providerConfigured:false, consentRequired:false, appReady:true };
-    window.VENBOT_AD_CONFIG = Object.assign(_defaultAdsConfig, window.VENBOT_AD_CONFIG || {});
-    window.VENBOT_AD_CONFIG.slots = Object.assign({}, _defaultAdsConfig.slots, window.VENBOT_AD_CONFIG.slots || {});
-    let _venbotAdsScriptPromise = null;
-
+    // Publicidad: el modo lanzamiento puede liberar funciones, pero conserva anuncios para cuentas FREE.
+    // PREMIUM/VIP pagados quedan sin publicidad. La cuenta/proveedor publicitario real se configura después.
+    window.VENBOT_AD_CONFIG = window.VENBOT_AD_CONFIG || { webEnabled: true, providerConfigured: false, appReady: true };
     function getAdvertisingPlan() {
       const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
-
-    function _venbotAdsConsentGranted() {
-      if (!window.VENBOT_AD_CONFIG?.consentRequired) return true;
-      try { return localStorage.getItem(window.VENBOT_AD_CONFIG.consentStorageKey || 'venbot-ads-consent') === 'granted'; }
-      catch(e) { return false; }
-    }
-
-    function _venbotAdsPublisherIsValid() {
-      return /^ca-pub-\\d{16}$/.test(String(window.VENBOT_AD_CONFIG?.publisherId || '').trim());
-    }
-
-    function _venbotAdsConfigured() {
-      if (window.VENBOT_AD_CONFIG?.provider !== 'adsense') return false;
-      if (!_venbotAdsPublisherIsValid()) return false;
-      const slots = window.VENBOT_AD_CONFIG?.slots || {};
-      return ['header','top','footer'].some(k => /^\\d+$/.test(String(slots[k] || '')));
-    }
-
-    function _venbotAdsFallbackHTML(message='Espacio publicitario') {
-      return `<div class="venbot-ad-fallback"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="text-[9px] text-slate-600">${message}</div></div>`;
-    }
-
-    function _venbotLoadAdSense() {
-      if (_venbotAdsScriptPromise) return _venbotAdsScriptPromise;
-      if (!_venbotAdsPublisherIsValid()) return Promise.reject(new Error('adsense_publisher_not_configured'));
-      _venbotAdsScriptPromise = new Promise((resolve, reject) => {
-        const existing = document.querySelector('script[data-venbot-adsense="1"]');
-        if (existing) {
-          existing.addEventListener('load', resolve, {once:true});
-          existing.addEventListener('error', reject, {once:true});
-          if (window.adsbygoogle) resolve();
-          return;
-        }
-        const s = document.createElement('script');
-        s.async = true;
-        s.crossOrigin = 'anonymous';
-        s.dataset.venbotAdsense = '1';
-        s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(window.VENBOT_AD_CONFIG.publisherId)}`;
-        s.onload = resolve;
-        s.onerror = () => reject(new Error('adsense_script_load_failed'));
-        document.head.appendChild(s);
-      });
-      return _venbotAdsScriptPromise;
-    }
-
-    function _venbotRenderAdSlot(el) {
-      if (!el) return;
-      const placement = el.dataset.adPlacement || '';
-      const slot = String(window.VENBOT_AD_CONFIG?.slots?.[placement] || '').trim();
-      if (!slot) { el.innerHTML = _venbotAdsFallbackHTML('Espacio publicitario · configuración pendiente'); return; }
-      el.innerHTML = `<div class="venbot-ad-inner"><ins class="adsbygoogle" data-ad-client="${window.VENBOT_AD_CONFIG.publisherId}" data-ad-slot="${slot}" data-ad-format="auto" data-full-width-responsive="true"></ins></div>`;
-      try { (window.adsbygoogle = window.adsbygoogle || []).push({}); }
-      catch(e) { el.innerHTML = _venbotAdsFallbackHTML('Publicidad temporalmente no disponible'); }
-    }
-
-    async function refreshVenbotWebAds() {
-      const enabled = window.VENBOT_AD_CONFIG?.webEnabled !== false;
-      const plan = getAdvertisingPlan();
-      const paid = plan === 'PREMIUM' || plan === 'VIP';
-      const allowed = enabled && !paid && _venbotAdsConfigured() && _venbotAdsConsentGranted();
-      window.VENBOT_AD_CONFIG.providerConfigured = _venbotAdsConfigured();
-
-      document.querySelectorAll('.ad-slot').forEach(el => {
-        if (!enabled || paid) {
-          el.innerHTML = '';
-          return;
-        }
-        if (!allowed) {
-          el.innerHTML = _venbotAdsConsentGranted()
-            ? _venbotAdsFallbackHTML(window.VENBOT_AD_CONFIG.providerConfigured ? 'Publicidad disponible al completar la configuración' : 'Espacio publicitario · proveedor pendiente')
-            : `<div class="venbot-ad-fallback"><div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div><div class="venbot-ad-consent-note">La publicidad requiere tu preferencia de privacidad.</div></div>`;
-          return;
-        }
-        _venbotLoadAdSense().then(()=>_venbotRenderAdSlot(el)).catch(()=>{ el.innerHTML=_venbotAdsFallbackHTML('Publicidad temporalmente no disponible'); });
-      });
-    }
-
     function applyVenbotAdPolicy() {
       const plan = getAdvertisingPlan();
       const paid = plan === 'PREMIUM' || plan === 'VIP';
@@ -1823,13 +1735,10 @@
       const web = document.getElementById('admin-ads-web');
       const free = document.getElementById('admin-ads-free');
       const paidEl = document.getElementById('admin-ads-paid');
-      const configured = _venbotAdsConfigured();
-      window.VENBOT_AD_CONFIG.providerConfigured = configured;
-      if (badge && window.venbotUser?.is_developer) badge.textContent = configured ? 'CONECTADA' : 'PREPARADA';
-      if (web && window.venbotUser?.is_developer) web.textContent = enabled ? (configured ? 'CONECTADA' : 'ESPACIOS ACTIVOS') : 'DESACTIVADA';
+      if (badge && window.venbotUser?.is_developer) badge.textContent = window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'PREPARADA';
+      if (web && window.venbotUser?.is_developer) web.textContent = enabled ? (window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'ESPACIOS ACTIVOS') : 'DESACTIVADA';
       if (free && window.venbotUser?.is_developer) free.textContent = enabled ? 'CON ANUNCIOS' : 'DESACTIVADOS';
       if (paidEl && window.venbotUser?.is_developer) paidEl.textContent = 'SIN ANUNCIOS';
-      refreshVenbotWebAds();
     }
 
     function allowedP2PHorizons(plan = getFrontendPlan()) {
@@ -2464,13 +2373,28 @@
             const cls=roll==='VALIDACION_ROLLING_OK'?'text-emerald-300':'text-slate-500';
             return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/50 border border-slate-800 px-2 py-1.5"><span class="font-black text-slate-300">${h.toUpperCase()}</span><span class="${cls} text-right">${ev} eval. · OOS ${imp} · mín ${minImp} · folds ${folds}</span></div>`;
           }).join('');
+          const allHourly=Object.keys(hs).filter(h=>/^\d+h$/i.test(h)).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h','')));
           const valid=research.filter(h=>(hs[h]?.shadow_candidate?.rolling_oos?.status||'')==='VALIDACION_ROLLING_OK').length;
           const evidence=research.filter(h=>Number(hs[h]?.evaluated||0)>=Number(d.minimum_evaluations_per_horizon||30)).length;
+          const allValid=allHourly.filter(h=>(hs[h]?.shadow_candidate?.rolling_oos?.status||'')==='VALIDACION_ROLLING_OK').length;
+          const allEvidence=allHourly.filter(h=>Number(hs[h]?.evaluated||0)>=Number(d.minimum_evaluations_per_horizon||30)).length;
+          const hourlyRows=allHourly.map(h=>{
+            const v=hs[h]||{}; const c=v.shadow_candidate||{}; const r=c.rolling_oos||{};
+            const ev=Number(v.evaluated||0);
+            const roll=r.status||'EVIDENCIA_INSUFICIENTE';
+            const imp=Number.isFinite(Number(r.avg_improvement_pct))?`${Number(r.avg_improvement_pct).toFixed(2)}%`:'—';
+            const folds=`${Number(r.folds_validos||0)}/${Number(r.folds_totales||0)}`;
+            const role=production.includes(h)?'PRODUCCIÓN':'SOMBRA';
+            const roleCls=production.includes(h)?'text-emerald-300':'text-purple-300';
+            const cls=roll==='VALIDACION_ROLLING_OK'?'text-emerald-300':'text-slate-500';
+            const cand=c.status==='CANDIDATO_VALIDO'?'válido':c.status==='CANDIDATO_EN_SOMBRA'?'sombra':'acumulando';
+            return `<div class="rounded-lg bg-slate-900/50 border border-slate-800 px-2 py-2"><div class="flex items-center justify-between gap-2"><span class="font-black text-slate-200">${h.toUpperCase()}</span><span class="text-[7px] uppercase font-black ${roleCls}">${role}</span></div><div class="mt-1 text-[8px] ${cls}">${ev} eval. · OOS ${imp} · folds ${folds}</div><div class="mt-0.5 text-[8px] text-slate-500">${cand} · ${advEsc(roll)}</div></div>`;
+          }).join('');
           const milestone=motor.milestone_300h||{};
           const qStatuses=research.map(h=>hs[h]?.shadow_candidate?.rolling_oos?.data_quality?.status||'').filter(Boolean);
           const qWarn=qStatuses.filter(x=>x!=='OK').length;
           const milestoneText=motor.motor==='SPOT'?`${milestone.assets_reached||0}/${milestone.assets_total||9} activos ≥ 300 h`:`${Number(milestone.coverage_hours||0).toFixed(2)} h / 300 h`;
-          return `<div class="rounded-2xl bg-slate-950/60 border border-indigo-500/15 p-3 md:p-4 mt-3"><div class="flex items-center justify-between gap-2"><div><div class="font-black text-slate-100">Laboratorio de maduración · ${motor.motor}</div><div class="text-[9px] text-slate-500 mt-1">Walk-forward OOS adicional para nuevos horizontes. No modifica producción.</div></div><span class="text-[8px] uppercase font-black text-indigo-200 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-full">SOMBRA</span></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Producción</span><strong class="block text-emerald-300">${production.map(x=>x.toUpperCase()).join(' · ')}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Investigación</span><strong class="block text-purple-200">${research.length} horizontes</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-300">${evidence}/${research.length}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${valid?'text-emerald-300':'text-slate-400'}">${valid}/${research.length}</strong></div></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Hito 300 h</span><strong class="block ${milestone.status==='HITO_ALCANZADO'?'text-emerald-300':'text-amber-200'}">${milestoneText}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Calidad temporal</span><strong class="block ${qWarn?'text-amber-200':'text-emerald-300'}">${qWarn?`${qWarn} en observación`:'OK / sin alertas'}</strong></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-3">${rows}</div><div class="text-[8px] text-slate-600 mt-2">La validación walk-forward requiere evidencia consecutiva; las alertas de calidad son informativas y no cambian por sí solas el estado del candidato. Los cuatro horizontes productivos permanecen bloqueados a cambios automáticos.</div></div>`;
+          return `<div class="rounded-2xl bg-slate-950/60 border border-indigo-500/15 p-3 md:p-4 mt-3"><div class="flex items-center justify-between gap-2"><div><div class="font-black text-slate-100">Laboratorio de maduración · ${motor.motor}</div><div class="text-[9px] text-slate-500 mt-1">Walk-forward OOS adicional para nuevos horizontes. No modifica producción.</div></div><span class="text-[8px] uppercase font-black text-indigo-200 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-full">SOMBRA</span></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Producción</span><strong class="block text-emerald-300">${production.map(x=>x.toUpperCase()).join(' · ')}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Investigación</span><strong class="block text-purple-200">${research.length} horizontes</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-300">${evidence}/${research.length}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${valid?'text-emerald-300':'text-slate-400'}">${valid}/${research.length}</strong></div></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Hito 300 h</span><strong class="block ${milestone.status==='HITO_ALCANZADO'?'text-emerald-300':'text-amber-200'}">${milestoneText}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Horario 1H → 24H</span><strong class="block text-cyan-300">${allHourly.length} horizontes</strong><small class="text-slate-500">${allEvidence}/24 con evidencia · ${allValid}/24 OOS válido</small></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Calidad temporal</span><strong class="block ${qWarn?'text-amber-200':'text-emerald-300'}">${qWarn?`${qWarn} en observación`:'OK / sin alertas'}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Gráfica</span><strong class="block text-purple-200">1H → 24H</strong><small class="text-slate-500">puntos horarios en sombra</small></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-3">${rows}</div><div class="mt-3"><div class="text-[9px] font-black text-slate-300 uppercase tracking-wider">Seguimiento horario completo · 1H → 24H</div><div class="text-[8px] text-slate-600 mt-1 mb-2">Cada hora se evalúa de forma independiente. Producción permanece en 1H · 3H · 7H · 24H; las demás horas siguen en sombra.</div><div class="grid grid-cols-2 md:grid-cols-4 gap-1.5">${hourlyRows || '<div class="text-slate-600 text-[8px]">Sin datos horarios.</div>'}</div></div><div class="text-[8px] text-slate-600 mt-2">La validación walk-forward requiere evidencia consecutiva; las alertas de calidad son informativas y no cambian por sí solas el estado del candidato. Ninguna hora horaria cambia producción automáticamente.</div></div>`;
         };
         if(maturity) maturity.innerHTML=[d.p2p,d.spot].map(motorLab).join('');
         const spotMilestone=d?.spot?.milestone_300h||d?.milestones?.spot_300h||{};
@@ -2624,7 +2548,10 @@
   // No modifica ninguna fórmula, endpoint productivo ni regla de promoción.
   const ADV_GRAPH_PRODUCTION_HORIZONS=['1h','3h','7h','24h'];
   const ADV_GRAPH_RESEARCH_HORIZONS=['2h','4h','5h','6h','8h','9h','10h','12h','18h'];
-  const ADV_GRAPH_DISPLAY_HORIZONS=[...ADV_GRAPH_PRODUCTION_HORIZONS,...ADV_GRAPH_RESEARCH_HORIZONS];
+  const ADV_GRAPH_ALL_HOURLY_HORIZONS=Array.from({length:24},(_,i)=>`${i+1}h`);
+  // Todos los 24 puntos horarios pueden verse en la gráfica. Producción e
+  // investigación siguen diferenciados visualmente y la promoción permanece bloqueada.
+  const ADV_GRAPH_DISPLAY_HORIZONS=ADV_GRAPH_ALL_HOURLY_HORIZONS;
   const ADV_GRAPH_PRODUCTION_SET=new Set(ADV_GRAPH_PRODUCTION_HORIZONS);
   const ADV_GRAPH_RESEARCH_SET=new Set(ADV_GRAPH_RESEARCH_HORIZONS);
   function advComputeYBounds(datasets, unit){
@@ -3682,8 +3609,9 @@
     const coverage=Number(motor.coverage_hours||0); const hvals=motor.horizons||{};
     box.innerHTML=`<div class="adv-learning-kpi"><span>Motor</span><strong>${kind==='spot'?'SPOT':'P2P'}</strong></div><div class="adv-learning-kpi"><span>Cobertura</span><strong>${coverage.toFixed(2)} h</strong></div><div class="adv-learning-kpi"><span>Etapa</span><strong>${advEsc(stage.stage||'ACUMULANDO')}</strong></div><div class="adv-learning-kpi"><span>Modo</span><strong>EN SOMBRA</strong></div>`;
     const covGoal=Number(motor.stage?.next_target_hours||700); const covPct=Math.max(0,Math.min(100,(coverage/covGoal)*100)); const covMeta=document.getElementById('adv-learning-coverage-meta'); const covFill=document.getElementById('adv-learning-coverage-fill'); if(covMeta) covMeta.textContent=`${coverage.toFixed(2)} / ${covGoal.toFixed(0)} h`; if(covFill) covFill.style.width=`${covPct.toFixed(1)}%`;
-    const displayHorizons=kind==='spot'&&motor?.hourly_shadow?.horizons ? Object.keys(motor.hourly_shadow.horizons).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))) : ['1h','3h','7h','24h'];
-    const displayData=kind==='spot'&&motor?.hourly_shadow?.horizons ? motor.hourly_shadow.horizons : hvals;
+    const hasHourly=!!motor?.hourly_shadow?.horizons;
+    const displayHorizons=hasHourly ? Object.keys(motor.hourly_shadow.horizons).filter(h=>/^\d+h$/i.test(h)).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))) : ['1h','3h','7h','24h'];
+    const displayData=hasHourly ? motor.hourly_shadow.horizons : hvals;
     hzbox.innerHTML=displayHorizons.map(h=>{const v=displayData[h]||{};const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'n/d';const mae=Number.isFinite(Number(v.mae_pct))?`${Number(v.mae_pct).toFixed(3)}% MAE`:'n/d';const cand=v.shadow_candidate?.status||'ACUMULANDO';return `<div class="adv-learning-kpi"><span>${h.toUpperCase()}</span><strong>${Number(v.evaluated||0)} eval.</strong><small class="text-slate-500">${acc} · ${mae}</small><small class="text-purple-300">${advEsc(cand)}</small></div>`;}).join('');
     if(badge) badge.textContent=motor.stage?.stage||'lectura';
     if(note) note.textContent='La capa adaptativa observa errores y sesgos, separa entrenamiento de OOS y mantiene los candidatos en sombra. Una medición no modifica el motor productivo.';
@@ -3695,9 +3623,17 @@
     }catch(e){const n=document.getElementById('adv-learning-note');if(n)n.textContent=e.message||'Aprendizaje adaptativo temporalmente no disponible.';}
   }
   function advResetDetails(){ advSetText('adv-chart-mode-label','Modelo cuantitativo'); ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const sh=document.getElementById('adv-snapshot-history'); if(sh) sh.innerHTML=''; const ms=document.getElementById('adv-memory-summary'); if(ms) ms.innerHTML=''; const sp=document.getElementById('adv-spot-context'); if(sp) sp.innerHTML=''; const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden'); const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot'; const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML=''; const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML=''; const cm=document.getElementById('adv-learning-coverage-meta'); if(cm) cm.textContent='0 / 700 h'; const cf=document.getElementById('adv-learning-coverage-fill'); if(cf) cf.style.width='0%'; }
-  function advProjectionRowsP2P(analysis){
+  function advProjectionRowsP2P(analysis, hourlyPoints=null){
+    const hourly = hourlyPoints && typeof hourlyPoints==='object' ? hourlyPoints : (analysis?.proyecciones_horarias_24h||{});
+    const keys=Object.keys(hourly||{}).filter(h=>/^\d+h$/i.test(h));
+    if(keys.length){
+      return keys.sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))).map(h=>{
+        const q=hourly[h]||{};
+        return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};
+      }).filter(r=>Number.isFinite(Number(r.central)));
+    }
     const src=analysis?.proyecciones_horizontes||{};
-    return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};});
+    return Object.keys(src).filter(h=>/^\d+h$/i.test(h)).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))).map(h=>{const q=src[h]||{}; return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};}).filter(r=>Number.isFinite(Number(r.central)));
   }
   function advProjectionRowsSpot(d, hourlySnapshot=null){
     if(hourlySnapshot?.horizons){
@@ -3725,9 +3661,9 @@
   async function loadAdvancedP2P(){
     const lockBefore=p2pReadLock(); const lockQuery=lockBefore?.snapshotId?`&snapshot_id=${encodeURIComponent(lockBefore.snapshotId)}`:''; const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=1200&t=${Date.now()}${lockQuery}`); const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden');
     advPopulateSnapshotSelector(d); const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
-    const liveProj=advProjectionRowsP2P(a);
     const serverHourly=d.hourly_projection||null;
     const serverHourlyPoints=serverHourly?.points||a.proyecciones_horarias_24h||{};
+    const liveProj=advProjectionRowsP2P(a,serverHourlyPoints);
     let lock=p2pReadLock();
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=d.history?.map(r=>({x:new Date(r.timestamp).getTime(),buy:Number(r.compra),sell:Number(r.venta),mid:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&p.buy>0&&p.sell>0) || [];
@@ -3767,7 +3703,7 @@
     const current=liveCompra>0&&liveVenta>0?((liveCompra+liveVenta)/2):(hist.length?hist[hist.length-1].mid:NaN);
     const hourlyAnchor=Number.isFinite(Date.parse(lock?.hourly_created_at||'') )?Date.parse(lock.hourly_created_at):projectionBase;
     const hourlyChartPoints=lock?.hourly_projection||serverHourlyPoints||{};
-    const graphHorizons=['1h','3h','7h','24h'];
+    const graphHorizons=Array.from({length:24},(_,i)=>`${i+1}h`);
     const graphH={};
     for(const h of graphHorizons){
       const q=hourlyChartPoints[h];
@@ -3782,7 +3718,7 @@
     advSetText('adv-m-range',selected?`${advMoney(selected.low)}–${advMoney(selected.high)}`:'n/d'); advSetText('adv-m-confidence',selected&&Number.isFinite(Number(selected.confidence))?advMoney(selected.confidence,0):'n/d');
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advSetText('adv-chart-mode-label','P2P · corredor horario 1H → 24H · T0 FIJO'); advSetChartLegend('p2p');
+    advSetText('adv-chart-mode-label','P2P · proyección horaria 1H → 24H · T0 FIJO · sombra'); advSetChartLegend('p2p');
     advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',graphSnapshot,{referenceTime:projectionBase,hourlyAnchor,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots,trend:String(lock?.trend||a.tendencia||''),support:Number(lock?.support??(a.proyeccion_7h||{}).soporte_7h??m.soporte??a.soporte_7h),resistance:Number(lock?.resistance??(a.proyeccion_7h||{}).resistencia_7h??m.resistencia??a.resistencia_7h),frozenProjection:proj,hourlyProjection:lock?.hourly_projection||serverHourlyPoints});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
