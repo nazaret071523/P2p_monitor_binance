@@ -9273,6 +9273,105 @@ def _predictive_quality_audit_hourly(motor, scope):
     return out
 
 
+def _predictive_calibration_learning_latest(motor, scope, horizons):
+    """Resume el aprendizaje de calibración ya calculado en sombra.
+
+    Solo lectura: no recalcula ni aplica factores a producción. Usa snapshots
+    persistidos y los gates existentes para mostrar el estado de cada horizonte.
+    """
+    hs=[str(h).lower() for h in horizons]
+    out={h:{"horizon":h,"evaluated":0,"candidate_factor":None,"oos_improvement_pct":None,
+            "shadow_status":None,"readiness":"SIN_EVIDENCIA","gate_status":"SIN_DATOS",
+            "stable_passes":0,"required_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,
+            "production_change":"DISABLED"} for h in hs}
+    if not DATABASE_URL:
+        return out
+    try:
+        with obtener_conexion() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    WITH ranked AS (
+                        SELECT horizon,evaluated,candidate_bias_factor,readiness,shadow_status,
+                               oos_improvement_pct,generated_at,
+                               ROW_NUMBER() OVER(PARTITION BY horizon ORDER BY generated_at DESC) rn
+                        FROM venbot_quant_adaptive_snapshots
+                        WHERE motor=%s AND scope=%s AND horizon=ANY(%s)
+                    )
+                    SELECT horizon,evaluated,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,generated_at
+                    FROM ranked WHERE rn=1 ORDER BY horizon
+                """,(str(motor),str(scope),hs))
+                rows=cur.fetchall()
+        gates=_adaptive_promotion_gates(motor,scope,hs)
+        for row in rows:
+            h=str(row[0]).lower()
+            if h not in out: continue
+            gate=gates.get(h,{})
+            out[h]={
+                "horizon":h,
+                "evaluated":int(row[1] or 0),
+                "candidate_factor":round(float(row[2]),6) if row[2] is not None else None,
+                "readiness":str(row[3] or "SIN_EVIDENCIA"),
+                "shadow_status":str(row[4]) if row[4] is not None else None,
+                "oos_improvement_pct":round(float(row[5]),4) if row[5] is not None else None,
+                "generated_at":row[6].isoformat() if hasattr(row[6],"isoformat") else str(row[6]),
+                "gate_status":str(gate.get("status") or "BLOQUEADO"),
+                "stable_passes":int(gate.get("stable_passes") or 0),
+                "required_passes":int(gate.get("required_passes") or ADAPTIVE_PROMOTION_STABLE_PASSES),
+                "gate_candidate_factor":round(float(gate.get("candidate_factor")),6) if gate.get("candidate_factor") is not None else None,
+                "gate_oos_improvement_avg_pct":round(float(gate.get("oos_improvement_avg_pct")),4) if gate.get("oos_improvement_avg_pct") is not None else None,
+                "production_change":"DISABLED_REVIEW_REQUIRED",
+            }
+        return out
+    except Exception as exc:
+        logger.warning("Calibration learning latest falló %s %s: %s",motor,scope,exc)
+        return {h:{**out[h],"gate_status":"TEMPORALMENTE_NO_DISPONIBLE","error":str(exc)[:120]} for h in hs}
+
+
+@app.get("/api/admin/predictive/calibration-learning")
+def admin_predictive_calibration_learning(
+    request: Request,
+    symbol: Optional[str] = Query(None),
+):
+    """Auditoría del aprendizaje/calibración por horizonte, solo en sombra."""
+    _require_developer_session(request)
+    sym=_normalizar_spot_symbol(symbol) if symbol else None
+    if sym and sym not in SPOT_SYMBOLS:
+        raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    hs4=("1h","3h","7h","24h")
+    hs24=tuple(f"{h}h" for h in range(1,25))
+    try:
+        p2p_prod=_predictive_calibration_learning_latest("P2P","GENERAL",hs4)
+        spot_prod=_predictive_calibration_learning_latest("SPOT",sym or "ALL",hs4)
+        p2p_shadow=_predictive_calibration_learning_latest("P2P","GENERAL",hs24)
+        spot_shadow=_predictive_calibration_learning_latest("SPOT",sym or "ALL",hs24)
+        def _summary(data):
+            vals=list(data.values())
+            return {
+                "horizons":len(vals),
+                "evidence_ready":sum(1 for x in vals if int(x.get("evaluated") or 0)>=ADAPTIVE_MIN_EVAL_PER_HORIZON),
+                "candidates_valid":sum(1 for x in vals if x.get("shadow_status")=="CANDIDATO_VALIDO"),
+                "review_ready":sum(1 for x in vals if x.get("gate_status")=="LISTO_PARA_REVISION"),
+                "production_change":"DISABLED",
+            }
+        return {
+            "ok":True,
+            "generated_at":datetime.now(VET).isoformat(),
+            "production": {"p2p":{"scope":"GENERAL","horizons":p2p_prod},"spot":{"scope":sym or "ALL","horizons":spot_prod}},
+            "hourly_shadow": {"p2p":{"scope":"GENERAL","horizons":p2p_shadow},"spot":{"scope":sym or "ALL","horizons":spot_shadow}},
+            "summary":{"production":{"p2p":_summary(p2p_prod),"spot":_summary(spot_prod)},"hourly_shadow":{"p2p":_summary(p2p_shadow),"spot":_summary(spot_shadow)}},
+            "rules":{
+                "candidate_generation":"bias ponderado + régimen + rolling OOS existente",
+                "minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
+                "stable_passes_required":ADAPTIVE_PROMOTION_STABLE_PASSES,
+                "production_change":"DISABLED_REVIEW_REQUIRED",
+                "note":"Este reporte observa candidatos y estabilidad. No aplica calibraciones ni modifica producción.",
+            }
+        }
+    except Exception as exc:
+        logger.warning("Calibration learning audit falló: %s",exc)
+        raise HTTPException(status_code=503,detail="calibration_learning_temporarily_unavailable")
+
+
 @app.get("/api/admin/predictive/quality-audit")
 def admin_predictive_quality_audit(
     request: Request,
