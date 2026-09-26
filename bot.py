@@ -1737,12 +1737,35 @@ def analizar_spot_predictivo(symbol):
     quality = _spot_calidad_label(confidence)
 
     def _spot_projection_for_hours(hours):
-        hours = float(hours)
-        raw_delta = drift * hours
-        # Misma matemática del motor Spot actual; solo se amplía el horizonte para sombra.
+        hours = max(1, int(round(float(hours))))
+
+        # Trayectoria dinámica v1: cada hora futura reutiliza señales observadas
+        # en ventanas 1H/3H/6H/12H/24H y las pendientes 5m/1h. No genera
+        # oscilaciones artificiales ni usa datos futuros; cambia gradualmente
+        # de un estado corto a uno de medio/largo plazo.
+        d_short = 0.70 * (slope_5m * 100.0) + 0.30 * float(r1h or 0.0)
+        d_mid = (0.50 * float((r3h or 0.0) / 3.0)
+                 + 0.30 * float((r6h or 0.0) / 6.0)
+                 + 0.20 * float((r12h or 0.0) / 12.0))
+        d_long = 0.55 * (slope_1h * 100.0) + 0.45 * float(r24h / 24.0)
+
         uncertainty = max(0.0025, vol_1h) * np.sqrt(hours) * 1.05
         max_move = min(0.18, max(0.012, uncertainty * 2.4 + 0.008))
-        central_delta = max(-max_move, min(max_move, raw_delta / 100.0))
+
+        # Acumulamos una tasa por hora variable. Las ponderaciones cambian con
+        # el horizonte: corto plazo domina al inicio, medio en la zona central,
+        # largo plazo gana peso hacia 24H. La curva resultante puede cambiar de
+        # pendiente cuando las ventanas observadas discrepan, sin dibujar ruido.
+        cumulative_delta = 0.0
+        for step in range(1, hours + 1):
+            phase = (step - 1) / 23.0 if hours > 1 else 0.0
+            w_short = 0.60 * (1.0 - phase)
+            w_mid = 0.25 + 0.10 * (1.0 - abs(phase - 0.5) / 0.5)
+            w_long = max(0.0, 1.0 - w_short - w_mid)
+            hourly_drift = (w_short * d_short + w_mid * d_mid + w_long * d_long)
+            cumulative_delta += hourly_drift / 100.0
+
+        central_delta = max(-max_move, min(max_move, cumulative_delta))
         central = price * np.exp(central_delta)
         band = min(max_move * 0.90, max(0.004, uncertainty))
         low = price * np.exp(central_delta - band)
@@ -1757,6 +1780,7 @@ def analizar_spot_predictivo(symbol):
             "bullish": round(price * np.exp(bull_delta), 8),
             "bearish": round(price * np.exp(bear_delta), 8),
             "uncertainty_pct": round(band * 100.0, 3),
+            "trajectory_model": "DYNAMIC_STATE_V1",
         }
 
     horizons = {"1h": 1, "3h": 3, "7h": 7, "24h": 24}
@@ -1776,6 +1800,11 @@ def analizar_spot_predictivo(symbol):
         })
         hourly_shadow[f"{h}h"] = row
 
+    trajectory_meta = {
+        "model": "DYNAMIC_STATE_V1",
+        "components": ["slope_5m", "slope_1h", "return_1h", "return_3h", "return_6h", "return_12h", "return_24h"],
+        "purpose": "trayectoria horaria con cambio gradual de estado; no simula ruido",
+    }
     source_ts = ticker.get("timestamp")
     result = {
         "ok": True,
@@ -1812,7 +1841,8 @@ def analizar_spot_predictivo(symbol):
             "bullish": projections["24h"]["bullish"],
         },
         "proyecciones_horarias_24h": hourly_shadow,
-        "method": "Pendiente temporal + momentum multiventana + volatilidad + niveles recientes; escenarios estadísticos, no precios garantizados.",
+        "trajectory_model": trajectory_meta,
+        "method": "Pendiente temporal + momentum multiventana + volatilidad + niveles recientes; trayectoria horaria dinámica por estado, sin simular ruido; escenarios estadísticos, no precios garantizados.",
         "generated_at": generated_at.isoformat(),
     }
     SPOT_ANALYSIS_CACHE[sym] = {"value": result, "expires": time.monotonic() + 30.0}
