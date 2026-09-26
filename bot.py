@@ -1686,7 +1686,7 @@ def analizar_spot_predictivo(symbol):
     with ThreadPoolExecutor(max_workers=3) as ex:
         f_ticker = ex.submit(obtener_spot_binance, sym)
         f_5m = ex.submit(obtener_spot_klines, sym, "5m", 288)
-        f_1h = ex.submit(obtener_spot_klines, sym, "1h", 120)
+        f_1h = ex.submit(obtener_spot_klines, sym, "1h", 500)
         ticker = f_ticker.result(timeout=SPOT_REQUEST_TIMEOUT + 2)
         candles_5m = f_5m.result(timeout=SPOT_REQUEST_TIMEOUT + 2)
         candles_1h = f_1h.result(timeout=SPOT_REQUEST_TIMEOUT + 2)
@@ -1736,36 +1736,88 @@ def analizar_spot_predictivo(symbol):
     confidence = int(round(max(35.0, min(92.0, 45.0 + 18.0*r2_score + 15.0*agreement + 12.0*history_score + 5.0*min(1.0, abs(trend_score))))))
     quality = _spot_calidad_label(confidence)
 
+    # Trayectoria Spot v2: usa trayectorias históricas reales como prior de camino.
+    # No inventa ruido futuro. Para cada hora futura, busca estados históricos
+    # parecidos al estado actual y agrega la distribución de los retornos que
+    # realmente ocurrieron después de esos estados. El estado actual del motor
+    # (corto/medio/largo plazo) se conserva como ancla y se mezcla con ese prior.
+    analog_rates = [0.0] * 25  # retorno log esperado por hora, en decimal
+    analog_weight = 0.0
+    try:
+        closes = np.asarray([float(c["c"]) for c in candles_1h if float(c.get("c") or 0) > 0], dtype=float)
+        if len(closes) >= 84:
+            logc = np.log(closes)
+            one = np.diff(logc)
+            # Features del estado actual: impulso 6H/24H, volatilidad y pendiente.
+            cur_r6 = float(logc[-1] - logc[-7]) if len(logc) >= 7 else 0.0
+            cur_r24 = float(logc[-1] - logc[-25]) if len(logc) >= 25 else 0.0
+            cur_vol = float(np.std(one[-24:], ddof=1)) if len(one) >= 24 else float(np.std(one[-12:], ddof=1))
+            cur_slope = float(np.polyfit(np.arange(24, dtype=float), logc[-24:], 1)[0]) if len(logc) >= 24 else 0.0
+
+            candidates = []
+            max_anchor = len(logc) - 25  # deja 24 horas futuras reales para comparar
+            for i in range(30, max_anchor + 1):
+                hist_r6 = float(logc[i] - logc[i-6])
+                hist_r24 = float(logc[i] - logc[i-24])
+                hvol = float(np.std(one[i-24:i], ddof=1)) if i >= 24 else 0.0
+                hslope = float(np.polyfit(np.arange(24, dtype=float), logc[i-23:i+1], 1)[0]) if i >= 23 else 0.0
+                candidates.append((hist_r6, hist_r24, hvol, hslope, i))
+
+            if len(candidates) >= 24:
+                arr = np.asarray([c[:4] for c in candidates], dtype=float)
+                cur = np.asarray([cur_r6, cur_r24, cur_vol, cur_slope], dtype=float)
+                scale = np.std(arr, axis=0, ddof=1)
+                scale = np.where(scale > 1e-9, scale, 1.0)
+                dist = np.sqrt(np.sum(((arr - cur) / scale) ** 2, axis=1))
+                k = min(24, max(8, int(np.sqrt(len(candidates)) * 1.8)))
+                order = np.argsort(dist)[:k]
+                weights = 1.0 / (0.35 + dist[order])
+                weights = weights / max(1e-12, float(np.sum(weights)))
+                for step in range(1, 25):
+                    vals = []
+                    ws = []
+                    for w, oi in zip(weights, order):
+                        idx = candidates[int(oi)][4]
+                        future_log_returns = logc[idx + step] - logc[idx + step - 1]
+                        if np.isfinite(future_log_returns):
+                            vals.append(float(future_log_returns)); ws.append(float(w))
+                    if vals:
+                        analog_rates[step] = float(np.average(np.asarray(vals), weights=np.asarray(ws)))
+                analog_weight = min(0.70, 0.30 + 0.40 * min(1.0, len(candidates) / 300.0))
+                if float(np.mean(dist[order])) > 2.75:
+                    analog_weight *= 0.55
+    except Exception:
+        analog_weight = 0.0
+
+    d_short = 0.70 * (slope_5m * 100.0) + 0.30 * float(r1h or 0.0)
+    d_mid = (0.50 * float((r3h or 0.0) / 3.0)
+             + 0.30 * float((r6h or 0.0) / 6.0)
+             + 0.20 * float((r12h or 0.0) / 12.0))
+    d_long = 0.55 * (slope_1h * 100.0) + 0.45 * float(r24h / 24.0)
+
+    state_rates = [0.0] * 25
+    for step in range(1, 25):
+        phase = (step - 1) / 23.0 if step > 1 else 0.0
+        w_short = 0.60 * (1.0 - phase)
+        w_mid = 0.25 + 0.10 * (1.0 - abs(phase - 0.5) / 0.5)
+        w_long = max(0.0, 1.0 - w_short - w_mid)
+        state_rates[step] = (w_short * d_short + w_mid * d_mid + w_long * d_long) / 100.0
+
+    cumulative_deltas = [0.0] * 25
+    cumulative = 0.0
+    for step in range(1, 25):
+        rate = ((analog_weight * analog_rates[step]) + ((1.0 - analog_weight) * state_rates[step])) if analog_weight > 0 else state_rates[step]
+        # La deriva de estado se atenúa suavemente con el horizonte; el prior
+        # histórico mantiene su forma por hora y evita una recta artificial.
+        rate *= 1.0 if step <= 6 else (0.94 ** (step - 6))
+        cumulative += rate
+        cumulative_deltas[step] = cumulative
+
     def _spot_projection_for_hours(hours):
-        hours = max(1, int(round(float(hours))))
-
-        # Trayectoria dinámica v1: cada hora futura reutiliza señales observadas
-        # en ventanas 1H/3H/6H/12H/24H y las pendientes 5m/1h. No genera
-        # oscilaciones artificiales ni usa datos futuros; cambia gradualmente
-        # de un estado corto a uno de medio/largo plazo.
-        d_short = 0.70 * (slope_5m * 100.0) + 0.30 * float(r1h or 0.0)
-        d_mid = (0.50 * float((r3h or 0.0) / 3.0)
-                 + 0.30 * float((r6h or 0.0) / 6.0)
-                 + 0.20 * float((r12h or 0.0) / 12.0))
-        d_long = 0.55 * (slope_1h * 100.0) + 0.45 * float(r24h / 24.0)
-
+        hours = max(1, min(24, int(round(float(hours)))))
         uncertainty = max(0.0025, vol_1h) * np.sqrt(hours) * 1.05
         max_move = min(0.18, max(0.012, uncertainty * 2.4 + 0.008))
-
-        # Acumulamos una tasa por hora variable. Las ponderaciones cambian con
-        # el horizonte: corto plazo domina al inicio, medio en la zona central,
-        # largo plazo gana peso hacia 24H. La curva resultante puede cambiar de
-        # pendiente cuando las ventanas observadas discrepan, sin dibujar ruido.
-        cumulative_delta = 0.0
-        for step in range(1, hours + 1):
-            phase = (step - 1) / 23.0 if hours > 1 else 0.0
-            w_short = 0.60 * (1.0 - phase)
-            w_mid = 0.25 + 0.10 * (1.0 - abs(phase - 0.5) / 0.5)
-            w_long = max(0.0, 1.0 - w_short - w_mid)
-            hourly_drift = (w_short * d_short + w_mid * d_mid + w_long * d_long)
-            cumulative_delta += hourly_drift / 100.0
-
-        central_delta = max(-max_move, min(max_move, cumulative_delta))
+        central_delta = float(np.clip(cumulative_deltas[hours], -max_move, max_move))
         central = price * np.exp(central_delta)
         band = min(max_move * 0.90, max(0.004, uncertainty))
         low = price * np.exp(central_delta - band)
@@ -1780,7 +1832,8 @@ def analizar_spot_predictivo(symbol):
             "bullish": round(price * np.exp(bull_delta), 8),
             "bearish": round(price * np.exp(bear_delta), 8),
             "uncertainty_pct": round(band * 100.0, 3),
-            "trajectory_model": "DYNAMIC_STATE_V1",
+            "trajectory_model": "HISTORICAL_ANALOG_V2",
+            "trajectory_evidence": "historical_analogs" if analog_weight > 0 else "state_only"
         }
 
     horizons = {"1h": 1, "3h": 3, "7h": 7, "24h": 24}
@@ -1803,7 +1856,7 @@ def analizar_spot_predictivo(symbol):
     trajectory_meta = {
         "model": "DYNAMIC_STATE_V1",
         "components": ["slope_5m", "slope_1h", "return_1h", "return_3h", "return_6h", "return_12h", "return_24h"],
-        "purpose": "trayectoria horaria con cambio gradual de estado; no simula ruido",
+        "purpose": "trayectoria horaria basada en análogos históricos reales + estado actual; no simula ruido",
     }
     source_ts = ticker.get("timestamp")
     result = {
