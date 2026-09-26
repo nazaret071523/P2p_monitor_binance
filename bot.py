@@ -41,7 +41,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from fastapi import FastAPI, Request, Query, HTTPException
+from fastapi import FastAPI, Request, Query, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -2001,11 +2001,14 @@ def evaluar_proyecciones_horarias_spot_pendientes(limit=60):
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT id,symbol,created_at,observed_price,projection,evaluations
-                    FROM venbot_spot_hourly_prediction_events
-                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '21 days'
-                      AND jsonb_object_length(COALESCE(evaluations, '{}'::jsonb)) < jsonb_object_length(COALESCE(projection, '{}'::jsonb))
-                    ORDER BY created_at ASC LIMIT %s
+                    SELECT DISTINCT e.id,e.symbol,e.created_at,e.observed_price,e.projection,e.evaluations
+                    FROM venbot_spot_hourly_prediction_events e
+                    CROSS JOIN LATERAL jsonb_each(COALESCE(e.projection, '{}'::jsonb)) p(label,item)
+                    WHERE e.created_at >= CURRENT_TIMESTAMP - INTERVAL '21 days'
+                      AND (p.item->>'horizonte_horas')::int BETWEEN 1 AND 24
+                      AND e.created_at + ((p.item->>'horizonte_horas')::int * INTERVAL '1 hour') <= CURRENT_TIMESTAMP
+                      AND NOT (COALESCE(e.evaluations, '{}'::jsonb) ? p.label)
+                    ORDER BY e.created_at ASC LIMIT %s
                 """, (int(limit),))
                 rows=cur.fetchall()
                 logger.info("[SPOT HOURLY TRACKING] candidatos=%s", len(rows))
@@ -8256,6 +8259,11 @@ def read_root():
         "prediction_recent": "/api/predictions/recent",
         "community": {"url": VENBOT_COMMUNITY_URL, "support_url": VENBOT_SUPPORT_URL, "bot_url": VENBOT_BOT_URL},
     }
+
+
+@app.head("/", include_in_schema=False)
+def head_root():
+    return Response(status_code=200)
 
 
 @app.get("/api/health")
