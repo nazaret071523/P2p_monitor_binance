@@ -297,6 +297,7 @@
 .robot-o-ball{fill:#28c8ff!important;filter:drop-shadow(0 0 3px #28c8ff)!important;}
 </style>
 
+<style id="venbot-v31-73-14-graph-audit-fix">/* v31.73.14: align plotted labels with active P2P hourly data; suppress duplicate Spot snapshot/active trajectory; keep VET timestamps consistent; prevent stale P2P validation values in Spot. Backend untouched. */</style>
 <style id="venbot-v31-46-p2p-reference-style">
 #advancedPredictiveChart{display:none!important}
 .venbot-p2p-refgraph{min-height:100%!important}
@@ -2337,11 +2338,7 @@
         const d=await r.json().catch(()=>({}));
         if(!r.ok) throw new Error(d.detail||'No se pudo cargar la evolución adaptativa');
         const cards=[];
-        const motorList=[d?.p2p,d?.spot].filter(Boolean);
-        if(!d || d.ok===false || !motorList.length){
-          throw new Error(d?.error || d?.message || 'El servidor no devolvió los motores adaptativos');
-        }
-        for(const motor of motorList){
+        for(const motor of [d.p2p,d.spot]){
           const st=motor.stage||{};
           const next=st.next_target_hours;
           const horizons=Object.entries(motor.horizons||{}).map(([label,v])=>{
@@ -2352,7 +2349,7 @@
             return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/60 border border-slate-800 px-2.5 py-2"><span class="font-black text-slate-200 uppercase">${label}</span><span class="text-slate-400 text-right">${evals} eval. · ${acc} · ${bias}${ready}</span></div>`;
           }).join('');
           let symbolLine='';
-          if(motor.motor==='SPOT'&&motor.by_symbol&&typeof motor.by_symbol==='object'){
+          if(motor.motor==='SPOT'&&motor.by_symbol){
             const rows=Object.entries(motor.by_symbol).map(([sym,v])=>`<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/50 border border-slate-800 px-2 py-1.5"><span class="font-bold text-slate-300">${sym.replace('USDT','')}</span><span class="text-slate-500">${Number(v.coverage_hours||0).toFixed(2)} h · ${Number(v.snapshots||0)} snapshots</span></div>`).join('');
             symbolLine=`<div class="space-y-1"><div class="text-[9px] text-slate-500">Cobertura por activo · mediana ${Number(motor.coverage_hours||0).toFixed(2)} h</div>${rows}</div>`;
           }
@@ -2362,65 +2359,30 @@
           const gateInfo=Object.entries(motor.promotion_gates||{}).map(([label,g])=>{ if(!g||!g.status) return ''; const ready=g.status==='LISTO_PARA_REVISION'; return `<div class="text-[8px] ${ready?'text-amber-200':'text-slate-600'}">${label} · ${ready?'listo para revisión':'promoción bloqueada'} · ${g.stable_passes||0}/${g.required_passes||2} validaciones estables${Number.isFinite(Number(g.oos_improvement_avg_pct))?` · OOS ${Number(g.oos_improvement_avg_pct).toFixed(2)}%`:''}</div>`; }).join('');
           cards.push(`<div class="rounded-2xl bg-slate-950/60 border border-slate-800 p-3 space-y-2.5"><div class="flex items-center justify-between gap-2"><div class="font-black text-slate-100">Motor ${motor.motor}</div><span class="text-[9px] font-bold text-purple-300 uppercase">Etapa ${st.stage_index||'—'} · ${st.stage||'—'}</span></div><div class="text-[11px] text-slate-300"><b>${Number(motor.coverage_hours||0).toFixed(2)} h</b> históricas${next?` · próxima meta ${next} h`:' · meta máxima alcanzada'}</div><div class="text-[9px] text-slate-500">${next?`A 24 h/día: ${st.eta_days_at_24h_day} días teóricos`:'Sin ETA adicional'} · mínimo ${Number(d.minimum_evaluations_per_horizon||30)} evaluaciones/horizonte · mínimo 10 por régimen · promoción exige ${Number(d?.rules?.promotion_stable_passes||2)} validaciones estables.</div>${symbolLine}${horizons}${regimeInfo}${shadowInfo}${hourlyShadow}${gateInfo}</div>`);
         }
-        content.innerHTML='';
+        content.innerHTML=cards.join('');
         const maturity=document.getElementById('quant-adaptive-maturity');
+        const research=['2h','4h','5h','6h','8h','9h','10h','12h','18h'];
         const production=['1h','3h','7h','24h'];
-        const hourlyLabels=Array.from({length:24},(_,i)=>`${i+1}h`);
-        const escHtml=(value)=>String(value??'').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-        const safePct=(value,digits=2)=>Number.isFinite(Number(value))?`${Number(value).toFixed(digits)}%`:'—';
-        const safeNum=(value,digits=2)=>Number.isFinite(Number(value))?Number(value).toFixed(digits):'—';
-        const buildMotorBlock=(motor)=>{
+        const motorLab=(motor)=>{
           const hs=motor?.hourly_shadow?.horizons||{};
-          const available=new Set(Object.keys(hs));
-          const orderedHourly=hourlyLabels.filter(h=>available.has(h)).concat(
-            Object.keys(hs).filter(h=>/^\d+h$/i.test(h)&&!hourlyLabels.includes(h)).sort((a,b)=>Number(a)-Number(b))
-          );
-          const allHourly=orderedHourly.length?orderedHourly:hourlyLabels;
-          const allEvidence=allHourly.filter(h=>Number(hs[h]?.evaluated||0)>=Number(d.minimum_evaluations_per_horizon||30)).length;
-          const allValid=allHourly.filter(h=>(hs[h]?.shadow_candidate?.rolling_oos?.status||'')==='VALIDACION_ROLLING_OK').length;
-          const milestone=motor?.milestone_300h||{};
-          const milestoneText=motor.motor==='SPOT'
-            ? `${milestone.assets_reached||0}/${milestone.assets_total||9} activos ≥ 300 h`
-            : `${Number(milestone.coverage_hours||0).toFixed(2)} h / 300 h`;
-
-          const prodRows=production.map(h=>{
-            const v=motor?.horizons?.[h]||{};
-            const c=v.shadow_candidate||{};
-            const r=c.rolling_oos||{};
-            const ev=Number(v.evaluated||0);
-            const dir=safePct(v.direction_accuracy_pct,1);
-            const bias=Number.isFinite(Number(v.bias_pct))?`${Number(v.bias_pct)>=0?'+':''}${Number(v.bias_pct).toFixed(3)}%`:'—';
-            const roll=String(r.status||'ACUMULANDO_EVIDENCIA');
-            const cls=roll==='VALIDACION_ROLLING_OK'?'text-emerald-300':'text-slate-500';
-            return `<div class="rounded-xl bg-slate-900/60 border border-slate-800 px-3 py-2.5"><div class="flex items-center justify-between gap-2"><span class="font-black text-slate-100">${h.toUpperCase()}</span><span class="text-[8px] font-black uppercase text-emerald-300">PRODUCCIÓN</span></div><div class="mt-1 text-[9px] text-slate-400">${ev} eval. · ${dir} dir. · sesgo ${bias}</div><div class="mt-0.5 text-[8px] ${cls}">${escHtml(roll)}</div></div>`;
-          }).join('');
-
-          const hourlyRows=allHourly.map(h=>{
-            const v=hs[h]||{};
-            const c=v.shadow_candidate||{};
-            const r=c.rolling_oos||{};
-            const ev=Number(v.evaluated||0);
-            const roll=String(r.status||'EVIDENCIA_INSUFICIENTE');
+          const rows=research.map(h=>{
+            const v=hs[h]||{}; const c=v.shadow_candidate||{}; const r=c.rolling_oos||{};
+            const ev=Number(v.evaluated||0); const roll=r.status||'EVIDENCIA_INSUFICIENTE';
             const imp=Number.isFinite(Number(r.avg_improvement_pct))?`${Number(r.avg_improvement_pct).toFixed(2)}%`:'—';
             const minImp=Number.isFinite(Number(r.min_improvement_pct))?`${Number(r.min_improvement_pct).toFixed(2)}%`:'—';
             const folds=`${Number(r.folds_validos||0)}/${Number(r.folds_totales||0)}`;
-            const isProd=production.includes(h);
-            const role=isProd?'PRODUCCIÓN':'SOMBRA';
-            const roleCls=isProd?'text-emerald-300':'text-purple-300';
             const cls=roll==='VALIDACION_ROLLING_OK'?'text-emerald-300':'text-slate-500';
-            const evidence=ev>=Number(d.minimum_evaluations_per_horizon||30);
-            return `<div class="rounded-xl bg-slate-950/70 border ${isProd?'border-emerald-500/15':'border-slate-800'} px-3 py-2.5"><div class="flex items-center justify-between gap-2"><span class="font-black text-slate-200 text-[13px]">${h.toUpperCase()}</span><span class="text-[8px] uppercase font-black ${roleCls}">${role}</span></div><div class="mt-1 text-[8px] ${evidence?'text-slate-300':'text-slate-600'}">${ev} eval. · OOS ${imp} · mín ${minImp} · folds ${folds}</div><div class="mt-0.5 text-[8px] ${cls}">${escHtml(roll)}</div></div>`;
+            return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/50 border border-slate-800 px-2 py-1.5"><span class="font-black text-slate-300">${h.toUpperCase()}</span><span class="${cls} text-right">${ev} eval. · OOS ${imp} · mín ${minImp} · folds ${folds}</span></div>`;
           }).join('');
-
-          const symbolLine=(motor.motor==='SPOT'&&motor.by_symbol&&typeof motor.by_symbol==='object')
-            ? `<div class="mt-3 rounded-xl bg-slate-900/50 border border-slate-800 p-3"><div class="text-[9px] uppercase font-black tracking-wider text-slate-400">Cobertura por activo Spot</div><div class="grid grid-cols-2 md:grid-cols-3 gap-1.5 mt-2">${Object.entries(motor.by_symbol).map(([sym,v])=>`<div class="rounded-lg bg-slate-950/60 px-2.5 py-2"><span class="font-bold text-slate-300 text-[9px]">${escHtml(sym.replace('USDT',''))}</span><span class="block text-[8px] text-slate-500 mt-0.5">${safeNum(v?.coverage_hours,2)} h · ${Number(v?.snapshots||0)} snapshots</span></div>`).join('')}</div></div>`
-            : '';
-
-          return `<section class="rounded-2xl bg-slate-950/70 border ${motor.motor==='P2P'?'border-cyan-500/20':'border-indigo-500/20'} p-3.5 md:p-4 mt-3 shadow-lg"><div class="flex items-start justify-between gap-3"><div><div class="text-[17px] md:text-lg font-black text-white">Motor ${escHtml(motor.motor)}</div><div class="text-[9px] uppercase tracking-wider text-slate-500 mt-1">Bloque independiente · evolución y validación horaria</div></div><span class="text-[8px] font-black uppercase text-purple-200 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-full">SOMBRA / PRODUCCIÓN</span></div><div class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-[9px]"><div class="rounded-xl bg-slate-900/60 px-2.5 py-2.5"><span class="text-slate-600">Cobertura</span><strong class="block text-slate-200 mt-1">${safeNum(motor.coverage_hours,2)} h</strong></div><div class="rounded-xl bg-slate-900/60 px-2.5 py-2.5"><span class="text-slate-600">Etapa</span><strong class="block text-purple-200 mt-1">${escHtml(motor?.stage?.stage||'—')}</strong></div><div class="rounded-xl bg-slate-900/60 px-2.5 py-2.5"><span class="text-slate-600">Hito 300 h</span><strong class="block text-emerald-300 mt-1">${escHtml(milestoneText)}</strong></div><div class="rounded-xl bg-slate-900/60 px-2.5 py-2.5"><span class="text-slate-600">Trayectoria</span><strong class="block text-cyan-300 mt-1">${allHourly.length}/24 horas</strong></div></div><div class="mt-3 text-[9px] text-slate-500">${motor?.stage?.next_target_hours?`Próxima meta ${motor.stage.next_target_hours} h · `:''}mínimo ${Number(d.minimum_evaluations_per_horizon||30)} evaluaciones por horizonte · mínimo 10 por régimen · promoción exige ${Number(d?.rules?.promotion_stable_passes||2)} validaciones estables.</div>${symbolLine}<div class="mt-4"><div class="text-[10px] font-black uppercase tracking-wider text-slate-300">Horizontes productivos</div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">${prodRows}</div></div><div class="mt-4 rounded-2xl border border-purple-500/15 bg-purple-500/5 p-3"><div class="text-[10px] font-black uppercase tracking-wider text-purple-200">Seguimiento horario completo · 1H → 24H</div><div class="text-[8px] text-slate-500 mt-1">Cada hora se evalúa de forma independiente. Las horas fuera de 1H · 3H · 7H · 24H permanecen en sombra hasta reunir evidencia suficiente.</div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-1.5 mt-3">${hourlyRows || '<div class="text-slate-600 text-[8px]">Sin datos horarios.</div>'}</div><div class="grid grid-cols-2 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/50 px-2.5 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-200 mt-1">${allEvidence}/24</strong></div><div class="rounded-lg bg-slate-900/50 px-2.5 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${allValid?'text-emerald-300':'text-slate-400'} mt-1">${allValid}/24</strong></div></div></div><div class="mt-3 text-[8px] text-slate-600">La validación walk-forward es informativa y no cambia producción por sí sola. Los cuatro horizontes productivos permanecen bloqueados a cambios automáticos.</div></section>`;
+          const valid=research.filter(h=>(hs[h]?.shadow_candidate?.rolling_oos?.status||'')==='VALIDACION_ROLLING_OK').length;
+          const evidence=research.filter(h=>Number(hs[h]?.evaluated||0)>=Number(d.minimum_evaluations_per_horizon||30)).length;
+          const milestone=motor.milestone_300h||{};
+          const qStatuses=research.map(h=>hs[h]?.shadow_candidate?.rolling_oos?.data_quality?.status||'').filter(Boolean);
+          const qWarn=qStatuses.filter(x=>x!=='OK').length;
+          const milestoneText=motor.motor==='SPOT'?`${milestone.assets_reached||0}/${milestone.assets_total||9} activos ≥ 300 h`:`${Number(milestone.coverage_hours||0).toFixed(2)} h / 300 h`;
+          return `<div class="rounded-2xl bg-slate-950/60 border border-indigo-500/15 p-3 md:p-4 mt-3"><div class="flex items-center justify-between gap-2"><div><div class="font-black text-slate-100">Laboratorio de maduración · ${motor.motor}</div><div class="text-[9px] text-slate-500 mt-1">Walk-forward OOS adicional para nuevos horizontes. No modifica producción.</div></div><span class="text-[8px] uppercase font-black text-indigo-200 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-full">SOMBRA</span></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Producción</span><strong class="block text-emerald-300">${production.map(x=>x.toUpperCase()).join(' · ')}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Investigación</span><strong class="block text-purple-200">${research.length} horizontes</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-300">${evidence}/${research.length}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${valid?'text-emerald-300':'text-slate-400'}">${valid}/${research.length}</strong></div></div><div class="grid grid-cols-2 gap-2 mt-2 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Hito 300 h</span><strong class="block ${milestone.status==='HITO_ALCANZADO'?'text-emerald-300':'text-amber-200'}">${milestoneText}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Calidad temporal</span><strong class="block ${qWarn?'text-amber-200':'text-emerald-300'}">${qWarn?`${qWarn} en observación`:'OK / sin alertas'}</strong></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-3">${rows}</div><div class="text-[8px] text-slate-600 mt-2">La validación walk-forward requiere evidencia consecutiva; las alertas de calidad son informativas y no cambian por sí solas el estado del candidato. Los cuatro horizontes productivos permanecen bloqueados a cambios automáticos.</div></div>`;
         };
-        const motorBlocks=[d?.p2p,d?.spot].filter(Boolean).map(buildMotorBlock).join('');
-        if(maturity) maturity.innerHTML='';
-        content.innerHTML=motorBlocks;
+        if(maturity) maturity.innerHTML=[d.p2p,d.spot].map(motorLab).join('');
         const spotMilestone=d?.spot?.milestone_300h||d?.milestones?.spot_300h||{};
         const auditBadge=document.getElementById('admin-spot-audit-badge');
         const auditCoverage=document.getElementById('admin-spot-audit-coverage');
@@ -2434,8 +2396,7 @@
       }catch(e){
         console.error('Venbot evolución adaptativa:', e);
         status.textContent='No se pudo cargar la evolución adaptativa.';
-        const detail=String(e?.message||'error temporal').slice(0,180);
-        content.innerHTML=`<div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-[10px] text-amber-200">Lectura temporalmente no disponible. Usa <b>Actualizar</b> para reintentar.<div class="mt-1 text-slate-500">Detalle: ${detail}</div></div>`;
+        content.innerHTML='<div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-[10px] text-amber-200">Lectura temporalmente no disponible. Usa <b>Actualizar</b> para reintentar.</div>';
       }
     }
     window.loadQuantAdaptiveStatus=loadQuantAdaptiveStatus;
@@ -2573,10 +2534,7 @@
   // No modifica ninguna fórmula, endpoint productivo ni regla de promoción.
   const ADV_GRAPH_PRODUCTION_HORIZONS=['1h','3h','7h','24h'];
   const ADV_GRAPH_RESEARCH_HORIZONS=['2h','4h','5h','6h','8h','9h','10h','12h','18h'];
-  const ADV_GRAPH_ALL_HOURLY_HORIZONS=Array.from({length:24},(_,i)=>`${i+1}h`);
-  // Todos los 24 puntos horarios pueden verse en la gráfica. Producción e
-  // investigación siguen diferenciados visualmente y la promoción permanece bloqueada.
-  const ADV_GRAPH_DISPLAY_HORIZONS=ADV_GRAPH_ALL_HOURLY_HORIZONS;
+  const ADV_GRAPH_DISPLAY_HORIZONS=[...ADV_GRAPH_PRODUCTION_HORIZONS,...ADV_GRAPH_RESEARCH_HORIZONS];
   const ADV_GRAPH_PRODUCTION_SET=new Set(ADV_GRAPH_PRODUCTION_HORIZONS);
   const ADV_GRAPH_RESEARCH_SET=new Set(ADV_GRAPH_RESEARCH_HORIZONS);
   function advComputeYBounds(datasets, unit){
@@ -3110,8 +3068,10 @@
       if(p.sell>0) pts.push(`<circle cx="${xFuture(p.x)}" cy="${y(p.sell)}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"><title>${prod?'Núcleo productivo':'Horizonte de resolución'} · +${Number(p.hours)}H · Venta ${F(p.sell)} Bs · ${vet(p.x)} VET</title></circle>`);
       return pts.join('');
     }).join('');
-    const sellLabels=sellPts.map(p=>marker(p,'#f2c65b','sell')).join('');
-    const buyLabels=buyPts.map(p=>marker(p,'#5ddcff','buy')).join('');
+    const sellLabelSource=primarySellPts.length?sellProj.slice(1):sellPts;
+    const buyLabelSource=primaryBuyPts.length?buyProj.slice(1):buyPts;
+    const sellLabels=sellLabelSource.map(p=>marker(p,'#f2c65b','sell')).join('');
+    const buyLabels=buyLabelSource.map(p=>marker(p,'#5ddcff','buy')).join('');
 
     // v31.55: tracking visual. The frozen T0 rail remains untouched; we only compare it with the live price at the current time.
     const interpRail=(pts,ts)=>{
@@ -3474,7 +3434,8 @@
     const histView=hist.filter(p=>p.x>=histStart&&p.x<=nowTs);
     const post=hist.filter(p=>p.x>=a&&p.x<=nowTs);
     if(live>0 && (!post.length||Math.abs(post[post.length-1].x-nowTs)>60000))post.push({x:nowTs,y:live});
-    const activePath=[{x:a,y:t0Price},...active].filter(p=>p.y>0);
+    const sameTrajectory=active.length===snapshotHourly.length && active.length>0 && active.every((p,i)=>{const q=snapshotHourly[i];return q&&Math.abs(Number(p.x)-Number(q.x))<1000&&Math.abs(Number(p.y)-Number(q.y))<1e-9;});
+    const activePath=sameTrajectory?[]:[{x:a,y:t0Price},...active].filter(p=>p.y>0);
     const activeLow=active.map(p=>({x:p.x,y:p.low})).filter(p=>p.y>0);
     const activeHigh=active.map(p=>({x:p.x,y:p.high})).filter(p=>p.y>0);
     const snapPath=[{x:a,y:t0Price},...snapshotHourly].filter(p=>p.y>0);
@@ -3611,9 +3572,10 @@
     const total=isSpot?24:4;
     if(!snapshot){ box.innerHTML='<div class="text-[9px] text-slate-600">Aún no existe un snapshot registrado para comparar.</div>'; return; }
     const snapTime=snapshot.created_at?new Date(snapshot.created_at):null;
+    const snapTimeText=snapTime?new Intl.DateTimeFormat('es-VE',{timeZone:'America/Caracas',dateStyle:'short',timeStyle:'medium'}).format(snapTime):'n/d';
     const status=String(snapshot.status||'pendiente');
     const count=Number(snapshot.evaluated_count||0);
-    box.innerHTML=`<div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-[9px] text-slate-500">Snapshot #${advEsc(snapshot.id)} · T0 ${snapTime?advEsc(snapTime.toLocaleString('es-VE')):'n/d'} · ${advEsc(status)}</div><span class="adv-snapshot-badge">${count}/${total} evaluadas</span></div><div class="overflow-x-auto"><table class="w-full min-w-[560px] text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción T0</th><th class="py-2 pr-3">Resultado real</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{
+    box.innerHTML=`<div class="mb-2 flex flex-wrap items-center justify-between gap-2"><div class="text-[9px] text-slate-500">Snapshot #${advEsc(snapshot.id)} · T0 ${advEsc(snapTimeText)} · ${advEsc(status)}</div><span class="adv-snapshot-badge">${count}/${total} evaluadas</span></div><div class="overflow-x-auto"><table class="w-full min-w-[560px] text-left text-[9px]"><thead><tr class="text-slate-600 border-b border-slate-800"><th class="py-2 pr-3">Horizonte</th><th class="py-2 pr-3">Predicción T0</th><th class="py-2 pr-3">Resultado real</th><th class="py-2 pr-3">Error</th><th class="py-2">Dirección</th></tr></thead><tbody>${labels.map(h=>{
       const q=snapshot.horizons?.[h]||{};
       const predicted=advNum(q.predicted);
       const actualNum=advNum(q.actual);
@@ -3634,9 +3596,8 @@
     const coverage=Number(motor.coverage_hours||0); const hvals=motor.horizons||{};
     box.innerHTML=`<div class="adv-learning-kpi"><span>Motor</span><strong>${kind==='spot'?'SPOT':'P2P'}</strong></div><div class="adv-learning-kpi"><span>Cobertura</span><strong>${coverage.toFixed(2)} h</strong></div><div class="adv-learning-kpi"><span>Etapa</span><strong>${advEsc(stage.stage||'ACUMULANDO')}</strong></div><div class="adv-learning-kpi"><span>Modo</span><strong>EN SOMBRA</strong></div>`;
     const covGoal=Number(motor.stage?.next_target_hours||700); const covPct=Math.max(0,Math.min(100,(coverage/covGoal)*100)); const covMeta=document.getElementById('adv-learning-coverage-meta'); const covFill=document.getElementById('adv-learning-coverage-fill'); if(covMeta) covMeta.textContent=`${coverage.toFixed(2)} / ${covGoal.toFixed(0)} h`; if(covFill) covFill.style.width=`${covPct.toFixed(1)}%`;
-    const hasHourly=!!motor?.hourly_shadow?.horizons;
-    const displayHorizons=hasHourly ? Object.keys(motor.hourly_shadow.horizons).filter(h=>/^\d+h$/i.test(h)).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))) : ['1h','3h','7h','24h'];
-    const displayData=hasHourly ? motor.hourly_shadow.horizons : hvals;
+    const displayHorizons=kind==='spot'&&motor?.hourly_shadow?.horizons ? Object.keys(motor.hourly_shadow.horizons).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))) : ['1h','3h','7h','24h'];
+    const displayData=kind==='spot'&&motor?.hourly_shadow?.horizons ? motor.hourly_shadow.horizons : hvals;
     hzbox.innerHTML=displayHorizons.map(h=>{const v=displayData[h]||{};const acc=Number.isFinite(Number(v.direction_accuracy_pct))?`${Number(v.direction_accuracy_pct).toFixed(1)}% dir.`:'n/d';const mae=Number.isFinite(Number(v.mae_pct))?`${Number(v.mae_pct).toFixed(3)}% MAE`:'n/d';const cand=v.shadow_candidate?.status||'ACUMULANDO';return `<div class="adv-learning-kpi"><span>${h.toUpperCase()}</span><strong>${Number(v.evaluated||0)} eval.</strong><small class="text-slate-500">${acc} · ${mae}</small><small class="text-purple-300">${advEsc(cand)}</small></div>`;}).join('');
     if(badge) badge.textContent=motor.stage?.stage||'lectura';
     if(note) note.textContent='La capa adaptativa observa errores y sesgos, separa entrenamiento de OOS y mantiene los candidatos en sombra. Una medición no modifica el motor productivo.';
@@ -3648,17 +3609,9 @@
     }catch(e){const n=document.getElementById('adv-learning-note');if(n)n.textContent=e.message||'Aprendizaje adaptativo temporalmente no disponible.';}
   }
   function advResetDetails(){ advSetText('adv-chart-mode-label','Modelo cuantitativo'); ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const sh=document.getElementById('adv-snapshot-history'); if(sh) sh.innerHTML=''; const ms=document.getElementById('adv-memory-summary'); if(ms) ms.innerHTML=''; const sp=document.getElementById('adv-spot-context'); if(sp) sp.innerHTML=''; const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden'); const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot'; const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML=''; const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML=''; const cm=document.getElementById('adv-learning-coverage-meta'); if(cm) cm.textContent='0 / 700 h'; const cf=document.getElementById('adv-learning-coverage-fill'); if(cf) cf.style.width='0%'; }
-  function advProjectionRowsP2P(analysis, hourlyPoints=null){
-    const hourly = hourlyPoints && typeof hourlyPoints==='object' ? hourlyPoints : (analysis?.proyecciones_horarias_24h||{});
-    const keys=Object.keys(hourly||{}).filter(h=>/^\d+h$/i.test(h));
-    if(keys.length){
-      return keys.sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))).map(h=>{
-        const q=hourly[h]||{};
-        return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};
-      }).filter(r=>Number.isFinite(Number(r.central)));
-    }
+  function advProjectionRowsP2P(analysis){
     const src=analysis?.proyecciones_horizontes||{};
-    return Object.keys(src).filter(h=>/^\d+h$/i.test(h)).sort((a,b)=>Number(a.replace('h',''))-Number(b.replace('h',''))).map(h=>{const q=src[h]||{}; return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};}).filter(r=>Number.isFinite(Number(r.central)));
+    return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};});
   }
   function advProjectionRowsSpot(d, hourlySnapshot=null){
     if(hourlySnapshot?.horizons){
@@ -3686,9 +3639,9 @@
   async function loadAdvancedP2P(){
     const lockBefore=p2pReadLock(); const lockQuery=lockBefore?.snapshotId?`&snapshot_id=${encodeURIComponent(lockBefore.snapshotId)}`:''; const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=1200&t=${Date.now()}${lockQuery}`); const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden');
     advPopulateSnapshotSelector(d); const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
+    const liveProj=advProjectionRowsP2P(a);
     const serverHourly=d.hourly_projection||null;
     const serverHourlyPoints=serverHourly?.points||a.proyecciones_horarias_24h||{};
-    const liveProj=advProjectionRowsP2P(a,serverHourlyPoints);
     let lock=p2pReadLock();
     const periodConfig = advancedPeriod==='24h' ? {rows:d.history||[], label:'24H'} : {rows:d.history||[], label:advancedPeriod.toUpperCase()};
     const hist=d.history?.map(r=>({x:new Date(r.timestamp).getTime(),buy:Number(r.compra),sell:Number(r.venta),mid:(Number(r.compra)+Number(r.venta))/2})).filter(p=>Number.isFinite(p.x)&&p.buy>0&&p.sell>0) || [];
@@ -3728,7 +3681,7 @@
     const current=liveCompra>0&&liveVenta>0?((liveCompra+liveVenta)/2):(hist.length?hist[hist.length-1].mid:NaN);
     const hourlyAnchor=Number.isFinite(Date.parse(lock?.hourly_created_at||'') )?Date.parse(lock.hourly_created_at):projectionBase;
     const hourlyChartPoints=lock?.hourly_projection||serverHourlyPoints||{};
-    const graphHorizons=Array.from({length:24},(_,i)=>`${i+1}h`);
+    const graphHorizons=['1h','3h','7h','24h'];
     const graphH={};
     for(const h of graphHorizons){
       const q=hourlyChartPoints[h];
@@ -3743,7 +3696,7 @@
     advSetText('adv-m-range',selected?`${advMoney(selected.low)}–${advMoney(selected.high)}`:'n/d'); advSetText('adv-m-confidence',selected&&Number.isFinite(Number(selected.confidence))?advMoney(selected.confidence,0):'n/d');
     advSetText('adv-m-r2',Number.isFinite(Number(selected?.regression_r2))?advMoney(selected.regression_r2,3):Number.isFinite(Number(a.metricas?.r2))?advMoney(a.metricas.r2,3):'n/d');
     const totalEval=['1h','3h','7h','24h'].reduce((s,hz)=>s+Number((perf?.horizons?.[hz]?.evaluated??0)),0); advSetText('adv-m-evaluated',Number.isFinite(totalEval)?String(totalEval):'n/d');
-    advSetText('adv-chart-mode-label','P2P · proyección horaria 1H → 24H · T0 FIJO · sombra'); advSetChartLegend('p2p');
+    advSetText('adv-chart-mode-label','P2P · corredor horario 1H → 24H · T0 FIJO'); advSetChartLegend('p2p');
     advRenderHorizonCards(proj,'Bs',true); advRenderTimeline(proj,'Bs',true); advRenderSnapshotHistory(d.snapshots,snapshot); advRenderMemorySummary(d.snapshots,snapshot); advRenderChart(hist,forecast,'Bs',graphSnapshot,{referenceTime:projectionBase,hourlyAnchor,currentPrice:current,currentBuy:liveCompra,currentSell:liveVenta,dualP2P:true,snapshotHistory:d.snapshots,trend:String(lock?.trend||a.tendencia||''),support:Number(lock?.support??(a.proyeccion_7h||{}).soporte_7h??m.soporte??a.soporte_7h),resistance:Number(lock?.resistance??(a.proyeccion_7h||{}).resistencia_7h??m.resistencia??a.resistencia_7h),frozenProjection:proj,hourlyProjection:lock?.hourly_projection||serverHourlyPoints});
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
@@ -3770,7 +3723,7 @@
     advSetText('adv-m-current',advMoney(o.price,4)); advSetText('adv-m-current-unit','USDT'); advSetText('adv-m-projection',advMoney(selected?.y,4)); advSetText('adv-m-projection-h','24H'); advSetText('adv-m-change',advPct(selected?.change)); advSetText('adv-m-range',selected?`${advMoney(selected.low,4)}–${advMoney(selected.high,4)}`:'n/d'); advSetText('adv-m-confidence',Number.isFinite(Number(a.confidence))?advMoney(a.confidence,0):'n/d'); advSetText('adv-m-r2',Number.isFinite(Number(a.regression_r2))?advMoney(a.regression_r2,3):'n/d');
     const totalEval=Object.values(snapshot?.horizons||{}).filter(q=>q?.evaluated_at).length; advSetText('adv-m-evaluated',String(totalEval||0));
     advSetText('adv-chart-mode-label',`${advancedSpotSymbol} · proyección horaria 1H → 24H · sombra`); advSetChartLegend('spot');
-    advRenderHorizonCards(proj,'USDT'); advRenderTimeline(proj,'USDT',false); advRenderSnapshotHistory(d.hourly_shadow?.snapshots||[],snapshot); advRenderMemorySummary(d.hourly_shadow?.snapshots||[],snapshot);
+    const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Predicciones registradas</span><strong class="block mt-1">${Number.isFinite(Number(perf.tracked))?Number(perf.tracked).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">n/d h</strong></div>`;} advRenderHorizonCards(proj,'USDT'); advRenderTimeline(proj,'USDT',false); advRenderSnapshotHistory(d.hourly_shadow?.snapshots||[],snapshot); advRenderMemorySummary(d.hourly_shadow?.snapshots||[],snapshot);
     advRenderChart(hist,forecast,'USDT',snapshot,{spotModern:true,referenceTime:anchor,hourlyAnchor:anchor,nowTs:Date.now(),currentPrice:Number(o.price),support:Number(a.support),resistance:Number(a.resistance),snapshotOriginPrice:Number(snapshot?.origin_price||o.price),symbol:advancedSpotSymbol});
     const sctx=document.getElementById('adv-spot-context'),sctxCard=document.getElementById('adv-spot-context-card'); if(sctx&&sctxCard){sctxCard.classList.remove('hidden');const vol=Number(o.quote_volume_24h);const volText=Number.isFinite(vol)&&vol>0?(vol>=1e9?(vol/1e9).toFixed(2)+' B':vol>=1e6?(vol/1e6).toFixed(2)+' M':vol>=1e3?(vol/1e3).toFixed(2)+' K':vol.toFixed(0)):'n/d';const mom=Number(a.momentum_score),v1=Number(a.volatility_1h_pct),ts=Number(a.trend_score);sctx.innerHTML=`<div class="adv-spot-context-card"><span class="k">Régimen</span><strong class="v">${advDirectionText(a.trend)}</strong><small class="m">score ${Number.isFinite(ts)?ts.toFixed(3):'n/d'}</small></div><div class="adv-spot-context-card"><span class="k">Momentum</span><strong class="v">${Number.isFinite(mom)?(mom>=0?'+':'')+mom.toFixed(3)+'%':'n/d'}</strong><small class="m">multiventana</small></div><div class="adv-spot-context-card"><span class="k">Volatilidad 1H</span><strong class="v">${Number.isFinite(v1)?v1.toFixed(3)+'%':'n/d'}</strong><small class="m">histórica</small></div><div class="adv-spot-context-card"><span class="k">Volumen 24H</span><strong class="v">${volText}</strong><small class="m">quote volume real</small></div><div class="adv-spot-context-card"><span class="k">Variación 24H</span><strong class="v">${advPct(o.change_24h_pct)}</strong><small class="m">precio observado</small></div><div class="adv-spot-context-card"><span class="k">R²</span><strong class="v">${Number.isFinite(Number(a.regression_r2))?Number(a.regression_r2).toFixed(3):'n/d'}</strong><small class="m">ajuste temporal</small></div>`;}
     advRenderSnapshotTrace(snapshot,'USDT'); advLoadLearning('spot');
@@ -3973,5 +3926,4 @@ window.venbotOpenAdvancedDirect=function(){
 </body>
 </html>
 
-<!-- VENBOT v31.73.9: panel adaptativo robusto ante respuestas parciales del endpoint; sin cambios de motor. -->
 <!-- VENBOT: interfaz aprobada conectada al motor original; no se altera la lógica funcional. -->
