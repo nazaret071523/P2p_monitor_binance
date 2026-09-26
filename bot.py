@@ -9158,6 +9158,156 @@ def _require_developer_session(request: Request):
     return user
 
 
+
+def _predictive_quality_audit_production_p2p(banco="GENERAL", lookback_days=45):
+    """Métricas descriptivas de calidad para los 4 horizontes P2P productivos.
+    Solo lectura: no cambia modelos ni promoción.
+    """
+    hs = {
+        "1h": ("error_pct_1h", "direction_correct_1h", "evaluated_1h_at"),
+        "3h": ("error_pct_3h", "direction_correct_3h", "evaluated_3h_at"),
+        "7h": ("error_pct_7h", "direction_correct_7h", "evaluated_7h_at"),
+        "24h": ("error_pct_24h", "direction_correct_24h", "evaluated_24h_at"),
+    }
+    out = {}
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            for label, (err_col, dir_col, ev_col) in hs.items():
+                cur.execute(f"""
+                    SELECT
+                        COUNT(*) FILTER (WHERE {ev_col} IS NOT NULL),
+                        AVG(ABS({err_col})) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL),
+                        percentile_cont(0.50) WITHIN GROUP (ORDER BY ABS({err_col})) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL),
+                        percentile_cont(0.75) WITHIN GROUP (ORDER BY ABS({err_col})) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL),
+                        AVG(({dir_col})::int) FILTER (WHERE {ev_col} IS NOT NULL AND {dir_col} IS NOT NULL),
+                        AVG({err_col}) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL)
+                    FROM venbot_prediction_events
+                    WHERE banco=%s AND created_at >= CURRENT_TIMESTAMP - (%s || ' days')::interval
+                """, (banco, int(lookback_days)))
+                n, mae, med, p75, acc, bias = cur.fetchone()
+                out[label] = {
+                    "evaluated": int(n or 0),
+                    "mae_pct": round(float(mae), 4) if mae is not None else None,
+                    "median_abs_error_pct": round(float(med), 4) if med is not None else None,
+                    "p75_abs_error_pct": round(float(p75), 4) if p75 is not None else None,
+                    "direction_accuracy_pct": round(float(acc) * 100.0, 2) if acc is not None else None,
+                    "bias_pct": round(float(bias), 4) if bias is not None else None,
+                    "evidence_status": "EVIDENCIA_SUFFICIENTE" if int(n or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON else "ACUMULANDO_EVIDENCIA",
+                }
+    return out
+
+
+def _predictive_quality_audit_production_spot(symbol=None, lookback_days=45):
+    hs = {
+        "1h": ("error_pct_1h", "direction_correct_1h", "evaluated_1h_at"),
+        "3h": ("error_pct_3h", "direction_correct_3h", "evaluated_3h_at"),
+        "7h": ("error_pct_7h", "direction_correct_7h", "evaluated_7h_at"),
+        "24h": ("error_pct_24h", "direction_correct_24h", "evaluated_24h_at"),
+    }
+    out = {}
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            for label, (err_col, dir_col, ev_col) in hs.items():
+                where = f"WHERE created_at >= CURRENT_TIMESTAMP - (%s || ' days')::interval"
+                params = [int(lookback_days)]
+                if symbol:
+                    where += " AND symbol=%s"
+                    params.append(symbol.upper())
+                cur.execute(f"""
+                    SELECT
+                        COUNT(*) FILTER (WHERE {ev_col} IS NOT NULL),
+                        AVG(ABS({err_col})) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL),
+                        percentile_cont(0.50) WITHIN GROUP (ORDER BY ABS({err_col})) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL),
+                        percentile_cont(0.75) WITHIN GROUP (ORDER BY ABS({err_col})) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL),
+                        AVG(({dir_col})::int) FILTER (WHERE {ev_col} IS NOT NULL AND {dir_col} IS NOT NULL),
+                        AVG({err_col}) FILTER (WHERE {ev_col} IS NOT NULL AND {err_col} IS NOT NULL)
+                    FROM venbot_spot_prediction_events
+                    {where}
+                """, tuple(params))
+                n, mae, med, p75, acc, bias = cur.fetchone()
+                out[label] = {
+                    "evaluated": int(n or 0),
+                    "mae_pct": round(float(mae), 4) if mae is not None else None,
+                    "median_abs_error_pct": round(float(med), 4) if med is not None else None,
+                    "p75_abs_error_pct": round(float(p75), 4) if p75 is not None else None,
+                    "direction_accuracy_pct": round(float(acc) * 100.0, 2) if acc is not None else None,
+                    "bias_pct": round(float(bias), 4) if bias is not None else None,
+                    "evidence_status": "EVIDENCIA_SUFFICIENTE" if int(n or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON else "ACUMULANDO_EVIDENCIA",
+                }
+    return out
+
+
+def _predictive_quality_audit_hourly(motor, scope):
+    """Última evidencia adaptativa registrada por cada hora 1..24.
+    Lee snapshots ya persistidos; no recalcula el motor y no promueve nada.
+    """
+    horizons=[f"{h}h" for h in range(1,25)]
+    out={h:{"horizon":h,"evaluated":0,"readiness":"SIN_EVIDENCIA","shadow_status":None,"oos_improvement_pct":None,"candidate_bias_factor":None} for h in horizons}
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT horizon,evaluated,readiness,shadow_status,oos_improvement_pct,candidate_bias_factor,generated_at
+                FROM (
+                    SELECT horizon,evaluated,readiness,shadow_status,oos_improvement_pct,candidate_bias_factor,generated_at,
+                           ROW_NUMBER() OVER (PARTITION BY horizon ORDER BY generated_at DESC) AS rn
+                    FROM venbot_quant_adaptive_snapshots
+                    WHERE motor=%s AND scope=%s AND horizon=ANY(%s)
+                ) q
+                WHERE rn=1
+                ORDER BY horizon
+            """, (str(motor), str(scope), horizons))
+            rows=cur.fetchall()
+    for horizon,evaluated,readiness,shadow_status,oos_improvement_pct,candidate_bias_factor,generated_at in rows:
+        h=str(horizon).lower()
+        if h not in out:
+            continue
+        out[h]={
+            "horizon":h,
+            "evaluated":int(evaluated or 0),
+            "readiness":str(readiness or "SIN_EVIDENCIA"),
+            "shadow_status":str(shadow_status) if shadow_status is not None else None,
+            "oos_improvement_pct":round(float(oos_improvement_pct),4) if oos_improvement_pct is not None else None,
+            "candidate_bias_factor":round(float(candidate_bias_factor),6) if candidate_bias_factor is not None else None,
+            "generated_at":generated_at.isoformat() if hasattr(generated_at,"isoformat") else str(generated_at),
+        }
+    return out
+
+
+@app.get("/api/admin/predictive/quality-audit")
+def admin_predictive_quality_audit(
+    request: Request,
+    symbol: Optional[str] = Query(None),
+    lookback_days: int = Query(45, ge=7, le=90),
+):
+    """Panel de auditoría de calidad predictiva. Solo lectura; producción intacta."""
+    _require_developer_session(request)
+    sym = _normalizar_spot_symbol(symbol) if symbol else None
+    if sym and sym not in SPOT_SYMBOLS:
+        raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    if not DATABASE_URL:
+        return {"ok":False,"error":"database_unavailable"}
+    try:
+        p2p_prod=_predictive_quality_audit_production_p2p("GENERAL", lookback_days)
+        spot_prod=_predictive_quality_audit_production_spot(sym, lookback_days)
+        p2p_hourly=_predictive_quality_audit_hourly("P2P","GENERAL")
+        spot_hourly=_predictive_quality_audit_hourly("SPOT",sym or "ALL")
+        return {
+            "ok":True,
+            "generated_at":datetime.now(VET).isoformat(),
+            "lookback_days":int(lookback_days),
+            "production":{"p2p":{"scope":"GENERAL","horizons":p2p_prod},"spot":{"scope":sym or "ALL","horizons":spot_prod}},
+            "hourly_shadow":{"p2p":{"scope":"GENERAL","horizons":p2p_hourly},"spot":{"scope":sym or "ALL","horizons":spot_hourly}},
+            "rules":{
+                "minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
+                "production_promotion":"DISABLED_REVIEW_REQUIRED",
+                "hourly_shadow_hours":24,
+                "note":"Lectura descriptiva para auditoría. No modifica calibración ni promoción."
+            }
+        }
+    except Exception as exc:
+        logger.warning("Predictive quality audit falló: %s",exc)
+        raise HTTPException(status_code=503, detail="predictive_quality_audit_temporarily_unavailable")
+
 @app.get("/api/admin/predictive/p2p")
 def admin_predictive_p2p(
     request: Request,
