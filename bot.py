@@ -5,8 +5,6 @@ import logging
 import time
 import json
 import threading
-import gc
-import resource
 from bisect import bisect_left, bisect_right
 import secrets
 import hashlib
@@ -37,23 +35,14 @@ import certifi
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 import numpy as np
-
-# v31.73.2: XGBoost/Matplotlib are loaded only when a feature actually needs them.
-# This lowers baseline RAM on the Render Free instance (512 MB).
-xgb = None
-XGB_IMPORT_LOCK = threading.Lock()
-def _get_xgb():
-    global xgb
-    if xgb is None:
-        with XGB_IMPORT_LOCK:
-            if xgb is None:
-                import xgboost as _xgb
-                xgb = _xgb
-    return xgb
-
+import xgboost as xgb
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from fastapi import FastAPI, Request, Query, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat, BotCommandScopeChatAdministrators, BotCommandScopeChatMember, BotCommandScopeAllPrivateChats
@@ -105,7 +94,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger("venbot")
-logger.info("Venbot v31.73.5 Quality Gate: evidencia + baseline persistencia + dirección + OOS por horizonte")
 
 
 async def _safe_callback_answer(update: Update, *args, **kwargs):
@@ -176,10 +164,11 @@ TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS = 3600
 # Publicación automática por categoría: botones sin convertir Telegram en un chat de consultas.
 TELEGRAM_AUTO_BUTTON_CACHE_SECONDS = max(30, int(os.getenv("TELEGRAM_AUTO_BUTTON_CACHE_SECONDS", "120")))
 _TELEGRAM_AUTO_SUMMARY_CACHE = {}
+VENBOT_BUILD = "31.73.3-tracking-freshness"
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
-MARKET_MAX_AGE_SECONDS = max(8, int(os.getenv("MARKET_MAX_AGE_SECONDS", "20")))
+MARKET_MAX_AGE_SECONDS = max(30, int(os.getenv("MARKET_MAX_AGE_SECONDS", "90")))
 BCV_REFRESH_SECONDS = max(60, int(os.getenv("BCV_REFRESH_SECONDS", "60")))
 BCV_REQUEST_TIMEOUT = max(3, int(os.getenv("BCV_REQUEST_TIMEOUT", "10")))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -317,13 +306,6 @@ QUANT_ML_BLEND_MAX = max(0.10, min(0.60, float(os.getenv("QUANT_ML_BLEND_MAX", "
 QUANT_ML_REFRESH_SECONDS = max(300, int(os.getenv("QUANT_ML_REFRESH_SECONDS", "1800")))
 QUANT_ML_CACHE = {}
 QUANT_ML_LOCK = threading.Lock()
-# Validación de evidencia: las muestras crudas P2P son muy densas (colector 10s)
-# y no deben confundirse con observaciones temporales independientes. Estas
-# variables afectan únicamente backtests/auditoría; producción permanece igual.
-VALIDATION_SAMPLE_BUCKET_MINUTES = max(1, min(15, int(os.getenv("VALIDATION_SAMPLE_BUCKET_MINUTES", "5"))))
-BACKTEST_MAX_EVALUATIONS = max(24, min(60, int(os.getenv("BACKTEST_MAX_EVALUATIONS", "48"))))
-BACKTEST_SPACING_MINUTES = max(60, min(24 * 60, int(os.getenv("BACKTEST_SPACING_MINUTES", "360"))))
-BACKTEST_HISTORY_HOURS = max(240, min(720, int(os.getenv("BACKTEST_HISTORY_HOURS", "600"))))
 # Seguimiento de predicciones: registra una lectura cada pocos minutos y evalúa
 # sus horizontes contra datos P2P reales posteriores. No modifica el motor Quant.
 PREDICTION_TRACKING_ENABLED = os.getenv("PREDICTION_TRACKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -354,15 +336,6 @@ ADAPTIVE_ROLLING_FOLDS = max(2, min(5, int(os.getenv("ADAPTIVE_ROLLING_FOLDS", "
 ADAPTIVE_ROLLING_MIN_TRAIN = max(12, int(os.getenv("ADAPTIVE_ROLLING_MIN_TRAIN", "15")))
 ADAPTIVE_ROLLING_MIN_OOS = max(5, int(os.getenv("ADAPTIVE_ROLLING_MIN_OOS", "5")))
 ADAPTIVE_ROLLING_MIN_VALID_FOLDS = max(2, int(os.getenv("ADAPTIVE_ROLLING_MIN_VALID_FOLDS", "2")))
-# Quality Gate por horizonte: diagnóstica y conservadora; no modifica producción.
-ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT = max(0.0, float(os.getenv("ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT", str(ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT))))
-ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT = min(99.0, max(50.0, float(os.getenv("ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT", "50.0"))))
-ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT = max(0.05, float(os.getenv("ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT", "0.75")))
-# v31.73.6: calibración de punto + intervalo en sombra. No modifica producción.
-ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT = min(95.0, max(60.0, float(os.getenv("ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT", "80.0"))))
-ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT = min(90.0, max(50.0, float(os.getenv("ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT", "65.0"))))
-ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT = min(99.0, max(ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT, float(os.getenv("ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT", "95.0"))))
-ADAPTIVE_CALIBRATION_QUANTILE = min(0.95, max(0.60, float(os.getenv("ADAPTIVE_CALIBRATION_QUANTILE", "0.80"))))
 _LAST_PREDICTION_TRACKING_TS = 0.0
 _LAST_SPOT_PREDICTION_TRACKING_TS = 0.0
 CONFIGURACION_BANCOS = {}
@@ -387,21 +360,6 @@ ONLINE_SESSIONS = {}
 ONLINE_LOCK = threading.Lock()
 ONLINE_TTL_SECONDS = max(45, int(os.getenv("ONLINE_TTL_SECONDS", "90")))
 
-# v31.73.2: control conservador del recolector cíclico y diagnóstico de memoria.
-# ru_maxrss es la memoria residente máxima observada por el proceso (diagnóstico;
-# no cambia la lógica de negocio). Se registra con baja frecuencia para no llenar logs.
-VENBOT_GC_COLLECT_EVERY_CYCLES = max(6, int(os.getenv("VENBOT_GC_COLLECT_EVERY_CYCLES", "12")))
-VENBOT_MEMORY_LOG_EVERY_CYCLES = max(6, int(os.getenv("VENBOT_MEMORY_LOG_EVERY_CYCLES", "12")))
-_COLLECTOR_CYCLES = 0
-
-def _log_memory_checkpoint(tag: str):
-    try:
-        # Linux: KiB -> MiB. En otros entornos puede variar, pero Render es Linux.
-        peak_mb = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
-        logger.info("[MEMORY] checkpoint=%s peak_rss_mb=%.1f", tag, peak_mb)
-    except Exception:
-        pass
-
 # Cachés cortas para que el monitor y la IA no repitan consultas pesadas a Supabase
 # mientras el usuario está navegando. Los datos siguen siendo reales; solo se
 # reutiliza durante unos segundos la misma lectura.
@@ -421,10 +379,12 @@ _QUANT_CACHE = {}
 _ADAPTIVE_STATUS_CACHE_SECONDS = max(15, int(os.getenv("ADAPTIVE_STATUS_CACHE_SECONDS", "60")))
 _ADAPTIVE_STATUS_CACHE = {}
 _ADAPTIVE_STATUS_LOCK = threading.Lock()
-_ADAPTIVE_HEALTH_VERSION = "31.73.8"
-_ADAPTIVE_HEALTH_CACHE_SECONDS = max(15, int(os.getenv("ADAPTIVE_HEALTH_CACHE_SECONDS", "30")))
-_ADAPTIVE_HEALTH_CACHE = {}
-_ADAPTIVE_HEALTH_LOCK = threading.Lock()
+# Métricas P2P: la agregación completa se cachea brevemente porque /api/estado
+# puede ser consultado varias veces por la interfaz. La caché solo afecta
+# observabilidad, nunca las predicciones ni la evaluación.
+_P2P_PERF_CACHE_SECONDS = max(15, int(os.getenv("P2P_PERF_CACHE_SECONDS", "30")))
+_P2P_PERF_CACHE = {}
+_P2P_PERF_CACHE_LOCK = threading.Lock()
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
@@ -805,13 +765,17 @@ def inicializar_db():
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_due
                     ON venbot_prediction_events(created_at DESC, evaluated_7h_at);
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_1h
-                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_1h_at IS NULL;
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_1h_at IS NULL;
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_3h
-                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_3h_at IS NULL;
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_3h_at IS NULL;
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_7h
-                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_7h_at IS NULL;
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_7h_at IS NULL;
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_pending_24h
-                    ON venbot_prediction_events(banco, created_at DESC) WHERE evaluated_24h_at IS NULL;
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_24h_at IS NULL;
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_p2p_hourly_prediction_events (
@@ -927,12 +891,6 @@ def inicializar_db():
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS oos_improvement_pct DOUBLE PRECISION;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS required_oos_improvement_pct DOUBLE PRECISION;
                     ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS evidence_at TIMESTAMPTZ;
-                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS quality_status TEXT;
-                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS baseline_mae_pct DOUBLE PRECISION;
-                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS persistence_improvement_pct DOUBLE PRECISION;
-                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS direction_lower_bound_pct DOUBLE PRECISION;
-                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS quality_gate JSONB;
-                    ALTER TABLE venbot_quant_adaptive_snapshots ADD COLUMN IF NOT EXISTS calibration_shadow JSONB;
                     CREATE INDEX IF NOT EXISTS idx_quant_adaptive_motor_scope_created
                     ON venbot_quant_adaptive_snapshots(motor, scope, generated_at DESC);
                     CREATE UNIQUE INDEX IF NOT EXISTS uq_quant_adaptive_evidence
@@ -1044,122 +1002,256 @@ def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None):
         return None
 
 
-def evaluar_predicciones_pendientes(limit=100):
-    """Evalúa cada horizonte contra la primera muestra P2P real posterior al objetivo."""
+def evaluar_predicciones_pendientes(limit=120):
+    """Evalúa P2P vencido en lotes, sin cambiar el motor productivo.
+
+    Reduce el patrón anterior de una consulta por evento+horizonte a una
+    consulta por horizonte con LEFT JOIN LATERAL y una actualización batched.
+    """
     if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
-        return {"evaluated": 0}
-    horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
-    evaluated = 0
+        return {"evaluated": 0, "evaluations_total": 0,
+                "evaluated_by_horizon": {"1h": 0, "3h": 0, "7h": 0, "24h": 0},
+                "waiting_for_sample": {"1h": 0, "3h": 0, "7h": 0, "24h": 0}}
+
+    horizons = {
+        "1h": {"hours": 1, "pred_buy": "pred_compra_1h", "pred_sell": "pred_venta_1h",
+               "eval_at": "evaluated_1h_at", "actual": "actual_mid_1h",
+               "error": "error_pct_1h", "direction": "direction_correct_1h"},
+        "3h": {"hours": 3, "pred_buy": "pred_compra_3h", "pred_sell": "pred_venta_3h",
+               "eval_at": "evaluated_3h_at", "actual": "actual_mid_3h",
+               "error": "error_pct_3h", "direction": "direction_correct_3h"},
+        "7h": {"hours": 7, "pred_buy": "pred_compra_7h", "pred_sell": "pred_venta_7h",
+               "eval_at": "evaluated_7h_at", "actual": "actual_mid_7h",
+               "error": "error_pct_7h", "direction": "direction_correct_7h"},
+        "24h": {"hours": 24, "pred_buy": "pred_compra_24h", "pred_sell": "pred_venta_24h",
+               "eval_at": "evaluated_24h_at", "actual": "actual_mid_24h",
+               "error": "error_pct_24h", "direction": "direction_correct_24h"},
+    }
+    evaluated_by = {h: 0 for h in horizons}
+    due_by = {h: 0 for h in horizons}
+    waiting_by = {h: 0 for h in horizons}
+    updated_ids = set()
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id,banco,created_at,actual_mid,
-                           pred_compra_1h,pred_venta_1h,pred_compra_3h,pred_venta_3h,
-                           pred_compra_7h,pred_venta_7h,pred_compra_24h,pred_venta_24h,
-                           evaluated_1h_at,evaluated_3h_at,evaluated_7h_at,evaluated_24h_at
-                    FROM venbot_prediction_events
-                    WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
-                      AND (evaluated_1h_at IS NULL OR evaluated_3h_at IS NULL OR evaluated_7h_at IS NULL OR evaluated_24h_at IS NULL)
-                    ORDER BY created_at ASC LIMIT %s
-                """, (int(limit),))
-                rows = cur.fetchall()
-                for row in rows:
-                    (pid,banco,created_at,origin_mid,
-                     pc1,pv1,pc3,pv3,pc7,pv7,pc24,pv24,
-                     ev1,ev3,ev7,ev24) = row
-                    predictions = {
-                        "1h": ((float(pc1)+float(pv1))/2.0) if pc1 is not None and pv1 is not None else None,
-                        "3h": ((float(pc3)+float(pv3))/2.0) if pc3 is not None and pv3 is not None else None,
-                        "7h": ((float(pc7)+float(pv7))/2.0) if pc7 is not None and pv7 is not None else None,
-                        "24h": ((float(pc24)+float(pv24))/2.0) if pc24 is not None and pv24 is not None else None,
-                    }
-                    evaluated_at = {"1h": ev1, "3h": ev3, "7h": ev7, "24h": ev24}
-                    updates = {}
-                    for label, hours in horizons:
-                        if evaluated_at[label] is not None or predictions[label] is None:
+                for label, spec in horizons.items():
+                    hours = int(spec["hours"])
+                    cur.execute(
+                        f"""
+                        WITH candidates AS (
+                            SELECT id, banco, created_at, actual_mid,
+                                   {spec['pred_buy']} AS pred_buy,
+                                   {spec['pred_sell']} AS pred_sell
+                            FROM venbot_prediction_events
+                            WHERE {spec['eval_at']} IS NULL
+                              AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                              AND CURRENT_TIMESTAMP >= created_at + make_interval(hours => %s)
+                            ORDER BY created_at ASC
+                            LIMIT %s
+                        )
+                        SELECT c.id, c.actual_mid, c.pred_buy, c.pred_sell,
+                               s.compra, s.venta, s.fecha
+                        FROM candidates c
+                        LEFT JOIN LATERAL (
+                            SELECT compra, venta, fecha
+                            FROM muestras_p2p s
+                            WHERE s.banco = c.banco
+                              AND s.fecha >= c.created_at + make_interval(hours => %s)
+                              AND s.fecha <= c.created_at + make_interval(hours => %s)
+                                                       + make_interval(mins => %s)
+                            ORDER BY s.fecha ASC
+                            LIMIT 1
+                        ) s ON TRUE
+                        """,
+                        (hours, int(limit), hours, hours, int(PREDICTION_EVAL_TOLERANCE_MINUTES)),
+                    )
+                    rows = cur.fetchall()
+                    due_by[label] = len(rows)
+                    updates = []
+                    for pid, origin_mid, pred_buy, pred_sell, actual_buy, actual_sell, actual_at in rows:
+                        if actual_at is None or pred_buy is None or pred_sell is None:
+                            if actual_at is None:
+                                waiting_by[label] += 1
                             continue
-                        objetivo = created_at + timedelta(hours=hours)
-                        if datetime.now(pytz.UTC) < objetivo:
+                        try:
+                            pred = (float(pred_buy) + float(pred_sell)) / 2.0
+                            actual_mid = (float(actual_buy) + float(actual_sell)) / 2.0
+                            if actual_mid <= 0:
+                                continue
+                            err = abs(actual_mid - pred) / actual_mid * 100.0
+                            predicted_move = pred - float(origin_mid or 0.0)
+                            actual_move = actual_mid - float(origin_mid or 0.0)
+                            if abs(predicted_move) > 1e-12 and abs(actual_move) > 1e-12:
+                                direction_correct = (predicted_move * actual_move) > 0
+                            elif abs(predicted_move) <= 1e-12 and abs(actual_move) <= 1e-12:
+                                direction_correct = True
+                            else:
+                                direction_correct = False
+                            updates.append((actual_mid, err, actual_at, direction_correct, pid))
+                            evaluated_by[label] += 1
+                            updated_ids.add(pid)
+                        except (TypeError, ValueError, OverflowError):
                             continue
-                        actual = _buscar_muestra_futura(banco, objetivo)
-                        if not actual:
-                            continue
-                        pred = float(predictions[label])
-                        actual_mid = float(actual["mid"])
-                        err = abs(actual_mid - pred) / actual_mid * 100.0 if actual_mid else None
-                        predicted_move = pred - float(origin_mid or 0)
-                        actual_move = actual_mid - float(origin_mid or 0)
-                        direction_correct = None
-                        if abs(predicted_move) > 1e-12 and abs(actual_move) > 1e-12:
-                            direction_correct = (predicted_move * actual_move) > 0
-                        elif abs(predicted_move) <= 1e-12 and abs(actual_move) <= 1e-12:
-                            direction_correct = True
-                        updates[f"actual_mid_{label}"] = actual_mid
-                        updates[f"error_pct_{label}"] = err
-                        updates[f"evaluated_{label}_at"] = actual["fecha"]
-                        updates[f"direction_correct_{label}"] = direction_correct
+
                     if updates:
-                        sets=[]; vals=[]
-                        for key,val in updates.items():
-                            sets.append(f"{key}=%s"); vals.append(val)
-                        vals.append(pid)
-                        cur.execute(f"UPDATE venbot_prediction_events SET {', '.join(sets)} WHERE id=%s", vals)
-                        evaluated += 1
-        return {"evaluated": evaluated}
+                        cur.executemany(
+                            f"""UPDATE venbot_prediction_events
+                                SET {spec['actual']}=%s,
+                                    {spec['error']}=%s,
+                                    {spec['eval_at']}=%s,
+                                    {spec['direction']}=%s
+                                WHERE id=%s""",
+                            updates,
+                        )
+
+        evaluations_total = sum(evaluated_by.values())
+        return {
+            "evaluated": len(updated_ids),
+            "evaluations_total": evaluations_total,
+            "evaluated_by_horizon": evaluated_by,
+            "due_by_horizon": due_by,
+            "waiting_for_sample": waiting_by,
+        }
     except Exception as e:
         logger.warning("Evaluación de predicciones falló: %s", e)
-        return {"evaluated": evaluated, "error": "tracking temporalmente no disponible"}
+        return {
+            "evaluated": len(updated_ids),
+            "evaluations_total": sum(evaluated_by.values()),
+            "evaluated_by_horizon": evaluated_by,
+            "due_by_horizon": due_by,
+            "waiting_for_sample": waiting_by,
+            "error": "tracking temporalmente no disponible",
+        }
 
 
 def obtener_prediction_performance(banco="GENERAL", limit=100):
-    """Resumen auditable por horizonte del tracking P2P real."""
+    """Resumen auditable P2P usando todo el histórico disponible del banco.
+
+    ``limit`` se conserva por compatibilidad de contrato, pero ya no recorta
+    las métricas: el panel debe medir la evidencia acumulada real y separar
+    pendientes de evaluadas.
+    """
     if not DATABASE_URL:
         return {"ok": False, "message": "Sin base de datos"}
     banco = (banco or "GENERAL").upper().strip()
+    now_mono = time.monotonic()
+    with _P2P_PERF_CACHE_LOCK:
+        cached = _P2P_PERF_CACHE.get(banco)
+        if cached and now_mono < float(cached.get("expires", 0.0) or 0.0):
+            result = dict(cached.get("value") or {})
+            result["cache"] = "FRESH"
+            result["requested_limit"] = int(limit)
+            return result
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT error_pct_1h,error_pct_3h,error_pct_7h,error_pct_24h,
-                           direction_correct_1h,direction_correct_3h,direction_correct_7h,direction_correct_24h,
-                           regimen,confidence,created_at
+                    SELECT
+                        COUNT(*) AS tracked_total,
+                        COUNT(*) FILTER (WHERE evaluated_1h_at IS NOT NULL),
+                        COUNT(*) FILTER (WHERE evaluated_3h_at IS NOT NULL),
+                        COUNT(*) FILTER (WHERE evaluated_7h_at IS NOT NULL),
+                        COUNT(*) FILTER (WHERE evaluated_24h_at IS NOT NULL),
+                        AVG(ABS(error_pct_1h)) FILTER (WHERE evaluated_1h_at IS NOT NULL),
+                        AVG(ABS(error_pct_3h)) FILTER (WHERE evaluated_3h_at IS NOT NULL),
+                        AVG(ABS(error_pct_7h)) FILTER (WHERE evaluated_7h_at IS NOT NULL),
+                        AVG(ABS(error_pct_24h)) FILTER (WHERE evaluated_24h_at IS NOT NULL),
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_1h)) FILTER (WHERE evaluated_1h_at IS NOT NULL),
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_3h)) FILTER (WHERE evaluated_3h_at IS NOT NULL),
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_7h)) FILTER (WHERE evaluated_7h_at IS NOT NULL),
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(error_pct_24h)) FILTER (WHERE evaluated_24h_at IS NOT NULL),
+                        100.0 * AVG(CASE WHEN direction_correct_1h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_1h IS NOT NULL),
+                        100.0 * AVG(CASE WHEN direction_correct_3h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_3h IS NOT NULL),
+                        100.0 * AVG(CASE WHEN direction_correct_7h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_7h IS NOT NULL),
+                        100.0 * AVG(CASE WHEN direction_correct_24h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_24h IS NOT NULL),
+                        COUNT(direction_correct_1h), COUNT(direction_correct_3h), COUNT(direction_correct_7h), COUNT(direction_correct_24h),
+                        COUNT(*) FILTER (WHERE evaluated_1h_at IS NULL),
+                        COUNT(*) FILTER (WHERE evaluated_3h_at IS NULL),
+                        COUNT(*) FILTER (WHERE evaluated_7h_at IS NULL),
+                        COUNT(*) FILTER (WHERE evaluated_24h_at IS NULL),
+                        COUNT(*) FILTER (WHERE evaluated_1h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '1 hour'),
+                        COUNT(*) FILTER (WHERE evaluated_3h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '3 hours'),
+                        COUNT(*) FILTER (WHERE evaluated_7h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '7 hours'),
+                        COUNT(*) FILTER (WHERE evaluated_24h_at IS NULL AND CURRENT_TIMESTAMP >= created_at + INTERVAL '24 hours'),
+                        MAX(created_at), MAX(evaluated_1h_at), MAX(evaluated_3h_at), MAX(evaluated_7h_at), MAX(evaluated_24h_at)
                     FROM venbot_prediction_events
-                    WHERE banco=%s ORDER BY created_at DESC LIMIT %s
-                """, (banco,int(limit)))
-                rows=cur.fetchall()
-        def stats(error_idx, direction_idx):
-            vals=[float(r[error_idx]) for r in rows if r[error_idx] is not None]
-            dirs=[bool(r[direction_idx]) for r in rows if r[direction_idx] is not None]
-            return {
-                "evaluated": len(vals),
-                "mean_abs_error_pct": round(float(np.mean(np.abs(vals))),4) if vals else None,
-                "median_abs_error_pct": round(float(np.median(np.abs(vals))),4) if vals else None,
-                "direction_accuracy_pct": round(sum(dirs)/len(dirs)*100,2) if dirs else None,
-                "direction_evaluated": len(dirs),
+                    WHERE banco=%s
+                """, (banco,))
+                row = cur.fetchone()
+
+                cur.execute("""
+                    SELECT regimen,
+                           COUNT(direction_correct_1h) FILTER (WHERE direction_correct_1h IS NOT NULL),
+                           100.0 * AVG(CASE WHEN direction_correct_1h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_1h IS NOT NULL),
+                           COUNT(direction_correct_3h) FILTER (WHERE direction_correct_3h IS NOT NULL),
+                           100.0 * AVG(CASE WHEN direction_correct_3h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_3h IS NOT NULL),
+                           COUNT(direction_correct_7h) FILTER (WHERE direction_correct_7h IS NOT NULL),
+                           100.0 * AVG(CASE WHEN direction_correct_7h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_7h IS NOT NULL),
+                           COUNT(direction_correct_24h) FILTER (WHERE direction_correct_24h IS NOT NULL),
+                           100.0 * AVG(CASE WHEN direction_correct_24h THEN 1.0 ELSE 0.0 END) FILTER (WHERE direction_correct_24h IS NOT NULL)
+                    FROM venbot_prediction_events
+                    WHERE banco=%s
+                    GROUP BY regimen
+                """, (banco,))
+                regime_rows = cur.fetchall()
+
+        if not row:
+            return {"ok": True, "bank": banco, "tracked": 0,
+                    "horizons": {h: {"evaluated": 0, "mean_abs_error_pct": None,
+                                     "median_abs_error_pct": None, "direction_accuracy_pct": None,
+                                     "direction_evaluated": 0, "pending": 0, "overdue_pending": 0}
+                                  for h in ("1h", "3h", "7h", "24h")},
+                    "by_regime": {}, "last_prediction_at": None}
+
+        tracked = int(row[0] or 0)
+        labels = ("1h", "3h", "7h", "24h")
+        evaluated = [int(row[i] or 0) for i in range(1, 5)]
+        means = [round(float(row[i]), 4) if row[i] is not None else None for i in range(5, 9)]
+        medians = [round(float(row[i]), 4) if row[i] is not None else None for i in range(9, 13)]
+        dirs = [round(float(row[i]), 2) if row[i] is not None else None for i in range(13, 17)]
+        dir_eval = [int(row[i] or 0) for i in range(17, 21)]
+        pending = [int(row[i] or 0) for i in range(21, 25)]
+        overdue = [int(row[i] or 0) for i in range(25, 29)]
+        last_eval = [row[i].isoformat() if row[i] else None for i in range(30, 34)]
+
+        horizons_out = {}
+        for i, label in enumerate(labels):
+            horizons_out[label] = {
+                "evaluated": evaluated[i],
+                "mean_abs_error_pct": means[i],
+                "median_abs_error_pct": medians[i],
+                "direction_accuracy_pct": dirs[i],
+                "direction_evaluated": dir_eval[i],
+                "pending": pending[i],
+                "overdue_pending": overdue[i],
+                "last_evaluated_at": last_eval[i],
             }
-        by_reg={}
-        for r in rows:
-            reg=str(r[8] or "SIN_DATOS")
-            for label, idx in (("1h",4),("3h",5),("7h",6),("24h",7)):
-                if r[idx] is not None:
-                    by_reg.setdefault(label,{}).setdefault(reg,[]).append(bool(r[idx]))
-        return {
-            "ok":True,
-            "bank":banco,
-            "tracked":len(rows),
-            "horizons":{
-                "1h":stats(0,4), "3h":stats(1,5), "7h":stats(2,6), "24h":stats(3,7)
-            },
-            "by_regime":{
-                label:{reg:round(sum(vals)/len(vals)*100,2) for reg,vals in regs.items()}
-                for label,regs in by_reg.items()
-            },
-            "last_prediction_at":rows[0][10].isoformat() if rows else None,
+
+        by_reg = {}
+        for rr in regime_rows:
+            reg = str(rr[0] or "SIN_DATOS")
+            vals = [(rr[1], rr[2]), (rr[3], rr[4]), (rr[5], rr[6]), (rr[7], rr[8])]
+            for label, (n, acc) in zip(labels, vals):
+                if n:
+                    by_reg.setdefault(label, {})[reg] = round(float(acc), 2) if acc is not None else None
+
+        result = {
+            "ok": True,
+            "bank": banco,
+            "tracked": tracked,
+            "metrics_scope": "historico_completo",
+            "requested_limit": int(limit),
+            "horizons": horizons_out,
+            "by_regime": by_reg,
+            "last_prediction_at": row[29].isoformat() if row[29] else None,
+            "cache": "REFRESHED",
         }
+        with _P2P_PERF_CACHE_LOCK:
+            _P2P_PERF_CACHE[banco] = {"value": dict(result), "expires": time.monotonic() + _P2P_PERF_CACHE_SECONDS}
+        return result
     except Exception as e:
         logger.warning("Performance tracking falló: %s", e)
-        return {"ok":False,"message":"Performance temporalmente no disponible"}
+        return {"ok": False, "message": "Performance temporalmente no disponible"}
 
 
 def evaluar_senal_operativa(datos, actual_compra, actual_venta):
@@ -3600,109 +3692,12 @@ def _buscar_futuro_series(series, objetivo, tolerance_minutes=20):
     return None
 
 
-def _agrupar_serie_validacion(series, bucket_minutes=VALIDATION_SAMPLE_BUCKET_MINUTES):
-    """Reduce redundancia temporal solo para validación/backtest.
-
-    El colector puede guardar una muestra cada ~10s. Miles de filas cercanas
-    entre sí representan casi el mismo estado de mercado y no equivalen a miles
-    de observaciones independientes. Para auditar el modelo usamos buckets
-    temporales y la mediana por bucket, conservando cobertura y estructura.
-
-    No se usa en el cálculo productivo ni modifica la base de datos.
-    """
-    rows=list(series or [])
-    if not rows or bucket_minutes <= 1:
-        return rows
-    size=int(bucket_minutes) * 60
-    buckets={}
-    order=[]
-    for item in rows:
-        try:
-            dt,mid,compra,venta=item
-            ts=float(dt.timestamp())
-            key=int(ts // size)
-            if key not in buckets:
-                buckets[key]=[dt,[],[],[]]
-                order.append(key)
-            b=buckets[key]
-            b[1].append(float(mid)); b[2].append(float(compra)); b[3].append(float(venta))
-        except Exception:
-            continue
-    out=[]
-    for key in sorted(order):
-        b=buckets.get(key)
-        if not b or not b[1]:
-            continue
-        try:
-            representative_dt=datetime.fromtimestamp(key*size, tz=b[0].tzinfo or VET)
-            out.append((
-                representative_dt,
-                float(np.median(b[1])),
-                float(np.median(b[2])),
-                float(np.median(b[3])),
-            ))
-        except Exception:
-            continue
-    return out
-
-
-def _obtener_serie_validacion_p2p_db(banco, desde, hasta, bucket_minutes=VALIDATION_SAMPLE_BUCKET_MINUTES):
-    """Lee toda la ventana de validación mediante agregación temporal en DB.
-
-    Evita el cuello de botella anterior: LIMIT 50000 sobre muestras crudas podía
-    recortar una historia de cientos de horas cuando el colector guardaba cada
-    ~10 segundos. PostgreSQL calcula una mediana por bucket y devuelve solo la
-    serie representativa para el backtest, manteniendo el número de muestras
-    crudas representadas como auditoría.
-    """
-    if not DATABASE_URL:
-        return [], 0
-    bucket_seconds=max(60, int(bucket_minutes)*60)
-    banco=(banco or "GENERAL").upper()
-    try:
-        with obtener_conexion() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT
-                        to_timestamp(floor(extract(epoch FROM fecha) / %s) * %s) AS bucket,
-                        percentile_cont(0.5) WITHIN GROUP (ORDER BY compra) AS compra_mediana,
-                        percentile_cont(0.5) WITHIN GROUP (ORDER BY venta) AS venta_mediana,
-                        AVG(liquidez_score) AS liquidez_mediana,
-                        COUNT(*) AS raw_count
-                    FROM muestras_p2p
-                    WHERE banco=%s AND fecha >= %s AND fecha <= %s
-                      AND compra > 0 AND venta > 0
-                    GROUP BY bucket
-                    ORDER BY bucket ASC
-                """, (bucket_seconds,bucket_seconds,banco,desde,hasta))
-                rows=cur.fetchall()
-        series=[]; represented=0
-        for bucket,compra,venta,_,raw_count in rows:
-            try:
-                if not bucket or float(compra)<=0 or float(venta)<=0: continue
-                dt=bucket.astimezone(VET) if getattr(bucket,'tzinfo',None) else VET.localize(bucket)
-                series.append((dt,(float(compra)+float(venta))/2.0,float(compra),float(venta)))
-                represented += int(raw_count or 0)
-            except Exception:
-                continue
-        return series, represented
-    except Exception as exc:
-        logger.warning("Agregación SQL de validación no disponible; usando fallback acotado: %s", exc)
-        return [], 0
-
-
-def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=BACKTEST_MAX_EVALUATIONS, spacing_minutes=BACKTEST_SPACING_MINUTES):
-    """Backtest 1H/3H/7H/24H con evidencia temporal representativa.
+def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=24, spacing_minutes=360):
+    """Backtest de precio completo 1H/3H/7H/24H contra muestras P2P reales.
 
     Cada origen solo ve historia anterior o igual al origen. Las cuatro
     predicciones se generan con el mismo helper productivo de escenarios y
     luego se comparan con la primera muestra real dentro de la tolerancia.
-
-    Para evitar que miles de muestras casi consecutivas pesen como si fueran
-    evidencia independiente, la serie se comprime en buckets temporales solo
-    dentro del backtest. Además, las evaluaciones se distribuyen a lo largo de
-    la historia disponible en lugar de concentrarse únicamente en las últimas
-    24 ventanas.
     """
     horizons = (("1h", 1.0), ("3h", 3.0), ("7h", 7.0), ("24h", 24.0))
     try:
@@ -3710,38 +3705,30 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=BACKT
         spacing_minutes = max(60, min(int(spacing_minutes), 24 * 60))
         spacing = timedelta(minutes=spacing_minutes)
         prehistory = timedelta(hours=72)
-        # El hito de madurez sigue siendo 300H, pero la validación debe poder
-        # aprovechar toda la historia reciente que ya existe. La agregación se
-        # hace en PostgreSQL para no truncar cientos de horas por un LIMIT de
-        # filas crudas ni llevar cientos de miles de muestras a RAM.
+        # El indicador de validación usa una meta fija de 300H, pero la
+        # ventana de lectura necesita margen para absorber gaps y no hacer
+        # que la cobertura aparente baje solo porque una muestra quedó fuera
+        # del borde temporal. El backtest sigue limitando su objetivo a 300H.
         query_now = datetime.now(VET)
         validation_target_hours = 300
-        required_for_selection = 72 + ((max_evaluaciones - 1) * spacing_minutes / 60.0) + 24
-        history_window_hours = max(float(BACKTEST_HISTORY_HOURS), float(required_for_selection), 384.0)
-        history_window_hours = min(720.0, history_window_hours)
-        desde_validacion=query_now - timedelta(hours=history_window_hours)
-        raw_series, raw_sample_count = _obtener_serie_validacion_p2p_db(
-            banco_filtro, desde_validacion, query_now, VALIDATION_SAMPLE_BUCKET_MINUTES
+        validation_buffer_hours = 60
+        filas = obtener_estadisticas_db(
+            limit=50000,
+            banco=banco_filtro,
+            desde=query_now - timedelta(hours=validation_target_hours + validation_buffer_hours),
         )
-        # Fallback: si el SQL agregado no está disponible, mantenemos la ruta
-        # anterior en un límite controlado y volvemos a compactar en Python.
-        if not raw_series:
-            filas = obtener_estadisticas_db(limit=50000, banco=banco_filtro, desde=desde_validacion)
-            raw_sample_count = len(filas)
-            for c,v,_,fecha in filas:
-                try:
-                    c,v=float(c),float(v)
-                    if c<=0 or v<=0 or not fecha: continue
-                    dt=fecha.astimezone(VET) if getattr(fecha,'tzinfo',None) else VET.localize(fecha)
-                    raw_series.append((dt,(c+v)/2.0,c,v))
-                except Exception:
+        logger.info("Backtest histórico cargado: banco=%s muestras=%s", banco_filtro, len(filas))
+        series = []
+        for c, v, _, fecha in filas:
+            try:
+                c, v = float(c), float(v)
+                if c <= 0 or v <= 0 or not fecha:
                     continue
-            raw_series.sort(key=lambda x:x[0])
-            series=_agrupar_serie_validacion(raw_series,VALIDATION_SAMPLE_BUCKET_MINUTES)
-        else:
-            series=raw_series
-        effective_sample_count=len(series)
-        logger.info("Backtest evidencia: banco=%s crudas_representadas=%s efectivas=%s ventana_h=%s bucket_min=%s", banco_filtro, raw_sample_count, effective_sample_count, round(history_window_hours,1), VALIDATION_SAMPLE_BUCKET_MINUTES)
+                dt = fecha.astimezone(VET) if getattr(fecha, "tzinfo", None) else VET.localize(fecha)
+                series.append((dt, (c + v) / 2.0, c, v))
+            except Exception:
+                continue
+        series.sort(key=lambda x: x[0])
         times = [x[0] for x in series]
         coverage_hours = ((series[-1][0] - series[0][0]).total_seconds() / 3600.0) if len(series) > 1 else 0.0
         required_span = 72 + 24
@@ -3755,26 +3742,14 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=BACKT
             return {"status":"insufficient_history","evaluations":0,"history_coverage_hours":round(coverage_hours,2),"message":"No hay ventanas completas para los cuatro horizontes."}
 
         eligible_times=[times[i] for i in eligible]
-        # Primero respetamos una separación mínima; después distribuimos las
-        # evaluaciones elegidas a lo largo de toda la historia disponible.
-        spaced_candidates=[]
+        selected=[]
         pos=len(eligible)-1
-        while pos >= 0:
+        while pos >= 0 and len(selected)<max_evaluaciones:
             cursor=eligible[pos]
-            spaced_candidates.append(cursor)
+            selected.append(cursor)
             cutoff=times[cursor]-spacing
             pos=bisect_right(eligible_times, cutoff, 0, pos+1)-1
-        spaced_candidates.reverse()
-        if len(spaced_candidates) <= max_evaluaciones:
-            selected=spaced_candidates
-        else:
-            picks=np.linspace(0, len(spaced_candidates)-1, max_evaluaciones)
-            selected=[]; seen=set()
-            for pidx in picks:
-                idx=spaced_candidates[int(round(float(pidx)))]
-                if idx not in seen:
-                    selected.append(idx); seen.add(idx)
-            selected=sorted(selected, key=lambda i: times[i])
+        selected.reverse()
 
         metrics={h: {"samples":0,"mae":[],"mape":[],"sqe":[],"bias":[],"direction":[],"coverage":[],"rows":[]} for h,_ in horizons}
         evaluated_origins=0
@@ -3837,11 +3812,7 @@ def backtest_quant_multihorizonte(banco_filtro="GENERAL", max_evaluaciones=BACKT
             if any_eval: evaluated_origins+=1
 
         reported_coverage_hours = min(float(coverage_hours), float(validation_target_hours))
-        # Auditoría explícita de cobertura/evaluación: deja claro cuánta historia
-        # se leyó y cuántos orígenes se usaron realmente, evitando confundir
-        # muestras representadas con evidencia independiente.
-        future_window_overlap_by_horizon={label: bool(spacing_minutes < int(hours * 60)) for label, hours in horizons}
-        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(reported_coverage_hours,2),"history_coverage_actual_hours":round(coverage_hours,2),"history_target_hours":validation_target_hours,"history_progress_pct":round(min(100.0, coverage_hours/validation_target_hours*100.0),1),"history_required_hours":72,"history_window_requested_hours":round(history_window_hours,1),"raw_samples_loaded":raw_sample_count,"effective_validation_samples":effective_sample_count,"validation_bucket_minutes":VALIDATION_SAMPLE_BUCKET_MINUTES,"spacing_minutes":spacing_minutes,"spacing_hours":round(spacing_minutes/60.0,2),"selection_method":"spaced_even_across_history","future_windows_overlap":any(future_window_overlap_by_horizon.values()),"future_window_overlap_by_horizon":future_window_overlap_by_horizon,"evaluations":evaluated_origins,"evaluation_capacity":max_evaluaciones,"evaluation_capacity_requested":max_evaluaciones,"evaluation_capacity_effective":max_evaluaciones,"selected_origin_first":times[selected[0]].isoformat() if selected else None,"selected_origin_last":times[selected[-1]].isoformat() if selected else None,"horizons":{}}
+        out={"status":"ok","evaluation_mode":"full_price_multihorizon","bank":banco_filtro,"history_coverage_hours":round(reported_coverage_hours,2),"history_coverage_actual_hours":round(coverage_hours,2),"history_target_hours":validation_target_hours,"history_progress_pct":round(min(100.0, coverage_hours/validation_target_hours*100.0),1),"history_required_hours":72,"spacing_minutes":spacing_minutes,"future_windows_overlap":spacing_minutes < 1440,"evaluations":evaluated_origins,"horizons":{}}
         for label,_ in horizons:
             m=metrics[label]; n=m["samples"]
             out["horizons"][label]={"evaluated":n,"mae_ves":round(float(np.mean(m["mae"])),4) if n else None,"mape_pct":round(float(np.mean(m["mape"])),4) if n else None,"rmse_ves":round(float(np.sqrt(np.mean(m["sqe"]))),4) if n else None,"bias_ves":round(float(np.mean(m["bias"])),4) if n else None,"median_abs_error_ves":round(float(np.median(m["mae"])),4) if n else None,"direction_accuracy_pct":round(sum(m["direction"])/len(m["direction"])*100,2) if m["direction"] else None,"direction_evaluated":len(m["direction"]),"interval_coverage_pct":round(sum(m["coverage"])/len(m["coverage"])*100,2) if m["coverage"] else None,"interval_evaluated":len(m["coverage"]),"recent":m["rows"][-5:]}
@@ -3911,7 +3882,7 @@ def _quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid):
         split=int(len(usable)*.75)
         if split<QUANT_ML_MIN_SAMPLES-30 or len(usable)-split<30: return None
         tr,va=usable[:split],usable[split:]
-        model=_get_xgb().XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
+        model=xgb.XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
         model.fit(np.vstack([r[1] for r in tr]),np.asarray([r[2] for r in tr]),verbose=False)
         ml=np.asarray(model.predict(np.vstack([r[1] for r in va])),dtype=float)
         # Baseline comparable: momentum/regresión de la misma ventana histórica.
@@ -3933,7 +3904,7 @@ def _quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid):
         bacc=float(np.mean(bd[mask]==ad[mask])) if np.any(mask) else 0; macc=float(np.mean(md[maskm]==ad[maskm])) if np.any(maskm) else 0
         improvement=(bmae-mmae)/max(bmae,1e-9)
         accepted=improvement>=.03 and macc>=bacc-.03
-        final=_get_xgb().XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
+        final=xgb.XGBRegressor(n_estimators=90,max_depth=3,learning_rate=.045,subsample=.85,colsample_bytree=.85,objective='reg:squarederror',eval_metric='mae',random_state=42,n_jobs=1,verbosity=0)
         final.fit(np.vstack([r[1] for r in usable]),np.asarray([r[2] for r in usable]),verbose=False)
         xnow=_quant_feature_vector(f,m,c,v,len(m)-1)
         if xnow is None: return None
@@ -3950,14 +3921,7 @@ def _quant_ml_cached(fechas,mids,compras,ventas,horizon_hours,current_mid):
             cached=QUANT_ML_CACHE.get(key)
             if cached and now-cached['ts']<QUANT_ML_REFRESH_SECONDS: return cached['info']
         info=_quant_ml_candidate(fechas,mids,compras,ventas,horizon_hours,current_mid)
-        with QUANT_ML_LOCK:
-            QUANT_ML_CACHE[key]={'ts':now,'info':info}
-            # La caché solo contiene metadatos/resultados compactos, pero el bucket
-            # cambiaba cada 30 min y podía crecer indefinidamente durante días.
-            if len(QUANT_ML_CACHE) > 8:
-                oldest = sorted(QUANT_ML_CACHE.items(), key=lambda kv: float(kv[1].get('ts', 0)))
-                for old_key, _ in oldest[:max(0, len(QUANT_ML_CACHE)-8)]:
-                    QUANT_ML_CACHE.pop(old_key, None)
+        with QUANT_ML_LOCK: QUANT_ML_CACHE[key]={'ts':now,'info':info}
         return info
     except Exception: return None
 
@@ -4601,178 +4565,6 @@ def _coverage_spot():
     return {"median_hours":round(float(np.median(vals)),2) if vals else 0.0,"by_symbol":out}
 
 
-def _wilson_lower_bound_pct(successes, total, z=1.6448536269514722):
-    """Límite inferior Wilson unilateral aproximado al 95% para dirección."""
-    try:
-        n=int(total or 0); k=int(successes or 0)
-        if n <= 0: return None
-        phat=k/n
-        denom=1.0+(z*z/n)
-        center=phat+(z*z/(2.0*n))
-        margin=z*((phat*(1.0-phat)/n + z*z/(4.0*n*n))**0.5)
-        lower=(center-margin)/denom
-        return float(max(0.0,min(1.0,lower))*100.0)
-    except Exception:
-        return None
-
-
-def _fit_shadow_interval_calibration(train, point_factor=None, min_regime_train=ADAPTIVE_SHADOW_MIN_REGIME_TRAIN):
-    """Estima en entrenamiento el ancho de intervalo por cuantiles de error.
-
-    Se usa únicamente para generar un candidato de calibración en sombra.
-    El ancho se aprende sobre errores absolutos porcentuales después de aplicar
-    la corrección de punto del candidato; el bloque OOS nunca participa en el fit.
-    """
-    factor_global = float(point_factor if point_factor is not None else 1.0)
-    residuals=[]
-    by_regime={}
-    for r in train or []:
-        try:
-            pred=float(r.get("pred")); actual=float(r.get("actual"))
-            if pred <= 0 or actual <= 0:
-                continue
-            g=str(r.get("group") or "SIN_CLASIFICAR").upper()
-            factor=factor_global
-            corrected=pred*factor
-            if corrected <= 0:
-                continue
-            err=abs(actual-corrected)/corrected*100.0
-            residuals.append(err)
-            by_regime.setdefault(g,[]).append(err)
-        except Exception:
-            continue
-    if not residuals:
-        return {"status":"CALIBRACION_SIN_EVIDENCIA"}
-
-    def _quantile(vals,q):
-        return float(np.percentile(np.asarray(vals,dtype=float), q*100.0)) if vals else None
-
-    width_global=_quantile(residuals, ADAPTIVE_CALIBRATION_QUANTILE)
-    regime_widths={}
-    for g,vals in by_regime.items():
-        if len(vals) >= int(min_regime_train):
-            q=_quantile(vals, ADAPTIVE_CALIBRATION_QUANTILE)
-            if q is not None:
-                regime_widths[g]={"train_evaluated":len(vals),"half_width_pct":round(float(q),4)}
-    return {
-        "status":"CALIBRACION_LISTA_SOMBRA",
-        "method":f"quantil_abs_error_p{int(round(ADAPTIVE_CALIBRATION_QUANTILE*100))}",
-        "target_coverage_pct":ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT,
-        "half_width_pct":round(float(width_global),4) if width_global is not None else None,
-        "by_regime":regime_widths,
-        "train_evaluated":len(residuals),
-        "production_change":"DISABLED"
-    }
-
-
-def _evaluate_shadow_interval_calibration(oos, point_factor=1.0, interval_fit=None, by_regime_fallback=None):
-    """Evalúa en OOS la cobertura y el ancho del intervalo aprendido en train."""
-    fit=interval_fit if isinstance(interval_fit,dict) else {}
-    global_half=float(fit.get("half_width_pct") or 0.0)
-    by_regime=fit.get("by_regime",{}) if isinstance(fit,dict) else {}
-    widths=[]; covered=0; evaluated=0; abs_errors=[]
-    for r in oos or []:
-        try:
-            pred=float(r.get("pred")); actual=float(r.get("actual"))
-            if pred<=0 or actual<=0:
-                continue
-            g=str(r.get("group") or "SIN_CLASIFICAR").upper()
-            regime_half=float(by_regime.get(g,{}).get("half_width_pct") or global_half)
-            center=pred*float(point_factor)
-            low=center*(1.0-regime_half/100.0)
-            high=center*(1.0+regime_half/100.0)
-            covered += int(low <= actual <= high)
-            evaluated += 1
-            widths.append(2.0*regime_half)
-            abs_errors.append(abs(actual-center)/center*100.0)
-        except Exception:
-            continue
-    if evaluated<=0:
-        return {"status":"CALIBRACION_OOS_SIN_EVIDENCIA","evaluated":0}
-    coverage=100.0*covered/evaluated
-    mean_width=float(np.mean(widths)) if widths else None
-    mean_abs_error=float(np.mean(abs_errors)) if abs_errors else None
-    passes_min=coverage>=ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT
-    not_pathological=coverage<=ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT
-    return {
-        "status":"CALIBRACION_OOS_OK" if passes_min and not_pathological else "CALIBRACION_OOS_OBSERVACION",
-        "evaluated":evaluated,
-        "coverage_pct":round(coverage,2),
-        "covered":covered,
-        "target_coverage_pct":ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT,
-        "min_coverage_pct":ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT,
-        "max_coverage_pct":ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT,
-        "mean_interval_width_pct":round(mean_width,4) if mean_width is not None else None,
-        "mean_abs_error_pct_after_point_correction":round(mean_abs_error,4) if mean_abs_error is not None else None,
-        "production_change":"DISABLED"
-    }
-
-
-def _adaptive_quality_gate(normalized, mae_pct, bias_pct, direction_accuracy_pct, shadow_candidate=None):
-    """Evalúa calidad por horizonte sin tocar la predicción productiva.
-
-    Compara contra persistencia (precio observado en T0), mide evidencia
-    direccional con un límite Wilson y exige OOS rolling estable para marcar
-    el horizonte como listo para revisión. El gate es diagnóstico; no promete
-    rendimiento futuro ni activa promociones.
-    """
-    n=len(normalized or [])
-    model_vals=[]; baseline_vals=[]; direction_success=0; direction_n=0
-    for r in normalized or []:
-        try:
-            actual=float(r.get("actual")); pred=float(r.get("pred"))
-            if actual:
-                model_vals.append(abs(actual-pred)/abs(actual)*100.0)
-            observed=r.get("observed")
-            if observed is not None and actual:
-                obs=float(observed)
-                if obs:
-                    baseline_vals.append(abs(actual-obs)/abs(actual)*100.0)
-            d=r.get("direction")
-            if d is not None:
-                direction_n += 1
-                direction_success += int(bool(d))
-        except Exception:
-            continue
-    baseline_mae=float(np.mean(baseline_vals)) if baseline_vals else None
-    model_mae=float(mae_pct) if mae_pct is not None else (float(np.mean(model_vals)) if model_vals else None)
-    persistence_improvement=None
-    if baseline_mae is not None and model_mae is not None and baseline_mae > 0:
-        persistence_improvement=(baseline_mae-model_mae)/baseline_mae*100.0
-    direction_lb=_wilson_lower_bound_pct(direction_success, direction_n)
-    evidence_ready=n>=ADAPTIVE_MIN_EVAL_PER_HORIZON
-    persistence_pass=(persistence_improvement is not None and persistence_improvement>=ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT)
-    direction_pass=(direction_lb is not None and direction_lb>=ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT)
-    bias_pass=(bias_pct is not None and abs(float(bias_pct))<=ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT)
-    rolling=shadow_candidate.get("rolling_oos",{}) if isinstance(shadow_candidate,dict) else {}
-    rolling_pass=rolling.get("status")=="VALIDACION_ROLLING_OK"
-    range_calibration=shadow_candidate.get("interval_calibration",{}) if isinstance(shadow_candidate,dict) else {}
-    range_pass=range_calibration.get("status")=="CALIBRACION_OOS_OK"
-    checks={
-        "evidence": {"pass":evidence_ready,"evaluated":n,"required":ADAPTIVE_MIN_EVAL_PER_HORIZON},
-        "vs_persistence": {"pass":persistence_pass,"baseline_mae_pct":round(baseline_mae,4) if baseline_mae is not None else None,"model_mae_pct":round(model_mae,4) if model_mae is not None else None,"improvement_pct":round(persistence_improvement,2) if persistence_improvement is not None else None,"required_improvement_pct":ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT},
-        "direction": {"pass":direction_pass,"accuracy_pct":round(float(direction_accuracy_pct),2) if direction_accuracy_pct is not None else None,"wilson_lower_bound_pct":round(direction_lb,2) if direction_lb is not None else None,"required_lower_bound_pct":ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT,"successes":direction_success,"evaluated":direction_n},
-        "bias": {"pass":bias_pass,"bias_pct":round(float(bias_pct),4) if bias_pct is not None else None,"max_abs_bias_pct":ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT},
-        "rolling_oos": {"pass":rolling_pass,"status":rolling.get("status"),"folds_validos":rolling.get("folds_validos"),"folds_requeridos":rolling.get("folds_requeridos")},
-        "range_calibration": {"pass":range_pass,"status":range_calibration.get("status"),"coverage_pct":range_calibration.get("coverage_pct"),"target_coverage_pct":range_calibration.get("target_coverage_pct"),"min_coverage_pct":range_calibration.get("min_coverage_pct")},
-    }
-    if not evidence_ready:
-        status="SIN_EVIDENCIA"
-    elif all((v.get("pass") is True) for v in checks.values()):
-        status="LISTO_PARA_REVISION"
-    else:
-        status="EN_OBSERVACION"
-    return {
-        "status":status,
-        "production_change":"DISABLED_REVIEW_REQUIRED",
-        "checks":checks,
-        "baseline_mae_pct":round(baseline_mae,4) if baseline_mae is not None else None,
-        "persistence_improvement_pct":round(persistence_improvement,2) if persistence_improvement is not None else None,
-        "direction_lower_bound_pct":round(direction_lb,2) if direction_lb is not None else None,
-        "direction_evaluated":direction_n,
-    }
-
-
 def _adaptive_stats_from_rows(rows, mode="p2p"):
     abs_errors=[]; signed_bias=[]; dirs=[]; groups={}
     normalized=[]
@@ -4780,13 +4572,9 @@ def _adaptive_stats_from_rows(rows, mode="p2p"):
     for row in rows:
         try:
             if mode=="p2p":
-                if len(row)>=8:
-                    observed,pbuy,psell,actual,err,direction,group,event_at=row[:8]
-                else:
-                    pbuy,psell,actual,err,direction,group,event_at=row[:7]
-                    observed=None
+                pbuy,psell,actual,err,direction,group,event_at=row
                 pred=(float(pbuy)+float(psell))/2.0
-                observed=float(observed) if observed is not None else None
+                observed=None
             else:
                 observed,pred,actual,err,direction,group,event_at=row
                 pred=float(pred); observed=float(observed) if observed is not None else None
@@ -4818,8 +4606,7 @@ def _adaptive_stats_from_rows(rows, mode="p2p"):
         regime_out[g]={"evaluated":info["evaluated"],"direction_accuracy_pct":round(100.0*sum(a)/len(a),1) if a else None,"ready":info["evaluated"]>=10}
     ready = n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and eligible_regimes>=1
     shadow = _build_shadow_candidate(normalized, mode) if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else {"status":"ACUMULANDO_EVIDENCIA"}
-    quality_gate=_adaptive_quality_gate(normalized, mae, bias, acc, shadow)
-    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":eligible_regimes,"shadow_candidate":shadow,"quality_gate":quality_gate,"latest_event_at":latest_event_at}
+    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":eligible_regimes,"shadow_candidate":shadow,"latest_event_at":latest_event_at}
 
 
 def _mae_percent(items):
@@ -5112,9 +4899,6 @@ def _build_shadow_candidate(rows, mode="p2p"):
         corrected.append(rr)
     corrected_mae=_mae_percent(corrected)
     improvement=((baseline-corrected_mae)/baseline*100.0) if baseline and corrected_mae is not None else None
-    # Calibración de rango: el ancho se aprende SOLO con train y se evalúa OOS.
-    interval_fit=_fit_shadow_interval_calibration(train, global_factor)
-    interval_oos=_evaluate_shadow_interval_calibration(oos, global_factor, interval_fit)
     ready=improvement is not None and improvement>=ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
     rolling=_rolling_oos_validation(rows, mode)
 
@@ -5131,16 +4915,8 @@ def _build_shadow_candidate(rows, mode="p2p"):
         "oos_mae_baseline_pct":round(baseline,4) if baseline is not None else None,
         "oos_mae_candidate_pct":round(corrected_mae,4) if corrected_mae is not None else None,
         "oos_improvement_pct":round(improvement,2) if improvement is not None else None,
-        "oos_interpretation":("MEJORA" if improvement is not None and improvement > 0 else ("DEGRADACION" if improvement is not None and improvement < 0 else "NEUTRO")),
         "required_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,
         "by_regime":by_regime,
-        "interval_calibration_fit":interval_fit,
-        "interval_calibration":interval_oos,
-        "point_calibration":{
-            "global_factor":round(global_factor,6),
-            "train_bias_pct":round(train_bias_pct,4),
-            "production_change":"DISABLED"
-        },
     }
 
 
@@ -5154,7 +4930,7 @@ def _adaptive_p2p_stats_from_batch_rows(rows, horizons, limit=5000):
         "24h":("pred_compra_24h","pred_venta_24h","actual_mid_24h","error_pct_24h","direction_correct_24h"),
     }
     # Cada fila viene como: 5 campos por horizonte + regimen + created_at.
-    offsets={h:1+i*5 for i,h in enumerate(hs)}
+    offsets={h:i*5 for i,h in enumerate(hs)}
     out={h:{"evaluated":0,"readiness":"ACUMULANDO_EVIDENCIA"} for h in hs if h in specs}
     for h in hs:
         if h not in specs:
@@ -5166,7 +4942,7 @@ def _adaptive_p2p_stats_from_batch_rows(rows, horizons, limit=5000):
                 actual=row[i+2]; err=row[i+3]
                 if actual is None or err is None:
                     continue
-                extracted.append((row[0],row[i],row[i+1],actual,err,row[i+4],row[-2],row[-1]))
+                extracted.append((row[i],row[i+1],actual,err,row[i+4],row[-2],row[-1]))
             except Exception:
                 continue
         out[h]=_adaptive_stats_from_rows(extracted,"p2p")
@@ -5179,7 +4955,7 @@ def _adaptive_p2p_stats_batch(banco="GENERAL", horizons=("1h","3h","7h","24h"), 
     hs=tuple(str(h).lower() for h in horizons)
     out={}
     try:
-        columns=["actual_mid"]
+        columns=[]
         for h in hs:
             spec={
                 "1h":("pred_compra_1h","pred_venta_1h","actual_mid_1h","error_pct_1h","direction_correct_1h"),
@@ -5323,13 +5099,12 @@ def _adaptive_hourly_stat_from_source_rows(source_rows, label, mode="p2p"):
     regime_out={g:{"evaluated":cnt,"ready":cnt>=10} for g,cnt in groups.items()}
     ready=n>=ADAPTIVE_MIN_EVAL_PER_HORIZON and any(v>=10 for v in groups.values())
     shadow=_build_shadow_candidate(normalized,"hourly" if mode=="p2p" else "spot_hourly") if n>=ADAPTIVE_MIN_EVAL_PER_HORIZON else {"status":"ACUMULANDO_EVIDENCIA"}
-    quality_gate=_adaptive_quality_gate(normalized, mae, bias, acc, shadow)
     extra={}
     if mode=="p2p":
         buy_err=[float(r["error_buy_pct"]) for r in normalized if r.get("error_buy_pct") is not None]
         sell_err=[float(r["error_sell_pct"]) for r in normalized if r.get("error_sell_pct") is not None]
         extra={"buy_mae_pct":round(float(np.mean(buy_err)),4) if buy_err else None,"sell_mae_pct":round(float(np.mean(sell_err)),4) if sell_err else None}
-    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":sum(1 for v in groups.values() if v>=10),"shadow_candidate":shadow,"quality_gate":quality_gate,"latest_event_at":normalized[0].get("created_at") if normalized else None,"source":"venbot_p2p_hourly_prediction_events" if mode=="p2p" else "venbot_spot_hourly_prediction_events","hourly":True,"horizon":label,**extra}
+    return {"evaluated":n,"mae_pct":round(mae,4) if mae is not None else None,"bias_pct":round(bias,4) if bias is not None else None,"direction_accuracy_pct":round(acc,2) if acc is not None else None,"p75_abs_error_pct":round(p75,4) if p75 is not None else None,"candidate_bias_factor":round(factor,6) if factor is not None else None,"readiness":"CANDIDATO_EN_SOMBRA" if ready else "ACUMULANDO_EVIDENCIA","regimes":regime_out,"regimes_informativos":sum(1 for v in groups.values() if v>=10),"shadow_candidate":shadow,"latest_event_at":normalized[0].get("created_at") if normalized else None,"source":"venbot_p2p_hourly_prediction_events" if mode=="p2p" else "venbot_spot_hourly_prediction_events","hourly":True,"horizon":label,**extra}
 
 
 def _adaptive_hourly_summary(banco="GENERAL"):
@@ -5396,7 +5171,7 @@ def _adaptive_promotion_gate(motor, scope, horizon):
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT readiness, shadow_status, oos_improvement_pct, candidate_bias_factor, evaluated, generated_at, evidence_at, quality_status
+                    """SELECT readiness, shadow_status, oos_improvement_pct, candidate_bias_factor, evaluated, generated_at, evidence_at
                        FROM venbot_quant_adaptive_snapshots
                        WHERE motor=%s AND scope=%s AND horizon=%s AND evidence_at IS NOT NULL
                        ORDER BY generated_at DESC LIMIT %s""",
@@ -5408,12 +5183,12 @@ def _adaptive_promotion_gate(motor, scope, horizon):
         improvements=[]
         seen_evidence=set()
         for r in rows:
-            readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at, quality_status = r
+            readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at = r
             evidence_key = evidence_at.isoformat() if hasattr(evidence_at, "isoformat") else str(evidence_at)
             if evidence_key in seen_evidence:
                 continue
             seen_evidence.add(evidence_key)
-            if shadow_status == "CANDIDATO_VALIDO" and readiness == "CANDIDATO_EN_SOMBRA" and quality_status == "LISTO_PARA_REVISION" and (improvement is not None and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT) and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON:
+            if shadow_status == "CANDIDATO_VALIDO" and readiness == "CANDIDATO_EN_SOMBRA" and (improvement is not None and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT) and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON:
                 stable += 1
                 if factor is not None: factors.append(float(factor))
                 if improvement is not None: improvements.append(float(improvement))
@@ -5457,7 +5232,7 @@ def _adaptive_promotion_gates(motor, scope, horizons):
                     """
                     WITH ranked AS (
                         SELECT horizon, readiness, shadow_status, oos_improvement_pct,
-                               candidate_bias_factor, evaluated, generated_at, evidence_at, quality_status,
+                               candidate_bias_factor, evaluated, generated_at, evidence_at,
                                ROW_NUMBER() OVER (PARTITION BY horizon ORDER BY generated_at DESC) AS rn
                         FROM venbot_quant_adaptive_snapshots
                         WHERE motor=%s
@@ -5466,7 +5241,7 @@ def _adaptive_promotion_gates(motor, scope, horizons):
                           AND evidence_at IS NOT NULL
                     )
                     SELECT horizon, readiness, shadow_status, oos_improvement_pct,
-                           candidate_bias_factor, evaluated, generated_at, evidence_at, quality_status
+                           candidate_bias_factor, evaluated, generated_at, evidence_at
                     FROM ranked
                     WHERE rn <= %s
                     ORDER BY horizon, generated_at DESC
@@ -5485,14 +5260,13 @@ def _adaptive_promotion_gates(motor, scope, horizons):
             improvements=[]
             seen_evidence=set()
             for r in grouped.get(h, []):
-                readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at, quality_status = r
+                readiness, shadow_status, improvement, factor, evaluated, generated_at, evidence_at = r
                 evidence_key = evidence_at.isoformat() if hasattr(evidence_at, "isoformat") else str(evidence_at)
                 if evidence_key in seen_evidence:
                     continue
                 seen_evidence.add(evidence_key)
                 if (shadow_status == "CANDIDATO_VALIDO"
                     and readiness == "CANDIDATO_EN_SOMBRA"
-                    and quality_status == "LISTO_PARA_REVISION"
                     and improvement is not None
                     and float(improvement) >= ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT
                     and int(evaluated or 0) >= ADAPTIVE_MIN_EVAL_PER_HORIZON):
@@ -5553,10 +5327,8 @@ def _adaptive_maturity_summary(hourly_shadow):
         return sum(1 for v in data.values() if (v.get(key) or "") in {"VALIDACION_ROLLING_OK","CANDIDATO_VALIDO"})
     rolling_ok=sum(1 for v in research.values() if (v.get("shadow_candidate") or {}).get("rolling_oos",{}).get("status")=="VALIDACION_ROLLING_OK")
     evidence=sum(1 for v in research.values() if int(v.get("evaluated") or 0)>=ADAPTIVE_MIN_EVAL_PER_HORIZON)
-    quality_ready=sum(1 for v in horizons.values() if (v.get("quality_gate") or {}).get("status")=="LISTO_PARA_REVISION")
     return {
         "production_horizons":production,
-        "quality_ready_horizons":quality_ready,
         "research_horizons":research,
         "research_evidence_ready":evidence,
         "research_horizons_total":len(ADAPTIVE_RESEARCH_HORIZONS),
@@ -5564,220 +5336,6 @@ def _adaptive_maturity_summary(hourly_shadow):
         "research_rolling_total":len(ADAPTIVE_RESEARCH_HORIZONS),
         "mode":"SHADOW_ONLY",
         "production_change":"DISABLED",
-    }
-
-
-
-def _dt_iso(value):
-    if value is None:
-        return None
-    try:
-        if getattr(value, "tzinfo", None) is None:
-            value=VET.localize(value)
-        return value.astimezone(VET).isoformat()
-    except Exception:
-        return str(value)
-
-
-def _age_seconds(value, now_dt=None):
-    if value is None:
-        return None
-    try:
-        dt=value
-        if isinstance(dt,str):
-            dt=datetime.fromisoformat(dt.replace("Z","+00:00"))
-        if getattr(dt,"tzinfo",None) is None:
-            dt=VET.localize(dt)
-        now_dt=now_dt or datetime.now(VET)
-        return max(0.0,(now_dt-dt.astimezone(VET)).total_seconds())
-    except Exception:
-        return None
-
-
-def _adaptive_snapshot_persistence_health(since_minutes=15):
-    """Lectura de verificación de snapshots adaptativos recientes."""
-    if not DATABASE_URL:
-        return {"status":"SIN_DB","verified":False,"rows_recent":0,"total_rows":0}
-    try:
-        with obtener_conexion() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT COUNT(*),MAX(generated_at),MAX(evidence_at)
-                    FROM venbot_quant_adaptive_snapshots
-                    WHERE generated_at >= CURRENT_TIMESTAMP - (%s * INTERVAL '1 minute')
-                """,(int(since_minutes),))
-                recent,last_generated,last_evidence=cur.fetchone() or (0,None,None)
-                cur.execute("""
-                    SELECT motor,scope,horizon,generated_at,evidence_at,quality_status,readiness,shadow_status,evaluated
-                    FROM venbot_quant_adaptive_snapshots
-                    ORDER BY generated_at DESC LIMIT 1
-                """)
-                latest=cur.fetchone()
-                cur.execute("SELECT COUNT(*) FROM venbot_quant_adaptive_snapshots")
-                total_rows=int((cur.fetchone() or (0,))[0] or 0)
-        verified=bool(latest and int(recent or 0)>0 and latest[3] is not None)
-        return {
-            "status":"OK" if verified else ("SIN_EVIDENCIA_RECIENTE" if total_rows else "SIN_SNAPSHOTS"),
-            "verified":verified,
-            "rows_recent":int(recent or 0),
-            "total_rows":total_rows,
-            "last_generated_at":_dt_iso(latest[3] if latest else last_generated),
-            "last_generated_age_seconds":round(_age_seconds(latest[3] if latest else last_generated) or 0.0,1) if (latest or last_generated) else None,
-            "last_evidence_at":_dt_iso(latest[4] if latest else last_evidence),
-            "readback":"OK" if verified else "PENDIENTE",
-        }
-    except Exception as exc:
-        logger.warning("Adaptive persistence health falló: %s",exc)
-        return {"status":"ERROR","verified":False,"rows_recent":0,"total_rows":0,"error":str(exc)[:180]}
-
-
-def _tracking_health_p2p(banco="GENERAL"):
-    if not DATABASE_URL:
-        return {"status":"SIN_DB"}
-    try:
-        with obtener_conexion() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT COUNT(*),COUNT(actual_mid_1h),COUNT(actual_mid_3h),COUNT(actual_mid_7h),COUNT(actual_mid_24h),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '1 hour' < CURRENT_TIMESTAMP AND actual_mid_1h IS NULL),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '3 hour' < CURRENT_TIMESTAMP AND actual_mid_3h IS NULL),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '7 hour' < CURRENT_TIMESTAMP AND actual_mid_7h IS NULL),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '24 hour' < CURRENT_TIMESTAMP AND actual_mid_24h IS NULL),
-                           MAX(created_at),MAX(evaluated_24h_at)
-                    FROM venbot_prediction_events
-                    WHERE banco=%s AND created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
-                """,((banco or "GENERAL").upper(),))
-                r=cur.fetchone()
-        return {"status":"OK","scope":(banco or "GENERAL").upper(),"created_45d":int(r[0] or 0),
-                "evaluated":{"1h":int(r[1] or 0),"3h":int(r[2] or 0),"7h":int(r[3] or 0),"24h":int(r[4] or 0)},
-                "due_pending":{"1h":int(r[5] or 0),"3h":int(r[6] or 0),"7h":int(r[7] or 0),"24h":int(r[8] or 0)},
-                "latest_created_at":_dt_iso(r[9]),"latest_24h_evaluated_at":_dt_iso(r[10])}
-    except Exception as exc:
-        logger.warning("P2P tracking health falló %s: %s",banco,exc)
-        return {"status":"ERROR","scope":(banco or "GENERAL").upper(),"error":str(exc)[:180]}
-
-
-def _tracking_health_spot(symbol=None):
-    if not DATABASE_URL:
-        return {"status":"SIN_DB"}
-    try:
-        where="WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'"
-        params=[]
-        scope="ALL"
-        if symbol:
-            scope=str(symbol).upper(); where += " AND symbol=%s"; params.append(scope)
-        with obtener_conexion() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"""
-                    SELECT COUNT(*),COUNT(actual_1h),COUNT(actual_3h),COUNT(actual_7h),COUNT(actual_24h),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '1 hour' < CURRENT_TIMESTAMP AND actual_1h IS NULL),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '3 hour' < CURRENT_TIMESTAMP AND actual_3h IS NULL),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '7 hour' < CURRENT_TIMESTAMP AND actual_7h IS NULL),
-                           COUNT(*) FILTER (WHERE created_at + INTERVAL '24 hour' < CURRENT_TIMESTAMP AND actual_24h IS NULL),
-                           MAX(created_at),MAX(evaluated_24h_at)
-                    FROM venbot_spot_prediction_events {where}
-                """,tuple(params))
-                r=cur.fetchone()
-        return {"status":"OK","scope":scope,"created_45d":int(r[0] or 0),
-                "evaluated":{"1h":int(r[1] or 0),"3h":int(r[2] or 0),"7h":int(r[3] or 0),"24h":int(r[4] or 0)},
-                "due_pending":{"1h":int(r[5] or 0),"3h":int(r[6] or 0),"7h":int(r[7] or 0),"24h":int(r[8] or 0)},
-                "latest_created_at":_dt_iso(r[9]),"latest_24h_evaluated_at":_dt_iso(r[10])}
-    except Exception as exc:
-        logger.warning("Spot tracking health falló %s: %s",symbol or "ALL",exc)
-        return {"status":"ERROR","scope":str(symbol or "ALL").upper(),"error":str(exc)[:180]}
-
-
-def _ingestion_health():
-    if not DATABASE_URL:
-        return {"status":"SIN_DB","p2p":{},"spot":{}}
-    now_dt=datetime.now(VET); out={"p2p":{},"spot":{}}
-    try:
-        with obtener_conexion() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT banco,COUNT(*) FILTER (WHERE fecha >= CURRENT_TIMESTAMP - INTERVAL '15 minutes'),MAX(fecha)
-                    FROM muestras_p2p GROUP BY banco ORDER BY banco
-                """)
-                for banco,cnt,last_at in cur.fetchall():
-                    out["p2p"][str(banco).upper()]={"recent_15m":int(cnt or 0),"last_sample_at":_dt_iso(last_at),"age_seconds":round(_age_seconds(last_at,now_dt) or 0.0,1) if last_at else None}
-                cur.execute("""
-                    SELECT symbol,COUNT(*) FILTER (WHERE fecha >= CURRENT_TIMESTAMP - INTERVAL '5 minutes'),MAX(fecha)
-                    FROM spot_market_snapshots GROUP BY symbol ORDER BY symbol
-                """)
-                for sym,cnt,last_at in cur.fetchall():
-                    out["spot"][str(sym).upper()]={"recent_5m":int(cnt or 0),"last_sample_at":_dt_iso(last_at),"age_seconds":round(_age_seconds(last_at,now_dt) or 0.0,1) if last_at else None}
-        p2p_stale=[k for k,v in out["p2p"].items() if v.get("age_seconds") is not None and v["age_seconds"]>180]
-        spot_stale=[k for k,v in out["spot"].items() if v.get("age_seconds") is not None and v["age_seconds"]>90]
-        out["p2p_stale_scopes"]=p2p_stale; out["spot_stale_symbols"]=spot_stale
-        out["status"]="OK" if not p2p_stale and not spot_stale else "OBSERVACION"
-        return out
-    except Exception as exc:
-        logger.warning("Ingestion health falló: %s",exc)
-        return {"status":"ERROR","p2p":{},"spot":{},"error":str(exc)[:180]}
-
-
-def _active_backtest_health():
-    now=time.time()
-    with QUANT_BACKTEST_LOCK:
-        active=[]
-        recent=sorted(QUANT_BACKTEST_JOBS.items(),key=lambda kv:float(kv[1].get("updated_at") or 0),reverse=True)[:3]
-        latest=[]
-        for jid,j in recent:
-            latest.append({"job_id":jid,"status":j.get("status"),"bank":j.get("bank"),"evaluations":(j.get("result") or {}).get("evaluations"),"updated_at":datetime.fromtimestamp(float(j.get("updated_at") or now),tz=timezone.utc).astimezone(VET).isoformat()})
-        for jid,j in QUANT_BACKTEST_JOBS.items():
-            if j.get("status") in {"queued","running"}:
-                age=max(0.0,now-float(j.get("created_at") or now))
-                active.append({"job_id":jid,"status":j.get("status"),"bank":j.get("bank"),"evaluations_effective":j.get("max_evaluaciones"),"spacing_minutes":j.get("spacing_minutes"),"age_seconds":round(age,1)})
-    return {"status":"OK" if all(x["age_seconds"]<1800 for x in active) else "OBSERVACION","active":active,"latest":latest}
-
-
-def _adaptive_system_health(status_parts=None, symbol=None, persistence_runtime=None, p2p_production=None, spot_production=None, p2p_gates=None, spot_gates=None):
-    status_parts=status_parts or {}
-    ingestion=_ingestion_health()
-    p2p_track=_tracking_health_p2p("GENERAL")
-    spot_track=_tracking_health_spot(symbol)
-    persistence_readback=_adaptive_snapshot_persistence_health()
-    p2p_hourly=status_parts.get("p2p_hourly") or {}
-    spot_hourly=status_parts.get("spot_hourly") or {}
-    p2p_maturity=status_parts.get("p2p_maturity") or {}
-    spot_maturity=status_parts.get("spot_maturity") or {}
-    lab={
-        "p2p":{"status":p2p_hourly.get("status","UNKNOWN"),"evaluated_total":int(p2p_hourly.get("evaluated_total") or 0),"evidence_ready_horizons":int(p2p_hourly.get("evidence_ready_horizons") or 0),"validated_shadow_horizons":int(p2p_hourly.get("validated_shadow_horizons") or 0),"rolling_validated":int(p2p_maturity.get("research_rolling_validated") or 0),"total_horizons":24},
-        "spot":{"status":spot_hourly.get("status","UNKNOWN"),"evaluated_total":int(spot_hourly.get("evaluated_total") or 0),"evidence_ready_horizons":int(spot_hourly.get("evidence_ready_horizons") or 0),"validated_shadow_horizons":int(spot_hourly.get("validated_shadow_horizons") or 0),"rolling_validated":int(spot_maturity.get("research_rolling_validated") or 0),"total_horizons":24},
-    }
-    def _production_metrics(hdata, gates):
-        out={}
-        for h,stats in (hdata or {}).items():
-            gate=(gates or {}).get(h) or {}
-            out[str(h)]={
-                "evaluated":int(stats.get("evaluated") or 0),
-                "mae_pct":stats.get("mae_pct"),
-                "bias_pct":stats.get("bias_pct"),
-                "direction_accuracy_pct":stats.get("direction_accuracy_pct"),
-                "p75_abs_error_pct":stats.get("p75_abs_error_pct"),
-                "readiness":stats.get("readiness"),
-                "quality_gate":gate.get("status") or (stats.get("quality_gate") or {}).get("status"),
-                "range_calibration":(stats.get("quality_gate") or {}).get("range_calibration") or {},
-            }
-        return out
-    production={"p2p":_production_metrics(p2p_production,p2p_gates),"spot":_production_metrics(spot_production,spot_gates)}
-    components={
-        "database":persistence_readback.get("status") not in {"ERROR","SIN_DB"},
-        "ingestion":ingestion.get("status") in {"OK","OBSERVACION"},
-        "p2p_tracking":p2p_track.get("status")=="OK",
-        "spot_tracking":spot_track.get("status")=="OK",
-        "adaptive_persistence":bool((persistence_runtime or {}).get("verified_rows") or persistence_readback.get("verified")),
-    }
-    if all(components.values()): overall="OK"
-    elif components["database"] and components["ingestion"]: overall="OBSERVACION"
-    else: overall="ERROR"
-    return {
-        "version":_ADAPTIVE_HEALTH_VERSION,"overall":overall,"components":components,
-        "ingestion":ingestion,"tracking":{"p2p":p2p_track,"spot":spot_track},
-        "laboratory":lab,"production_metrics":production,"adaptive_persistence":persistence_readback,
-        "adaptive_persistence_runtime":persistence_runtime or {},"backtest":_active_backtest_health(),
-        "production_horizons":["1h","3h","7h","24h"],"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),
-        "promotion":"DISABLED_REVIEW_REQUIRED","generated_at":datetime.now(VET).isoformat()
     }
 
 
@@ -5800,55 +5358,56 @@ def _obtener_quant_adaptive_status_uncached(symbol=None):
     p2p_primary_gates=_adaptive_promotion_gates("P2P","GENERAL",hs)
     spot_primary_gates=_adaptive_promotion_gates("SPOT",symbol or "ALL",hs)
     status={"ok":True,"enabled":ADAPTIVE_LEARNING_ENABLED,"targets_hours":list(ADAPTIVE_TARGET_HOURS),"minimum_evaluations_per_horizon":ADAPTIVE_MIN_EVAL_PER_HORIZON,
-      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS},"quality_gate":{"min_persistence_improvement_pct":ADAPTIVE_QUALITY_MIN_PERSISTENCE_IMPROVEMENT_PCT,"min_direction_wilson_lower_bound_pct":ADAPTIVE_QUALITY_MIN_DIRECTION_LOWER_BOUND_PCT,"max_abs_bias_pct":ADAPTIVE_QUALITY_MAX_ABS_BIAS_PCT,"range_calibration":{"target_coverage_pct":ADAPTIVE_CALIBRATION_TARGET_COVERAGE_PCT,"min_coverage_pct":ADAPTIVE_CALIBRATION_MIN_COVERAGE_PCT,"max_coverage_pct":ADAPTIVE_CALIBRATION_MAX_COVERAGE_PCT,"quantile":ADAPTIVE_CALIBRATION_QUANTILE},"production_change":"DISABLED_REVIEW_REQUIRED"}},
+      "rules":{"minimum_regime_evaluations":10,"production_calibration":"DISABLED_SHADOW_ONLY","requires_out_of_sample_improvement":True,"shadow_train_ratio":ADAPTIVE_SHADOW_TRAIN_RATIO,"minimum_oos_improvement_pct":ADAPTIVE_SHADOW_MIN_OOS_IMPROVEMENT_PCT,"promotion_stable_passes":ADAPTIVE_PROMOTION_STABLE_PASSES,"regime_min_train":ADAPTIVE_SHADOW_MIN_REGIME_TRAIN,"hourly_horizons":24,"hourly_promotion":"INDIVIDUAL_PER_HORIZON","research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"rolling_oos":{"folds":ADAPTIVE_ROLLING_FOLDS,"min_train":ADAPTIVE_ROLLING_MIN_TRAIN,"min_oos":ADAPTIVE_ROLLING_MIN_OOS,"min_valid_folds":ADAPTIVE_ROLLING_MIN_VALID_FOLDS}},
       "p2p":{"motor":"P2P","scope":"GENERAL","coverage_hours":round(p2p_cov,2),"stage":p2p_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":p2p_h,"hourly_shadow":p2p_hourly,"maturity":_adaptive_maturity_summary(p2p_hourly),"promotion_gates":p2p_primary_gates,"hourly_promotion_gates":p2p_hourly_gates,"milestone_300h":milestones["p2p_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "spot":{"motor":"SPOT","scope":symbol or "ALL","coverage_hours":spot_cov["median_hours"],"stage":spot_stage,"production_horizons":list(hs),"research_horizons":list(ADAPTIVE_RESEARCH_HORIZONS),"horizons":spot_h,"hourly_shadow":spot_hourly,"maturity":_adaptive_maturity_summary(spot_hourly),"by_symbol":spot_cov["by_symbol"],"promotion_gates":spot_primary_gates,"hourly_promotion_gates":spot_hourly_gates,"milestone_300h":milestones["spot_300h"],"note":"Candidatos de calibración en sombra; no modifican producción."},
       "milestones":milestones,"generated_at":datetime.now(VET).isoformat()}
-    persistence=_persist_adaptive_status_snapshots(p2p_cov,p2p_stage,p2p_h,spot_cov,spot_stage,spot_h,p2p_hourly,spot_hourly,symbol)
-    status["adaptive_persistence"]=persistence
-    status["system_health"]=_adaptive_system_health({
-        "p2p_hourly":p2p_hourly,"spot_hourly":spot_hourly,
-        "p2p_maturity":_adaptive_maturity_summary(p2p_hourly),
-        "spot_maturity":_adaptive_maturity_summary(spot_hourly),
-    },symbol,persistence,p2p_h,spot_h,p2p_primary_gates,spot_primary_gates)
-    return status
-
-
-
-def _persist_adaptive_status_snapshots(p2p_cov,p2p_stage,p2p_h,spot_cov,spot_stage,spot_h,p2p_hourly,spot_hourly,symbol=None):
-    """Persiste métricas adaptativas en lote y verifica readback en PostgreSQL."""
-    started=datetime.now(VET)
-    rows=[]
-    def add_rows(motor,scope,coverage,stage,hdata):
-        for h,stats in (hdata or {}).items():
-            shadow=stats.get("shadow_candidate") or {}; gate=stats.get("quality_gate") or {}
-            rows.append((motor,scope,h,float(coverage or 0.0),str(stage.get("stage") or "BASE"),int(stage.get("next_target_hours") or stage.get("milestone_hours") or 0),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at"),gate.get("status"),gate.get("baseline_mae_pct"),gate.get("persistence_improvement_pct"),gate.get("direction_lower_bound_pct"),json.dumps(gate,ensure_ascii=False),json.dumps({"point":shadow.get("point_calibration") or {},"interval":shadow.get("interval_calibration") or {},"interval_fit":shadow.get("interval_calibration_fit") or {}},ensure_ascii=False)))
-    add_rows("P2P","GENERAL",p2p_cov,p2p_stage,p2p_h)
-    add_rows("SPOT",symbol or "ALL",spot_cov.get("median_hours",0.0),spot_stage,spot_h)
-    add_rows("P2P","GENERAL",p2p_cov,p2p_stage,(p2p_hourly or {}).get("horizons",{}))
-    add_rows("SPOT",symbol or "ALL",spot_cov.get("median_hours",0.0),spot_stage,(spot_hourly or {}).get("horizons",{}))
-    if not DATABASE_URL:
-        return {"status":"SIN_DB","attempted":len(rows),"verified_rows":0,"verified_unique":0,"readback":"PENDIENTE","started_at":started.isoformat(),"error":"database_unavailable"}
-    sql="""INSERT INTO venbot_quant_adaptive_snapshots
-        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at,quality_status,baseline_mae_pct,persistence_improvement_pct,direction_lower_bound_pct,quality_gate,calibration_shadow)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
-            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,quality_status=EXCLUDED.quality_status,baseline_mae_pct=EXCLUDED.baseline_mae_pct,persistence_improvement_pct=EXCLUDED.persistence_improvement_pct,direction_lower_bound_pct=EXCLUDED.direction_lower_bound_pct,quality_gate=EXCLUDED.quality_gate,calibration_shadow=EXCLUDED.calibration_shadow,generated_at=CURRENT_TIMESTAMP"""
+    # Persistimos una instantánea liviana para auditoría del aprendizaje.
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
-                cur.executemany(sql,rows)
-            conn.commit()
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*),COUNT(DISTINCT (motor,scope,horizon,evidence_at)),MAX(generated_at) FROM venbot_quant_adaptive_snapshots WHERE generated_at >= %s",(started,))
-                verified_rows,verified_unique,last_generated=cur.fetchone() or (0,0,None)
-        verified=bool(rows) and int(verified_rows or 0)>0 and int(verified_unique or 0)>0
-        result={"status":"OK" if verified else "SIN_EVIDENCIA_RECIENTE","attempted":len(rows),"verified_rows":int(verified_rows or 0),"verified_unique":int(verified_unique or 0),"readback":"OK" if verified else "PENDIENTE","started_at":started.isoformat(),"last_generated_at":_dt_iso(last_generated),"error":None}
-        if verified: logger.info("[ADAPTIVE] snapshot persistido y verificado filas=%s unicas=%s",int(verified_rows or 0),int(verified_unique or 0))
-        return result
-    except Exception as exc:
-        logger.warning("No se pudo persistir snapshot adaptativo: %s",exc)
-        return {"status":"ERROR","attempted":len(rows),"verified_rows":0,"verified_unique":0,"readback":"ERROR","started_at":started.isoformat(),"error":str(exc)[:180]}
+                for motor,scope,coverage,stage,hdata in [("P2P","GENERAL",p2p_cov,p2p_stage,p2p_h),("SPOT",symbol or "ALL",spot_cov["median_hours"],spot_stage,spot_h)]:
+                    for h,stats in hdata.items():
+                        shadow=stats.get("shadow_candidate") or {}
+                        cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
+                            (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
+                                coverage_hours=EXCLUDED.coverage_hours,
+                                stage=EXCLUDED.stage,
+                                target_hours=EXCLUDED.target_hours,
+                                evaluated=EXCLUDED.evaluated,
+                                mae_pct=EXCLUDED.mae_pct,
+                                bias_pct=EXCLUDED.bias_pct,
+                                direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,
+                                p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,
+                                candidate_bias_factor=EXCLUDED.candidate_bias_factor,
+                                readiness=EXCLUDED.readiness,
+                                shadow_status=EXCLUDED.shadow_status,
+                                oos_improvement_pct=EXCLUDED.oos_improvement_pct,
+                                required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,
+                                generated_at=CURRENT_TIMESTAMP
+                            """,
+                            (motor,scope,h,coverage,float(stage["milestone_hours"]),int(stage["next_target_hours"] or stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+                for h,stats in p2p_hourly.get("horizons",{}).items():
+                    shadow=stats.get("shadow_candidate") or {}
+                    cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
+                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,generated_at=CURRENT_TIMESTAMP
+                    """,("P2P","GENERAL",h,p2p_cov,float(p2p_stage["milestone_hours"]),int(p2p_stage["next_target_hours"] or p2p_stage["milestone_hours"]),int(stats.get("evaluated") or 0),stats.get("mae_pct"),stats.get("bias_pct"),stats.get("direction_accuracy_pct"),stats.get("p75_abs_error_pct"),stats.get("candidate_bias_factor"),stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+                for h,stats in spot_hourly.get("horizons",{}).items():
+                    shadow=stats.get("shadow_candidate") or {}
+                    cur.execute("""INSERT INTO venbot_quant_adaptive_snapshots
+                        (motor,scope,horizon,coverage_hours,stage,target_hours,evaluated,mae_pct,bias_pct,direction_accuracy_pct,p75_abs_error_pct,candidate_bias_factor,readiness,shadow_status,oos_improvement_pct,required_oos_improvement_pct,evidence_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (motor,scope,horizon,evidence_at) DO UPDATE SET
+                            coverage_hours=EXCLUDED.coverage_hours,stage=EXCLUDED.stage,target_hours=EXCLUDED.target_hours,evaluated=EXCLUDED.evaluated,mae_pct=EXCLUDED.mae_pct,bias_pct=EXCLUDED.bias_pct,direction_accuracy_pct=EXCLUDED.direction_accuracy_pct,p75_abs_error_pct=EXCLUDED.p75_abs_error_pct,candidate_bias_factor=EXCLUDED.candidate_bias_factor,readiness=EXCLUDED.readiness,shadow_status=EXCLUDED.shadow_status,oos_improvement_pct=EXCLUDED.oos_improvement_pct,required_oos_improvement_pct=EXCLUDED.required_oos_improvement_pct,generated_at=CURRENT_TIMESTAMP
+                    """,("SPOT",symbol or "ALL",h,spot_cov["median_hours"],float(spot_stage["milestone_hours"]),int(spot_stage["next_target_hours"] or spot_stage["milestone_hours"]),int(stats.get("evaluated") or 0), stats.get("mae_pct"), stats.get("bias_pct"), stats.get("direction_accuracy_pct"), stats.get("p75_abs_error_pct"), stats.get("candidate_bias_factor"), stats.get("readiness","ACUMULANDO_EVIDENCIA"),shadow.get("status"),shadow.get("oos_improvement_pct"),shadow.get("required_oos_improvement_pct"),stats.get("latest_event_at")))
+    except Exception as e:
+        logger.warning("No se pudo persistir snapshot adaptativo: %s",e)
+    return status
 
 
 def obtener_quant_adaptive_status(symbol=None):
@@ -5921,13 +5480,6 @@ def generar_imagen_grafica_cuantica(filas, banco):
     if not filas or len(filas) < 5:
         return None
 
-    # Importación diferida: el servidor web no paga el coste de Matplotlib
-    # mientras nadie solicite esta gráfica de Telegram.
-    import matplotlib as _matplotlib
-    _matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-
     compras = np.array([f[0] for f in filas], dtype=float)
     ventas = np.array([f[1] for f in filas], dtype=float)
     fechas = [f[3] for f in filas]
@@ -5951,8 +5503,8 @@ def generar_imagen_grafica_cuantica(filas, banco):
     c_fut, v_fut = [float(compras[-1])], [float(ventas[-1])]
 
     if len(X):
-        mc = _get_xgb().XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
-        mv = _get_xgb().XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
+        mc = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
+        mv = xgb.XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.1, verbosity=0, random_state=42)
         mc.fit(X, y_c)
         mv.fit(X, y_v)
         sim_c = list(compras[-window_size:])
@@ -5997,13 +5549,9 @@ def generar_imagen_grafica_cuantica(filas, banco):
     plt.tight_layout()
 
     buf = io.BytesIO()
-    try:
-        plt.savefig(buf, format="png", dpi=160)
-        buf.seek(0)
-    finally:
-        plt.close(fig)
-        # Libera referencias Python/cíclicas antes de devolver el buffer.
-        gc.collect()
+    plt.savefig(buf, format="png", dpi=160)
+    buf.seek(0)
+    plt.close(fig)
     return buf
 
 
@@ -8230,10 +7778,6 @@ async def tarea_recoleccion_automatica():
                     await asyncio.to_thread(guardar_mercado_actual, c, v, l, tasas["usd"], tasas["eur"], tasas["source"])
                     mercado = {"compra": c, "venta": v, "liquidez": l, "bcv": tasas["usd"], "eur": tasas["eur"], "fuente_bcv": tasas["source"], "timestamp": now}
 
-            # v31.73.2: las respuestas de Binance pueden contener estructuras anidadas
-            # de anuncios; ya no son necesarias después de calcular VWAP/resultados.
-            del raw_sell, raw_buy, bank_sell, bank_buy
-
             global _LAST_SPOT_COLLECTION_TS
             if time.monotonic() - _LAST_SPOT_COLLECTION_TS >= SPOT_REFRESH_SECONDS:
                 try:
@@ -8274,7 +7818,16 @@ async def tarea_recoleccion_automatica():
                 global _LAST_PREDICTION_TRACKING_TS
                 if PREDICTION_TRACKING_ENABLED:
                     try:
-                        await asyncio.to_thread(evaluar_predicciones_pendientes, 120)
+                        _tracking_eval = await asyncio.to_thread(evaluar_predicciones_pendientes, 120)
+                        logger.info(
+                            "[P2P TRACKING] filas=%s eval_total=%s 1H=%s 3H=%s 7H=%s 24H=%s",
+                            _tracking_eval.get("evaluated", 0),
+                            _tracking_eval.get("evaluations_total", 0),
+                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("1h", 0),
+                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("3h", 0),
+                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("7h", 0),
+                            (_tracking_eval.get("evaluated_by_horizon") or {}).get("24h", 0),
+                        )
                         if time.monotonic() - _LAST_PREDICTION_TRACKING_TS >= PREDICTION_TRACKING_INTERVAL_SECONDS:
                             for _banco, (_c, _v, _l) in resultados.items():
                                 if _c > 0 and _v > 0:
@@ -8345,14 +7898,6 @@ async def tarea_recoleccion_automatica():
             raise
         except Exception as e:
             logger.exception("Error en tarea autónoma: %s", e)
-        finally:
-            # v31.73.2: limpieza periódica de ciclos Python sin forzar GC en cada ciclo.
-            global _COLLECTOR_CYCLES
-            _COLLECTOR_CYCLES += 1
-            if _COLLECTOR_CYCLES % VENBOT_GC_COLLECT_EVERY_CYCLES == 0:
-                gc.collect()
-            if _COLLECTOR_CYCLES % VENBOT_MEMORY_LOG_EVERY_CYCLES == 0:
-                _log_memory_checkpoint("collector")
         await asyncio.sleep(COLLECT_INTERVAL_SECONDS)
 
 
@@ -8889,18 +8434,6 @@ def health():
         "spot_prediction_tracking": {"enabled": SPOT_PREDICTION_TRACKING_ENABLED, "interval_seconds": SPOT_PREDICTION_TRACKING_INTERVAL_SECONDS},
         "timestamp": datetime.now(VET).isoformat(),
     }
-
-
-# v31.73.1/v31.73.2: UptimeRobot Free sends HEAD requests. These routes are
-# deliberately constant-time and do not touch DB, Binance, Spot or Quant.
-@app.head("/")
-def head_root():
-    return Response(status_code=200)
-
-
-@app.head("/api/health")
-def head_health():
-    return Response(status_code=200)
 
 def _validar_alerta_banco(banco):
     banco = (banco or "GENERAL").upper().strip()
@@ -9870,25 +9403,6 @@ def obtener_quant_adaptive_status_api(request: Request, symbol: Optional[str] = 
     return obtener_quant_adaptive_status(sym)
 
 
-@app.get("/api/quant/health")
-def obtener_quant_health_api(request: Request, symbol: Optional[str] = Query(None)):
-    """Estado consolidado de captura, tracking, laboratorio y persistencia."""
-    _require_developer_session(request)
-    sym=_normalizar_spot_symbol(symbol) if symbol else None
-    if sym and sym not in SPOT_SYMBOLS:
-        raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
-    key=str(sym or "ALL").upper(); now=time.monotonic()
-    with _ADAPTIVE_HEALTH_LOCK:
-        cached=_ADAPTIVE_HEALTH_CACHE.get(key)
-        if cached and now < cached.get("expires",0.0):
-            out=dict(cached.get("value") or {}); out["cache"]="FRESH"; return out
-        status=obtener_quant_adaptive_status(sym)
-        health=dict(status.get("system_health") or {})
-        health["cache"]="REFRESHED"
-        _ADAPTIVE_HEALTH_CACHE[key]={"value":health,"expires":time.monotonic()+_ADAPTIVE_HEALTH_CACHE_SECONDS}
-        return health
-
-
 @app.get("/api/quant/adaptive/hourly")
 def obtener_quant_adaptive_hourly_api(request: Request, banco: str = Query("GENERAL")):
     _require_developer_session(request)
@@ -9923,29 +9437,13 @@ def obtener_quant_v2_api(request: Request, include_spot: bool = Query(True)):
 def obtener_quant_backtest(
     request: Request,
     banco: str = Query("GENERAL"),
-    max_evaluaciones: int = Query(BACKTEST_MAX_EVALUATIONS, ge=1, le=100),
-    spacing_minutes: int = Query(BACKTEST_SPACING_MINUTES, ge=15, le=1440),
+    max_evaluaciones: int = Query(24, ge=1, le=100),
+    spacing_minutes: int = Query(360, ge=15, le=1440),
 ):
     user = _require_plan_user(request, "VIP")
     banco = (banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         banco = "GENERAL"
-
-    # Compatibilidad con la interfaz anterior: algunas pantallas todavía
-    # envían max_evaluaciones=24. Desde v31.73.4 ese valor histórico se
-    # interpreta como el perfil por defecto expandido (48), evitando que una
-    # UI anterior vuelva a limitar la evidencia sin necesidad de cambiar
-    # frontend. Si otra versión necesita menos evaluaciones, puede enviar un
-    # valor distinto de 24 explícitamente.
-    requested_max_evaluaciones = max(1, min(int(max_evaluaciones), 100))
-    legacy_24 = (
-        requested_max_evaluaciones == 24
-        and BACKTEST_MAX_EVALUATIONS >= 48
-        and str(request.query_params.get("max_evaluaciones", "")).strip() == "24"
-    )
-    effective_max_evaluaciones = BACKTEST_MAX_EVALUATIONS if legacy_24 else requested_max_evaluaciones
-    requested_spacing_minutes = max(15, min(int(spacing_minutes), 1440))
-    effective_spacing_minutes = requested_spacing_minutes
 
     now = time.time()
     with QUANT_BACKTEST_LOCK:
@@ -9966,10 +9464,8 @@ def obtener_quant_backtest(
             "updated_at": now,
             "external_user_id": user["external_user_id"],
             "bank": banco,
-            "max_evaluaciones": effective_max_evaluaciones,
-            "max_evaluaciones_requested": requested_max_evaluaciones,
-            "max_evaluaciones_legacy_alias": legacy_24,
-            "spacing_minutes": effective_spacing_minutes,
+            "max_evaluaciones": max_evaluaciones,
+            "spacing_minutes": spacing_minutes,
             "result": None,
             "error": None,
         }
@@ -9982,17 +9478,11 @@ def obtener_quant_backtest(
             job["status"] = "running"
             job["updated_at"] = time.time()
         logger.info(
-            "Backtest Quant multihorizonte iniciado: banco=%s evaluaciones=%s solicitadas=%s alias_24=%s spacing=%s min job=%s",
-            banco, effective_max_evaluaciones, requested_max_evaluaciones, legacy_24, effective_spacing_minutes, job_id,
+            "Backtest Quant multihorizonte iniciado: banco=%s evaluaciones=%s spacing=%s min job=%s",
+            banco, max_evaluaciones, spacing_minutes, job_id,
         )
         try:
-            result = backtest_quant_multihorizonte(banco, effective_max_evaluaciones, effective_spacing_minutes)
-            if isinstance(result, dict):
-                result["evaluation_capacity_requested"] = requested_max_evaluaciones
-                result["evaluation_capacity_effective"] = effective_max_evaluaciones
-                result["legacy_24_alias"] = legacy_24
-                result["spacing_requested_minutes"] = requested_spacing_minutes
-                result["spacing_effective_minutes"] = effective_spacing_minutes
+            result = backtest_quant_multihorizonte(banco, max_evaluaciones, spacing_minutes)
             with QUANT_BACKTEST_LOCK:
                 job = QUANT_BACKTEST_JOBS.get(job_id)
                 if job:
@@ -10019,10 +9509,6 @@ def obtener_quant_backtest(
         "status": "queued",
         "job_id": job_id,
         "bank": banco,
-        "max_evaluaciones_requested": requested_max_evaluaciones,
-        "max_evaluaciones_effective": effective_max_evaluaciones,
-        "legacy_24_alias": legacy_24,
-        "spacing_minutes": effective_spacing_minutes,
         "message": "Backtest encolado. Consulta el estado con el mismo job_id.",
     }
 
@@ -10114,7 +9600,30 @@ def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
     q,_=_obtener_quant_compartido(banco,c,v,int(mercado.get("liquidez",0) or 0)) if c>0 and v>0 else {}
     perf=obtener_prediction_performance(banco,100)
     spot_perf = obtener_spot_prediction_performance() if SPOT_PREDICTION_TRACKING_ENABLED else {"ok": False, "tracked": 0}
-    return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
+    market_age=None
+    market_stale=None
+    if mercado.get("fecha"):
+        fecha_mercado=mercado.get("fecha")
+        if fecha_mercado.tzinfo is None:
+            fecha_mercado=VET.localize(fecha_mercado)
+        market_age=max(0.0,(datetime.now(VET)-fecha_mercado.astimezone(VET)).total_seconds())
+        market_stale=market_age>MARKET_MAX_AGE_SECONDS
+    p2p_h=perf.get("horizons",{}) if isinstance(perf,dict) else {}
+    tracking_health={
+        "p2p":{
+            "tracked":perf.get("tracked",0) if isinstance(perf,dict) else 0,
+            "evaluated":{h:(p2p_h.get(h,{}).get("evaluated",0) if isinstance(p2p_h.get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
+            "pending":{h:(p2p_h.get(h,{}).get("pending",0) if isinstance(p2p_h.get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
+            "overdue_pending":{h:(p2p_h.get(h,{}).get("overdue_pending",0) if isinstance(p2p_h.get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
+            "last_prediction_at":perf.get("last_prediction_at") if isinstance(perf,dict) else None,
+        },
+        "spot":{
+            "tracked":spot_perf.get("tracked",0) if isinstance(spot_perf,dict) else 0,
+            "evaluated":{h:(spot_perf.get("horizons",{}).get(h,{}).get("evaluated",0) if isinstance(spot_perf.get("horizons",{}).get(h,{}),dict) else 0) for h in ("1h","3h","7h","24h")},
+            "last_prediction_at":spot_perf.get("last_prediction_at") if isinstance(spot_perf,dict) else None,
+        },
+    }
+    return {"ok":True,"build":VENBOT_BUILD,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf,"freshness":{"market_age_seconds":round(market_age,1) if market_age is not None else None,"threshold_seconds":MARKET_MAX_AGE_SECONDS,"stale":market_stale},"tracking_health":tracking_health}}
 
 
 def _programar_refresco_analysis(banco="GENERAL"):
