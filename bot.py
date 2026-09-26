@@ -407,8 +407,12 @@ _LAST_SPOT_COLLECTION_TS = 0.0
 # v31.62 mantiene intacta la lógica de negocio y controla únicamente el ciclo
 # de vida de las conexiones mediante un pool interno conservador.
 DB_POOL_MIN = max(1, int(os.getenv("VENBOT_DB_POOL_MIN", "1")))
-DB_POOL_MAX = min(4, max(DB_POOL_MIN, int(os.getenv("VENBOT_DB_POOL_MAX", "4"))))
+# v31.73.20: seis conexiones máximas dejan margen para los ciclos de drenaje
+# y las peticiones web simultáneas sin volver al volumen agresivo anterior.
+DB_POOL_MAX = min(6, max(DB_POOL_MIN, int(os.getenv("VENBOT_DB_POOL_MAX", "6"))))
 DB_POOL_WAIT_SECONDS = max(3, int(os.getenv("VENBOT_DB_POOL_WAIT_SECONDS", "12")))
+DB_POOL_GET_RETRIES = max(1, int(os.getenv("VENBOT_DB_POOL_GET_RETRIES", "3")))
+DB_POOL_RETRY_SLEEP_SECONDS = max(0.05, float(os.getenv("VENBOT_DB_POOL_RETRY_SLEEP_SECONDS", "0.20")))
 _DB_POOL = None
 _DB_POOL_LOCK = threading.Lock()
 _DB_POOL_SEMAPHORE = threading.BoundedSemaphore(DB_POOL_MAX)
@@ -449,14 +453,38 @@ def obtener_conexion():
     conn = None
     close_conn = False
     try:
-        conn = pool.getconn()
-        if conn is None or getattr(conn, "closed", 0):
+        last_exc = None
+        for _attempt in range(DB_POOL_GET_RETRIES):
+            try:
+                conn = pool.getconn()
+                if conn is not None:
+                    break
+            except Exception as exc:
+                last_exc = exc
+            time.sleep(DB_POOL_RETRY_SLEEP_SECONDS)
+        if conn is None:
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("DB pool no devolvió una conexión disponible")
+        if getattr(conn, "closed", 0):
             close_conn = True
             try:
                 pool.putconn(conn, close=True)
             except Exception:
                 pass
-            conn = pool.getconn()
+            conn = None
+            for _attempt in range(DB_POOL_GET_RETRIES):
+                try:
+                    conn = pool.getconn()
+                    if conn is not None:
+                        break
+                except Exception as exc:
+                    last_exc = exc
+                time.sleep(DB_POOL_RETRY_SLEEP_SECONDS)
+            if conn is None:
+                if last_exc is not None:
+                    raise last_exc
+                raise RuntimeError("DB pool no pudo reemplazar una conexión cerrada")
         try:
             yield conn
         except Exception:
@@ -8088,7 +8116,10 @@ AUTH_SESSION_DAYS = max(1, int(os.getenv("AUTH_SESSION_DAYS", "30")))
 AUTH_LOGIN_MAX_ATTEMPTS = max(3, int(os.getenv("AUTH_LOGIN_MAX_ATTEMPTS", "8")))
 AUTH_LOGIN_WINDOW_SECONDS = max(60, int(os.getenv("AUTH_LOGIN_WINDOW_SECONDS", "900")))
 TELEGRAM_ACCOUNT_SETUP_SECRET = os.getenv("TELEGRAM_ACCOUNT_SETUP_SECRET", "").strip()
+AUTH_SESSION_CACHE_SECONDS = max(1, int(os.getenv("AUTH_SESSION_CACHE_SECONDS", "3")))
 _AUTH_LOGIN_ATTEMPTS = {}
+_AUTH_SESSION_CACHE = {}
+_AUTH_SESSION_CACHE_LOCK = threading.Lock()
 
 def _hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
@@ -8178,6 +8209,13 @@ def _account_from_session(token: str):
     if not token or not DATABASE_URL:
         return None
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now_mono = time.monotonic()
+    with _AUTH_SESSION_CACHE_LOCK:
+        cached = _AUTH_SESSION_CACHE.get(token_hash)
+        if cached and now_mono < cached[0]:
+            return cached[1]
+        if cached:
+            _AUTH_SESSION_CACHE.pop(token_hash, None)
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute("""SELECT u.external_user_id,u.username,u.country_code,u.plan_code,u.status,u.plan_expires_at,u.telegram_user_id,s.expires_at FROM venbot_sessions s JOIN venbot_users u ON u.external_user_id=s.external_user_id WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>CURRENT_TIMESTAMP AND u.status='active' LIMIT 1""", (token_hash,))
@@ -8185,7 +8223,15 @@ def _account_from_session(token: str):
             if not row:
                 return None
             cur.execute("UPDATE venbot_sessions SET last_seen_at=CURRENT_TIMESTAMP WHERE token_hash=%s", (token_hash,))
-    return dict(zip(["external_user_id","username","country_code","plan_code","status","plan_expires_at","telegram_user_id","session_expires_at"], row))
+    user = dict(zip(["external_user_id","username","country_code","plan_code","status","plan_expires_at","telegram_user_id","session_expires_at"], row))
+    with _AUTH_SESSION_CACHE_LOCK:
+        _AUTH_SESSION_CACHE[token_hash] = (now_mono + AUTH_SESSION_CACHE_SECONDS, user)
+        # Prevent unbounded growth if clients generate many short-lived tokens.
+        if len(_AUTH_SESSION_CACHE) > 2048:
+            oldest = sorted(_AUTH_SESSION_CACHE.items(), key=lambda kv: kv[1][0])[:256]
+            for key, _ in oldest:
+                _AUTH_SESSION_CACHE.pop(key, None)
+    return user
 
 def _create_session(external_user_id: str):
     token = secrets.token_urlsafe(48)
@@ -8197,11 +8243,20 @@ def _create_session(external_user_id: str):
             cur.execute("DELETE FROM venbot_sessions WHERE external_user_id=%s AND (revoked_at IS NOT NULL OR expires_at<=CURRENT_TIMESTAMP)", (external_user_id,))
     return token, expires
 
+_LAUNCH_MODE_CACHE = {"value": None, "expires": 0.0}
+_LAUNCH_MODE_CACHE_LOCK = threading.Lock()
+LAUNCH_MODE_CACHE_SECONDS = max(1, int(os.getenv("LAUNCH_MODE_CACHE_SECONDS", "5")))
+
 def _launch_mode_state():
     """Estado del modo lanzamiento promocional global. Se autoexpira por fecha."""
     base = {"enabled": False, "duration_days": None, "activated_at": None, "expires_at": None, "activated_by": None}
     if not DATABASE_URL:
         return base
+    now_mono = time.monotonic()
+    with _LAUNCH_MODE_CACHE_LOCK:
+        cached = _LAUNCH_MODE_CACHE.get("value")
+        if cached is not None and now_mono < float(_LAUNCH_MODE_CACHE.get("expires", 0.0) or 0.0):
+            return dict(cached)
     try:
         now = datetime.now(VET)
         with obtener_conexion() as conn:
@@ -8210,24 +8265,30 @@ def _launch_mode_state():
                 row = cur.fetchone()
                 if not row:
                     cur.execute("INSERT INTO venbot_launch_mode(id,enabled) VALUES (1,FALSE) ON CONFLICT (id) DO NOTHING")
-                    return base
-                enabled, duration_days, activated_at, expires_at, activated_by = row
-                if enabled and expires_at:
-                    exp = expires_at if expires_at.tzinfo else VET.localize(expires_at)
-                    if exp <= now:
-                        cur.execute("UPDATE venbot_launch_mode SET enabled=FALSE,updated_at=CURRENT_TIMESTAMP WHERE id=1")
-                        logger.info("[LAUNCH MODE] autoexpirado")
-                        return base
-                return {
-                    "enabled": bool(enabled),
-                    "duration_days": int(duration_days) if duration_days else None,
-                    "activated_at": activated_at.isoformat() if activated_at else None,
-                    "expires_at": expires_at.isoformat() if expires_at else None,
-                    "activated_by": str(activated_by) if activated_by else None,
-                }
-    except Exception as exc:
-        logger.warning("[LAUNCH MODE] lectura falló: %s", exc)
-        return base
+                    result = base
+                else:
+                    enabled, duration_days, activated_at, expires_at, activated_by = row
+                    if enabled and expires_at:
+                        exp_vet = expires_at.astimezone(VET) if getattr(expires_at, "tzinfo", None) else VET.localize(expires_at)
+                        if now >= exp_vet:
+                            cur.execute("UPDATE venbot_launch_mode SET enabled=FALSE,updated_at=CURRENT_TIMESTAMP WHERE id=1")
+                            result = dict(base)
+                        else:
+                            result = {"enabled": bool(enabled), "duration_days": duration_days, "activated_at": activated_at.isoformat() if activated_at else None, "expires_at": expires_at.isoformat() if expires_at else None, "activated_by": activated_by}
+                    else:
+                        result = {"enabled": bool(enabled), "duration_days": duration_days, "activated_at": activated_at.isoformat() if activated_at else None, "expires_at": expires_at.isoformat() if expires_at else None, "activated_by": activated_by}
+        with _LAUNCH_MODE_CACHE_LOCK:
+            _LAUNCH_MODE_CACHE["value"] = dict(result)
+            _LAUNCH_MODE_CACHE["expires"] = time.monotonic() + LAUNCH_MODE_CACHE_SECONDS
+        return result
+    except Exception:
+        # El estado de lanzamiento no debe convertir una consulta de lectura en
+        # una tormenta de errores si el pool está momentáneamente bajo presión.
+        with _LAUNCH_MODE_CACHE_LOCK:
+            cached = _LAUNCH_MODE_CACHE.get("value")
+            if cached is not None:
+                return dict(cached)
+        raise
 
 def _set_launch_mode(enabled: bool, duration_days: Optional[int], actor: str):
     if enabled and int(duration_days or 0) not in {15, 30}:
@@ -8250,6 +8311,9 @@ def _set_launch_mode(enabled: bool, duration_days: Optional[int], actor: str):
                 json.dumps({"duration_days": int(duration_days) if enabled else None})
             ))
     logger.info("[LAUNCH MODE] %s duration=%s actor=%s", "activado" if enabled else "desactivado", duration_days, actor)
+    with _LAUNCH_MODE_CACHE_LOCK:
+        _LAUNCH_MODE_CACHE["value"] = None
+        _LAUNCH_MODE_CACHE["expires"] = 0.0
     return _launch_mode_state()
 
 def _foundation_entitlements(user):
