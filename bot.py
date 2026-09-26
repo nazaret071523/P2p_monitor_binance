@@ -164,7 +164,7 @@ TELEGRAM_AUTO_PREDICTIONS_INTERVAL_SECONDS = 3600
 # Publicación automática por categoría: botones sin convertir Telegram en un chat de consultas.
 TELEGRAM_AUTO_BUTTON_CACHE_SECONDS = max(30, int(os.getenv("TELEGRAM_AUTO_BUTTON_CACHE_SECONDS", "120")))
 _TELEGRAM_AUTO_SUMMARY_CACHE = {}
-VENBOT_BUILD = "31.73.3-tracking-freshness"
+VENBOT_BUILD = "31.73.4-p2p-backlog-recovery"
 COLLECT_INTERVAL_SECONDS = max(8, int(os.getenv("COLLECT_INTERVAL_SECONDS", "10")))
 P2P_SCAN_ADS = min(100, max(20, int(os.getenv("P2P_SCAN_ADS", "100"))))
 P2P_BANK_REFRESH_SECONDS = max(20, int(os.getenv("P2P_BANK_REFRESH_SECONDS", "30")))
@@ -1003,10 +1003,17 @@ def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None):
 
 
 def evaluar_predicciones_pendientes(limit=120):
-    """Evalúa P2P vencido en lotes, sin cambiar el motor productivo.
+    """Recupera el backlog P2P sin dejar que eventos sin muestra bloqueen la cola.
 
-    Reduce el patrón anterior de una consulta por evento+horizonte a una
-    consulta por horizonte con LEFT JOIN LATERAL y una actualización batched.
+    El fallo observado en 31.73.3 era de priorización: se tomaban primero los
+    eventos más antiguos y, si esos eventos no tenían una muestra P2P dentro de
+    la tolerancia histórica, podían ocupar permanentemente el lote y evitar que
+    predicciones más nuevas y evaluables llegaran a procesarse.
+
+    Esta versión selecciona directamente eventos vencidos que sí tienen una
+    muestra real futura dentro de la tolerancia, usando JOIN LATERAL y un límite
+    por horizonte. Los eventos sin muestra siguen pendientes y permanecen
+    visibles en /api/estado, pero ya no bloquean la evaluación de los demás.
     """
     if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
         return {"evaluated": 0, "evaluations_total": 0,
@@ -1024,8 +1031,8 @@ def evaluar_predicciones_pendientes(limit=120):
                "eval_at": "evaluated_7h_at", "actual": "actual_mid_7h",
                "error": "error_pct_7h", "direction": "direction_correct_7h"},
         "24h": {"hours": 24, "pred_buy": "pred_compra_24h", "pred_sell": "pred_venta_24h",
-               "eval_at": "evaluated_24h_at", "actual": "actual_mid_24h",
-               "error": "error_pct_24h", "direction": "direction_correct_24h"},
+                "eval_at": "evaluated_24h_at", "actual": "actual_mid_24h",
+                "error": "error_pct_24h", "direction": "direction_correct_24h"},
     }
     evaluated_by = {h: 0 for h in horizons}
     due_by = {h: 0 for h in horizons}
@@ -1036,23 +1043,35 @@ def evaluar_predicciones_pendientes(limit=120):
             with conn.cursor() as cur:
                 for label, spec in horizons.items():
                     hours = int(spec["hours"])
+
+                    # Conteo de eventos vencidos con predicción válida. Este dato
+                    # conserva la visibilidad del backlog aunque algunos carezcan
+                    # de muestra futura dentro de la tolerancia.
                     cur.execute(
                         f"""
-                        WITH candidates AS (
-                            SELECT id, banco, created_at, actual_mid,
-                                   {spec['pred_buy']} AS pred_buy,
-                                   {spec['pred_sell']} AS pred_sell
-                            FROM venbot_prediction_events
-                            WHERE {spec['eval_at']} IS NULL
-                              AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
-                              AND CURRENT_TIMESTAMP >= created_at + make_interval(hours => %s)
-                            ORDER BY created_at ASC
-                            LIMIT %s
-                        )
+                        SELECT COUNT(*)
+                        FROM venbot_prediction_events
+                        WHERE {spec['eval_at']} IS NULL
+                          AND {spec['pred_buy']} IS NOT NULL
+                          AND {spec['pred_sell']} IS NOT NULL
+                          AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                          AND CURRENT_TIMESTAMP >= created_at + make_interval(hours => %s)
+                        """,
+                        (hours,),
+                    )
+                    due_total = int(cur.fetchone()[0] or 0)
+                    due_by[label] = due_total
+
+                    # Importante: JOIN LATERAL aquí evita que una cabecera antigua
+                    # sin muestra futura bloquee el lote completo. PostgreSQL puede
+                    # usar los índices existentes de muestras_p2p y de eventos
+                    # pendientes para buscar solo los vencidos que sí son evaluables.
+                    cur.execute(
+                        f"""
                         SELECT c.id, c.actual_mid, c.pred_buy, c.pred_sell,
                                s.compra, s.venta, s.fecha
-                        FROM candidates c
-                        LEFT JOIN LATERAL (
+                        FROM venbot_prediction_events c
+                        JOIN LATERAL (
                             SELECT compra, venta, fecha
                             FROM muestras_p2p s
                             WHERE s.banco = c.banco
@@ -1062,17 +1081,26 @@ def evaluar_predicciones_pendientes(limit=120):
                             ORDER BY s.fecha ASC
                             LIMIT 1
                         ) s ON TRUE
+                        WHERE c.{spec['eval_at']} IS NULL
+                          AND c.{spec['pred_buy']} IS NOT NULL
+                          AND c.{spec['pred_sell']} IS NOT NULL
+                          AND c.created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                          AND CURRENT_TIMESTAMP >= c.created_at + make_interval(hours => %s)
+                        ORDER BY c.created_at ASC
+                        LIMIT %s
                         """,
-                        (hours, int(limit), hours, hours, int(PREDICTION_EVAL_TOLERANCE_MINUTES)),
+                        (
+                            hours,
+                            hours,
+                            int(PREDICTION_EVAL_TOLERANCE_MINUTES),
+                            hours,
+                            int(limit),
+                        ),
                     )
                     rows = cur.fetchall()
-                    due_by[label] = len(rows)
+                    waiting_by[label] = max(0, due_total - len(rows))
                     updates = []
                     for pid, origin_mid, pred_buy, pred_sell, actual_buy, actual_sell, actual_at in rows:
-                        if actual_at is None or pred_buy is None or pred_sell is None:
-                            if actual_at is None:
-                                waiting_by[label] += 1
-                            continue
                         try:
                             pred = (float(pred_buy) + float(pred_sell)) / 2.0
                             actual_mid = (float(actual_buy) + float(actual_sell)) / 2.0
