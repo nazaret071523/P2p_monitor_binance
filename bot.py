@@ -1033,7 +1033,7 @@ def _buscar_muestra_futura(banco, objetivo, tolerance_minutes=None, cursor=None)
 
 
 def evaluar_predicciones_pendientes(limit=100):
-    """Drenaje justo 1H/3H/7H/24H: cada horizonte recibe su propio cupo."""
+    """Drenaje justo 1H/3H/7H/24H con cola escaneada y candidatos listos primero."""
     if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
         return {"evaluated": 0}
     horizon_specs = {
@@ -1043,33 +1043,56 @@ def evaluar_predicciones_pendientes(limit=100):
         "24h": ("evaluated_24h_at", "pred_compra_24h", "pred_venta_24h", 24),
     }
     per_horizon = max(1, int(math.ceil(int(limit) / float(len(horizon_specs)))))
+    scan_pool = max(per_horizon * 8, per_horizon + 20)
     evaluated_horizons = 0
     evaluated_events = set()
     by_horizon = {k: 0 for k in horizon_specs}
     selected = {k: 0 for k in horizon_specs}
+    scanned = {k: 0 for k in horizon_specs}
     waiting_data = {k: 0 for k in horizon_specs}
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 for label, (ev_col, pred_buy_col, pred_sell_col, hours) in horizon_specs.items():
                     cur.execute(f"""
-                        SELECT id,banco,created_at,actual_mid,{pred_buy_col},{pred_sell_col},{ev_col}
-                        FROM venbot_prediction_events
-                        WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
-                          AND {ev_col} IS NULL
-                          AND {pred_buy_col} IS NOT NULL
-                          AND {pred_sell_col} IS NOT NULL
-                          AND created_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 hour')
-                        ORDER BY created_at ASC, id ASC
+                        WITH base AS (
+                            SELECT id,banco,created_at,actual_mid,{pred_buy_col},{pred_sell_col},{ev_col}
+                            FROM venbot_prediction_events
+                            WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
+                              AND {ev_col} IS NULL
+                              AND {pred_buy_col} IS NOT NULL
+                              AND {pred_sell_col} IS NOT NULL
+                              AND created_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 hour')
+                        ), scored AS (
+                            SELECT b.*,
+                                   EXISTS (
+                                       SELECT 1
+                                       FROM muestras_p2p m
+                                       WHERE m.banco=b.banco
+                                         AND m.fecha >= b.created_at + (%s * INTERVAL '1 hour')
+                                         AND m.fecha <= b.created_at + (%s * INTERVAL '1 hour') + (%s * INTERVAL '1 minute')
+                                   ) AS has_future
+                            FROM base b
+                        )
+                        SELECT id,banco,created_at,actual_mid,{pred_buy_col},{pred_sell_col},{ev_col},has_future
+                        FROM scored
+                        ORDER BY has_future DESC, created_at ASC, id ASC
                         LIMIT %s
-                    """, (hours, per_horizon))
+                    """, (hours, hours, hours, PREDICTION_EVAL_MAX_TOLERANCE_MINUTES, scan_pool))
                     rows = cur.fetchall()
-                    selected[label] = len(rows)
-                    for pid,banco,created_at,origin_mid,pred_buy,pred_sell,_ev in rows:
+                    scanned[label] = len(rows)
+                    for pid,banco,created_at,origin_mid,pred_buy,pred_sell,_ev,has_future in rows:
+                        if not has_future:
+                            waiting_data[label] += 1
+                            continue
+                        if selected[label] >= per_horizon:
+                            break
+                        selected[label] += 1
                         objetivo = created_at + timedelta(hours=hours)
                         actual = _buscar_muestra_futura(banco, objetivo, cursor=cur)
                         if not actual:
                             waiting_data[label] += 1
+                            selected[label] -= 1
                             continue
                         pred = (float(pred_buy) + float(pred_sell)) / 2.0
                         actual_mid = float(actual["mid"])
@@ -1092,15 +1115,15 @@ def evaluar_predicciones_pendientes(limit=100):
                         evaluated_horizons += 1
                         evaluated_events.add(pid)
                         by_horizon[label] += 1
-        if evaluated_horizons or any(selected.values()) or any(waiting_data.values()):
+        if evaluated_horizons or any(scanned.values()) or any(waiting_data.values()):
             logger.info(
-                "[P2P TRACKING DRAIN] seleccion=%s evaluadas_horizontes=%s eventos=%s 1H=%s 3H=%s 7H=%s 24H=%s esperando_dato=%s",
-                selected, evaluated_horizons, len(evaluated_events), by_horizon["1h"], by_horizon["3h"], by_horizon["7h"], by_horizon["24h"], waiting_data
+                "[P2P TRACKING DRAIN] cupo=%s seleccion_listos=%s escaneadas=%s evaluadas_horizontes=%s eventos=%s 1H=%s 3H=%s 7H=%s 24H=%s sin_dato=%s",
+                {k: per_horizon for k in horizon_specs}, selected, scanned, evaluated_horizons, len(evaluated_events), by_horizon["1h"], by_horizon["3h"], by_horizon["7h"], by_horizon["24h"], waiting_data
             )
-        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "waiting_data": waiting_data}
+        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "scanned": scanned, "waiting_data": waiting_data}
     except Exception as e:
         logger.warning("Evaluación de predicciones P2P falló: %s", e)
-        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "waiting_data": waiting_data, "error": "tracking temporalmente no disponible"}
+        return {"evaluated": len(evaluated_events), "evaluated_horizons": evaluated_horizons, "by_horizon": by_horizon, "selected": selected, "scanned": scanned, "waiting_data": waiting_data, "error": "tracking temporalmente no disponible"}
 
 
 def obtener_prediction_performance(banco="GENERAL", limit=100):
@@ -4223,41 +4246,58 @@ def guardar_proyeccion_horaria_p2p(banco, datos):
 
 
 def evaluar_proyecciones_horarias_p2p(limit=40):
-    """Drenaje 1H..24H con cupo independiente por horizonte."""
+    """Drenaje 1H..24H con cupo independiente y candidatos con dato listo primero."""
     if not DATABASE_URL or not PREDICTION_TRACKING_ENABLED:
         return {"evaluated": 0}
     horizon_count = 24
     per_horizon = max(1, int(limit) // horizon_count)
+    scan_pool = max(per_horizon * 8, per_horizon + 4)
     total_horizons = 0
     events_updated = set()
     by_horizon = {f"{h}h": 0 for h in range(1, 25)}
     selected = {f"{h}h": 0 for h in range(1, 25)}
     waiting_data = {f"{h}h": 0 for h in range(1, 25)}
+    scanned = {f"{h}h": 0 for h in range(1, 25)}
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    WITH candidates AS (
+                    WITH scored AS (
                         SELECT e.id,e.banco,e.created_at,e.actual_mid,e.evaluations,
                                p.label,p.item,
-                               ROW_NUMBER() OVER (PARTITION BY p.label ORDER BY e.created_at ASC,e.id ASC) AS rn
+                               EXISTS (
+                                   SELECT 1 FROM muestras_p2p m
+                                   WHERE m.banco=e.banco
+                                     AND m.fecha >= e.created_at + ((p.item->>'horizonte_horas')::int * INTERVAL '1 hour')
+                                     AND m.fecha <= e.created_at + ((p.item->>'horizonte_horas')::int * INTERVAL '1 hour') + (%s * INTERVAL '1 minute')
+                               ) AS has_future
                         FROM venbot_p2p_hourly_prediction_events e
                         CROSS JOIN LATERAL jsonb_each(COALESCE(e.projection,'{}'::jsonb)) p(label,item)
                         WHERE e.created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
                           AND (p.item->>'horizonte_horas')::int BETWEEN 1 AND 24
                           AND e.created_at + ((p.item->>'horizonte_horas')::int * INTERVAL '1 hour') <= CURRENT_TIMESTAMP
                           AND NOT (COALESCE(e.evaluations,'{}'::jsonb) ? p.label)
+                    ), candidates AS (
+                        SELECT s.*,
+                               ROW_NUMBER() OVER (PARTITION BY s.label ORDER BY s.has_future DESC,s.created_at ASC,s.id ASC) AS rn
+                        FROM scored s
                     )
-                    SELECT id,banco,created_at,actual_mid,evaluations,label,item
+                    SELECT id,banco,created_at,actual_mid,evaluations,label,item,has_future
                     FROM candidates
                     WHERE rn <= %s
-                    ORDER BY (item->>'horizonte_horas')::int ASC, created_at ASC, id ASC
-                """, (per_horizon,))
+                    ORDER BY (item->>'horizonte_horas')::int ASC, has_future DESC, created_at ASC, id ASC
+                """, (PREDICTION_EVAL_MAX_TOLERANCE_MINUTES, max(scan_pool * horizon_count, 100)))
                 rows = cur.fetchall()
                 grouped = {}
-                for pid,banco,created_at,origin_mid,evaluations,label,item in rows:
+                for pid,banco,created_at,origin_mid,evaluations,label,item,has_future in rows:
                     label = str(label)
                     if label not in by_horizon:
+                        continue
+                    scanned[label] += 1
+                    if not has_future:
+                        waiting_data[label] += 1
+                        continue
+                    if selected[label] >= per_horizon:
                         continue
                     selected[label] += 1
                     g = grouped.setdefault(pid, {
@@ -4280,6 +4320,7 @@ def evaluar_proyecciones_horarias_p2p(limit=40):
                         actual = _buscar_muestra_futura(g["banco"], target, cursor=cur)
                         if not actual:
                             waiting_data[label] += 1
+                            selected[label] = max(0, selected[label]-1)
                             continue
                         pred = float(item.get("midpoint") or 0)
                         actual_mid = float(actual.get("mid") or 0)
@@ -4309,11 +4350,11 @@ def evaluar_proyecciones_horarias_p2p(limit=40):
                         changed = True
                     if changed:
                         cur.execute('UPDATE venbot_p2p_hourly_prediction_events SET evaluations=%s,last_evaluated_at=CURRENT_TIMESTAMP WHERE id=%s',(json.dumps(ev,ensure_ascii=False),pid))
-        logger.info('[P2P 24H DRAIN] candidatos=%s evaluadas_horas=%s eventos=%s por_horizonte=%s esperando_dato=%s',len(rows),total_horizons,len(events_updated),by_horizon,waiting_data)
-        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'waiting_data':waiting_data}
+        logger.info('[P2P 24H DRAIN] cupo_por_horizonte=%s seleccion_listos=%s escaneadas=%s evaluadas_horas=%s eventos=%s por_horizonte=%s sin_dato=%s',per_horizon,selected,scanned,total_horizons,len(events_updated),by_horizon,waiting_data)
+        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'scanned':scanned,'waiting_data':waiting_data}
     except Exception as e:
         logger.warning('Evaluación horaria P2P falló: %s',e)
-        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'waiting_data':waiting_data,'error':'tracking_horario_temporalmente_no_disponible'}
+        return {'evaluated':len(events_updated),'evaluated_horizons':total_horizons,'by_horizon':by_horizon,'selected':selected,'scanned':scanned,'waiting_data':waiting_data,'error':'tracking_horario_temporalmente_no_disponible'}
 
 
 def obtener_ultima_proyeccion_horaria_p2p(banco='GENERAL'):
