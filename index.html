@@ -2337,7 +2337,11 @@
         const d=await r.json().catch(()=>({}));
         if(!r.ok) throw new Error(d.detail||'No se pudo cargar la evolución adaptativa');
         const cards=[];
-        for(const motor of [d.p2p,d.spot]){
+        const motorList=[d?.p2p,d?.spot].filter(Boolean);
+        if(!d || d.ok===false || !motorList.length){
+          throw new Error(d?.error || d?.message || 'El servidor no devolvió los motores adaptativos');
+        }
+        for(const motor of motorList){
           const st=motor.stage||{};
           const next=st.next_target_hours;
           const horizons=Object.entries(motor.horizons||{}).map(([label,v])=>{
@@ -2348,7 +2352,7 @@
             return `<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/60 border border-slate-800 px-2.5 py-2"><span class="font-black text-slate-200 uppercase">${label}</span><span class="text-slate-400 text-right">${evals} eval. · ${acc} · ${bias}${ready}</span></div>`;
           }).join('');
           let symbolLine='';
-          if(motor.motor==='SPOT'&&motor.by_symbol){
+          if(motor.motor==='SPOT'&&motor.by_symbol&&typeof motor.by_symbol==='object'){
             const rows=Object.entries(motor.by_symbol).map(([sym,v])=>`<div class="flex items-center justify-between gap-2 rounded-lg bg-slate-900/50 border border-slate-800 px-2 py-1.5"><span class="font-bold text-slate-300">${sym.replace('USDT','')}</span><span class="text-slate-500">${Number(v.coverage_hours||0).toFixed(2)} h · ${Number(v.snapshots||0)} snapshots</span></div>`).join('');
             symbolLine=`<div class="space-y-1"><div class="text-[9px] text-slate-500">Cobertura por activo · mediana ${Number(motor.coverage_hours||0).toFixed(2)} h</div>${rows}</div>`;
           }
@@ -2396,7 +2400,7 @@
           const milestoneText=motor.motor==='SPOT'?`${milestone.assets_reached||0}/${milestone.assets_total||9} activos ≥ 300 h`:`${Number(milestone.coverage_hours||0).toFixed(2)} h / 300 h`;
           return `<div class="rounded-2xl bg-slate-950/60 border border-indigo-500/15 p-3 md:p-4 mt-3"><div class="flex items-center justify-between gap-2"><div><div class="font-black text-slate-100">Laboratorio de maduración · ${motor.motor}</div><div class="text-[9px] text-slate-500 mt-1">Walk-forward OOS adicional para nuevos horizontes. No modifica producción.</div></div><span class="text-[8px] uppercase font-black text-indigo-200 bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 rounded-full">SOMBRA</span></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Producción</span><strong class="block text-emerald-300">${production.map(x=>x.toUpperCase()).join(' · ')}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Investigación</span><strong class="block text-purple-200">${research.length} horizontes</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Evidencia mínima</span><strong class="block text-slate-300">${evidence}/${research.length}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Rolling OOS válido</span><strong class="block ${valid?'text-emerald-300':'text-slate-400'}">${valid}/${research.length}</strong></div></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-[9px]"><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Hito 300 h</span><strong class="block ${milestone.status==='HITO_ALCANZADO'?'text-emerald-300':'text-amber-200'}">${milestoneText}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Horario 1H → 24H</span><strong class="block text-cyan-300">${allHourly.length} horizontes</strong><small class="text-slate-500">${allEvidence}/24 con evidencia · ${allValid}/24 OOS válido</small></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Calidad temporal</span><strong class="block ${qWarn?'text-amber-200':'text-emerald-300'}">${qWarn?`${qWarn} en observación`:'OK / sin alertas'}</strong></div><div class="rounded-lg bg-slate-900/60 px-2 py-2"><span class="text-slate-600">Gráfica</span><strong class="block text-purple-200">1H → 24H</strong><small class="text-slate-500">puntos horarios en sombra</small></div></div><div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-3">${rows}</div><div class="mt-3"><div class="text-[9px] font-black text-slate-300 uppercase tracking-wider">Seguimiento horario completo · 1H → 24H</div><div class="text-[8px] text-slate-600 mt-1 mb-2">Cada hora se evalúa de forma independiente. Producción permanece en 1H · 3H · 7H · 24H; las demás horas siguen en sombra.</div><div class="grid grid-cols-2 md:grid-cols-4 gap-1.5">${hourlyRows || '<div class="text-slate-600 text-[8px]">Sin datos horarios.</div>'}</div></div><div class="text-[8px] text-slate-600 mt-2">La validación walk-forward requiere evidencia consecutiva; las alertas de calidad son informativas y no cambian por sí solas el estado del candidato. Ninguna hora horaria cambia producción automáticamente.</div></div>`;
         };
-        if(maturity) maturity.innerHTML=[d.p2p,d.spot].map(motorLab).join('');
+        if(maturity) maturity.innerHTML=motorList.map(motorLab).join('');
         const spotMilestone=d?.spot?.milestone_300h||d?.milestones?.spot_300h||{};
         const auditBadge=document.getElementById('admin-spot-audit-badge');
         const auditCoverage=document.getElementById('admin-spot-audit-coverage');
@@ -2410,7 +2414,8 @@
       }catch(e){
         console.error('Venbot evolución adaptativa:', e);
         status.textContent='No se pudo cargar la evolución adaptativa.';
-        content.innerHTML='<div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-[10px] text-amber-200">Lectura temporalmente no disponible. Usa <b>Actualizar</b> para reintentar.</div>';
+        const detail=String(e?.message||'error temporal').slice(0,180);
+        content.innerHTML=`<div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-[10px] text-amber-200">Lectura temporalmente no disponible. Usa <b>Actualizar</b> para reintentar.<div class="mt-1 text-slate-500">Detalle: ${detail}</div></div>`;
       }
     }
     window.loadQuantAdaptiveStatus=loadQuantAdaptiveStatus;
@@ -3948,4 +3953,5 @@ window.venbotOpenAdvancedDirect=function(){
 </body>
 </html>
 
+<!-- VENBOT v31.73.9: panel adaptativo robusto ante respuestas parciales del endpoint; sin cambios de motor. -->
 <!-- VENBOT: interfaz aprobada conectada al motor original; no se altera la lógica funcional. -->
