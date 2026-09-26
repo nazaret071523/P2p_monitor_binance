@@ -757,6 +757,18 @@ def inicializar_db():
                     ON venbot_prediction_events(banco, created_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_venbot_prediction_due
                     ON venbot_prediction_events(created_at DESC, evaluated_7h_at);
+                    CREATE INDEX IF NOT EXISTS idx_venbot_pred_pending_1h
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_1h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_venbot_pred_pending_3h
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_3h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_venbot_pred_pending_7h
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_7h_at IS NULL;
+                    CREATE INDEX IF NOT EXISTS idx_venbot_pred_pending_24h
+                    ON venbot_prediction_events(banco, created_at)
+                    WHERE evaluated_24h_at IS NULL;
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS venbot_p2p_hourly_prediction_events (
@@ -989,6 +1001,8 @@ def evaluar_predicciones_pendientes(limit=100):
         return {"evaluated": 0}
     horizons = [("1h", 1), ("3h", 3), ("7h", 7), ("24h", 24)]
     evaluated = 0
+    by_horizon = {"1h":0,"3h":0,"7h":0,"24h":0}
+    selected_priority = {"7h":0,"24h":0,"3h":0,"1h":0,"other":0}
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
@@ -1000,7 +1014,16 @@ def evaluar_predicciones_pendientes(limit=100):
                     FROM venbot_prediction_events
                     WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '14 days'
                       AND (evaluated_1h_at IS NULL OR evaluated_3h_at IS NULL OR evaluated_7h_at IS NULL OR evaluated_24h_at IS NULL)
-                    ORDER BY created_at ASC LIMIT %s
+                    ORDER BY
+                      CASE
+                        WHEN evaluated_7h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '7 hours' THEN 0
+                        WHEN evaluated_24h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '24 hours' THEN 1
+                        WHEN evaluated_3h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '3 hours' THEN 2
+                        WHEN evaluated_1h_at IS NULL AND created_at <= CURRENT_TIMESTAMP - INTERVAL '1 hour' THEN 3
+                        ELSE 4
+                      END,
+                      created_at ASC
+                    LIMIT %s
                 """, (int(limit),))
                 rows = cur.fetchall()
                 for row in rows:
@@ -1014,6 +1037,18 @@ def evaluar_predicciones_pendientes(limit=100):
                         "24h": ((float(pc24)+float(pv24))/2.0) if pc24 is not None and pv24 is not None else None,
                     }
                     evaluated_at = {"1h": ev1, "3h": ev3, "7h": ev7, "24h": ev24}
+                    # Clasificación de prioridad para observar si el cuello de botella 7H/24H está drenándose.
+                    now_utc = datetime.now(pytz.UTC)
+                    if ev7 is None and created_at + timedelta(hours=7) <= now_utc:
+                        selected_priority["7h"] += 1
+                    elif ev24 is None and created_at + timedelta(hours=24) <= now_utc:
+                        selected_priority["24h"] += 1
+                    elif ev3 is None and created_at + timedelta(hours=3) <= now_utc:
+                        selected_priority["3h"] += 1
+                    elif ev1 is None and created_at + timedelta(hours=1) <= now_utc:
+                        selected_priority["1h"] += 1
+                    else:
+                        selected_priority["other"] += 1
                     updates = {}
                     for label, hours in horizons:
                         if evaluated_at[label] is not None or predictions[label] is None:
@@ -1038,6 +1073,7 @@ def evaluar_predicciones_pendientes(limit=100):
                         updates[f"error_pct_{label}"] = err
                         updates[f"evaluated_{label}_at"] = actual["fecha"]
                         updates[f"direction_correct_{label}"] = direction_correct
+                        by_horizon[label] += 1
                     if updates:
                         sets=[]; vals=[]
                         for key,val in updates.items():
@@ -1045,7 +1081,12 @@ def evaluar_predicciones_pendientes(limit=100):
                         vals.append(pid)
                         cur.execute(f"UPDATE venbot_prediction_events SET {', '.join(sets)} WHERE id=%s", vals)
                         evaluated += 1
-        return {"evaluated": evaluated}
+        if evaluated or any(selected_priority.values()):
+            logger.info(
+                "[P2P TRACKING PRIORITY] filas=%s evaluadas=%s 1H=%s 3H=%s 7H=%s 24H=%s prioridad=%s",
+                len(rows), evaluated, by_horizon["1h"], by_horizon["3h"], by_horizon["7h"], by_horizon["24h"], selected_priority
+            )
+        return {"evaluated": evaluated, "by_horizon": by_horizon, "priority_selected": selected_priority}
     except Exception as e:
         logger.warning("Evaluación de predicciones falló: %s", e)
         return {"evaluated": evaluated, "error": "tracking temporalmente no disponible"}
