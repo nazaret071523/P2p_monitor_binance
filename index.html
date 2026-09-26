@@ -678,6 +678,23 @@
               </div>
             </div>
           </div>
+          <div class="rounded-2xl bg-slate-950/50 border border-violet-500/15 p-3 space-y-3">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2"><i class="fa-solid fa-sliders text-violet-300"></i><span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Calibración · aprendizaje por horizonte</span></div>
+                <p class="text-[9px] text-slate-500 mt-1">Observa factores candidatos, OOS y estabilidad 1H→24H. Solo sombra; no aplica cambios automáticamente.</p>
+              </div>
+              <span id="admin-calibration-learning-badge" class="text-[8px] font-black uppercase text-slate-400 bg-slate-900 border border-slate-700 px-2 py-1 rounded-full">SIN CONSULTAR</span>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <div id="admin-calibration-learning-summary" class="text-[9px] text-slate-500">Pendiente de consulta.</div>
+              <button type="button" onclick="loadPredictiveCalibrationLearning()" class="focus-ring rounded-xl bg-violet-500/10 border border-violet-500/25 text-violet-200 px-3 py-2.5 text-[10px] font-black shrink-0">Actualizar aprendizaje</button>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><div class="text-[9px] font-black uppercase tracking-[0.15em] text-violet-300 mb-2">P2P · producción</div><div id="admin-calibration-learning-p2p-prod" class="overflow-x-auto text-[8px]">Pendiente…</div></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><div class="text-[9px] font-black uppercase tracking-[0.15em] text-violet-300 mb-2">Spot · producción</div><div id="admin-calibration-learning-spot-prod" class="overflow-x-auto text-[8px]">Pendiente…</div></div>
+            </div>
+          </div>
           <div class="rounded-2xl bg-slate-950/50 border border-slate-800 p-3 space-y-3">
             <div class="flex items-center justify-between gap-2">
               <div><div class="flex items-center gap-2"><i class="fa-solid fa-rocket text-amber-300"></i><span class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Modo lanzamiento</span></div><p class="text-[9px] text-slate-500 mt-1">Activa temporalmente el acceso promocional global. Se autoexpira.</p></div>
@@ -3893,6 +3910,47 @@
     }
   }
 
+  function calibrationLearningTable(data){
+    const keys=Object.keys(data||{});
+    if(!keys.length) return '<div class="text-slate-600">Sin evidencia.</div>';
+    const rows=keys.map(k=>{
+      const d=data[k]||{};
+      const ev=Number(d.evaluated||0);
+      const factor=d.candidate_factor==null?'—':Number(d.candidate_factor).toFixed(6);
+      const oos=d.oos_improvement_pct==null?'—':Number(d.oos_improvement_pct).toFixed(2)+'%';
+      const gate=d.gate_status||'—';
+      const stable=`${Number(d.stable_passes||0)}/${Number(d.required_passes||0)}`;
+      const shadow=d.shadow_status||'—';
+      return `<tr class="border-t border-slate-800"><td class="px-1.5 py-1 font-black text-slate-300">${k.toUpperCase()}</td><td class="px-1.5 py-1">${Number.isFinite(ev)?ev.toLocaleString('es-VE'):'—'}</td><td class="px-1.5 py-1">${factor}</td><td class="px-1.5 py-1">${oos}</td><td class="px-1.5 py-1">${stable}</td><td class="px-1.5 py-1 text-slate-500">${String(shadow).replaceAll('_',' ')}</td><td class="px-1.5 py-1 text-slate-500">${String(gate).replaceAll('_',' ')}</td></tr>`;
+    }).join('');
+    return `<table class="w-full border-collapse text-[8px] leading-tight"><thead class="text-slate-500 uppercase"><tr><th class="px-1.5 py-1 text-left">H</th><th class="px-1.5 py-1">Eval</th><th class="px-1.5 py-1">Factor</th><th class="px-1.5 py-1">OOS Δ</th><th class="px-1.5 py-1">Estable</th><th class="px-1.5 py-1 text-left">Sombra</th><th class="px-1.5 py-1 text-left">Gate</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  async function loadPredictiveCalibrationLearning(){
+    if(!window.venbotUser?.is_developer) return;
+    const badge=document.getElementById('admin-calibration-learning-badge');
+    const summary=document.getElementById('admin-calibration-learning-summary');
+    const p2p=document.getElementById('admin-calibration-learning-p2p-prod');
+    const spot=document.getElementById('admin-calibration-learning-spot-prod');
+    if(badge) badge.textContent='CONSULTANDO';
+    if(summary) summary.textContent='Consultando aprendizaje por horizonte…';
+    try{
+      const token=getAuthToken();
+      if(!token) throw new Error('Sesión de desarrollador no disponible.');
+      const symbol=(document.getElementById('admin-quality-audit-symbol')?.value||'BTCUSDT').toUpperCase();
+      const r=await fetch(`${API_BASE_URL}/api/admin/predictive/calibration-learning?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':token,'Accept':'application/json'},cache:'no-store'});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok || !d.ok) throw new Error(d.detail||d.error||`HTTP ${r.status}`);
+      if(p2p) p2p.innerHTML=calibrationLearningTable(d.production?.p2p?.horizons||{});
+      if(spot) spot.innerHTML=calibrationLearningTable(d.production?.spot?.horizons||{});
+      const ps=d.summary?.production?.p2p||{}; const ss=d.summary?.production?.spot||{};
+      if(badge){badge.textContent='APRENDIZAJE ACTIVO';badge.className='text-[8px] font-black uppercase text-violet-300 bg-violet-500/10 border border-violet-500/20 px-2 py-1 rounded-full';}
+      if(summary) summary.textContent=`P2P evidencia ${ps.evidence_ready||0}/4 · revisables ${ps.review_ready||0} · Spot evidencia ${ss.evidence_ready||0}/4 · revisables ${ss.review_ready||0} · producción sin cambios automáticos.`;
+    }catch(e){
+      if(badge){badge.textContent='ERROR';badge.className='text-[8px] font-black uppercase text-rose-300 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-full';}
+      if(summary) summary.textContent=`No se pudo consultar el aprendizaje: ${e.message||'error temporal'}`;
+    }
+  }
+
   async function loadAdminControlCenter(){
     if(!window.venbotUser?.is_developer) return;
     const statusEl=document.getElementById('admin-system-status');
@@ -3961,7 +4019,7 @@
   function applyDeveloperOnly(){
     const visible = !!window.venbotUser?.is_developer;
     [quantBacktest, quantAdaptive, document.getElementById('advanced-graphs-launcher'), document.getElementById('venbot-admin-center')].forEach(el=>{ if(el) el.classList.toggle('developer-visible', visible); });
-    if(visible){ loadAdminControlCenter(); loadPredictiveQualityAudit(); }
+    if(visible){ loadAdminControlCenter(); loadPredictiveQualityAudit(); loadPredictiveCalibrationLearning(); }
   }
   window.applyVenbotDeveloperUI = applyDeveloperOnly;
   function place(){
