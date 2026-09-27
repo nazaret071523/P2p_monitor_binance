@@ -389,6 +389,16 @@ _QUANT_CACHE = {}
 _ADAPTIVE_STATUS_CACHE_SECONDS = max(15, int(os.getenv("ADAPTIVE_STATUS_CACHE_SECONDS", "60")))
 _ADAPTIVE_STATUS_CACHE = {}
 _ADAPTIVE_STATUS_LOCK = threading.Lock()
+# v31.73.24: caches de lectura para evitar ráfagas del panel administrativo y
+# /api/estado compitiendo con los workers por las pocas conexiones disponibles.
+_ADMIN_QUALITY_CACHE_SECONDS = max(10, int(os.getenv("ADMIN_QUALITY_CACHE_SECONDS", "30")))
+_ADMIN_CALIBRATION_CACHE_SECONDS = max(10, int(os.getenv("ADMIN_CALIBRATION_CACHE_SECONDS", "30")))
+_ADMIN_PREDICTIVE_CACHE_SECONDS = max(5, int(os.getenv("ADMIN_PREDICTIVE_CACHE_SECONDS", "15")))
+_STATE_CACHE_SECONDS = max(2, int(os.getenv("STATE_CACHE_SECONDS", "5")))
+_ADMIN_READ_CACHE = {}
+_ADMIN_READ_CACHE_LOCK = threading.Lock()
+_STATE_CACHE = {}
+_STATE_CACHE_LOCK = threading.Lock()
 LIVE_CACHE = {"value": None, "expires": 0.0}
 LIVE_LOCK = threading.Lock()
 SPOT_CACHE = {"value": {}, "expires": 0.0}
@@ -8116,7 +8126,7 @@ AUTH_SESSION_DAYS = max(1, int(os.getenv("AUTH_SESSION_DAYS", "30")))
 AUTH_LOGIN_MAX_ATTEMPTS = max(3, int(os.getenv("AUTH_LOGIN_MAX_ATTEMPTS", "8")))
 AUTH_LOGIN_WINDOW_SECONDS = max(60, int(os.getenv("AUTH_LOGIN_WINDOW_SECONDS", "900")))
 TELEGRAM_ACCOUNT_SETUP_SECRET = os.getenv("TELEGRAM_ACCOUNT_SETUP_SECRET", "").strip()
-AUTH_SESSION_CACHE_SECONDS = max(1, int(os.getenv("AUTH_SESSION_CACHE_SECONDS", "3")))
+AUTH_SESSION_CACHE_SECONDS = max(1, int(os.getenv("AUTH_SESSION_CACHE_SECONDS", "10")))
 _AUTH_LOGIN_ATTEMPTS = {}
 _AUTH_SESSION_CACHE = {}
 _AUTH_SESSION_CACHE_LOCK = threading.Lock()
@@ -9339,6 +9349,14 @@ def admin_predictive_calibration_learning(
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
     hs4=("1h","3h","7h","24h")
     hs24=tuple(f"{h}h" for h in range(1,25))
+    cache_key=f"calibration:{sym or 'ALL'}"
+    now=time.monotonic()
+    with _ADMIN_READ_CACHE_LOCK:
+        cached=_ADMIN_READ_CACHE.get(cache_key)
+        if cached and now < float(cached.get("expires",0) or 0):
+            value=dict(cached.get("value") or {})
+            value["cache"]="FRESH"
+            return value
     try:
         p2p_prod=_predictive_calibration_learning_latest("P2P","GENERAL",hs4)
         spot_prod=_predictive_calibration_learning_latest("SPOT",sym or "ALL",hs4)
@@ -9353,7 +9371,7 @@ def admin_predictive_calibration_learning(
                 "review_ready":sum(1 for x in vals if x.get("gate_status")=="LISTO_PARA_REVISION"),
                 "production_change":"DISABLED",
             }
-        return {
+        result={
             "ok":True,
             "generated_at":datetime.now(VET).isoformat(),
             "production": {"p2p":{"scope":"GENERAL","horizons":p2p_prod},"spot":{"scope":sym or "ALL","horizons":spot_prod}},
@@ -9367,6 +9385,9 @@ def admin_predictive_calibration_learning(
                 "note":"Este reporte observa candidatos y estabilidad. No aplica calibraciones ni modifica producción.",
             }
         }
+        with _ADMIN_READ_CACHE_LOCK:
+            _ADMIN_READ_CACHE[cache_key]={"value":result,"expires":time.monotonic()+_ADMIN_CALIBRATION_CACHE_SECONDS}
+        return {**result,"cache":"REFRESHED"}
     except Exception as exc:
         logger.warning("Calibration learning audit falló: %s",exc)
         raise HTTPException(status_code=503,detail="calibration_learning_temporarily_unavailable")
@@ -9385,12 +9406,20 @@ def admin_predictive_quality_audit(
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
     if not DATABASE_URL:
         return {"ok":False,"error":"database_unavailable"}
+    cache_key=f"quality:{sym or 'ALL'}:{int(lookback_days)}"
+    now=time.monotonic()
+    with _ADMIN_READ_CACHE_LOCK:
+        cached=_ADMIN_READ_CACHE.get(cache_key)
+        if cached and now < float(cached.get("expires",0) or 0):
+            value=dict(cached.get("value") or {})
+            value["cache"]="FRESH"
+            return value
     try:
         p2p_prod=_predictive_quality_audit_production_p2p("GENERAL", lookback_days)
         spot_prod=_predictive_quality_audit_production_spot(sym, lookback_days)
         p2p_hourly=_predictive_quality_audit_hourly("P2P","GENERAL")
         spot_hourly=_predictive_quality_audit_hourly("SPOT",sym or "ALL")
-        return {
+        result={
             "ok":True,
             "generated_at":datetime.now(VET).isoformat(),
             "lookback_days":int(lookback_days),
@@ -9403,6 +9432,9 @@ def admin_predictive_quality_audit(
                 "note":"Lectura descriptiva para auditoría. No modifica calibración ni promoción."
             }
         }
+        with _ADMIN_READ_CACHE_LOCK:
+            _ADMIN_READ_CACHE[cache_key]={"value":result,"expires":time.monotonic()+_ADMIN_QUALITY_CACHE_SECONDS}
+        return {**result,"cache":"REFRESHED"}
     except Exception as exc:
         logger.warning("Predictive quality audit falló: %s",exc)
         raise HTTPException(status_code=503, detail="predictive_quality_audit_temporarily_unavailable")
@@ -9423,6 +9455,14 @@ def admin_predictive_p2p(
     bank = (banco or "GENERAL").upper().strip()
     if bank not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         bank = "GENERAL"
+    cache_key=f"p2p:{bank}:{snapshot_id or 0}:{int(limit)}"
+    now=time.monotonic()
+    with _ADMIN_READ_CACHE_LOCK:
+        cached=_ADMIN_READ_CACHE.get(cache_key)
+        if cached and now < float(cached.get("expires",0) or 0):
+            value=dict(cached.get("value") or {})
+            value["cache"]="FRESH"
+            return value
     analysis = calcular_analisis_monitor(bank)
     filas = obtener_estadisticas_db(limit=int(limit), banco=bank)
     history = []
@@ -9455,7 +9495,10 @@ def admin_predictive_p2p(
                     hourly=obtener_ultima_proyeccion_horaria_p2p(bank)
         except Exception as _hourly_now_exc:
             logger.warning("Proyección horaria administrativa no disponible %s: %s",bank,_hourly_now_exc)
-    return {"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": snapshots, "selected_snapshot_id": snapshot_id, "hourly_projection": hourly}
+    result={"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": snapshots, "selected_snapshot_id": snapshot_id, "hourly_projection": hourly}
+    with _ADMIN_READ_CACHE_LOCK:
+        _ADMIN_READ_CACHE[cache_key]={"value":result,"expires":time.monotonic()+_ADMIN_PREDICTIVE_CACHE_SECONDS}
+    return {**result,"cache":"REFRESHED"}
 
 
 @app.get("/api/admin/predictive/spot")
@@ -9472,6 +9515,15 @@ def admin_predictive_spot(
     sym = _normalizar_spot_symbol(symbol)
     if sym not in SPOT_SYMBOLS:
         raise HTTPException(status_code=400, detail="Activo Spot no habilitado en Venbot")
+    cache_key=f"spot:{sym}:{snapshot_id or 0}:{interval}:{int(limit)}:{int(new_t0)}"
+    now=time.monotonic()
+    if not new_t0:
+        with _ADMIN_READ_CACHE_LOCK:
+            cached=_ADMIN_READ_CACHE.get(cache_key)
+            if cached and now < float(cached.get("expires",0) or 0):
+                value=dict(cached.get("value") or {})
+                value["cache"]="FRESH"
+                return value
     prediction = analizar_spot_predictivo(sym)
     # La lectura administrativa garantiza que exista un snapshot horario persistente.
     # new_t0 fuerza uno nuevo para que el control "Nuevo T0" sea realmente manual.
@@ -9491,7 +9543,11 @@ def admin_predictive_spot(
             logger.warning("No se pudo inicializar T0 Spot %s: %s", sym, exc)
     candles = obtener_spot_klines(sym, interval, limit)
     performance = obtener_spot_prediction_performance(sym)
-    return {"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance, "snapshots": obtener_spot_prediction_snapshots(sym, 40), "hourly_shadow": obtener_spot_hourly_prediction_snapshots(sym, 40, snapshot_id)}
+    result={"ok": True, "symbol": sym, "prediction": prediction, "candles": candles, "performance": performance, "snapshots": obtener_spot_prediction_snapshots(sym, 40), "hourly_shadow": obtener_spot_hourly_prediction_snapshots(sym, 40, snapshot_id)}
+    if not new_t0:
+        with _ADMIN_READ_CACHE_LOCK:
+            _ADMIN_READ_CACHE[cache_key]={"value":result,"expires":time.monotonic()+_ADMIN_PREDICTIVE_CACHE_SECONDS}
+    return {**result,"cache":"REFRESHED"} if not new_t0 else result
 
 
 @app.get("/api/admin/launch-mode")
@@ -10032,12 +10088,20 @@ def obtener_prediction_signal_api(request: Request, banco: str = Query("GENERAL"
 def obtener_estado_sistema_api(banco: str = Query("GENERAL")):
     banco=(banco or "GENERAL").upper().strip()
     if banco not in {"GENERAL","MERCANTIL","PROVINCIAL","BNC"}: banco="GENERAL"
+    now=time.monotonic()
+    with _STATE_CACHE_LOCK:
+        cached=_STATE_CACHE.get(banco)
+        if cached and now < float(cached.get("expires",0) or 0):
+            return dict(cached.get("value") or {})
     mercado=obtener_ultimo_mercado_banco(banco) or {}
     c=float(mercado.get("compra",0) or 0); v=float(mercado.get("venta",0) or 0)
-    q,_=_obtener_quant_compartido(banco,c,v,int(mercado.get("liquidez",0) or 0)) if c>0 and v>0 else {}
+    q=_obtener_quant_compartido(banco,c,v,int(mercado.get("liquidez",0) or 0))[0] if c>0 and v>0 else {}
     perf=obtener_prediction_performance(banco,100)
     spot_perf = obtener_spot_prediction_performance() if SPOT_PREDICTION_TRACKING_ENABLED else {"ok": False, "tracked": 0}
-    return {"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
+    result={"ok":True,"bank":banco,"services":{"p2p":c>0 and v>0,"quant":True,"alerts":True,"billing_manual":BILLING_PROVIDER=="manual","prediction_tracking":PREDICTION_TRACKING_ENABLED,"spot_prediction_tracking":SPOT_PREDICTION_TRACKING_ENABLED},"data":{"muestras":q.get("muestras",0),"coverage_hours":q.get("cobertura_horas",0),"calibration_24h":q.get("calibracion_24h",{}),"performance":perf,"spot_prediction_performance":spot_perf}}
+    with _STATE_CACHE_LOCK:
+        _STATE_CACHE[banco]={"value":result,"expires":time.monotonic()+_STATE_CACHE_SECONDS}
+    return result
 
 
 def _programar_refresco_analysis(banco="GENERAL"):
