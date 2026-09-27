@@ -407,6 +407,8 @@ SPOT_LOCK = threading.Lock()
 _LAST_SPOT_COLLECTION_TS = 0.0
 
 
+# v31.73.28 — DB stability: soft-cache for current real market reads +
+# compatibility of the P2P 12H graph window. No prediction math changed.
 # ==========================================
 # BASE DE DATOS POSTGRESQL / SUPABASE
 # ==========================================
@@ -1386,9 +1388,77 @@ def guardar_muestra_db(compra, venta, liquidez_score=0, banco="GENERAL", fecha=N
         return False
 
 
+# v31.73.28: caché de última lectura real para evitar que las lecturas frecuentes
+# del panel web consuman una conexión PostgreSQL en cada refresco.
+_MARKET_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("MARKET_CACHE_TTL_SECONDS", "15")))
+_MARKET_CACHE_STALE_GRACE_SECONDS = max(30.0, float(os.getenv("MARKET_CACHE_STALE_GRACE_SECONDS", "120")))
+_MARKET_CACHE = {"value": None, "expires": 0.0, "updated": 0.0}
+_MARKET_CACHE_LOCK = threading.Lock()
+_BANK_MARKET_CACHE = {}
+_BANK_MARKET_CACHE_LOCK = threading.Lock()
+
+def _set_market_cache(value):
+    if not isinstance(value, dict):
+        return
+    payload = dict(value)
+    now_mono = time.monotonic()
+    with _MARKET_CACHE_LOCK:
+        _MARKET_CACHE["value"] = payload
+        _MARKET_CACHE["expires"] = now_mono + _MARKET_CACHE_TTL_SECONDS
+        _MARKET_CACHE["updated"] = now_mono
+
+def _get_market_cache(allow_stale=True):
+    now_mono = time.monotonic()
+    with _MARKET_CACHE_LOCK:
+        value = _MARKET_CACHE.get("value")
+        updated = float(_MARKET_CACHE.get("updated", 0) or 0)
+        expires = float(_MARKET_CACHE.get("expires", 0) or 0)
+        if not isinstance(value, dict) or not value:
+            return None
+        if now_mono < expires:
+            return dict(value)
+        if allow_stale and updated and (now_mono - updated) <= _MARKET_CACHE_STALE_GRACE_SECONDS:
+            return dict(value)
+    return None
+
+def _set_bank_market_cache(banco, value):
+    if not isinstance(value, dict):
+        return
+    bank = (banco or "GENERAL").upper().strip()
+    now_mono = time.monotonic()
+    with _BANK_MARKET_CACHE_LOCK:
+        _BANK_MARKET_CACHE[bank] = {"value": dict(value), "updated": now_mono}
+
+def _get_bank_market_cache(banco, allow_stale=True):
+    bank = (banco or "GENERAL").upper().strip()
+    now_mono = time.monotonic()
+    with _BANK_MARKET_CACHE_LOCK:
+        item = _BANK_MARKET_CACHE.get(bank)
+        if not item or not isinstance(item.get("value"), dict):
+            return None
+        age = now_mono - float(item.get("updated", 0) or 0)
+        if age <= _MARKET_CACHE_TTL_SECONDS or (allow_stale and age <= _MARKET_CACHE_STALE_GRACE_SECONDS):
+            return dict(item["value"])
+    return None
+
+
 def guardar_mercado_actual(compra, venta, liquidez, bcv_usd, bcv_eur, fuente_bcv):
+    now = datetime.now(VET)
+    cache_value = {
+        "compra": float(compra),
+        "venta": float(venta),
+        "liquidez": int(liquidez or 0),
+        "bcv": float(bcv_usd) if bcv_usd else 0.0,
+        "eur": float(bcv_eur) if bcv_eur else 0.0,
+        "fuente_bcv": fuente_bcv or "sin_datos",
+        "fecha": now,
+    }
+    # La lectura proviene directamente del colector real; conservarla localmente
+    # permite que la UI siga mostrando datos aunque PostgreSQL esté temporalmente
+    # ocupado. La persistencia continúa intentando escribirse normalmente.
+    _set_market_cache(cache_value)
+    _set_bank_market_cache("GENERAL", cache_value)
     try:
-        now = datetime.now(VET)
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1417,11 +1487,16 @@ def guardar_mercado_actual(compra, venta, liquidez, bcv_usd, bcv_eur, fuente_bcv
                 )
         return True
     except Exception as e:
-        logger.exception("Error guardando mercado actual: %s", e)
+        # La última lectura real permanece disponible en caché; no propagamos una
+        # caída temporal del pool hacia la experiencia del usuario.
+        logger.warning("Persistencia de mercado actual temporalmente no disponible; caché local conservado: %s", e)
         return False
 
 
 def obtener_mercado_actual_db():
+    cached = _get_market_cache(allow_stale=True)
+    if cached:
+        return cached
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
@@ -1433,7 +1508,7 @@ def obtener_mercado_actual_db():
                 row = cur.fetchone()
         if not row:
             return None
-        return {
+        result = {
             "compra": float(row[0]),
             "venta": float(row[1]),
             "liquidez": int(row[2] or 0),
@@ -1442,12 +1517,19 @@ def obtener_mercado_actual_db():
             "fuente_bcv": row[5] or "sin_datos",
             "fecha": row[6],
         }
+        _set_market_cache(result)
+        _set_bank_market_cache("GENERAL", result)
+        return result
     except Exception as e:
-        logger.exception("Error leyendo mercado actual: %s", e)
+        cached = _get_market_cache(allow_stale=True)
+        if cached:
+            logger.warning("Lectura DB de mercado actual temporalmente no disponible; usando última lectura real en caché: %s", e)
+            return cached
+        logger.warning("Error leyendo mercado actual sin caché disponible: %s", e)
         return None
 
 
-def obtener_estadisticas_db(limit=2000, banco="GENERAL", desde: Optional[datetime] = None):
+def obtener_estadisticas_db(limit=2000, banco="GENERAL", desde: Optional[datetime] = None, hasta: Optional[datetime] = None):
     try:
         with obtener_conexion() as conn:
             with conn.cursor() as cur:
@@ -1462,6 +1544,9 @@ def obtener_estadisticas_db(limit=2000, banco="GENERAL", desde: Optional[datetim
                 if desde is not None:
                     conditions.append("fecha >= %s")
                     params.append(desde)
+                if hasta is not None:
+                    conditions.append("fecha <= %s")
+                    params.append(hasta)
 
                 where_sql = " WHERE " + " AND ".join(conditions) if conditions else ""
                 params.append(int(limit))
@@ -5722,13 +5807,19 @@ def generar_imagen_grafica_cuantica(filas, banco):
 
 
 def obtener_ultimo_mercado_banco(banco):
-    if banco == "GENERAL":
+    bank = (banco or "GENERAL").upper().strip()
+    cached = _get_bank_market_cache(bank, allow_stale=True)
+    if cached:
+        return cached
+    if bank == "GENERAL":
         return obtener_mercado_actual_db() or {}
-    filas = obtener_estadisticas_db(limit=1, banco=banco)
+    filas = obtener_estadisticas_db(limit=1, banco=bank)
     if not filas:
         return {}
     c, v, l, f = filas[0]
-    return {"compra": float(c or 0), "venta": float(v or 0), "liquidez": int(l or 0), "fecha": f}
+    result = {"compra": float(c or 0), "venta": float(v or 0), "liquidez": int(l or 0), "fecha": f}
+    _set_bank_market_cache(bank, result)
+    return result
 
 
 def _guardar_quant_cache(banco, compra, venta, liquidez, datos):
@@ -7937,6 +8028,7 @@ async def tarea_recoleccion_automatica():
                 resultados[banco] = (c, v, l)
                 logger.info("P2P %s listo: %.2f compra / %.2f venta / %s anuncios", banco, c, v, l)
                 if c > 0 and v > 0:
+                    _set_bank_market_cache(banco, {"compra": float(c), "venta": float(v), "liquidez": int(l), "fecha": datetime.now(VET)})
                     await asyncio.to_thread(guardar_muestra_db, c, v, l, banco)
                 if banco == "GENERAL":
                     tasas = await asyncio.to_thread(obtener_tasas_bcv_oficiales)
@@ -9443,8 +9535,10 @@ def admin_predictive_quality_audit(
 def admin_predictive_p2p(
     request: Request,
     banco: str = Query("GENERAL"),
-    limit: int = Query(1200, ge=100, le=5000),
+    limit: int = Query(5000, ge=100, le=5000),
     snapshot_id: Optional[int] = Query(None, ge=1),
+    history_hours: int = Query(12, ge=1, le=24),
+    history_anchor: Optional[str] = Query(None),
 ):
     """Lectura administrativa de P2P para la nueva visualización.
 
@@ -9455,7 +9549,8 @@ def admin_predictive_p2p(
     bank = (banco or "GENERAL").upper().strip()
     if bank not in {"GENERAL", "MERCANTIL", "PROVINCIAL", "BNC"}:
         bank = "GENERAL"
-    cache_key=f"p2p:{bank}:{snapshot_id or 0}:{int(limit)}"
+    cache_anchor=str(history_anchor or "")[:80]
+    cache_key=f"p2p:{bank}:{snapshot_id or 0}:{int(limit)}:{int(history_hours)}:{cache_anchor}"
     now=time.monotonic()
     with _ADMIN_READ_CACHE_LOCK:
         cached=_ADMIN_READ_CACHE.get(cache_key)
@@ -9464,7 +9559,39 @@ def admin_predictive_p2p(
             value["cache"]="FRESH"
             return value
     analysis = calcular_analisis_monitor(bank)
-    filas = obtener_estadisticas_db(limit=int(limit), banco=bank)
+    performance = obtener_prediction_performance(bank, min(1000, max(100, int(limit)))) if DATABASE_URL else {"ok": False}
+    hourly = obtener_ultima_proyeccion_horaria_p2p(bank) if DATABASE_URL else None
+    snapshots = obtener_prediction_snapshots(bank, 40)
+    selected_snapshot = obtener_prediction_snapshots(bank, 1, snapshot_id) if (DATABASE_URL and snapshot_id is not None) else {"ok": True, "snapshots": []}
+    selected_rows = selected_snapshot.get("snapshots") or []
+
+    def _parse_history_anchor(value):
+        if not value:
+            return None
+        try:
+            raw = str(value).strip().replace("Z", "+00:00")
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = VET.localize(dt)
+            return dt.astimezone(VET)
+        except Exception:
+            return None
+
+    anchor_dt = _parse_history_anchor(history_anchor)
+    if anchor_dt is None and hourly and hourly.get("created_at"):
+        anchor_dt = _parse_history_anchor(hourly.get("created_at"))
+    if anchor_dt is None and selected_rows and selected_rows[0].get("created_at"):
+        anchor_dt = _parse_history_anchor(selected_rows[0].get("created_at"))
+    if anchor_dt is None:
+        anchor_dt = datetime.now(VET)
+    history_from = anchor_dt - timedelta(hours=int(history_hours))
+
+    filas = obtener_estadisticas_db(
+        limit=min(5000, max(100, int(limit))),
+        banco=bank,
+        desde=history_from,
+        hasta=anchor_dt,
+    )
     history = []
     for c, v, l, f in filas:
         try:
@@ -9472,11 +9599,6 @@ def admin_predictive_p2p(
             history.append({"timestamp": ts, "compra": float(c or 0), "venta": float(v or 0), "liquidez": int(l or 0)})
         except Exception:
             continue
-    performance = obtener_prediction_performance(bank, min(1000, max(100, int(limit)))) if DATABASE_URL else {"ok": False}
-    hourly = obtener_ultima_proyeccion_horaria_p2p(bank) if DATABASE_URL else None
-    snapshots = obtener_prediction_snapshots(bank, 40)
-    selected_snapshot = obtener_prediction_snapshots(bank, 1, snapshot_id) if (DATABASE_URL and snapshot_id is not None) else {"ok": True, "snapshots": []}
-    selected_rows = selected_snapshot.get("snapshots") or []
     selected_ids = {str(x.get("id")) for x in (snapshots.get("snapshots") or [])}
     if selected_rows:
         for row in selected_rows:
@@ -9495,7 +9617,21 @@ def admin_predictive_p2p(
                     hourly=obtener_ultima_proyeccion_horaria_p2p(bank)
         except Exception as _hourly_now_exc:
             logger.warning("Proyección horaria administrativa no disponible %s: %s",bank,_hourly_now_exc)
-    result={"ok": bool(analysis and analysis.get("ok", True)), "bank": bank, "analysis": analysis or {}, "history": history, "performance": performance, "snapshots": snapshots, "selected_snapshot_id": snapshot_id, "hourly_projection": hourly}
+    result={
+        "ok": bool(analysis and analysis.get("ok", True)),
+        "bank": bank,
+        "analysis": analysis or {},
+        "history": history,
+        "history_anchor": anchor_dt.isoformat(),
+        "history_from": history_from.isoformat(),
+        "history_to": anchor_dt.isoformat(),
+        "history_hours": int(history_hours),
+        "history_rows": len(history),
+        "performance": performance,
+        "snapshots": snapshots,
+        "selected_snapshot_id": snapshot_id,
+        "hourly_projection": hourly,
+    }
     with _ADMIN_READ_CACHE_LOCK:
         _ADMIN_READ_CACHE[cache_key]={"value":result,"expires":time.monotonic()+_ADMIN_PREDICTIVE_CACHE_SECONDS}
     return {**result,"cache":"REFRESHED"}
