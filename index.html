@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#070a11">
   <meta name="description" content="Venbot: consulta y análisis exclusivo del mercado P2P USDT/VES, tasas oficiales BCV en vivo y herramientas de trader.">
 
-  <!-- IMPORTANTE: reemplaza SOLO esta URL por la URL pública de tu Web Service en Render -->
-  <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com">
+  <!-- API pública de Venbot en Contabo. Cambia esta URL solo si cambia el backend. -->
+  <meta name="venbot-api" content="https://venbot-quants.duckdns.org">
 
   <title>Venbot · USDT/VES</title>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -1175,7 +1175,7 @@
 
   <script>
     // =========================================================
-    // VENBOT MONITOR - CONEXIÓN REAL AL BACKEND DE RENDER
+    // VENBOT MONITOR - CONEXIÓN REAL AL BACKEND DE CONTABO
     // =========================================================
     const API_BASE_URL = (document.querySelector('meta[name="venbot-api"]')?.content || '').replace(/\/+$/, '');
     const API_PRICES = `${API_BASE_URL}/api/precios`;
@@ -1332,7 +1332,7 @@
             status.textContent=sd.status==='running'?'Calculando 1H / 3H / 7H / 24H con histórico real...':'Backtest en cola...';
           }
         }
-        if(!done) throw new Error('El backtest está tardando más de lo esperado. Revisa los logs de Render; el proceso continúa en segundo plano.');
+        if(!done) throw new Error('El backtest está tardando más de lo esperado. Revisa los logs de Contabo; el proceso continúa en segundo plano.');
       } catch(e) {
         const msg=e?.message||'No se pudo ejecutar el backtest.';
         if(status) status.textContent=msg==='unauthorized'?'Sesión no autorizada. Inicia sesión nuevamente con un plan VIP.':msg;
@@ -2463,8 +2463,8 @@
     initCalculator();
       applyPlanHorizonUI();
       if (!API_BASE_URL || API_BASE_URL.includes('TU-SERVICIO')) {
-        setSyncState(false, 'configura URL Render');
-        console.error('Configura <meta name="venbot-api" content="https://p2p-monitor-binance.onrender.com"> con la URL real de Render.');
+        setSyncState(false, 'configura URL de Contabo');
+        console.error('Configura <meta name="venbot-api" content="https://venbot-quants.duckdns.org"> con la URL pública de Contabo.');
         return;
       }
       await Promise.allSettled([loadPrices(), loadHistory('5m')]);
