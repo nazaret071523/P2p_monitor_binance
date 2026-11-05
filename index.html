@@ -1,13 +1,20 @@
+
 <!DOCTYPE html>
 <html lang="es" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#070a11">
-  <meta name="description" content="Venbot: consulta y análisis exclusivo del mercado P2P USDT/VES, tasas oficiales BCV en vivo y herramientas de trader.">
+  <meta name="description" content="Venbot: consulta y análisis del mercado P2P USDT/VES, tasas oficiales publicadas por el BCV y herramientas de análisis.">
 
   <!-- API pública de Venbot en Contabo. Cambia esta URL solo si cambia el backend. -->
   <meta name="venbot-api" content="https://venbot-quants.duckdns.org">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/venbot-192.png">
+  <link rel="apple-touch-icon" href="/icons/venbot-192.png">
+  <!-- AdSense permanece bloqueado hasta aprobación del sitio, CMP certificada y slots reales. -->
+  <script src="/venbot-ads-config.js"></script>
+  <script src="/venbot-ads-loader.js"></script>
 
   <title>Venbot · USDT/VES</title>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -353,7 +360,7 @@
           <p id="header-market-context" class="text-[10px] text-slate-500 mt-1">Mercado P2P · USDT / VES</p>
         </div>
         <div class="hidden md:block flex-1 max-w-xl mx-3">
-          <div class="ad-slot rounded-xl px-4 py-2 text-center">
+          <div class="ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="header">
             <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
             <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
           </div>
@@ -374,7 +381,7 @@
             <i class="fa-regular fa-clock"></i>Actualizado <span id="updated-ago">conectando...</span>
           </span>
           <span class="text-slate-700">•</span>
-          <span>Fuente: <strong class="text-slate-300">Binance P2P y BCV Oficial</strong></span>
+          <span>Fuente: <strong class="text-slate-300">Binance P2P · referencia de publicación BCV</strong></span>
           <button type="button" onclick="openInfoMenu()" class="focus-ring inline-flex items-center gap-1.5 text-[10px] font-bold text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2 py-1 rounded-lg" title="Usuarios conectados"><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span id="online-count">--</span> en línea</button>
         </div>
         <a id="community-top-link" href="#" target="_blank" class="focus-ring text-sky-400 hover:text-sky-300 font-bold transition">Comunidad y soporte <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></a>
@@ -382,7 +389,7 @@
     </div>
 
     <div class="w-full px-4 pt-2">
-      <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="banner-top">
+      <div class="max-w-7xl mx-auto ad-slot rounded-xl px-4 py-2 text-center" data-ad-placement="top">
         <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
         <div class="text-[9px] text-slate-600 mt-0.5">Espacio publicitario · FREE / promoción</div>
       </div>
@@ -434,14 +441,14 @@
           <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-amber-500/15">
             <div class="flex items-center gap-3">
               <div class="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-300"><i class="fa-solid fa-euro-sign"></i></div>
-              <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-emerald-400 font-semibold mt-0.5">Oficial BCV en vivo</p></div>
+              <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa Euro</p><p class="text-[10px] text-emerald-400 font-semibold mt-0.5">Publicación oficial BCV</p></div>
             </div>
             <div class="text-right"><p id="euro-rate" class="tabular text-lg font-black text-amber-200">--,-- Bs/EUR</p><p id="euro-updated" class="text-[10px] text-slate-500 font-bold">BCV · sin lectura</p></div>
           </article>
           <article class="glass-card rounded-2xl px-4 py-3 flex items-center justify-between gap-3 border border-blue-500/15">
             <div class="flex items-center gap-3">
               <div class="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400"><i class="fa-solid fa-building-columns"></i></div>
-              <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-emerald-400 font-semibold mt-0.5">Oficial BCV en vivo</p></div>
+              <div><p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Tasa BCV</p><p class="text-[10px] text-emerald-400 font-semibold mt-0.5">Publicación oficial BCV</p></div>
             </div>
             <div class="text-right"><p id="bcv-rate" class="tabular text-lg font-black text-blue-300">--,-- Bs/USD</p><p id="bcv-gap" class="text-[10px] text-amber-300 font-bold">Brecha P2P: --.--%</p><p id="bcv-updated" class="text-[9px] text-slate-500 font-bold">BCV · sin lectura</p></div>
           </article>
@@ -719,8 +726,8 @@
               <span id="admin-ads-badge" class="text-[8px] font-black uppercase text-amber-200 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full">PREPARADA</span>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[9px]">
-              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">Web</span><strong id="admin-ads-web" class="block mt-1 text-emerald-300">ESPACIOS ACTIVOS</strong></div>
-              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">FREE / PROMO</span><strong id="admin-ads-free" class="block mt-1 text-amber-200">CON ANUNCIOS</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">Web</span><strong id="admin-ads-web" class="block mt-1 text-emerald-300">BLOQUEADA HASTA APROBACIÓN</strong></div>
+              <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">FREE / PROMO</span><strong id="admin-ads-free" class="block mt-1 text-amber-200">PENDIENTE DE ACTIVACIÓN</strong></div>
               <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-2.5"><span class="text-slate-500 uppercase font-black">PREMIUM / VIP</span><strong id="admin-ads-paid" class="block mt-1 text-emerald-300">SIN ANUNCIOS</strong></div>
             </div>
             <div class="rounded-xl bg-slate-900/50 border border-slate-800 p-2.5 text-[9px] leading-relaxed text-slate-500">
@@ -939,7 +946,7 @@
           <a href="https://www.tiktok.com/@venbotquant" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-400 transition flex items-center gap-1.5"><i class="fa-brands fa-tiktok"></i> TikTok</a>
         </div>
 
-        <div class="ad-slot rounded-xl p-4 text-center">
+        <div class="ad-slot rounded-xl p-4 text-center" data-ad-placement="footer">
           <div class="ad-label text-[8px] font-black text-slate-500">PUBLICIDAD</div>
           <div class="text-[10px] text-slate-600 mt-1">Espacio publicitario · FREE / promoción · debajo de las redes</div>
         </div>
@@ -1042,6 +1049,11 @@
                 <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4" id="adv-spot-context-card">
                   <h3 class="text-xs font-black text-white">Contexto cuantitativo Spot</h3>
                   <div id="adv-spot-context" class="adv-spot-context mt-3"></div>
+                </div>
+                <div id="adv-p2p-microstructure-card" class="glass-card rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.025] p-3 md:p-4">
+                  <div class="flex items-center justify-between gap-2"><h3 class="text-xs font-black text-white">Microestructura P2P · laboratorio Venbot</h3><span class="text-[8px] uppercase font-black text-cyan-300 border border-cyan-500/20 rounded-full px-2 py-1">Sombra</span></div>
+                  <p class="text-[8px] text-slate-500 mt-1">Features propias sobre anuncios P2P visibles seleccionados; no afectan proyecciones productivas ni equivalen al libro de órdenes de un exchange.</p>
+                  <div id="adv-p2p-microstructure" class="mt-3 space-y-2 text-[10px]"><span class="text-slate-500">Esperando una captura P2P…</span></div>
                 </div>
                 <div class="glass-card rounded-2xl border border-slate-800 p-3 md:p-4">
                   <h3 class="text-xs font-black text-white">Escenarios y estructura</h3>
@@ -1257,11 +1269,24 @@
       document.getElementById('euro-rate').textContent = marketState.euro > 0 ? `${money(marketState.euro)} Bs/EUR` : 'Sin lectura';
       const bcvUpdated = document.getElementById('bcv-updated');
       const euroUpdated = document.getElementById('euro-updated');
-      const bcvStamp = data.bcv_updated_at ? new Date(data.bcv_updated_at).toLocaleString('es-VE', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : null;
-      const effective = data.bcv_effective_date ? ` · Fecha valor ${data.bcv_effective_date}` : '';
-      const bcvStatus = marketState.bcv > 0 ? `BCV · actualizado ${bcvStamp || 'reciente'}${effective}` : 'BCV · sin lectura';
+      const bcvStamp = data.bcv_updated_at ? new Date(data.bcv_updated_at).toLocaleString('es-VE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : null;
+      const effective = data.bcv_effective_date ? `Fecha valor ${data.bcv_effective_date}` : 'fecha valor no informada';
+      const status = String(data.bcv_status || 'unknown');
+      const bcvStatus = marketState.bcv <= 0
+        ? 'BCV · sin lectura'
+        : status === 'current'
+          ? `Vigente según fecha valor · ${effective} · consulta ${bcvStamp || 'reciente'}`
+          : status === 'outdated'
+            ? `Último valor disponible · DESACTUALIZADO · ${effective}`
+            : `Último valor disponible · vigencia no verificada · ${effective}`;
       if (bcvUpdated) bcvUpdated.textContent = bcvStatus;
       if (euroUpdated) euroUpdated.textContent = bcvStatus;
+      [bcvUpdated, euroUpdated].forEach(el => {
+        if (!el) return;
+        el.classList.toggle('text-amber-300', status !== 'current');
+        el.classList.toggle('text-slate-500', status === 'current');
+        el.title = 'La hora de consulta no sustituye la fecha de vigencia publicada por el BCV.';
+      });
 
       const bcvGap = marketState.bcv > 0
         ? ((marketState.sell - marketState.bcv) / marketState.bcv) * 100
@@ -1777,9 +1802,8 @@
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
 
-    // Publicidad: el modo lanzamiento puede liberar funciones, pero conserva anuncios para cuentas FREE.
-    // PREMIUM/VIP pagados quedan sin publicidad. La cuenta/proveedor publicitario real se configura después.
-    window.VENBOT_AD_CONFIG = window.VENBOT_AD_CONFIG || { webEnabled: true, providerConfigured: false, appReady: true };
+    // AdSense solo se habilita después de aprobar el sitio, configurar CMP
+    // certificada y cargar IDs reales de unidades. PREMIUM/VIP permanecen sin anuncios.
     function getAdvertisingPlan() {
       const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
@@ -1787,15 +1811,17 @@
     function applyVenbotAdPolicy() {
       const plan = getAdvertisingPlan();
       const paid = plan === 'PREMIUM' || plan === 'VIP';
-      const enabled = window.VENBOT_AD_CONFIG?.webEnabled !== false;
-      document.body.classList.toggle('venbot-no-ads', !(enabled && !paid));
+      const adsReady = !paid && Boolean(window.VenbotAds?.isReady?.());
+      document.body.classList.toggle('venbot-no-ads', !adsReady);
+      if (!paid) window.VenbotAds?.sync?.(plan);
       const badge = document.getElementById('admin-ads-badge');
       const web = document.getElementById('admin-ads-web');
       const free = document.getElementById('admin-ads-free');
       const paidEl = document.getElementById('admin-ads-paid');
-      if (badge && window.venbotUser?.is_developer) badge.textContent = window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'PREPARADA';
-      if (web && window.venbotUser?.is_developer) web.textContent = enabled ? (window.VENBOT_AD_CONFIG?.providerConfigured ? 'CONECTADA' : 'ESPACIOS ACTIVOS') : 'DESACTIVADA';
-      if (free && window.venbotUser?.is_developer) free.textContent = enabled ? 'CON ANUNCIOS' : 'DESACTIVADOS';
+      const state = window.VENBOT_AD_CONFIG?.siteApproved ? (adsReady ? 'CONECTADA' : 'PENDIENTE CMP / SLOTS') : 'PENDIENTE APROBACIÓN';
+      if (badge && window.venbotUser?.is_developer) badge.textContent = state;
+      if (web && window.venbotUser?.is_developer) web.textContent = adsReady ? 'CONECTADA' : 'BLOQUEADA HASTA APROBACIÓN';
+      if (free && window.venbotUser?.is_developer) free.textContent = adsReady ? 'CON ANUNCIOS' : 'PENDIENTE';
       if (paidEl && window.venbotUser?.is_developer) paidEl.textContent = 'SIN ANUNCIOS';
     }
 
@@ -3748,6 +3774,56 @@
     ];
     ids.forEach((id,i)=>{const el=document.getElementById(id); if(el) el.innerHTML=vals[i];});
   }
+  function renderAdvP2PMicrostructure(data){
+    const card=document.getElementById('adv-p2p-microstructure-card');
+    const host=document.getElementById('adv-p2p-microstructure');
+    if(!card || !host) return;
+    card.classList.remove('hidden');
+    if(!data || !data.ok){host.textContent='La captura de anuncios todavía no está disponible.';return;}
+
+    const fmt=(v,d=2)=>(v===null||v===undefined||v==='')?'n/d':(Number.isFinite(Number(v))?Number(v).toFixed(d):'n/d');
+    const force=data.market_force||{};
+    const forceValue=force.index ?? data.market_force_index;
+    const quality=data.data_quality||{};
+    const s=data.sismografo||{};
+    const classification=s.classification||'WARMING_UP';
+    const classLabel={NORMAL:'NORMAL',ACELERACION:'ACELERACIÓN',PERTURBACION:'PERTURBACIÓN',WARMING_UP:'CALIBRANDO'}[classification]||'CALIBRANDO';
+    const classTone=classification==='PERTURBACION'?'text-rose-300':classification==='ACELERACION'?'text-amber-300':classification==='NORMAL'?'text-emerald-300':'text-slate-300';
+    const sismoText=s.score===null||s.score===undefined
+      ? `Línea base ${Number(s.baseline_samples||0)}/8 muestras · sin clasificar todavía`
+      : `Índice ${fmt(s.score,1)}/100 · desviación robusta máxima ${fmt(s.max_robust_z,2)}σ`;
+    const depthBands=data.depth?.bands||{};
+    const depthRows=Object.entries(depthBands).map(([band,x])=>
+      `<div class="grid grid-cols-4 gap-1 border-b border-slate-800/70 py-1 text-[8px]"><span class="text-slate-400">${band}</span><span class="text-emerald-200">${fmt(x.bid?.volume_usdt,0)}</span><span class="text-sky-200">${fmt(x.ask?.volume_usdt,0)}</span><span class="text-slate-300">${fmt(x.volume_imbalance_pct,1)}%</span></div>`
+    ).join('');
+    const blocks=(data.blocks||[]).slice(0,4).map(b=>
+      `<div class="flex justify-between gap-2 text-[8px] text-slate-400"><span>${b.side==='bid'?'BUY':'SELL'} · ${fmt(b.price_band_center,2)} · ${b.state||'OBSERVADO'}${Number(b.consecutive_samples||0)>1?` (${b.consecutive_samples} ciclos)`:''}</span><span>${fmt(b.visible_volume_usdt,0)} USDT · ${fmt(b.share_pct,1)}%</span></div>`
+    ).join('');
+    const activity=data.block_activity||{};
+    const forceBasis=force.basis==='volumen_y_cantidad'?'Volumen visible + cantidad de anuncios':force.basis==='cantidad_anuncios_sin_cobertura_suficiente'?'Solo cantidad de anuncios · cobertura limitada':'Datos insuficientes';
+    const ts=data.timestamp?new Date(data.timestamp).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'n/d';
+
+    host.innerHTML=`
+      <div class="grid grid-cols-2 gap-2">
+        <div class="rounded-lg border border-cyan-500/15 bg-slate-950/60 p-2"><small class="text-slate-500">Fuerza del mercado · shadow</small><div class="font-black text-cyan-200 text-sm">${fmt(forceValue,1)}</div><small class="text-slate-600">−100 vendedor / +100 comprador</small></div>
+        <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><small class="text-slate-500">Desequilibrio por volumen</small><div class="font-black text-white text-sm">${fmt(data.imbalance_pct,1)}%</div><small class="text-slate-600">BUY frente a SELL visible</small></div>
+        <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><small class="text-slate-500">Spread visible</small><div class="font-black text-white text-sm">${fmt(data.spread_pct,3)}%</div><small class="text-slate-600">Mejor ASK frente a BID</small></div>
+        <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><small class="text-slate-500">Anuncios / inventario publicado</small><div class="font-black text-white text-sm">${Number(data.bid?.ad_count||0)+Number(data.ask?.ad_count||0)}</div><small class="text-slate-600">${fmt((Number(data.bid?.visible_volume_usdt)||0)+(Number(data.ask?.visible_volume_usdt)||0),0)} USDT · cobertura ${fmt(quality.minimum_volume_coverage_pct,0)}%</small></div>
+      </div>
+      <div class="rounded-lg border border-cyan-500/15 bg-cyan-500/[0.035] p-2">
+        <div class="flex items-center justify-between gap-2"><span class="font-bold text-cyan-200">Fuerza · calidad de evidencia</span><span class="text-[8px] font-black text-slate-300">${force.quality||quality.status||'n/d'}</span></div>
+        <div class="text-[8px] text-slate-500 mt-1">${forceBasis} · ${fmt(force.minimum_volume_coverage_pct ?? quality.minimum_volume_coverage_pct,0)}% de cobertura mínima</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+        <div class="flex items-center justify-between gap-2"><span class="font-bold text-white">Sismógrafo adaptativo</span><span class="font-black ${classTone}">${classLabel}</span></div>
+        <div class="text-[9px] text-slate-300 mt-1">${sismoText}</div>
+        <div class="text-[8px] text-slate-600 mt-1">${s.message||'Comparación temporal de cambios observados.'}</div>
+      </div>
+      ${depthRows?`<div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><div class="font-bold text-white mb-1">Profundidad visible por banda</div><div class="grid grid-cols-4 gap-1 text-[8px] uppercase tracking-wider text-slate-500"><span>Distancia</span><span>BUY USDT</span><span>SELL USDT</span><span>Balance</span></div>${depthRows}<div class="text-[8px] text-slate-600 mt-1">Volumen declarado dentro de la distancia indicada al punto medio.</div></div>`:''}
+      ${blocks?`<div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2 space-y-1"><div class="font-bold text-white">Bloques y persistencia visible</div>${blocks}<div class="text-[8px] text-slate-500 mt-1">Persistentes: ${Number(activity.persistent_count||0)} · nuevos: ${Number(activity.new_count||0)} · desaparecidos: ${Number(activity.disappeared_count||0)}</div></div>`:''}
+      <div class="text-[8px] text-slate-600">Muestra ${ts}. Solo anuncios visibles seleccionados; no representa el libro completo ni estima liquidez oculta. Diagnóstico experimental: no modifica Quant, predicciones, confianza ni alertas.</div>`;
+  }
+
   async function loadAdvancedP2P(){
     const lockBefore=p2pReadLock();
     const lockParts=[];
@@ -3756,6 +3832,7 @@
     const lockQuery=lockParts.length?`&${lockParts.join('&')}`:'';
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=5000&history_hours=12&t=${Date.now()}${lockQuery}`);
     const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden');
+    renderAdvP2PMicrostructure(d.microstructure_shadow);
     advPopulateSnapshotSelector(d); const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
     const liveProj=advProjectionRowsP2P(a);
     const serverHourly=d.hourly_projection||null;
@@ -3830,6 +3907,7 @@
     const lockQuery=lock?.snapshotId?`&snapshot_id=${encodeURIComponent(lock.snapshotId)}`:'';
     const forceQuery=advancedForceNewT0?'&new_t0=true':'';
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/spot?symbol=${encodeURIComponent(advancedSpotSymbol)}&interval=${rangeCfg.interval}&limit=${rangeCfg.limit}&t=${Date.now()}${lockQuery}${forceQuery}`);
+    const p2pShadowCard=document.getElementById('adv-p2p-microstructure-card'); if(p2pShadowCard) p2pShadowCard.classList.add('hidden');
     advancedForceNewT0=false;
     advPopulateSnapshotSelector(d);
     const pred=d.prediction||{}; const o=pred.observed||{}; const a=pred.analysis||{}; const perf=d.performance||{};
@@ -4150,6 +4228,14 @@ window.venbotOpenAdvancedDirect=function(){
 };
 </script>
 
+  <script>
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+          .catch(err => console.warn('Venbot PWA: service worker no disponible', err));
+      }, { once: true });
+    }
+  </script>
 </body>
 </html>
 
