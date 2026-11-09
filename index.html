@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es" class="dark">
 <head>
@@ -1101,6 +1100,10 @@
         <div id="logged-account-box" class="hidden space-y-2 text-xs text-slate-300 bg-slate-950/60 border border-slate-800 rounded-xl p-3">
           <div class="font-bold text-white">Cuenta activa</div><div>Usuario: <span id="logged-account-user" class="font-mono text-emerald-300"></span></div><div>Plan: <span id="logged-account-plan" class="font-bold text-emerald-300"></span></div><div>Vence: <span id="logged-account-exp" class="font-mono"></span></div>
           <button type="button" onclick="logoutVenbot()" class="mt-1 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-2 rounded-xl">Cerrar sesión</button>
+          <div id="delete-account-action" class="pt-2 border-t border-slate-800 space-y-1">
+            <button type="button" id="delete-account-button" onclick="deleteVenbotAccount()" class="w-full bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/30 text-rose-200 font-bold px-3 py-2 rounded-xl">Eliminar cuenta y datos</button>
+            <p class="text-[9px] leading-relaxed text-slate-500">Acción irreversible. Se eliminarán los datos de perfil y uso asociados; los registros mínimos de transacciones podrán conservarse sin vinculación a tu cuenta.</p>
+          </div>
         </div>
         <p class="text-[10px] leading-relaxed text-slate-500">🆓 FREE no necesita credenciales. El inicio de sesión está disponible para cuentas PREMIUM y VIP.</p>
       </div>
@@ -1115,14 +1118,14 @@
         <div class="p-2 space-y-1">
           <button type="button" onclick="toggleTheme(); closeInfoMenu()" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold flex items-center gap-3"><i id="theme-menu-icon" class="fa-solid fa-sun text-amber-300 w-5"></i><span id="theme-menu-label">Cambiar a tema claro</span></button>
           <div class="px-3 py-2 text-[9px] uppercase tracking-[.16em] font-black text-slate-500">Ayuda y legal</div>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('privacy.html', '_blank'); return false;"><i class="fa-solid fa-shield-halved text-emerald-400 w-5 mr-2"></i>Política de privacidad</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('terms.html', '_blank'); return false;"><i class="fa-solid fa-file-contract text-sky-400 w-5 mr-2"></i>Términos de uso</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open(API_BASE_URL + '/blog', '_blank'); return false;"><i class="fa-solid fa-newspaper text-amber-300 w-5 mr-2"></i>Blog Venbot</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('help.html', '_blank'); return false;"><i class="fa-solid fa-circle-play text-rose-400 w-5 mr-2"></i>Tutorial de la app</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('risk.html', '_blank'); return false;"><i class="fa-solid fa-triangle-exclamation text-amber-300 w-5 mr-2"></i>Riesgos y predicciones</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('advertising.html', '_blank'); return false;"><i class="fa-solid fa-rectangle-ad text-purple-300 w-5 mr-2"></i>Publicidad y cookies</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('delete-account.html', '_blank'); return false;"><i class="fa-solid fa-user-slash text-rose-300 w-5 mr-2"></i>Eliminar mi cuenta</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="window.open('contact.html', '_blank'); return false;"><i class="fa-solid fa-envelope text-cyan-300 w-5 mr-2"></i>Responsables y contacto</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./privacy.html" onclick="closeInfoMenu()"><i class="fa-solid fa-shield-halved text-emerald-400 w-5 mr-2"></i>Política de privacidad</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./terms.html" onclick="closeInfoMenu()"><i class="fa-solid fa-file-contract text-sky-400 w-5 mr-2"></i>Términos de uso</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="closeInfoMenu(); window.location.assign(API_BASE_URL + '/blog'); return false;"><i class="fa-solid fa-newspaper text-amber-300 w-5 mr-2"></i>Blog Venbot</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./help.html" onclick="closeInfoMenu()"><i class="fa-solid fa-circle-play text-rose-400 w-5 mr-2"></i>Tutorial de la app</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./risk.html" onclick="closeInfoMenu()"><i class="fa-solid fa-triangle-exclamation text-amber-300 w-5 mr-2"></i>Riesgos y predicciones</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./advertising.html" onclick="closeInfoMenu()"><i class="fa-solid fa-rectangle-ad text-purple-300 w-5 mr-2"></i>Publicidad y cookies</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./delete-account.html" onclick="closeInfoMenu()"><i class="fa-solid fa-user-slash text-rose-300 w-5 mr-2"></i>Eliminar mi cuenta</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./contact.html" onclick="closeInfoMenu()"><i class="fa-solid fa-envelope text-cyan-300 w-5 mr-2"></i>Responsables y contacto</a>
           <button type="button" onclick="alert('Usuarios activos: ' + (document.getElementById('online-count')?.textContent || '--'))" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold"><i class="fa-solid fa-users text-sky-400 w-5 mr-2"></i>Usuarios en línea: <span id="menu-online-count">--</span></button>
         </div>
         <div class="p-3 border-t border-slate-800 text-[9px] text-slate-500 leading-relaxed">Venbot no solicita claves de Binance ni custodia fondos. Los análisis son informativos.</div>
@@ -1596,7 +1599,12 @@
       }
     }
 
+    // Evita que una respuesta antigua (por ejemplo BTC) sobrescriba el activo
+    // que el usuario acaba de seleccionar (por ejemplo ETH).
+    let spotPredictionRequestSequence = 0;
+
     async function loadSpotPrediction(symbol='BTCUSDT') {
+      const requestId = ++spotPredictionRequestSequence;
       const status=document.getElementById('spot-prediction-status');
       const head=document.getElementById('spot-prediction-head');
       const horizons=document.getElementById('spot-horizon-grid');
@@ -1611,7 +1619,9 @@
       status.textContent='Calculando análisis con velas reales de Binance…';
       try {
         const r=await fetch(`${API_BASE_URL}/api/spot/prediction?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
-        const d=await r.json(); if(!r.ok || !d.ok) throw new Error(d.error||'No disponible');
+        const d=await r.json();
+        if(requestId !== spotPredictionRequestSequence) return;
+        if(!r.ok || !d.ok) throw new Error(d.error||'No disponible');
         const o=d.observed, a=d.analysis, p=d.projections;
         const fmt=(v)=>{
           const n=Number(v);
@@ -1632,47 +1642,44 @@
         structure.innerHTML=`<div class="font-black text-slate-200 mb-2">Estructura técnica</div><div>Soporte: <b class="text-slate-200">${fmt(a.support)}</b></div><div>Resistencia: <b class="text-slate-200">${fmt(a.resistance)}</b></div><div>Momentum: <b class="text-slate-200">${Number(a.momentum_score)>=0?'+':''}${Number(a.momentum_score).toFixed(3)}%</b></div>`;
         scenarios.innerHTML=`<div class="font-black text-slate-200 mb-2">Escenarios 24H</div><div>🔴 Bajista: <b class="text-slate-200">${fmt(d.scenarios_24h.bearish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bearish,o.price)})</span></div><div>🟡 Central: <b class="text-slate-200">${fmt(d.scenarios_24h.central)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.central,o.price)})</span></div><div>🟢 Alcista / favorable: <b class="text-slate-200">${fmt(d.scenarios_24h.bullish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bullish,o.price)})</span></div><div class="mt-2 text-slate-500">Los escenarios se comparan con el precio observado; “favorable” no implica necesariamente un precio superior al actual.</div>`;
         method.innerHTML=`<div class="font-black text-slate-200 mb-2">Cómo calcula Venbot</div><div>${d.method}</div><div class="mt-2 text-slate-500">${a.data_points_5m} velas de 5m · ${a.data_points_1h} velas de 1H.</div><div class="mt-1 text-slate-600">Generado: ${new Date(d.generated_at).toLocaleString('es-VE')}</div>`;
-        if(performance){
-          performance.innerHTML='<div class="text-slate-500">Cargando validación de predicciones…</div>';
-          try {
-            const pr=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(symbol)}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
-            const pd=await pr.json();
-            if(pr.ok && pd.ok){
-              const horizon=pd.horizons||pd.horizon_summary||pd.by_horizon||pd.summary||{};
-              const evaluatedTotal=['1h','3h','7h','24h'].reduce((sum,h)=>sum+Number((horizon[h]||{}).evaluated??0),0);
-              const total=Number.isFinite(evaluatedTotal)?evaluatedTotal:NaN;
-              const correct=Number(pd.direction_correct ?? pd.direction_accuracy_pct ?? NaN);
-              const acc=Number.isFinite(correct)?(correct<=1?correct*100:correct):NaN;
-              const rows=['1h','3h','7h','24h'].map(h=>{const x=horizon[h]||{}; const ev=Number(x.evaluated??x.count??0); const ac=Number(x.direction_accuracy_pct ?? x.accuracy_pct ?? NaN); return `<div><span class="text-slate-600">${h.toUpperCase()}</span> <span class="text-slate-300">${ev} evaluadas</span>${Number.isFinite(ac)?` · <span class="text-slate-300">${ac.toFixed(1)}% dirección</span>`:''}</div>`;}).join('');
-              performance.innerHTML=`<div class="font-black text-slate-200 mb-2">Validación de predicciones Spot</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${rows}</div><div class="mt-2 text-slate-500">Total evaluaciones por horizonte: ${Number.isFinite(total)?total:'n/d'}${Number.isFinite(acc)?` · precisión direccional global: ${acc.toFixed(1)}%`:''}</div>`;
-            } else { performance.innerHTML='<div class="text-slate-500">Aún no hay suficientes evaluaciones reales para mostrar desempeño Spot.</div>'; }
-          } catch(_e){ performance.innerHTML='<div class="text-slate-500">Validación Spot temporalmente no disponible.</div>'; }
-        }
+        // La proyección principal queda visible en cuanto llega. Las métricas
+        // históricas son complementarias y nunca deben retener el estado de carga.
         status.textContent=`${d.asset} analizado con datos reales de Binance · ${new Date(d.generated_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+        if(performance){
+          performance.innerHTML='<div class="text-slate-500">Cargando validación histórica en segundo plano…</div>';
+          void (async()=>{
+            try {
+              const pr=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(symbol)}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+              const pd=await pr.json();
+              if(requestId !== spotPredictionRequestSequence) return;
+              if(pr.ok && pd.ok){
+                const horizon=pd.horizons||pd.horizon_summary||pd.by_horizon||pd.summary||{};
+                const evaluatedTotal=['1h','3h','7h','24h'].reduce((sum,h)=>sum+Number((horizon[h]||{}).evaluated??0),0);
+                const total=Number.isFinite(evaluatedTotal)?evaluatedTotal:NaN;
+                const correct=Number(pd.direction_correct ?? pd.direction_accuracy_pct ?? NaN);
+                const acc=Number.isFinite(correct)?(correct<=1?correct*100:correct):NaN;
+                const rows=['1h','3h','7h','24h'].map(h=>{const x=horizon[h]||{}; const ev=Number(x.evaluated??x.count??0); const ac=Number(x.direction_accuracy_pct ?? x.accuracy_pct ?? NaN); return `<div><span class="text-slate-600">${h.toUpperCase()}</span> <span class="text-slate-300">${ev} evaluadas</span>${Number.isFinite(ac)?` · <span class="text-slate-300">${ac.toFixed(1)}% dirección</span>`:''}</div>`;}).join('');
+                performance.innerHTML=`<div class="font-black text-slate-200 mb-2">Validación de predicciones Spot</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${rows}</div><div class="mt-2 text-slate-500">Total evaluaciones por horizonte: ${Number.isFinite(total)?total:'n/d'}${Number.isFinite(acc)?` · precisión direccional global: ${acc.toFixed(1)}%`:''}</div>`;
+              } else { performance.innerHTML='<div class="text-slate-500">Aún no hay suficientes evaluaciones reales para mostrar desempeño Spot.</div>'; }
+            } catch(_e){
+              if(requestId === spotPredictionRequestSequence) performance.innerHTML='<div class="text-slate-500">Validación Spot temporalmente no disponible.</div>';
+            }
+          })();
+        }
       } catch(e) {
+        if(requestId !== spotPredictionRequestSequence) return;
         status.textContent='No se pudo generar la proyección Spot en este momento.';
       }
     }
 
     setTimeout(applyVenbotAdPolicy, 0);
 
-    async function loadSpotMarket() {
-      const ent=window.venbotEntitlements?.features || {};
-      const token=getAuthToken();
+    function loadSpotMarket() {
       const selector=document.getElementById('spot-symbol-select');
-      if(!token || !ent.spot) {
-        loadSpotPrediction(selector?.value || 'BTCUSDT');
-        return;
-      }
-      try {
-        const r=await fetch(`${API_BASE_URL}/api/spot?t=${Date.now()}`,{headers:{'X-Venbot-Session':token,'Accept':'application/json'},cache:'no-store'});
-        const d=await r.json();
-        if(r.ok && Array.isArray(d.configured_symbols) && selector) {
-          selector.innerHTML=d.configured_symbols.map(sym=>`<option value="${sym}">${sym.replace('USDT','')}</option>`).join('');
-        }
-      } catch(e) {
-        console.warn('No se pudo actualizar la lista de activos Spot:',e);
-      }
+      // La lista de activos ya viene incluida en el HTML del release y coincide
+      // con SPOT_SYMBOLS. No consultar /api/spot para volver a descargar precios
+      // de los nueve activos: esa ruta también persiste snapshots en Supabase y
+      // retrasaba innecesariamente la predicción del activo seleccionado.
       loadSpotPrediction(selector?.value || 'BTCUSDT');
     }
 
@@ -1798,6 +1805,7 @@
 
     function getFrontendPlan() {
       if (window.venbotEntitlements?.launch_mode?.enabled) return 'VIP';
+      if (window.venbotUser?.is_developer || window.venbotUser?.is_creator) return 'VIP';
       const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
       return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
     }
@@ -1805,8 +1813,7 @@
     // AdSense solo se habilita después de aprobar el sitio, configurar CMP
     // certificada y cargar IDs reales de unidades. PREMIUM/VIP permanecen sin anuncios.
     function getAdvertisingPlan() {
-      const raw = String(window.venbotUser?.plan || window.venbotEntitlements?.plan || 'FREE').toUpperCase();
-      return ['FREE','PREMIUM','VIP'].includes(raw) ? raw : 'FREE';
+      return getFrontendPlan();
     }
     function applyVenbotAdPolicy() {
       const plan = getAdvertisingPlan();
@@ -2034,7 +2041,9 @@
       document.getElementById('login-username').value=user?.username||''; document.getElementById('login-password').value='';
       document.getElementById('logged-account-box').classList.toggle('hidden',!user);
       document.querySelector('#loginModal #login-submit').classList.toggle('hidden',!!user);
-      if(user){ document.getElementById('logged-account-user').textContent=user.username||'--'; document.getElementById('logged-account-plan').textContent=user.plan||'FREE'; document.getElementById('logged-account-exp').textContent=user.plan_expires_at?new Date(user.plan_expires_at).toLocaleDateString('es-VE'):'No definido'; }
+      const deleteAction=document.getElementById('delete-account-action');
+      if(deleteAction) deleteAction.classList.toggle('hidden',!user || !!user.is_developer || !!user.is_creator);
+      if(user){ document.getElementById('logged-account-user').textContent=user.username||'--'; document.getElementById('logged-account-plan').textContent=(user.is_developer||user.is_creator)?'VIP':(user.plan||'FREE'); document.getElementById('logged-account-exp').textContent=user.plan_expires_at?new Date(user.plan_expires_at).toLocaleDateString('es-VE'):'No definido'; }
     }
     async function validateExistingSession() {
       const token=getAuthToken(); if(!token) return null;
@@ -2051,13 +2060,47 @@
       } catch(e){ showLoginStatus(e.message||'Credenciales inválidas.'); } finally { btn.disabled=false; btn.textContent='Iniciar sesión'; }
     }
     async function logoutVenbot(){ const token=getAuthToken(); try{ if(token) await fetch(`${API_BASE_URL}/api/auth/logout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_token:token})}); }catch(e){} localStorage.removeItem('venbot-session-token'); localStorage.removeItem('venbot-account-id'); window.venbotUser=null; window.venbotEntitlements=null; applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); updateLoginButton(); renderAccountModal(null); closeLoginModal(); location.reload(); }
+    async function deleteVenbotAccount(){
+      const token=getAuthToken(); const user=window.venbotUser;
+      if(!token || !user?.external_user_id){ showLoginStatus('Inicia sesión para solicitar la eliminación segura de tu cuenta.'); return; }
+      if(user.is_developer || user.is_creator){ showLoginStatus('La cuenta maestra del creador está protegida.'); return; }
+      const accepted=window.confirm('Vas a eliminar permanentemente tu cuenta Venbot y los datos personales asociados. Esta acción no se puede deshacer. Los registros mínimos de transacciones podrán conservarse anonimizados para conciliación y obligaciones aplicables. ¿Deseas continuar?');
+      if(!accepted) return;
+      const phrase=window.prompt('Para confirmar, escribe exactamente ELIMINAR.');
+      if(phrase!=='ELIMINAR'){ showLoginStatus('Eliminación cancelada: la confirmación no coincide.'); return; }
+      const button=document.getElementById('delete-account-button');
+      if(button){ button.disabled=true; button.textContent='Eliminando cuenta…'; }
+      try{
+        const response=await fetch(`${API_BASE_URL}/api/account/delete`,{
+          method:'POST', cache:'no-store',
+          headers:{'Content-Type':'application/json','X-Venbot-Session':token,'Accept':'application/json'},
+          body:JSON.stringify({external_user_id:user.external_user_id,confirmation:phrase})
+        });
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok) throw new Error(data.detail||'No se pudo completar la eliminación. Contacta con soporte.');
+        localStorage.removeItem('venbot-session-token');
+        localStorage.removeItem('venbot-account-id');
+        window.venbotUser=null; window.venbotEntitlements=null;
+        updateLoginButton(); renderAccountModal(null); closeLoginModal();
+        window.alert('Tu cuenta y los datos personales asociados fueron eliminados. Los registros mínimos de transacciones se conservaron sin vinculación a tu perfil cuando corresponde.');
+        window.location.reload();
+      }catch(error){
+        showLoginStatus(error?.message||'No se pudo completar la eliminación. Contacta con soporte.');
+      }finally{
+        if(button){ button.disabled=false; button.textContent='Eliminar cuenta y datos'; }
+      }
+    }
     async function bootstrapVenbotFoundation() {
       try {
         const sid = getOnlineSessionId(); const token=getAuthToken();
         const country = (localStorage.getItem('venbot-country') || 'VE').toUpperCase();
         const headers={'Content-Type':'application/json','X-Venbot-Country':country}; if(token) headers['X-Venbot-Session']=token;
         const r = await fetch(`${API_BASE_URL}/api/foundation/bootstrap`, {method:'POST', headers, body:JSON.stringify({external_user_id:sid, country_code:country})});
-        if (!r.ok) return; const d = await r.json(); window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton(); applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); loadSpotMarket();
+        if (!r.ok) return;
+        const d = await r.json();
+        // Si había sesión, no aceptes una respuesta de invitado como si fuera la cuenta autenticada.
+        if (token && d.authenticated !== true) { console.warn('Venbot: bootstrap no autenticó la sesión; se conserva el estado de cuenta previo.'); return; }
+        window.venbotEntitlements=d.entitlements||null; window.venbotBilling=d.billing||null; window.venbotUser=d.user||window.venbotUser; updateLoginButton(); applyPlanHorizonUI(); if(typeof window.applyVenbotDeveloperUI==='function') window.applyVenbotDeveloperUI(); loadSpotMarket();
       } catch(e) {}
     }
     async function loadCommunityLinks(){
@@ -3800,7 +3843,22 @@
       `<div class="flex justify-between gap-2 text-[8px] text-slate-400"><span>${b.side==='bid'?'BUY':'SELL'} · ${fmt(b.price_band_center,2)} · ${b.state||'OBSERVADO'}${Number(b.consecutive_samples||0)>1?` (${b.consecutive_samples} ciclos)`:''}</span><span>${fmt(b.visible_volume_usdt,0)} USDT · ${fmt(b.share_pct,1)}%</span></div>`
     ).join('');
     const activity=data.block_activity||{};
-    const forceBasis=force.basis==='volumen_y_cantidad'?'Volumen visible + cantidad de anuncios':force.basis==='cantidad_anuncios_sin_cobertura_suficiente'?'Solo cantidad de anuncios · cobertura limitada':'Datos insuficientes';
+    const forceBasis=force.basis==='desequilibrio_de_volumen_visible'
+      ?'Desequilibrio de volumen visible'
+      :String(force.basis||'').startsWith('volumen_insuficiente')
+        ?'Solo recuento de anuncios · volumen insuficiente'
+        :'Datos insuficientes';
+    const hasNumber=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+    const bidVolume=data.bid?.visible_volume_usdt;
+    const askVolume=data.ask?.visible_volume_usdt;
+    const totalInventory=hasNumber(bidVolume)&&hasNumber(askVolume)
+      ?`${fmt(Number(bidVolume)+Number(askVolume),0)} USDT`
+      :'n/d USDT';
+    const coverageDetail=`BUY ${fmt(data.data_quality?.bid_volume_coverage_pct,0)}% / SELL ${fmt(data.data_quality?.ask_volume_coverage_pct,0)}%`;
+    const knownAds=Number(quality.volume_known_ads||0);
+    const totalAds=Number(data.bid?.ad_count||0)+Number(data.ask?.ad_count||0);
+    const sourceCounts=quality.volume_source_counts||{};
+    const sourceSummary=Object.entries(sourceCounts).map(([k,v])=>`${k}: ${v}`).join(' · ')||'sin campo de inventario reconocido';
     const ts=data.timestamp?new Date(data.timestamp).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'n/d';
 
     host.innerHTML=`
@@ -3808,11 +3866,12 @@
         <div class="rounded-lg border border-cyan-500/15 bg-slate-950/60 p-2"><small class="text-slate-500">Fuerza del mercado · shadow</small><div class="font-black text-cyan-200 text-sm">${fmt(forceValue,1)}</div><small class="text-slate-600">−100 vendedor / +100 comprador</small></div>
         <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><small class="text-slate-500">Desequilibrio por volumen</small><div class="font-black text-white text-sm">${fmt(data.imbalance_pct,1)}%</div><small class="text-slate-600">BUY frente a SELL visible</small></div>
         <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><small class="text-slate-500">Spread visible</small><div class="font-black text-white text-sm">${fmt(data.spread_pct,3)}%</div><small class="text-slate-600">Mejor ASK frente a BID</small></div>
-        <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><small class="text-slate-500">Anuncios / inventario publicado</small><div class="font-black text-white text-sm">${Number(data.bid?.ad_count||0)+Number(data.ask?.ad_count||0)}</div><small class="text-slate-600">${fmt((Number(data.bid?.visible_volume_usdt)||0)+(Number(data.ask?.visible_volume_usdt)||0),0)} USDT · cobertura ${fmt(quality.minimum_volume_coverage_pct,0)}%</small></div>
+        <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2"><small class="text-slate-500">Anuncios / inventario declarado</small><div class="font-black text-white text-sm">${totalAds}</div><small class="text-slate-600">${totalInventory} · cobertura mín. ${fmt(quality.minimum_volume_coverage_pct,0)}%</small><small class="block text-slate-600 mt-1">${knownAds}/${totalAds} con inventario · ${coverageDetail}</small></div>
       </div>
       <div class="rounded-lg border border-cyan-500/15 bg-cyan-500/[0.035] p-2">
         <div class="flex items-center justify-between gap-2"><span class="font-bold text-cyan-200">Fuerza · calidad de evidencia</span><span class="text-[8px] font-black text-slate-300">${force.quality||quality.status||'n/d'}</span></div>
         <div class="text-[8px] text-slate-500 mt-1">${forceBasis} · ${fmt(force.minimum_volume_coverage_pct ?? quality.minimum_volume_coverage_pct,0)}% de cobertura mínima</div>
+        <div class="text-[8px] text-slate-600 mt-1">Campos de inventario: ${sourceSummary} · faltantes: ${Number(quality.volume_missing_ads||0)}</div>
       </div>
       <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
         <div class="flex items-center justify-between gap-2"><span class="font-bold text-white">Sismógrafo adaptativo</span><span class="font-black ${classTone}">${classLabel}</span></div>
