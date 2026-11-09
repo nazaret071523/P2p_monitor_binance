@@ -1,8 +1,8 @@
+
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
   "framework": null,
-  "cleanUrls": false,
-  "trailingSlash": false,
   "builds": [
     {
       "src": "*.html",
@@ -25,36 +25,6 @@
       "use": "@vercel/static"
     }
   ],
-  "rewrites": [
-    {
-      "source": "/delete-account",
-      "destination": "/delete-account.html"
-    },
-    {
-      "source": "/privacy",
-      "destination": "/privacy.html"
-    },
-    {
-      "source": "/terms",
-      "destination": "/terms.html"
-    },
-    {
-      "source": "/advertising",
-      "destination": "/advertising.html"
-    },
-    {
-      "source": "/contact",
-      "destination": "/contact.html"
-    },
-    {
-      "source": "/help",
-      "destination": "/help.html"
-    },
-    {
-      "source": "/risk",
-      "destination": "/risk.html"
-    }
-  ],
   "headers": [
     {
       "source": "/sw.js",
@@ -75,28 +45,6 @@
         {
           "key": "Content-Type",
           "value": "application/manifest+json"
-        },
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=3600"
-        }
-      ]
-    },
-    {
-      "source": "/ads.txt",
-      "headers": [
-        {
-          "key": "Content-Type",
-          "value": "text/plain; charset=utf-8"
-        }
-      ]
-    },
-    {
-      "source": "/(.*).html",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=0, must-revalidate"
         }
       ]
     }
