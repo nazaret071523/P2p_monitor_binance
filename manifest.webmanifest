@@ -1,0 +1,18 @@
+{
+  "id": "/",
+  "name": "Venbot AI · Mercado P2P y análisis",
+  "short_name": "Venbot",
+  "description": "Monitor P2P, análisis cuantitativo y herramientas de mercado de Venbot AI.",
+  "lang": "es-VE",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070a11",
+  "theme_color": "#070a11",
+  "icons": [
+    { "src": "/icons/venbot-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/venbot-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/venbot-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
