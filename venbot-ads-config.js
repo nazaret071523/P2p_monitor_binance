@@ -1,30 +1,22 @@
 /*
- * VENBOT AI · PUBLICIDAD WEB
- * Fase 18 · v31.72
+ * VENBOT AI · Google AdSense web integration
+ * Release candidate 31.73.43
  *
- * Esta configuración está preparada para Google AdSense.
- * NO colocar aquí datos ficticios. Mantener publisherId/slots vacíos
- * hasta disponer de los valores reales de la cuenta aprobada.
- *
- * Flujo:
- * 1) Crear/validar la cuenta AdSense.
- * 2) Añadir el sitio Venbot y completar su revisión.
- * 3) Crear unidades de anuncio Display para header/top/footer.
- * 4) Pegar aquí el publisherId y los IDs de cada slot.
- * 5) Si Google exige consentimiento para una región, configurar
- *    Privacy & messaging/CMP en AdSense antes de servir anuncios
- *    personalizados en esa región.
+ * Intentionally fail-closed. Do not enable until the AdSense site is approved,
+ * a Google-certified CMP/TCF is installed where required, and each ad unit has
+ * a real slot ID copied from the owner's AdSense account.
  */
 window.VENBOT_AD_CONFIG = {
   webEnabled: true,
   provider: "adsense",
   publisherId: "ca-pub-1110097120437683",
+  siteApproved: false,
+  cmpConfigured: false,
+  consentRequired: true,
+  consentStorageKey: "venbot-ads-consent",
   slots: {
     header: "",
     top: "",
     footer: ""
-  },
-  consentRequired: false,
-  consentStorageKey: "venbot-ads-consent",
-  appReady: true
+  }
 };
