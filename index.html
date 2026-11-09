@@ -341,6 +341,26 @@
 }
 </style>
 
+<style id="venbot-v31-73-52-mobile-audit-tables">
+/* Mobile: keep technical columns readable and let their existing wrappers scroll horizontally. */
+@media(max-width:767px){
+  #admin-quality-audit-p2p-prod table,
+  #admin-quality-audit-spot-prod table{min-width:660px!important;width:max-content!important}
+  #admin-quality-audit-p2p-hourly table,
+  #admin-quality-audit-spot-hourly table{min-width:560px!important;width:max-content!important}
+  #admin-calibration-learning-p2p-prod table,
+  #admin-calibration-learning-spot-prod table{min-width:590px!important;width:max-content!important}
+  #adv-trace-table table{min-width:520px!important;width:max-content!important}
+  #admin-quality-audit-p2p-prod th,#admin-quality-audit-p2p-prod td,
+  #admin-quality-audit-spot-prod th,#admin-quality-audit-spot-prod td,
+  #admin-quality-audit-p2p-hourly th,#admin-quality-audit-p2p-hourly td,
+  #admin-quality-audit-spot-hourly th,#admin-quality-audit-spot-hourly td,
+  #admin-calibration-learning-p2p-prod th,#admin-calibration-learning-p2p-prod td,
+  #admin-calibration-learning-spot-prod th,#admin-calibration-learning-spot-prod td,
+  #adv-trace-table th,#adv-trace-table td{white-space:nowrap}
+}
+</style>
+
 </head>
 <body class="bg-[#070a11] text-slate-100 font-sans min-h-screen antialiased">
   <div class="min-h-screen flex flex-col">
@@ -1118,14 +1138,14 @@
         <div class="p-2 space-y-1">
           <button type="button" onclick="toggleTheme(); closeInfoMenu()" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold flex items-center gap-3"><i id="theme-menu-icon" class="fa-solid fa-sun text-amber-300 w-5"></i><span id="theme-menu-label">Cambiar a tema claro</span></button>
           <div class="px-3 py-2 text-[9px] uppercase tracking-[.16em] font-black text-slate-500">Ayuda y legal</div>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./privacy.html" onclick="closeInfoMenu()"><i class="fa-solid fa-shield-halved text-emerald-400 w-5 mr-2"></i>Política de privacidad</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./terms.html" onclick="closeInfoMenu()"><i class="fa-solid fa-file-contract text-sky-400 w-5 mr-2"></i>Términos de uso</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="/privacy.html" onclick="closeInfoMenu()"><i class="fa-solid fa-shield-halved text-emerald-400 w-5 mr-2"></i>Política de privacidad</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="/terms.html" onclick="closeInfoMenu()"><i class="fa-solid fa-file-contract text-sky-400 w-5 mr-2"></i>Términos de uso</a>
           <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="#" onclick="closeInfoMenu(); window.location.assign(API_BASE_URL + '/blog'); return false;"><i class="fa-solid fa-newspaper text-amber-300 w-5 mr-2"></i>Blog Venbot</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./help.html" onclick="closeInfoMenu()"><i class="fa-solid fa-circle-play text-rose-400 w-5 mr-2"></i>Tutorial de la app</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./risk.html" onclick="closeInfoMenu()"><i class="fa-solid fa-triangle-exclamation text-amber-300 w-5 mr-2"></i>Riesgos y predicciones</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./advertising.html" onclick="closeInfoMenu()"><i class="fa-solid fa-rectangle-ad text-purple-300 w-5 mr-2"></i>Publicidad y cookies</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./delete-account.html" onclick="closeInfoMenu()"><i class="fa-solid fa-user-slash text-rose-300 w-5 mr-2"></i>Eliminar mi cuenta</a>
-          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="./contact.html" onclick="closeInfoMenu()"><i class="fa-solid fa-envelope text-cyan-300 w-5 mr-2"></i>Responsables y contacto</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="/help.html" onclick="closeInfoMenu()"><i class="fa-solid fa-circle-play text-rose-400 w-5 mr-2"></i>Tutorial de la app</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="/risk.html" onclick="closeInfoMenu()"><i class="fa-solid fa-triangle-exclamation text-amber-300 w-5 mr-2"></i>Riesgos y predicciones</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="/advertising.html" onclick="closeInfoMenu()"><i class="fa-solid fa-rectangle-ad text-purple-300 w-5 mr-2"></i>Publicidad y cookies</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="/delete-account.html" onclick="closeInfoMenu()"><i class="fa-solid fa-user-slash text-rose-300 w-5 mr-2"></i>Eliminar mi cuenta</a>
+          <a class="menu-link block px-3 py-3 rounded-xl text-sm font-semibold" href="/contact.html" onclick="closeInfoMenu()"><i class="fa-solid fa-envelope text-cyan-300 w-5 mr-2"></i>Responsables y contacto</a>
           <button type="button" onclick="alert('Usuarios activos: ' + (document.getElementById('online-count')?.textContent || '--'))" class="menu-link w-full text-left px-3 py-3 rounded-xl text-sm font-semibold"><i class="fa-solid fa-users text-sky-400 w-5 mr-2"></i>Usuarios en línea: <span id="menu-online-count">--</span></button>
         </div>
         <div class="p-3 border-t border-slate-800 text-[9px] text-slate-500 leading-relaxed">Venbot no solicita claves de Binance ni custodia fondos. Los análisis son informativos.</div>
@@ -1599,12 +1619,32 @@
       }
     }
 
-    // Evita que una respuesta antigua (por ejemplo BTC) sobrescriba el activo
-    // que el usuario acaba de seleccionar (por ejemplo ETH).
+    // Evita respuestas fuera de orden y datos obsoletos al cambiar de activo.
+    // Esta capa solo controla presentación/estado; no modifica fórmulas ni endpoints.
     let spotPredictionRequestSequence = 0;
+    const VENBOT_SPOT_UI_SYMBOLS = ['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'];
+
+    function resetSpotPredictionPanels(message='', state='idle') {
+      const status=document.getElementById('spot-prediction-status');
+      const head=document.getElementById('spot-prediction-head');
+      const horizons=document.getElementById('spot-horizon-grid');
+      const structure=document.getElementById('spot-structure');
+      const scenarios=document.getElementById('spot-scenarios');
+      const method=document.getElementById('spot-method');
+      const performance=document.getElementById('spot-performance');
+      // No conservar ni un solo valor del símbolo anterior mientras el actual carga.
+      if(head) head.replaceChildren();
+      if(horizons) horizons.replaceChildren();
+      if(structure) structure.textContent='Esperando datos del activo seleccionado…';
+      if(scenarios) scenarios.textContent='Los escenarios aparecerán cuando exista una proyección válida.';
+      if(method) method.textContent='El método y la hora de generación aparecerán con la lectura.';
+      if(performance) performance.textContent='La validación histórica se consulta después de la proyección.';
+      if(status){ status.textContent=message; status.setAttribute('aria-live','polite'); status.dataset.state=state; }
+    }
 
     async function loadSpotPrediction(symbol='BTCUSDT') {
       const requestId = ++spotPredictionRequestSequence;
+      const requestedSymbol=VENBOT_SPOT_UI_SYMBOLS.includes(String(symbol||'').toUpperCase())?String(symbol).toUpperCase():'BTCUSDT';
       const status=document.getElementById('spot-prediction-status');
       const head=document.getElementById('spot-prediction-head');
       const horizons=document.getElementById('spot-horizon-grid');
@@ -1614,61 +1654,85 @@
       const performance=document.getElementById('spot-performance');
       const ent=window.venbotEntitlements?.features || {};
       if(!status || !head || !horizons) return;
-      if(!getAuthToken()){ status.textContent='Inicia sesión con un plan VIP para consultar las proyecciones Spot.'; return; }
-      if(!ent.spot){ status.textContent='La predicción y proyección Spot está disponible en el plan VIP.'; return; }
-      status.textContent='Calculando análisis con velas reales de Binance…';
+
+      // Impide que se vean datos de BTC debajo del selector SOL (o de un usuario anterior).
+      resetSpotPredictionPanels(`Consultando ${requestedSymbol.replace('USDT','')} con datos de Binance…`, 'loading');
+      setMarketContext('spot', requestedSymbol.replace('USDT',''));
+
+      if(!getAuthToken()){
+        if(requestId===spotPredictionRequestSequence) resetSpotPredictionPanels('Inicia sesión con un plan VIP para consultar las proyecciones Spot.', 'locked');
+        return;
+      }
+      if(!ent.spot){
+        if(requestId===spotPredictionRequestSequence) resetSpotPredictionPanels('La predicción y proyección Spot está disponible en el plan VIP.', 'locked');
+        return;
+      }
+
       try {
-        const r=await fetch(`${API_BASE_URL}/api/spot/prediction?symbol=${encodeURIComponent(symbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
-        const d=await r.json();
+        const r=await fetch(`${API_BASE_URL}/api/spot/prediction?symbol=${encodeURIComponent(requestedSymbol)}&t=${Date.now()}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+        const d=await r.json().catch(()=>({}));
         if(requestId !== spotPredictionRequestSequence) return;
-        if(!r.ok || !d.ok) throw new Error(d.error||'No disponible');
+        if(!r.ok || !d.ok) throw new Error(d.error||d.detail||`HTTP ${r.status}`);
+        const responseSymbol=String(d.symbol||'').toUpperCase();
+        if(responseSymbol && responseSymbol!==requestedSymbol) throw new Error('El servidor respondió con un activo distinto al seleccionado.');
         const o=d.observed, a=d.analysis, p=d.projections;
+        const requiredHorizons=['1h','3h','7h','24h'];
+        if(!o || !Number.isFinite(Number(o.price)) || Number(o.price)<=0 || !a || !p || !requiredHorizons.every(h=>p[h] && Number.isFinite(Number(p[h].central)) && Number(p[h].central)>0)) {
+          throw new Error('La respuesta del motor Spot está incompleta para este activo.');
+        }
+        const esc=(v)=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
         const fmt=(v)=>{
           const n=Number(v);
           if(!Number.isFinite(n)) return 'n/d';
           const decimals=Math.abs(n)>=1?2:4;
           return n.toLocaleString('es-ES',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});
         };
-        const signed=(v)=>`${Number(v)>=0?'+':''}${Number(v).toFixed(2)}%`;
+        const signed=(v)=>{
+          const n=Number(v);
+          return Number.isFinite(n)?`${n>=0?'+':''}${n.toFixed(2)}%`:'n/d';
+        };
         const relative=(v,base)=>{
           const n=Number(v), b=Number(base);
           if(!Number.isFinite(n)||!Number.isFinite(b)||!b) return 'n/d';
           const pct=(n/b-1)*100;
           return `${pct>=0?'+':''}${pct.toFixed(2)}% vs. observado`;
         };
-        setMarketContext('spot', d.asset);
-        head.innerHTML=`<div class="bg-slate-950/70 border border-purple-500/20 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Dato observado</span><strong class="block text-lg font-black text-purple-300 mt-1">${fmt(o.price)} <span class="text-[9px] text-slate-500">USDT</span></strong><span class="text-[10px] ${Number(o.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">24H ${signed(o.change_24h_pct)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Tendencia</span><strong class="block text-sm font-black text-slate-100 mt-2">${a.trend_icon} ${a.trend}</strong><span class="text-[9px] text-slate-500">Score ${Number(a.trend_score).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Volatilidad</span><strong class="block text-sm font-black text-slate-100 mt-2">${Number(a.volatility_1h_pct).toFixed(2)}% / 1H</strong><span class="text-[9px] text-slate-500">R² ${Number(a.regression_r2).toFixed(2)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Confianza</span><strong class="block text-sm font-black text-purple-300 mt-2">${a.confidence}/100</strong><span class="text-[9px] text-slate-500">Calidad ${a.quality}</span></div>`;
-        horizons.innerHTML=['1h','3h','7h','24h'].map(h=>{const q=p[h]; const ch=Number(q.change_pct||0); const dir=Math.abs(ch)<0.08?'RANGO':(ch>0?'ALCISTA':'BAJISTA'); const dirClass=dir==='ALCISTA'?'text-emerald-400':dir==='BAJISTA'?'text-rose-400':'text-amber-400'; return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-black text-slate-200 uppercase">Proyección ${h}</span><span class="text-[9px] ${dirClass} font-black">${dir}</span></div><strong class="block text-base font-black text-white mt-2">${fmt(q.central)} <span class="text-[9px] text-slate-500">USDT</span></strong><div class="flex items-center justify-between gap-2 mt-1"><span class="text-[9px] text-slate-500">Cambio ${signed(q.change_pct)}</span><span class="text-[9px] text-slate-500">Rango ${fmt(q.low)} – ${fmt(q.high)}</span></div></div>`}).join('');
-        structure.innerHTML=`<div class="font-black text-slate-200 mb-2">Estructura técnica</div><div>Soporte: <b class="text-slate-200">${fmt(a.support)}</b></div><div>Resistencia: <b class="text-slate-200">${fmt(a.resistance)}</b></div><div>Momentum: <b class="text-slate-200">${Number(a.momentum_score)>=0?'+':''}${Number(a.momentum_score).toFixed(3)}%</b></div>`;
-        scenarios.innerHTML=`<div class="font-black text-slate-200 mb-2">Escenarios 24H</div><div>🔴 Bajista: <b class="text-slate-200">${fmt(d.scenarios_24h.bearish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bearish,o.price)})</span></div><div>🟡 Central: <b class="text-slate-200">${fmt(d.scenarios_24h.central)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.central,o.price)})</span></div><div>🟢 Alcista / favorable: <b class="text-slate-200">${fmt(d.scenarios_24h.bullish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h.bullish,o.price)})</span></div><div class="mt-2 text-slate-500">Los escenarios se comparan con el precio observado; “favorable” no implica necesariamente un precio superior al actual.</div>`;
-        method.innerHTML=`<div class="font-black text-slate-200 mb-2">Cómo calcula Venbot</div><div>${d.method}</div><div class="mt-2 text-slate-500">${a.data_points_5m} velas de 5m · ${a.data_points_1h} velas de 1H.</div><div class="mt-1 text-slate-600">Generado: ${new Date(d.generated_at).toLocaleString('es-VE')}</div>`;
-        // La proyección principal queda visible en cuanto llega. Las métricas
-        // históricas son complementarias y nunca deben retener el estado de carga.
-        status.textContent=`${d.asset} analizado con datos reales de Binance · ${new Date(d.generated_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+        const score=Number(a.trend_score), volatility=Number(a.volatility_1h_pct), r2=Number(a.regression_r2);
+        setMarketContext('spot', requestedSymbol.replace('USDT',''));
+        head.innerHTML=`<div class="bg-slate-950/70 border border-purple-500/20 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Dato observado · ${esc(requestedSymbol.replace('USDT',''))}</span><strong class="block text-lg font-black text-purple-300 mt-1">${fmt(o.price)} <span class="text-[9px] text-slate-500">USDT</span></strong><span class="text-[10px] ${Number(o.change_24h_pct)>=0?'text-emerald-400':'text-rose-400'} font-bold">24H ${signed(o.change_24h_pct)}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Tendencia</span><strong class="block text-sm font-black text-slate-100 mt-2">${esc(a.trend_icon)} ${esc(a.trend)}</strong><span class="text-[9px] text-slate-500">Score ${Number.isFinite(score)?score.toFixed(2):'n/d'}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Volatilidad</span><strong class="block text-sm font-black text-slate-100 mt-2">${Number.isFinite(volatility)?volatility.toFixed(2)+'%':'n/d'} / 1H</strong><span class="text-[9px] text-slate-500">R² ${Number.isFinite(r2)?r2.toFixed(2):'n/d'}</span></div><div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><span class="text-[9px] text-slate-500 uppercase font-bold">Confianza</span><strong class="block text-sm font-black text-purple-300 mt-2">${Number.isFinite(Number(a.confidence))?esc(a.confidence):'n/d'}/100</strong><span class="text-[9px] text-slate-500">Calidad ${esc(a.quality||'n/d')}</span></div>`;
+        horizons.innerHTML=requiredHorizons.map(h=>{const q=p[h]; const ch=Number(q.change_pct); const dir=!Number.isFinite(ch)||Math.abs(ch)<0.08?'RANGO':(ch>0?'ALCISTA':'BAJISTA'); const dirClass=dir==='ALCISTA'?'text-emerald-400':dir==='BAJISTA'?'text-rose-400':'text-amber-400'; return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="flex items-center justify-between"><span class="text-[10px] font-black text-slate-200 uppercase">Proyección ${h}</span><span class="text-[9px] ${dirClass} font-black">${dir}</span></div><strong class="block text-base font-black text-white mt-2">${fmt(q.central)} <span class="text-[9px] text-slate-500">USDT</span></strong><div class="flex items-center justify-between gap-2 mt-1"><span class="text-[9px] text-slate-500">Cambio ${signed(q.change_pct)}</span><span class="text-[9px] text-slate-500">Rango ${fmt(q.low)} – ${fmt(q.high)}</span></div></div>`}).join('');
+        if(structure) structure.innerHTML=`<div class="font-black text-slate-200 mb-2">Estructura técnica</div><div>Soporte: <b class="text-slate-200">${fmt(a.support)}</b></div><div>Resistencia: <b class="text-slate-200">${fmt(a.resistance)}</b></div><div>Momentum: <b class="text-slate-200">${Number.isFinite(Number(a.momentum_score))?(Number(a.momentum_score)>=0?'+':'')+Number(a.momentum_score).toFixed(3)+'%':'n/d'}</b></div>`;
+        if(scenarios) scenarios.innerHTML=`<div class="font-black text-slate-200 mb-2">Escenarios 24H</div><div>🔴 Bajista: <b class="text-slate-200">${fmt(d.scenarios_24h?.bearish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h?.bearish,o.price)})</span></div><div>🟡 Central: <b class="text-slate-200">${fmt(d.scenarios_24h?.central)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h?.central,o.price)})</span></div><div>🟢 Alcista / favorable: <b class="text-slate-200">${fmt(d.scenarios_24h?.bullish)}</b> <span class="text-slate-500">(${relative(d.scenarios_24h?.bullish,o.price)})</span></div><div class="mt-2 text-slate-500">Los escenarios se comparan con el precio observado; “favorable” no implica necesariamente un precio superior al actual.</div>`;
+        if(method) method.innerHTML=`<div class="font-black text-slate-200 mb-2">Cómo calcula Venbot</div><div>${esc(d.method||'Método no informado por el servidor.')}</div><div class="mt-2 text-slate-500">${Number.isFinite(Number(a.data_points_5m))?a.data_points_5m:'n/d'} velas de 5m · ${Number.isFinite(Number(a.data_points_1h))?a.data_points_1h:'n/d'} velas de 1H.</div><div class="mt-1 text-slate-600">Generado: ${d.generated_at?new Date(d.generated_at).toLocaleString('es-VE'):'n/d'}</div>`;
+        status.textContent=`${requestedSymbol} analizado con datos reales de Binance · ${new Date(d.generated_at||Date.now()).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
+        status.dataset.state='ready';
+
+        // La validación histórica es secundaria: se consulta en segundo plano.
         if(performance){
-          performance.innerHTML='<div class="text-slate-500">Cargando validación histórica en segundo plano…</div>';
+          performance.textContent='Cargando validación histórica en segundo plano…';
           void (async()=>{
             try {
-              const pr=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(symbol)}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
-              const pd=await pr.json();
+              const pr=await fetch(`${API_BASE_URL}/api/spot/predictions/performance?symbol=${encodeURIComponent(requestedSymbol)}`,{headers:{'X-Venbot-Session':getAuthToken(),'Accept':'application/json'},cache:'no-store'});
+              const pd=await pr.json().catch(()=>({}));
               if(requestId !== spotPredictionRequestSequence) return;
               if(pr.ok && pd.ok){
                 const horizon=pd.horizons||pd.horizon_summary||pd.by_horizon||pd.summary||{};
-                const evaluatedTotal=['1h','3h','7h','24h'].reduce((sum,h)=>sum+Number((horizon[h]||{}).evaluated??0),0);
+                const evaluatedTotal=requiredHorizons.reduce((sum,h)=>sum+Number((horizon[h]||{}).evaluated??0),0);
                 const total=Number.isFinite(evaluatedTotal)?evaluatedTotal:NaN;
                 const correct=Number(pd.direction_correct ?? pd.direction_accuracy_pct ?? NaN);
                 const acc=Number.isFinite(correct)?(correct<=1?correct*100:correct):NaN;
-                const rows=['1h','3h','7h','24h'].map(h=>{const x=horizon[h]||{}; const ev=Number(x.evaluated??x.count??0); const ac=Number(x.direction_accuracy_pct ?? x.accuracy_pct ?? NaN); return `<div><span class="text-slate-600">${h.toUpperCase()}</span> <span class="text-slate-300">${ev} evaluadas</span>${Number.isFinite(ac)?` · <span class="text-slate-300">${ac.toFixed(1)}% dirección</span>`:''}</div>`;}).join('');
-                performance.innerHTML=`<div class="font-black text-slate-200 mb-2">Validación de predicciones Spot</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${rows}</div><div class="mt-2 text-slate-500">Total evaluaciones por horizonte: ${Number.isFinite(total)?total:'n/d'}${Number.isFinite(acc)?` · precisión direccional global: ${acc.toFixed(1)}%`:''}</div>`;
-              } else { performance.innerHTML='<div class="text-slate-500">Aún no hay suficientes evaluaciones reales para mostrar desempeño Spot.</div>'; }
+                const rows=requiredHorizons.map(h=>{const x=horizon[h]||{}; const ev=Number(x.evaluated??x.count??0); const ac=Number(x.direction_accuracy_pct ?? x.accuracy_pct ?? NaN); return `<div><span class="text-slate-600">${h.toUpperCase()}</span> <span class="text-slate-300">${Number.isFinite(ev)?ev:0} evaluadas</span>${Number.isFinite(ac)?` · <span class="text-slate-300">${ac.toFixed(1)}% dirección</span>`:''}</div>`;}).join('');
+                performance.innerHTML=`<div class="font-black text-slate-200 mb-2">Validación de predicciones Spot · ${requestedSymbol.replace('USDT','')}</div><div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${rows}</div><div class="mt-2 text-slate-500">Total evaluaciones por horizonte: ${Number.isFinite(total)?total:'n/d'}${Number.isFinite(acc)?` · precisión direccional global: ${acc.toFixed(1)}%`:''}</div>`;
+              } else { performance.textContent='Aún no hay suficientes evaluaciones reales para mostrar desempeño Spot.'; }
             } catch(_e){
-              if(requestId === spotPredictionRequestSequence) performance.innerHTML='<div class="text-slate-500">Validación Spot temporalmente no disponible.</div>';
+              if(requestId === spotPredictionRequestSequence) performance.textContent='Validación Spot temporalmente no disponible.';
             }
           })();
         }
       } catch(e) {
         if(requestId !== spotPredictionRequestSequence) return;
-        status.textContent='No se pudo generar la proyección Spot en este momento.';
+        resetSpotPredictionPanels(`No se pudo generar la proyección de ${requestedSymbol.replace('USDT','')} en este momento. No se muestran datos del activo anterior.`, 'error');
+        if(status) status.dataset.state='error';
       }
     }
 
@@ -2596,6 +2660,8 @@
   let advancedPeriod = '24h';
   let advancedChart = null;
   let advancedBusy = false;
+  let advancedPending = false;
+  let advancedLoadSequence = 0;
   let advancedSnapshotId = null;
   let advancedSpotHourlySnapshotId = null;
   let advancedForceNewT0 = false;
@@ -2642,6 +2708,14 @@
     const p2p=document.getElementById('adv-p2p-bank-controls'), spot=document.getElementById('adv-spot-symbol');
     if(p2p) p2p.classList.toggle('hidden', advancedGraphKind!=='p2p');
     if(spot) spot.classList.toggle('hidden', advancedGraphKind!=='spot');
+    const longPeriods=document.querySelectorAll('[data-adv-period="7d"],[data-adv-period="30d"]');
+    if(advancedGraphKind==='p2p') advancedPeriod='24h';
+    longPeriods.forEach(button=>{
+      button.classList.toggle('hidden', advancedGraphKind==='p2p');
+      button.disabled=advancedGraphKind==='p2p';
+      button.setAttribute('aria-hidden', advancedGraphKind==='p2p'?'true':'false');
+      button.title=advancedGraphKind==='p2p'?'P2P avanzado dispone actualmente de una ventana máxima de 24 horas.':'Cambiar ventana histórica Spot';
+    });
     advSetText('adv-graph-kind-label', advancedGraphKind==='p2p'?'P2P':'Spot');
     advSetText('adv-horizon-title', advancedGraphKind==='spot'?'Proyección Spot · 1H → 24H':'Proyección P2P por horizonte');
   }
@@ -3783,13 +3857,41 @@
     if(badge) badge.textContent=motor.stage?.stage||'lectura';
     if(note) note.textContent='La capa adaptativa observa errores y sesgos, separa entrenamiento de OOS y mantiene los candidatos en sombra. Una medición no modifica el motor productivo.';
   }
-  async function advLoadLearning(kind){
+  async function advLoadLearning(kind, requestId=advancedLoadSequence){
     try{
       const symbol=kind==='spot'?`?symbol=${encodeURIComponent(advancedSpotSymbol)}`:'';
-      const d=await advFetch(`${API_BASE_URL}/api/quant/adaptive/status${symbol}`); advRenderLearning(d,kind);
-    }catch(e){const n=document.getElementById('adv-learning-note');if(n)n.textContent=e.message||'Aprendizaje adaptativo temporalmente no disponible.';}
+      const d=await advFetch(`${API_BASE_URL}/api/quant/adaptive/status${symbol}`);
+      // Un resultado lento de otro banco/activo no debe sobrescribir el panel actual.
+      if(requestId!==advancedLoadSequence || kind!==advancedGraphKind) return;
+      advRenderLearning(d,kind);
+    }catch(e){
+      if(requestId!==advancedLoadSequence || kind!==advancedGraphKind) return;
+      const n=document.getElementById('adv-learning-note');if(n)n.textContent=e.message||'Aprendizaje adaptativo temporalmente no disponible.';
+    }
   }
-  function advResetDetails(){ advSetText('adv-chart-mode-label','Modelo cuantitativo'); ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d')); const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML=''; const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML=''; const v=document.getElementById('adv-validation'); if(v) v.innerHTML=''; const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML=''; const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML=''; const sh=document.getElementById('adv-snapshot-history'); if(sh) sh.innerHTML=''; const ms=document.getElementById('adv-memory-summary'); if(ms) ms.innerHTML=''; const sp=document.getElementById('adv-spot-context'); if(sp) sp.innerHTML=''; const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden'); const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora'; const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot'; const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML=''; const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML=''; const cm=document.getElementById('adv-learning-coverage-meta'); if(cm) cm.textContent='0 / 700 h'; const cf=document.getElementById('adv-learning-coverage-fill'); if(cf) cf.style.width='0%'; }
+  function advResetDetails(){
+    advDestroyChart();
+    advSetText('adv-chart-mode-label','Modelo cuantitativo');
+    ['adv-m-current','adv-m-projection','adv-m-change','adv-m-range','adv-m-confidence','adv-m-r2','adv-m-evaluated'].forEach(id=>advSetText(id,'n/d'));
+    const h=document.getElementById('adv-horizon-cards'); if(h) h.innerHTML='';
+    const s=document.getElementById('adv-scenarios'); if(s) s.innerHTML='';
+    const v=document.getElementById('adv-validation'); if(v) v.innerHTML='';
+    const t=document.getElementById('adv-trace-table'); if(t) t.innerHTML='';
+    const tl=document.getElementById('adv-timeline-strip'); if(tl) tl.innerHTML='';
+    const sh=document.getElementById('adv-snapshot-history'); if(sh) sh.innerHTML='';
+    const ms=document.getElementById('adv-memory-summary'); if(ms) ms.innerHTML='';
+    const hr=document.getElementById('adv-hourly-readout'); if(hr) hr.innerHTML='';
+    const sp=document.getElementById('adv-spot-context'); if(sp) sp.innerHTML='';
+    const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden');
+    const t0=document.getElementById('adv-t0-label'); if(t0) t0.textContent='T0 · ahora';
+    const sb=document.getElementById('adv-snapshot-badge'); if(sb) sb.textContent='sin snapshot';
+    const lc=document.getElementById('adv-learning-content'); if(lc) lc.innerHTML='';
+    const lh=document.getElementById('adv-learning-horizons'); if(lh) lh.innerHTML='';
+    const cm=document.getElementById('adv-learning-coverage-meta'); if(cm) cm.textContent='0 / 700 h';
+    const cf=document.getElementById('adv-learning-coverage-fill'); if(cf) cf.style.width='0%';
+    const host=document.querySelector('.adv-chart-viewport');
+    if(host) host.innerHTML='<div class="h-full min-h-[320px] flex flex-col items-center justify-center gap-2 p-6 text-center text-slate-400"><span class="inline-block w-6 h-6 rounded-full border-2 border-cyan-400/30 border-t-cyan-300 animate-spin" aria-hidden="true"></span><strong class="text-sm text-slate-200">Preparando la gráfica</strong><span class="text-xs">Se están consultando los datos del mercado seleccionado. No se reutilizará una gráfica anterior.</span></div><canvas id="advancedPredictiveChart" class="hidden" aria-hidden="true"></canvas>';
+  }
   function advProjectionRowsP2P(analysis){
     const src=analysis?.proyecciones_horizontes||{};
     return ['1h','3h','7h','24h'].filter(h=>src[h]).map(h=>{const q=src[h]; return {h,central:q.midpoint,buy:q.compra,sell:q.venta,low:q.rango_mid_min,high:q.rango_mid_max,change:q.cambio_pct,direction:q.direccion,confidence:q.confianza,spread:Number(q.venta)-Number(q.compra),regression_r2:q.regression_r2};});
@@ -3883,13 +3985,14 @@
       <div class="text-[8px] text-slate-600">Muestra ${ts}. Solo anuncios visibles seleccionados; no representa el libro completo ni estima liquidez oculta. Diagnóstico experimental: no modifica Quant, predicciones, confianza ni alertas.</div>`;
   }
 
-  async function loadAdvancedP2P(){
+  async function loadAdvancedP2P(requestId=advancedLoadSequence){
     const lockBefore=p2pReadLock();
     const lockParts=[];
     if(lockBefore?.snapshotId) lockParts.push(`snapshot_id=${encodeURIComponent(lockBefore.snapshotId)}`);
     if(lockBefore?.hourly_created_at) lockParts.push(`history_anchor=${encodeURIComponent(lockBefore.hourly_created_at)}`);
     const lockQuery=lockParts.length?`&${lockParts.join('&')}`:'';
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/p2p?banco=${encodeURIComponent(advancedP2PBank)}&limit=5000&history_hours=12&t=${Date.now()}${lockQuery}`);
+    if(requestId!==advancedLoadSequence) return;
     const spc=document.getElementById('adv-spot-context-card'); if(spc) spc.classList.add('hidden');
     renderAdvP2PMicrostructure(d.microstructure_shadow);
     advPopulateSnapshotSelector(d); const a=d.analysis||{}; const perf=d.performance||{}; const snapshot=advPickSnapshot(d.snapshots);
@@ -3956,16 +4059,17 @@
     const sbox=document.getElementById('adv-scenarios'); if(sbox){const p7=a.proyeccion_7h||{}; const metric=Object.assign({},a.metricas||{}); sbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Tendencia</span><strong class="block mt-1">${advDirectionText(a.tendencia)}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Soporte</span><strong class="block mt-1">${advMoney(p7.soporte_7h??metric.soporte??a.soporte_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Resistencia</span><strong class="block mt-1">${advMoney(p7.resistencia_7h??metric.resistencia??a.resistencia_7h)} Bs</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Volatilidad</span><strong class="block mt-1">${advPct(metric.volatilidad_pct??a.volatilidad_pct)}</strong></div>`;}
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Muestras actuales</span><strong class="block mt-1">${Number.isFinite(Number(m.muestras))?Number(m.muestras).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">${advMoney(m.cobertura_horas,2)} h</strong></div>`;}
     advRenderSnapshotTrace(snapshot,'Bs');
-    advLoadLearning('p2p');
+    advLoadLearning('p2p', requestId);
     const histRows=Number(d.history_rows||hist.length||0);
     advSetStatus(`P2P ${advancedP2PBank} · ${periodConfig.label} · histórico 12H (${histRows.toLocaleString('es-VE')} filas) + proyección activa + snapshot verificable · ${new Date().toLocaleTimeString('es-VE')}`,'ok');
   }
-  async function loadAdvancedSpot(){
+  async function loadAdvancedSpot(requestId=advancedLoadSequence){
     const rangeCfg = advancedPeriod==='24h' ? {interval:'1h',limit:80} : advancedPeriod==='7d' ? {interval:'1h',limit:180} : {interval:'4h',limit:220};
     const lock=spotReadLock();
     const lockQuery=lock?.snapshotId?`&snapshot_id=${encodeURIComponent(lock.snapshotId)}`:'';
     const forceQuery=advancedForceNewT0?'&new_t0=true':'';
     const d=await advFetch(`${API_BASE_URL}/api/admin/predictive/spot?symbol=${encodeURIComponent(advancedSpotSymbol)}&interval=${rangeCfg.interval}&limit=${rangeCfg.limit}&t=${Date.now()}${lockQuery}${forceQuery}`);
+    if(requestId!==advancedLoadSequence) return;
     const p2pShadowCard=document.getElementById('adv-p2p-microstructure-card'); if(p2pShadowCard) p2pShadowCard.classList.add('hidden');
     advancedForceNewT0=false;
     advPopulateSnapshotSelector(d);
@@ -3983,7 +4087,7 @@
     const vbox=document.getElementById('adv-validation'); if(vbox){vbox.innerHTML=`<div class="adv-horizon-row"><span class="text-slate-500">Estado</span><strong class="block mt-1">${perf.ok!==false?'Disponible':'No disponible'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Predicciones registradas</span><strong class="block mt-1">${Number.isFinite(Number(perf.tracked))?Number(perf.tracked).toLocaleString('es-VE'):'n/d'}</strong></div><div class="adv-horizon-row"><span class="text-slate-500">Cobertura</span><strong class="block mt-1">n/d h</strong></div>`;} advRenderHorizonCards(proj,'USDT'); advRenderTimeline(proj,'USDT',false); advRenderSnapshotHistory(d.hourly_shadow?.snapshots||[],snapshot); advRenderMemorySummary(d.hourly_shadow?.snapshots||[],snapshot);
     advRenderChart(hist,forecast,'USDT',snapshot,{spotModern:true,referenceTime:anchor,hourlyAnchor:anchor,nowTs:Date.now(),currentPrice:Number(o.price),support:Number(a.support),resistance:Number(a.resistance),snapshotOriginPrice:Number(snapshot?.origin_price||o.price),symbol:advancedSpotSymbol});
     const sctx=document.getElementById('adv-spot-context'),sctxCard=document.getElementById('adv-spot-context-card'); if(sctx&&sctxCard){sctxCard.classList.remove('hidden');const vol=Number(o.quote_volume_24h);const volText=Number.isFinite(vol)&&vol>0?(vol>=1e9?(vol/1e9).toFixed(2)+' B':vol>=1e6?(vol/1e6).toFixed(2)+' M':vol>=1e3?(vol/1e3).toFixed(2)+' K':vol.toFixed(0)):'n/d';const mom=Number(a.momentum_score),v1=Number(a.volatility_1h_pct),ts=Number(a.trend_score);sctx.innerHTML=`<div class="adv-spot-context-card"><span class="k">Régimen</span><strong class="v">${advDirectionText(a.trend)}</strong><small class="m">score ${Number.isFinite(ts)?ts.toFixed(3):'n/d'}</small></div><div class="adv-spot-context-card"><span class="k">Momentum</span><strong class="v">${Number.isFinite(mom)?(mom>=0?'+':'')+mom.toFixed(3)+'%':'n/d'}</strong><small class="m">multiventana</small></div><div class="adv-spot-context-card"><span class="k">Volatilidad 1H</span><strong class="v">${Number.isFinite(v1)?v1.toFixed(3)+'%':'n/d'}</strong><small class="m">histórica</small></div><div class="adv-spot-context-card"><span class="k">Volumen 24H</span><strong class="v">${volText}</strong><small class="m">quote volume real</small></div><div class="adv-spot-context-card"><span class="k">Variación 24H</span><strong class="v">${advPct(o.change_24h_pct)}</strong><small class="m">precio observado</small></div><div class="adv-spot-context-card"><span class="k">R²</span><strong class="v">${Number.isFinite(Number(a.regression_r2))?Number(a.regression_r2).toFixed(3):'n/d'}</strong><small class="m">ajuste temporal</small></div>`;}
-    advRenderSnapshotTrace(snapshot,'USDT'); advLoadLearning('spot');
+    advRenderSnapshotTrace(snapshot,'USDT'); advLoadLearning('spot', requestId);
     advSetStatus(`${advancedSpotSymbol} · histórico real + proyección horaria + snapshot verificable · ${new Date(pred.generated_at||Date.now()).toLocaleTimeString('es-VE')}`,'ok');
   }
   window.openAdvancedGraphs=async function(){
@@ -3993,13 +4097,16 @@
     advSetKindUI(); advSetButtons(); await loadAdvancedGraphs();
   };
   window.closeAdvancedGraphs=async function(){
+    // Invalida la respuesta que esté en vuelo, pero deja que su finally libere el bloqueo.
+    advancedLoadSequence++;
+    advancedPending=false;
     try{ if(document.fullscreenElement) await document.exitFullscreen?.(); }catch(e){}
     const modal=document.getElementById('advancedGraphsModal');
     if(modal){ modal.classList.add('hidden'); modal.style.display='none'; modal.style.visibility='hidden'; }
-    document.body.classList.remove('overflow-hidden'); advancedBusy=false; advDestroyChart();
+    document.body.classList.remove('overflow-hidden'); advDestroyChart();
   };
   document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !document.getElementById('advancedGraphsModal')?.classList.contains('hidden')) window.closeAdvancedGraphs?.(); });
-  window.setAdvancedGraphKind=async function(kind){advancedGraphKind=kind==='spot'?'spot':'p2p';advSetKindUI();advSetButtons();await loadAdvancedGraphs();};
+  window.setAdvancedGraphKind=async function(kind){advancedGraphKind=kind==='spot'?'spot':'p2p';if(advancedGraphKind==='p2p')advancedPeriod='24h';advSetKindUI();advSetButtons();await loadAdvancedGraphs();};
   window.setAdvancedP2PBank=async function(bank){advancedP2PBank=['GENERAL','MERCANTIL','PROVINCIAL','BNC'].includes(bank)?bank:'GENERAL';advSetButtons();await loadAdvancedGraphs();};
   window.setAdvancedSpotSymbol=async function(symbol){advancedSpotSymbol=['BTCUSDT','ETHUSDT','SOLUSDT','SUIUSDT','AAVEUSDT','UNIUSDT','KSMUSDT','ZECUSDT','XRPUSDT'].includes(symbol)?symbol:'BTCUSDT';advancedSpotHourlySnapshotId=null;await loadAdvancedGraphs();};
   window.setAdvancedSnapshot=async function(id){
@@ -4016,14 +4123,47 @@
     if(advancedGraphKind==='spot'){spotClearLock();advancedSpotHourlySnapshotId=null;advancedForceNewT0=true;}else{p2pClearLock();advancedSnapshotId=null;}
     await loadAdvancedGraphs();
   };
-  window.setAdvancedPeriod=async function(p){advancedPeriod=['24h','7d','30d'].includes(p)?p:'24h';advSetButtons();await loadAdvancedGraphs();};
+  window.setAdvancedPeriod=async function(p){
+    advancedPeriod=advancedGraphKind==='p2p'?'24h':(['24h','7d','30d'].includes(p)?p:'24h');
+    advSetButtons();
+    await loadAdvancedGraphs();
+  };
   window.loadAdvancedGraphs=async function(){
-    if(advancedBusy) return; advancedBusy=true; advResetDetails(); advSetStatus('Cargando datos reales…');
+    const modal=document.getElementById('advancedGraphsModal');
+    if(!modal || modal.classList.contains('hidden')) return;
+    advancedLoadSequence++;
+    if(advancedBusy){advancedPending=true;return;}
+    advancedBusy=true;
+    let requestId=advancedLoadSequence;
     try{
-      if(advancedGraphKind==='spot' && !window.venbotUser?.is_developer) throw new Error('Acceso reservado al administrador.');
-      if(advancedGraphKind==='p2p') await loadAdvancedP2P(); else await loadAdvancedSpot();
-    }catch(e){console.error('Venbot centro predictivo:',e);advSetStatus(`No se pudo cargar la gráfica avanzada: ${e.message||'error temporal'}`,'error');}
-    finally{advancedBusy=false;}
+      do{
+        advancedPending=false;
+        advResetDetails();
+        const selectedLabel=advancedGraphKind==='p2p'?`P2P · ${advancedP2PBank}`:`Spot · ${advancedSpotSymbol}`;
+        advSetStatus(`Cargando datos reales de ${selectedLabel}…`);
+        try{
+          if(advancedGraphKind==='spot' && !window.venbotUser?.is_developer) throw new Error('Acceso reservado al administrador.');
+          if(advancedGraphKind==='p2p') await loadAdvancedP2P(requestId); else await loadAdvancedSpot(requestId);
+        }catch(e){
+          if(requestId===advancedLoadSequence){
+            console.error('Venbot centro predictivo:',e);
+            advSetStatus(`No se pudo cargar la gráfica avanzada: ${e.message||'error temporal'}`,'error');
+            const host=document.querySelector('.adv-chart-viewport');
+            if(host) host.innerHTML=`<div class="h-full min-h-[320px] flex items-center justify-center p-6 text-center text-rose-300 text-sm">No se pudo cargar ${advEsc(selectedLabel)}. Actualiza la consulta o comprueba el acceso y la conexión.</div>`;
+          }
+        }
+        if(!advancedPending && requestId===advancedLoadSequence) break;
+        requestId=advancedLoadSequence;
+        if(modal.classList.contains('hidden')) break;
+      }while(true);
+    }finally{
+      advancedBusy=false;
+      // Cubre el caso poco frecuente de una interacción justo al finalizar la petición.
+      if(advancedPending && !modal.classList.contains('hidden')){
+        advancedPending=false;
+        void window.loadAdvancedGraphs();
+      }
+    }
   };
 })();
 </script>
@@ -4290,7 +4430,7 @@ window.venbotOpenAdvancedDirect=function(){
   <script>
     if ('serviceWorker' in navigator && location.protocol === 'https:') {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
           .catch(err => console.warn('Venbot PWA: service worker no disponible', err));
       }, { once: true });
     }
